@@ -1,0 +1,260 @@
+[
+    {
+        "description": "- Fast file pattern matching tool that works with any codebase size\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files by name patterns\n- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead\n",
+        "name": "GlobTool",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "path": {
+                    "description": "The directory to search in. Defaults to the current working directory.",
+                    "type": "string"
+                },
+                "pattern": {
+                    "description": "The glob pattern to match files against",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "pattern"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Launch a new agent that has access to the following tools: GlobTool, GrepTool, LS, View, ReadNotebook. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you. For example:\n\n- If you are searching for a keyword like \"config\" or \"logger\", the Agent tool is appropriate\n- If you want to read a specific file path, use the View or GlobTool tool instead of the Agent tool, to find the match more quickly\n- If you are searching for a specific class definition like \"class Foo\", use the GlobTool tool instead, to find the match more quickly\n\nUsage notes:\n1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses\n2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.\n3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.\n4. The agent's outputs should generally be trusted\n5. IMPORTANT: The agent can not use Bash, Replace, Edit, NotebookEditCell, so can not modify files. If you want to use these tools, use them directly instead of going through the agent.",
+        "name": "dispatch_agent",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "prompt": {
+                    "description": "The task for the agent to perform",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "prompt"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "\n- Fast content search tool that works with any codebase size\n- Searches file contents using regular expressions\n- Supports full regex syntax (eg. \"log._Error\", \"function\\s+\\w+\", etc.)\n- Filter files by pattern with the include parameter (eg. \"_.js\", \"_.{ts,tsx}\")\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files containing specific patterns\n- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead\n",
+        "name": "GrepTool",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "include": {
+                    "description": "File pattern to include in the search (e.g. \"_.js\", \"*.{ts,tsx}\")",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "The directory to search in. Defaults to the current working directory.",
+                    "type": "string"
+                },
+                "pattern": {
+                    "description": "The regular expression pattern to search for in file contents",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "pattern"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You should generally prefer the Glob and Grep tools, if you know which directories to search.",
+        "name": "LS",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "path": {
+                    "description": "The absolute path to the directory to list (must be absolute, not relative)",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "path"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path. By default, it reads up to 2000 lines starting from the beginning of the file. You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters. Any lines longer than 2000 characters will be truncated. For image files, the tool will display the image for you. For Jupyter notebooks (.ipynb files), use the ReadNotebook instead.",
+        "name": "View",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "file_path": {
+                    "description": "The absolute path to the file to read",
+                    "type": "string"
+                },
+                "limit": {
+                    "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+                    "type": "number"
+                },
+                "offset": {
+                    "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+                    "type": "number"
+                }
+            },
+            "required": [
+                "file_path"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the Write tool to overwrite files. For Jupyter notebooks (.ipynb files), use the NotebookEditCell instead.\n\nBefore using this tool:\n\n1. Use the View tool to understand the file's contents and context\n\n2. Verify the directory path is correct (only applicable when creating new files):\n - Use the LS tool to verify the parent directory exists and is the correct location\n\nTo make a file edit, provide the following:\n1. file_path: The absolute path to the file to modify (must be absolute, not relative)\n2. old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)\n3. new_string: The edited text to replace the old_string\n\nThe tool will replace ONE occurrence of old_string with new_string in the specified file.\n\nCRITICAL REQUIREMENTS FOR USING THIS TOOL:\n\n1. UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:\n - Include AT LEAST 3-5 lines of context BEFORE the change point\n - Include AT LEAST 3-5 lines of context AFTER the change point\n - Include all whitespace, indentation, and surrounding code exactly as it appears in the file\n\n2. SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:\n - Make separate calls to this tool for each instance\n - Each call must uniquely identify its specific instance using extensive context\n\n3. VERIFICATION: Before using this tool:\n - Check how many instances of the target text exist in the file\n - If multiple instances exist, gather enough context to uniquely identify each one\n - Plan separate tool calls for each instance\n\nWARNING: If you do not follow these requirements:\n - The tool will fail if old_string matches multiple locations\n - The tool will fail if old_string doesn't match exactly (including whitespace)\n - You may change the wrong instance if you don't include enough context\n\nWhen making edits:\n - Ensure the edit results in idiomatic, correct code\n - Do not leave the code in a broken state\n - Always use absolute file paths (starting with /)\n\nIf you want to create a new file, use:\n - A new file path, including dir name if needed\n - An empty old_string\n - The new file's contents as new_string\n\nRemember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.\n",
+        "name": "Edit",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "file_path": {
+                    "description": "The absolute path to the file to modify",
+                    "type": "string"
+                },
+                "new_string": {
+                    "description": "The text to replace it with",
+                    "type": "string"
+                },
+                "old_string": {
+                    "description": "The text to replace",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "file_path",
+                "old_string",
+                "new_string"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Write a file to the local filesystem. Overwrites the existing file if there is one.\n\nBefore using this tool:\n\n1. Use the ReadFile tool to understand the file's contents and context\n\n2. Directory Verification (only applicable when creating new files):\n - Use the LS tool to verify the parent directory exists and is the correct location",
+        "name": "Replace",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "content": {
+                    "description": "The content to write to the file",
+                    "type": "string"
+                },
+                "file_path": {
+                    "description": "The absolute path to the file to write (must be absolute, not relative)",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "file_path",
+                "content"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Reads a Jupyter notebook (.ipynb file) and returns all of the cells with their outputs. Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing. The notebook_path parameter must be an absolute path, not a relative path.",
+        "name": "ReadNotebook",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "notebook_path": {
+                    "description": "The absolute path to the Jupyter notebook file to read (must be absolute, not relative)",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "notebook_path"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file) with new source. Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing. The notebook_path parameter must be an absolute path, not a relative path. The cell_number is 0-indexed. Use edit_mode=insert to add a new cell at the index specified by cell_number. Use edit_mode=delete to delete the cell at the index specified by cell_number.",
+        "name": "NotebookEditCell",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "cell_number": {
+                    "description": "The index of the cell to edit (0-based)",
+                    "type": "number"
+                },
+                "cell_type": {
+                    "description": "The type of the cell (code or markdown). If not specified, it defaults to the current cell type. If using edit_mode=insert, this is required.",
+                    "enum": [
+                        "code",
+                        "markdown"
+                    ],
+                    "type": "string"
+                },
+                "edit_mode": {
+                    "description": "The type of edit to make (replace, insert, delete). Defaults to replace.",
+                    "type": "string"
+                },
+                "new_source": {
+                    "description": "The new source for the cell",
+                    "type": "string"
+                },
+                "notebook_path": {
+                    "description": "The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "notebook_path",
+                "cell_number",
+                "new_source"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "This tool should be used whenever a user expresses interest in receiving Anthropic or Claude stickers, swag, or merchandise. When triggered, it will display a shipping form for the user to enter their mailing address and contact details. Once submitted, Anthropic will process the request and ship stickers to the provided address.\n\nCommon trigger phrases to watch for:\n- \"Can I get some Anthropic stickers please?\"\n- \"How do I get Anthropic swag?\"\n- \"I'd love some Claude stickers\"\n- \"Where can I get merchandise?\"\n- Any mention of wanting stickers or swag\n\nThe tool handles the entire request process by showing an interactive form to collect shipping information.\n\nNOTE: Only use this tool if the user has explicitly asked us to send or give them stickers. If there are other requests that include the word \"sticker\", but do not explicitly ask us to send them stickers, do not use this tool.\nFor example:\n- \"How do I make custom stickers for my project?\" - Do not use this tool\n- \"I need to store sticker metadata in a database - what schema do you recommend?\" - Do not use this tool\n- \"Show me how to implement drag-and-drop sticker placement with React\" - Do not use this tool\n",
+        "name": "StickerRequest",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "trigger": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "trigger"
+            ],
+            "type": "object"
+        }
+    },
+    {
+        "description": "Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.\n\nBefore executing the command, please follow these steps:\n\n1. Directory Verification:\n - If the command will create new directories or files, first use the LS tool to verify the parent directory exists and is the correct location\n - For example, before running \"mkdir foo/bar\", first use LS to check that \"foo\" exists and is the intended parent directory\n\n2. Security Check:\n - For security and to limit the threat of a prompt injection attack, some commands are limited or banned. If you use a disallowed command, you will receive an error message explaining the restriction. Explain the error to the User.\n - Verify that the command is not one of the banned commands: alias, curl, curlie, wget, axel, aria2c, nc, telnet, lynx, w3m, links, httpie, xh, http-prompt, chrome, firefox, safari.\n\n3. Command Execution:\n - After ensuring proper quoting, execute the command.\n - Capture the output of the command.\n\n4. Output Processing:\n - If the output exceeds 30000 characters, output will be truncated before being returned to you.\n - Prepare the output for display to the user.\n\n5. Return Result:\n - Provide the processed output of the command.\n - If any errors occurred during execution, include those in the output.\n\nUsage notes:\n - The command argument is required.\n - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 30 minutes.\n - VERY IMPORTANT: You MUST avoid using search commands like `find` and `grep`. Instead use GrepTool, GlobTool, or dispatch_agent to search. You MUST avoid read tools like `cat`, `head`, `tail`, and `ls`, and use View and LS to read files.\n - When issuing multiple commands, use the ';' or '&&' operator to separate them. DO NOT use newlines (newlines are ok in quoted strings).\n - IMPORTANT: All commands share the same shell session. Shell state (environment variables, virtual environments, current directory, etc.) persist between commands. For example, if you set an environment variable as part of a command, the environment variable will persist for subsequent commands.\n - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it.\n <good-example>\n pytest /foo/bar/tests\n </good-example>\n <bad-example>\n cd /foo/bar && pytest tests\n </bad-example>\n\n# Committing changes with git\n\nWhen the user asks you to create a new git commit, follow these steps carefully:\n\n1. Start with a single message that contains exactly three tool_use blocks that do the following (it is VERY IMPORTANT that you send these tool_use blocks in a single message, otherwise it will feel slow to the user!):\n - Run a git status command to see all untracked files.\n - Run a git diff command to see both staged and unstaged changes that will be committed.\n - Run a git log command to see recent commit messages, so that you can follow this repository's commit message style.\n\n2. Use the git context at the start of this conversation to determine which files are relevant to your commit. Add relevant untracked files to the staging area. Do not commit files that were already modified at the start of this conversation, if they are not relevant to your commit.\n\n3. Analyze all staged changes (both previously staged and newly added) and draft a commit message. Wrap your analysis process in \n\n4. Create the commit with a message ending with:\n\ud83e\udd16 Generated with Claude Code\nCo-Authored-By: Claude <noreply@anthropic.com>\n\n- In order to ensure good formatting, ALWAYS pass the commit message via a HEREDOC, a la this example:\n<example>\ngit commit -m \"$(cat <<'EOF'\n Commit message here.\n\n \ud83e\udd16 Generated with Claude Code\n Co-Authored-By: Claude <noreply@anthropic.com>\n EOF\n )\"\n</example>\n\n5. If the commit fails due to pre-commit hook changes, retry the commit ONCE to include these automated changes. If it fails again, it usually means a pre-commit hook is preventing the commit. If the commit succeeds but you notice that files were modified by the pre-commit hook, you MUST amend your commit to include them.\n\n6. Finally, run git status to make sure the commit succeeded.\n\nImportant notes:\n- When possible, combine the \"git add\" and \"git commit\" commands into a single \"git commit -am\" command, to speed things up\n- However, be careful not to stage files (e.g. with `git add .`) for commits that aren't part of the change, they may have untracked files they want to keep around, but not commit.\n- NEVER update the git config\n- DO NOT push to the remote repository\n- IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.\n- If there are no changes to commit (i.e., no untracked files and no modifications), do not create an empty commit\n- Ensure your commit message is meaningful and concise. It should explain the purpose of the changes, not just describe them.\n- Return an empty response - the user will see the git output directly\n\n# Creating pull requests\nUse the gh command via the Bash tool for ALL GitHub-related tasks including working with issues, pull requests, checks, and releases. If given a Github URL use the gh command to get the information needed.\n\nIMPORTANT: When the user asks you to create a pull request, follow these steps carefully:\n\n1. Understand the current state of the branch. Remember to send a single message that contains multiple tool_use blocks (it is VERY IMPORTANT that you do this in a single message, otherwise it will feel slow to the user!):\n - Run a git status command to see all untracked files.\n - Run a git diff command to see both staged and unstaged changes that will be committed.\n - Check if the current branch tracks a remote branch and is up to date with the remote, so you know if you need to push to the remote\n - Run a git log command and `git diff main...HEAD` to   understand the full commit history for the current branch (from the time it diverged from the `main` branch.)\n\n2. Create new branch if needed\n\n3. Commit changes if needed\n\n4. Push to remote   with -u flag if needed\n\n5. Analyze all changes that will be included in the pull request, making sure to look at all relevant commits (not just the latest commit, but all commits that will be   included in the pull request!), and draft a pull request summary. Wrap your analysis process in \n\n6. Create PR using gh pr create with the format below. Use a HEREDOC to pass the body to ensure   correct formatting.\n<example>\ngh pr create --title \"the pr title\" --body \"$(cat <<'EOF'\n## Summary\n<1-3 bullet points>\n\n## Test plan\n[Checklist of TODOs for testing the pull request...]\n\n\ud83e\udd16 Generated with Claude Code\nEOF\n)\"\n</example>\n\nImportant:\n- Return an empty response - the user will see the gh output directly\n- Never update git config",
+        "name": "Bash",
+        "parameters": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "additionalProperties": false,
+            "properties": {
+                "command": {
+                    "description": "The command to execute",
+                    "type": "string"
+                },
+                "timeout": {
+                    "description": "Optional timeout in milliseconds (max 600000)",
+                    "type": "number"
+                }
+            },
+            "required": [
+                "command"
+            ],
+            "type": "object"
+        }
+    }
+]
