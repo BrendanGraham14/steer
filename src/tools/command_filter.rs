@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use std::env;
 use std::collections::HashSet;
 
 /// Command filter for enhanced security
@@ -111,7 +110,7 @@ impl CommandFilter {
         ];
         
         // Call the API
-        let response = client.complete(messages, None).await
+        let response = client.complete(messages, None, None).await
             .context("Failed to call command filter API")?;
         
         // Extract the response text

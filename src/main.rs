@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use dotenv::dotenv;
 
 mod app;
 mod api;
@@ -45,14 +46,19 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
+    // Load .env file if it exists
+    if let Ok(path) = dotenv() {
+        println!("Loaded environment from {}", path.display());
+    }
+    
     // Load or initialize config
     let config = config::load_config()?;
     
-    // Check for API key
-    let api_key = match cli.api_key.or(config.api_key) {
+    // Check for API key in order: CLI arg > env var (including .env) > config file
+    let api_key = match cli.api_key.or_else(|| std::env::var("CLAUDE_API_KEY").ok()).or(config.api_key) {
         Some(key) => key,
         None => {
-            eprintln!("Error: No API key provided. Please use --api-key or set CLAUDE_API_KEY environment variable");
+            eprintln!("Error: No API key provided. Please use --api-key, set CLAUDE_API_KEY environment variable, add it to .env file, or configure it in config file");
             std::process::exit(1);
         }
     };

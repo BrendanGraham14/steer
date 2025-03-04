@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::env;
 
 /// Dispatch Agent implementation
@@ -48,17 +48,13 @@ impl DispatchAgent {
         // Create the messages for the API call
         let messages = vec![
             crate::api::Message {
-                role: "system".to_string(),
-                content: system_prompt,
-            },
-            crate::api::Message {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             },
         ];
 
         // Call the API
-        let response = dispatch_client.complete(messages, Some(tools)).await?;
+        let response = dispatch_client.complete(messages, Some(system_prompt), Some(tools)).await?;
 
         // Extract the response text
         let response_text = response.extract_text();

@@ -28,6 +28,8 @@ pub struct CompletionRequest {
     messages: Vec<Message>,
     max_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
@@ -147,12 +149,14 @@ impl Client {
     pub async fn complete(
         &self,
         messages: Vec<Message>,
+        system: Option<String>,
         tools: Option<Vec<Tool>>,
     ) -> Result<CompletionResponse> {
         let request = CompletionRequest {
             model: self.model.clone(),
             messages,
             max_tokens: 4000,
+            system,
             tools,
             temperature: Some(0.7),
             top_p: None,
@@ -189,12 +193,14 @@ impl Client {
     pub fn complete_streaming(
         &self,
         messages: Vec<Message>,
+        system: Option<String>,
         tools: Option<Vec<Tool>>,
     ) -> CompletionStream {
         let request = CompletionRequest {
             model: self.model.clone(),
             messages,
             max_tokens: 4000,
+            system,
             tools,
             temperature: Some(0.7),
             top_p: None,
@@ -284,7 +290,7 @@ impl Client {
             content: prompt.to_string(),
         }];
 
-        let response = self.complete(messages, None).await?;
+        let response = self.complete(messages, None, None).await?;
         
         // Extract text from the response
         let mut result = String::new();

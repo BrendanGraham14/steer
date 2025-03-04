@@ -30,7 +30,7 @@ impl Message {
     
     pub fn from_app_message(app_message: &crate::app::Message) -> Self {
         let role = match app_message.role {
-            crate::app::Role::System => "system",
+            crate::app::Role::System => "system", // This should not happen now as we handle system messages separately
             crate::app::Role::User => "user",
             crate::app::Role::Assistant => "assistant",
             crate::app::Role::Tool => "tool",
@@ -43,8 +43,24 @@ impl Message {
     }
 }
 
-pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Message> {
-    conversation.messages.iter().map(Message::from_app_message).collect()
+pub fn convert_conversation(conversation: &crate::app::Conversation) -> (Vec<Message>, Option<String>) {
+    let mut messages = Vec::new();
+    let mut system_content = None;
+    
+    for msg in &conversation.messages {
+        match msg.role {
+            crate::app::Role::System => {
+                // Store system message content
+                system_content = Some(msg.content.clone());
+            }
+            _ => {
+                // Add other message types to the messages array
+                messages.push(Message::from_app_message(msg));
+            }
+        }
+    }
+    
+    (messages, system_content)
 }
 
 /// Create a system prompt message based on the environment

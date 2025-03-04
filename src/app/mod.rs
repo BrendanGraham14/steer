@@ -344,14 +344,46 @@ impl App {
     
     /// Get a response from Claude
     pub async fn get_claude_response(&self, tools: Option<&Vec<crate::api::Tool>>) -> Result<crate::api::CompletionResponse> {
-        let messages = crate::api::messages::convert_conversation(&self.conversation);
-        self.api_client.complete(messages, tools.cloned()).await
+        // Extract user, assistant and tool messages from conversation
+        let mut messages = Vec::new();
+        let mut system_content = None;
+        
+        for msg in &self.conversation.messages {
+            match msg.role {
+                Role::System => {
+                    // Store system message content
+                    system_content = Some(msg.content.clone());
+                }
+                _ => {
+                    // Add other message types to the messages array
+                    messages.push(crate::api::Message::from_app_message(msg));
+                }
+            }
+        }
+        
+        self.api_client.complete(messages, system_content, tools.cloned()).await
     }
     
     /// Get a streaming response from Claude
     pub fn get_claude_response_streaming(&self, tools: Option<&Vec<crate::api::Tool>>) -> crate::api::CompletionStream {
-        let messages = crate::api::messages::convert_conversation(&self.conversation);
-        self.api_client.complete_streaming(messages, tools.cloned())
+        // Extract user, assistant and tool messages from conversation
+        let mut messages = Vec::new();
+        let mut system_content = None;
+        
+        for msg in &self.conversation.messages {
+            match msg.role {
+                Role::System => {
+                    // Store system message content
+                    system_content = Some(msg.content.clone());
+                }
+                _ => {
+                    // Add other message types to the messages array
+                    messages.push(crate::api::Message::from_app_message(msg));
+                }
+            }
+        }
+        
+        self.api_client.complete_streaming(messages, system_content, tools.cloned())
     }
     
     /// Handle a command
