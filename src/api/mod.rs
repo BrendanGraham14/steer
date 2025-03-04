@@ -8,9 +8,10 @@ use async_stream::stream;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use futures_core::Stream;
+use futures_util::StreamExt;
 
-mod messages;
-mod tools;
+pub mod messages;
+pub mod tools;
 
 pub use messages::Message;
 pub use tools::{Tool, ToolCall, ToolResult};
@@ -289,5 +290,38 @@ impl Client {
         }
         
         Ok(result)
+    }
+}
+
+impl CompletionResponse {
+    /// Check if the response contains any tool calls
+    pub fn has_tool_calls(&self) -> bool {
+        self.content.iter().any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+    }
+    
+    /// Extract all tool calls from the response
+    pub fn extract_tool_calls(&self) -> Vec<ToolCall> {
+        self.content.iter().filter_map(|block| {
+            if let ContentBlock::ToolUse { name, parameters } = block {
+                Some(ToolCall {
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                    id: None, // We don't have IDs in the raw API response
+                })
+            } else {
+                None
+            }
+        }).collect()
+    }
+    
+    /// Extract all text content from the response
+    pub fn extract_text(&self) -> String {
+        self.content.iter().filter_map(|block| {
+            if let ContentBlock::Text { text } = block {
+                Some(text.clone())
+            } else {
+                None
+            }
+        }).collect::<Vec<String>>().join("")
     }
 }

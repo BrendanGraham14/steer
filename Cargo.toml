@@ -1,13 +1,13 @@
 [package]
 name = "claude-code-rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"                                                     # edition 2024 is now stable
 description = "A command line tool for pair programming with Claude"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 
 [dependencies]
 # CLI framework
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 
 # Terminal UI
 ratatui = "0.24.0"
@@ -17,6 +17,7 @@ crossterm = "0.27.0"
 reqwest = { version = "0.11", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
 async-stream = "0.3.5"
+futures = "0.3"
 futures-core = "0.3"
 futures-util = "0.3"
 
@@ -29,7 +30,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 dirs = "5.0"
 colored = "2.0"
-syntect = "5.1" # Syntax highlighting
+syntect = "5.1"   # Syntax highlighting
 home = "0.5"
 chrono = "0.4"
 

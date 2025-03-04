@@ -10,6 +10,9 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [x] Create persistent shell session management
 - [x] Implement tool execution framework
 - [x] Support streaming responses from Claude (initial implementation)
+- [x] Refactor architecture for proper separation of concerns
+- [x] Implement ToolExecutor in App layer
+- [x] Implement proper layering (TUI → App → API/Tools)
 
 ### Tools Implementation
 - [x] GlobTool - File pattern matching
@@ -36,22 +39,53 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [x] API key management
 - [x] User preferences storage
 
-## Current Issues To Fix
+## Current Progress (March 2025)
 
-### Compilation Errors
-- [ ] Create utils module referenced in main.rs
-- [ ] Make API submodules (messages and tools) public
-- [ ] Fix module imports and re-exports
-- [ ] Fix ratatui Frame generic parameters
-- [ ] Fix regex escaping issues in the tool handler
-- [ ] Fix pattern matching in input handling
-- [ ] Fix Paragraph::new usage with proper type annotations
-- [ ] Fix stream handling in the API client
-- [ ] Fix regex unwrap_or_default usage (Regex doesn't implement Default)
-- [ ] Resolve the borrowed data escaping issue in bash.rs
-- [ ] Fix access to private fields in the App struct
-- [ ] Fix method usage on the App struct
-- [ ] Fix the env attribute in clap arg declarations
+### Critical Compilation Errors (Priority 1)
+- [x] Create utils module referenced in main.rs
+- [x] Fix stream handling in API client and TUI module
+- [x] Add proper StreamExt import in TUI module
+- [x] Fix string formatting in message_formatter.rs
+- [x] Fix type mismatch in conversation.rs message handling
+- [x] Implement missing tool_calls functionality in TUI module
+- [x] Fix potential deadlock in conversation.compact method
+
+### Additional Compilation Errors (Priority 2)
+- [x] Make API submodules (messages and tools) public
+- [x] Fix module imports and re-exports
+- [x] Fix ratatui Frame generic parameters
+- [x] Fix regex escaping issues in the tool handler
+- [x] Fix pattern matching in input handling
+- [x] Fix Paragraph::new usage with proper type annotations
+- [x] Fix regex unwrap_or_default usage (Regex doesn't implement Default)
+- [x] Resolve the borrowed data escaping issue in bash.rs
+- [x] Fix access to private fields in the App struct
+- [x] Fix method usage on the App struct
+- [x] Fix the env attribute in clap arg declarations
+
+### Next Steps (March 2025)
+
+#### Priority 1: Architecture Improvements
+- [x] Refactor architecture following the design in ARCHITECTURE.md:
+  - [x] Create proper ToolExecutor in App layer
+  - [x] Update API client to only communicate with App layer, not TUI
+  - [x] Move all API calls from TUI to App layer
+  - [x] Simplify TUI to only handle display/input, not business logic
+  - [x] Ensure the App layer manages all conversation state and flow
+  - [x] Establish clean separation of concerns between all layers
+
+#### Priority 2: Core Functionality
+- [x] Complete the critical compilation fixes
+- [x] Attempt to compile and run the project
+- [x] Fix compilation errors
+- [ ] Test basic functionality and fix any runtime issues
+- [ ] Test basic functionality including:
+  - [ ] Connecting to Claude API
+  - [ ] Sending/receiving messages
+  - [ ] Tool execution (bash, ls, view, etc.)
+- [ ] Enhance tool call handling in streaming responses
+- [ ] Improve error handling throughout the codebase
+- [ ] Add unit tests for core components
 
 ## Remaining Tasks
 

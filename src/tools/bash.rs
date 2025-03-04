@@ -13,10 +13,11 @@ pub async fn execute_bash(command: &str, timeout_ms: u64) -> Result<String> {
 
     // Execute the command with a timeout
     let timeout_duration = Duration::from_millis(timeout_ms);
+    let command_owned = command.to_string(); // Clone the command to move into the closure
     let result = timeout(timeout_duration, tokio::task::spawn_blocking(move || {
         Command::new("bash")
             .arg("-c")
-            .arg(command)
+            .arg(command_owned)
             .output()
     })).await
       .context("Command execution timed out")?
@@ -74,12 +75,12 @@ fn is_banned_command(command: &str) -> bool {
     ];
 
     for pattern in command_injection_patterns.iter() {
-        if Regex::new(pattern).unwrap_or_default().is_match(command) {
+        if Regex::new(pattern).unwrap_or_else(|_| Regex::new(r"^$").unwrap()).is_match(command) {
             // Allow specific safe patterns for command chaining
             if pattern == &r"\s*;" || pattern == &r"\s*&&" {
                 // Don't ban if it's just chaining basic commands
-                let safe_semicolon = Regex::new(r"^[\w\s/._-]+;[\w\s/._-]+$").unwrap_or_default();
-                let safe_ampersand = Regex::new(r"^[\w\s/._-]+&&[\w\s/._-]+$").unwrap_or_default();
+                let safe_semicolon = Regex::new(r"^[\w\s/._-]+;[\w\s/._-]+$").unwrap_or_else(|_| Regex::new(r"^$").unwrap());
+                let safe_ampersand = Regex::new(r"^[\w\s/._-]+&&[\w\s/._-]+$").unwrap_or_else(|_| Regex::new(r"^$").unwrap());
                 
                 if safe_semicolon.is_match(command) || safe_ampersand.is_match(command) {
                     continue;

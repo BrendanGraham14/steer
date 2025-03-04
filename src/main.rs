@@ -10,14 +10,14 @@ mod utils;
 
 /// A command line tool to pair program with Claude
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about = None, author)]
 struct Cli {
     /// Optional directory to work in
     #[arg(short, long)]
     directory: Option<std::path::PathBuf>,
 
     /// API Key for Claude (can also be set via CLAUDE_API_KEY env var)
-    #[arg(short, long, env = "CLAUDE_API_KEY")]
+    #[arg(short, long, env("CLAUDE_API_KEY"))]
     api_key: Option<String>,
 
     /// Subcommands

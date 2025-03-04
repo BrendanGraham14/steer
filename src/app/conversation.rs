@@ -93,15 +93,38 @@ impl Conversation {
             .collect()
     }
     
-    /// Compact the conversation by summarizing older messages
+    /// Get the system prompt if present
+    pub fn system_prompt(&self) -> Option<&String> {
+        for message in &self.messages {
+            if message.role == Role::System {
+                return Some(&message.content);
+            }
+        }
+        None
+    }
+    
+    /// Convert conversation to a string
+    pub fn to_string(&self) -> String {
+        self.messages
+            .iter()
+            .map(|msg| format!("{}: {}", msg.role, msg.content))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+    
+    /// Compact the conversation by summarizing older messages (deprecated)
     pub async fn compact(&mut self, api_client: &crate::api::Client) -> anyhow::Result<()> {
         // Skip if we don't have enough messages to compact
         if self.messages.len() < 10 {
             return Ok(());
         }
         
-        // Take the first N messages and ask Claude to summarize them
-        let messages_to_compact: Vec<&Message> = self.messages.iter().take(self.messages.len() - 5).collect();
+        // Create a copy of the messages to compact to avoid borrowing issues
+        let messages_to_compact: Vec<Message> = self.messages
+            .iter()
+            .take(self.messages.len() - 5)
+            .cloned()
+            .collect();
         
         let summary_prompt = format!(
             "Summarize the following conversation concisely, preserving key information that would be needed to continue the conversation. Focus on code-related details, decisions, and context:\n\n{}",
@@ -116,7 +139,7 @@ impl Conversation {
         let summary = api_client.generate_summary(&summary_prompt).await?;
         
         // Replace the compacted messages with a single system message containing the summary
-        let new_messages = Vec::from_iter(self.messages.drain(messages_to_compact.len()..));
+        let new_messages = self.messages.split_off(messages_to_compact.len());
         self.messages.clear();
         self.add_system_message(format!("Previous conversation summary:\n{}", summary));
         self.messages.extend(new_messages);
