@@ -3,6 +3,7 @@ use serde_json::Value;
 
 // Export the modules for testing and direct use
 pub mod bash;
+pub mod dispatch_agent;
 pub mod edit;
 pub mod glob_tool;
 pub mod grep_tool;
@@ -120,6 +121,14 @@ pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
                 .context("Missing content parameter")?;
             
             replace::replace_file(file_path, content)
+        }
+        "dispatch_agent" => {
+            let prompt = parameters["prompt"]
+                .as_str()
+                .context("Missing prompt parameter")?;
+            
+            let agent = dispatch_agent::DispatchAgent::new();
+            agent.execute(prompt).await
         }
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
     }

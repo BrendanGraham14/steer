@@ -323,6 +323,32 @@ impl Tool {
         }
     }
 
+        /// Dispatch Agent tool - for handling search operations
+    pub fn dispatch_agent() -> Self {
+        let mut properties = serde_json::Map::new();
+
+        // Prompt property
+        let mut prompt_prop = serde_json::Map::new();
+        prompt_prop.insert(
+            "description".to_string(),
+            serde_json::json!("The task for the agent to perform"),
+        );
+        properties.insert(
+            "prompt".to_string(),
+            serde_json::Value::Object(prompt_prop),
+        );
+
+        Self {
+            name: "dispatch_agent".to_string(),
+            description: "Launch a new agent that has access to the following tools: GlobTool, GrepTool, LS, View, ReadNotebook.".to_string(),
+            input_schema: InputSchema {
+                properties,
+                schema_type: "object".to_string(),
+                required: vec!["prompt".to_string()],
+            },
+        }
+    }
+
     /// Get all available tools
     pub fn all() -> Vec<Self> {
         vec![
@@ -333,6 +359,7 @@ impl Tool {
             Self::view(),
             Self::edit(),
             Self::replace(),
+            Self::dispatch_agent(),
         ]
     }
 }

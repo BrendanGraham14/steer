@@ -93,10 +93,10 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [ ] Improve terminal-based chat interface (TUI)
 
 ### Agent System
-- [ ] Main Agent implementation
-- [ ] Dispatch Agent for search operations
+- [x] Main Agent implementation
+- [x] Dispatch Agent for search operations
 - [ ] Command filtering for security
-- [ ] System prompt generation with environment context
+- [x] System prompt generation with environment context
 
 ### Environment Management
 - [ ] CLAUDE.md memory file handling

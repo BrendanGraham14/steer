@@ -297,6 +297,43 @@ impl App {
         self.tool_executor.execute_tools(tool_calls).await
     }
     
+    /// Use the dispatch agent to search or gather information
+    pub async fn dispatch_agent(&self, prompt: &str) -> Result<String> {
+        // Signal that we're executing a dispatch agent
+        self.emit_event(AppEvent::ToolCallStarted { 
+            name: "dispatch_agent".to_string() 
+        });
+        
+        // Create a DispatchAgent instance with the app's API key
+        let agent = crate::tools::dispatch_agent::DispatchAgent::with_api_key(
+            self.config.api_key.clone()
+        );
+        
+        // Execute the agent with the prompt
+        match agent.execute(prompt).await {
+            Ok(result) => {
+                // Signal that the dispatch agent completed successfully
+                self.emit_event(AppEvent::ToolCallCompleted { 
+                    name: "dispatch_agent".to_string(),
+                    result: result.clone() 
+                });
+                
+                // Return the result
+                Ok(result)
+            },
+            Err(e) => {
+                // Signal that the dispatch agent failed
+                self.emit_event(AppEvent::ToolCallFailed { 
+                    name: "dispatch_agent".to_string(),
+                    error: e.to_string() 
+                });
+                
+                // Propagate the error
+                Err(e)
+            }
+        }
+    }
+    
     /// Get a response from Claude
     pub async fn get_claude_response(&self, tools: Option<&Vec<crate::api::Tool>>) -> Result<crate::api::CompletionResponse> {
         let messages = crate::api::messages::convert_conversation(&self.conversation);
