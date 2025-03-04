@@ -67,7 +67,17 @@ impl Tui {
         self.add_system_message("Press Ctrl+C to exit, Ctrl+S to toggle input mode.");
 
         // Add the system prompt to the conversation
-        let system_prompt = crate::api::messages::create_system_prompt(app.environment_info());
+        let system_prompt = if app.has_memory_file() {
+            // Use the memory-enhanced system prompt
+            crate::api::messages::create_system_prompt_with_memory(
+                app.environment_info(), 
+                app.memory_content()
+            )
+        } else {
+            // Use the regular system prompt
+            crate::api::messages::create_system_prompt(app.environment_info())
+        };
+        
         app.add_system_message(system_prompt.content.clone());
         
         // Spawn a task to handle events from the app

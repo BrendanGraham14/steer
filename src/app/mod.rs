@@ -4,10 +4,12 @@ use futures_util::future::BoxFuture;
 
 mod conversation;
 mod environment;
+mod memory;
 mod tool_executor;
 
 pub use conversation::{Conversation, Message, Role};
 pub use environment::EnvironmentInfo;
+pub use memory::MemoryManager;
 pub use tool_executor::ToolExecutor;
 
 /// Events emitted by the App to update the UI
@@ -51,6 +53,7 @@ pub struct App {
     pub env_info: EnvironmentInfo,
     pub tool_executor: ToolExecutor,
     pub api_client: crate::api::Client,
+    pub memory: MemoryManager,
     event_sender: Option<Sender<AppEvent>>,
 }
 
@@ -61,6 +64,7 @@ impl App {
         let conversation = Conversation::new();
         let tool_executor = ToolExecutor::new();
         let api_client = crate::api::Client::new(&config.api_key);
+        let memory = MemoryManager::new(&env_info.working_directory);
         
         Ok(Self {
             config,
@@ -68,6 +72,7 @@ impl App {
             env_info,
             tool_executor,
             api_client,
+            memory,
             event_sender: None,
         })
     }
@@ -348,9 +353,13 @@ impl App {
     
     /// Handle a command
     pub async fn handle_command(&mut self, command: &str) -> Result<String> {
-        match command {
+        // Split the command into parts
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        let cmd = parts[0];
+        
+        match cmd {
             "/help" => {
-                Ok("Available commands:\n/help - Show this help message\n/compact - Compact the conversation history\n/clear - Clear the conversation history\n/exit - Exit the application".to_string())
+                Ok("Available commands:\n/help - Show this help message\n/compact - Compact the conversation history\n/clear - Clear the conversation history\n/memory - Manage the memory file\n/exit - Exit the application".to_string())
             }
             "/compact" => {
                 // Compact the conversation
@@ -360,6 +369,46 @@ impl App {
             "/clear" => {
                 self.conversation.clear();
                 Ok("Conversation cleared".to_string())
+            }
+            "/memory" => {
+                // Handle memory commands
+                if parts.len() < 2 {
+                    // Just show memory content
+                    if self.has_memory_file() {
+                        Ok(format!("Memory file content:\n{}", self.memory_content()))
+                    } else {
+                        Ok("No memory file exists yet. Use /memory add <section> <content> to create one.".to_string())
+                    }
+                } else {
+                    // Sub-command for memory
+                    match parts[1] {
+                        "add" => {
+                            if parts.len() < 4 {
+                                Ok("Usage: /memory add <section> <content>".to_string())
+                            } else {
+                                let section = parts[2];
+                                let content = parts[3..].join(" ");
+                                self.add_to_memory(section, &content)?;
+                                Ok(format!("Added section '{}' to memory file", section))
+                            }
+                        }
+                        "get" => {
+                            if parts.len() < 3 {
+                                Ok("Usage: /memory get <section>".to_string())
+                            } else {
+                                let section = parts[2];
+                                if let Some(content) = self.get_from_memory(section) {
+                                    Ok(format!("Section '{}':\n{}", section, content))
+                                } else {
+                                    Ok(format!("Section '{}' not found", section))
+                                }
+                            }
+                        }
+                        _ => {
+                            Ok(format!("Unknown memory command: {}. Available commands: add, get", parts[1]))
+                        }
+                    }
+                }
             }
             _ => {
                 Ok(format!("Unknown command: {}", command))
@@ -394,5 +443,33 @@ impl App {
         self.conversation.add_system_message(format!("CONVERSATION HISTORY SUMMARY:\n{}", summary));
         
         Ok(())
+    }
+    
+    /// Add information to the memory file
+    pub fn add_to_memory(&mut self, section: &str, content: &str) -> Result<()> {
+        // Add the section to the memory file
+        self.memory.add_section(section, content)?;
+        
+        // Emit an event to notify the user
+        self.emit_event(AppEvent::CommandResponse { 
+            content: format!("Added to CLAUDE.md - Section: {}", section) 
+        });
+        
+        Ok(())
+    }
+    
+    /// Get information from the memory file
+    pub fn get_from_memory(&self, section: &str) -> Option<String> {
+        self.memory.get_section(section)
+    }
+    
+    /// Check if the memory file exists
+    pub fn has_memory_file(&self) -> bool {
+        self.memory.exists()
+    }
+    
+    /// Get the entire content of the memory file
+    pub fn memory_content(&self) -> &str {
+        self.memory.content()
     }
 }

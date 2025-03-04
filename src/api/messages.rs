@@ -65,3 +65,21 @@ pub fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> Message {
     
     Message::new_system(prompt)
 }
+
+/// Create a system prompt message with memory file content
+pub fn create_system_prompt_with_memory(env_info: &crate::app::EnvironmentInfo, memory_content: &str) -> Message {
+    // Create the base system prompt
+    let mut prompt = create_system_prompt(env_info).content;
+    
+    // Add the memory file content
+    if !memory_content.is_empty() {
+        prompt.push_str("\n\n# Memory file (CLAUDE.md)\n\n");
+        prompt.push_str("The following content is from the CLAUDE.md memory file in the working directory:\n\n");
+        prompt.push_str("```markdown\n");
+        prompt.push_str(memory_content);
+        prompt.push_str("\n```\n\n");
+        prompt.push_str("Use this information to remember settings, commands, and context for this project.\n");
+    }
+    
+    Message::new_system(prompt)
+}
