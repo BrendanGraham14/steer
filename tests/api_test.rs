@@ -28,14 +28,14 @@ async fn test_claude_api_basic() {
     }];
 
     // Call Claude API
-    let response = client.complete(messages, None).await;
+    let response = client.complete(messages, None, None).await;
 
     // Check if the response is successful
     assert!(response.is_ok(), "API call failed: {:?}", response.err());
 
     // Print the response content
     let response = response.unwrap();
-    
+
     // Extract text from response
     let text = response.extract_text();
     println!("Claude response: {}", text);
@@ -43,7 +43,7 @@ async fn test_claude_api_basic() {
     // Verify we got a reasonable response
     assert!(!text.is_empty(), "Response text should not be empty");
     assert!(text.contains("4"), "Response should contain the answer '4'");
-    
+
     println!("Basic API test passed successfully!");
 }
 
@@ -75,7 +75,7 @@ async fn test_claude_api_with_tools() {
     }];
 
     // Call Claude API with tools
-    let response = client.complete(messages, Some(tools)).await;
+    let response = client.complete(messages, None, Some(tools)).await;
 
     // Debug output
     if response.is_err() {
@@ -90,7 +90,10 @@ async fn test_claude_api_with_tools() {
 
     // Check if the response contains a tool call
     println!("Has tool calls: {}", response.has_tool_calls());
-    assert!(response.has_tool_calls(), "Response should contain tool calls");
+    assert!(
+        response.has_tool_calls(),
+        "Response should contain tool calls"
+    );
 
     // Extract and process tool calls
     let tool_calls = response.extract_tool_calls();
@@ -104,11 +107,11 @@ async fn test_claude_api_with_tools() {
         "Parameters: {}",
         serde_json::to_string_pretty(&first_tool_call.parameters).unwrap()
     );
-    
+
     // Execute the tool manually
     let result = execute_tool(first_tool_call).await;
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
-    
+
     println!("Tool result: {}", result.unwrap());
     println!("Tools API test passed successfully!");
 }
@@ -138,32 +141,32 @@ async fn test_streaming_response() -> Result<()> {
     }];
 
     // Get streaming response
-    let mut stream = client.complete_streaming(messages, None);
-    
+    let mut stream = client.complete_streaming(messages, None, None);
+
     // Process the stream
     use futures_util::StreamExt;
     let mut text = String::new();
-    
+
     while let Some(chunk) = stream.next().await {
         match chunk {
             Ok(content) => {
                 println!("Received chunk: {}", content);
                 text.push_str(&content);
-            },
+            }
             Err(e) => {
                 println!("Stream error: {}", e);
                 assert!(false, "Stream error: {}", e);
             }
         }
     }
-    
+
     // Verify we got a reasonable response
     assert!(!text.is_empty(), "Response text should not be empty");
     assert!(text.contains("Rust"), "Response should mention Rust");
-    
+
     println!("Final response: {}", text);
     println!("Streaming API test passed successfully!");
-    
+
     Ok(())
 }
 
