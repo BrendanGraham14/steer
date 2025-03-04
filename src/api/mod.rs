@@ -193,9 +193,9 @@ impl Client {
             stream: None,
         };
 
-        // Print the request body for debugging
-        let request_json = serde_json::to_string_pretty(&request).unwrap();
-        println!("API Request Body: {}", request_json);
+        // For debug purposes, uncomment the following lines
+        // let request_json = serde_json::to_string_pretty(&request).unwrap();
+        // eprintln!("API Request Body: {}", request_json);
         
         let response = self
             .client
@@ -286,8 +286,8 @@ impl Client {
                                 let delta: StreamingCompletionResponse = match serde_json::from_str(data) {
                                     Ok(d) => d,
                                     Err(e) => {
-                                        // Try to print the raw data for debugging
-                                        println!("Failed to parse delta. Raw data: {}", data);
+                                        // For debug purposes, uncomment the following line
+                                        // eprintln!("Failed to parse delta. Raw data: {}", data);
                                         yield Err(anyhow::anyhow!("Failed to parse delta: {}", e));
                                         continue;
                                     }

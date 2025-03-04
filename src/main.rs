@@ -47,9 +47,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     
     // Load .env file if it exists
-    if let Ok(path) = dotenv() {
-        println!("Loaded environment from {}", path.display());
-    }
+    dotenv().ok();
     
     // Load or initialize config
     let config = config::load_config()?;
