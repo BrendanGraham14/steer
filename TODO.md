@@ -111,7 +111,7 @@ This document tracks both the completed work and remaining tasks for the Claude 
 
 ### API Client
 - [x] Fix system message format (top-level parameter)
-- [ ] Improve streaming response handling
+- [x] Improve streaming response handling
 - [ ] Support different Claude models
 
 ### Additional Features
