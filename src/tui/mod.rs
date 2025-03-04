@@ -26,9 +26,10 @@ enum InputMode {
     Editing,
 }
 
-// Static scroll data to allow access from static methods
+// Static data to allow access from static methods
 static SCROLL_OFFSET: RwLock<usize> = RwLock::new(0);
 static MAX_SCROLL: RwLock<usize> = RwLock::new(0);
+static SPINNER_STATE: RwLock<usize> = RwLock::new(0);
 
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -36,6 +37,9 @@ pub struct Tui {
     input_mode: InputMode,
     messages: Vec<FormattedMessage>,
     is_processing: bool,
+    // Progress tracking
+    progress_message: Option<String>,
+    last_spinner_update: std::time::Instant,
 }
 
 #[derive(Clone)]
@@ -61,12 +65,19 @@ impl Tui {
             *max = 0;
         }
         
+        // Reset spinner state
+        if let Ok(mut spinner) = SPINNER_STATE.write() {
+            *spinner = 0;
+        }
+        
         Ok(Self {
             terminal,
             input: String::new(),
             input_mode: InputMode::Normal,
             messages: Vec::new(),
             is_processing: false,
+            progress_message: None,
+            last_spinner_update: std::time::Instant::now(),
         })
     }
 
@@ -130,6 +141,21 @@ impl Tui {
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 let mut messages = messages.lock().await;
+                
+                // Update the progress message based on events
+                match &event {
+                    crate::app::AppEvent::ThinkingStarted => {
+                        if let Ok(mut state) = SPINNER_STATE.write() {
+                            *state = 0; // Reset spinner state
+                        }
+                    }
+                    crate::app::AppEvent::ToolCallStarted { name: _ } => {
+                        if let Ok(mut state) = SPINNER_STATE.write() {
+                            *state = 0; // Reset spinner state
+                        }
+                    }
+                    _ => {}
+                }
                 
                 match event {
                     crate::app::AppEvent::MessageAdded { role, content } => {
@@ -228,7 +254,31 @@ impl Tui {
         }
     }
     
+    // Get current spinner character
+    fn get_spinner_char() -> &'static str {
+        const SPINNER_CHARS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let state = SPINNER_STATE.read().map(|s| *s).unwrap_or(0) % SPINNER_CHARS.len();
+        SPINNER_CHARS[state]
+    }
+    
+    // Update spinner state
+    fn update_spinner_state(&mut self) {
+        let now = std::time::Instant::now();
+        // Update spinner every 80ms
+        if now.duration_since(self.last_spinner_update).as_millis() >= 80 {
+            if let Ok(mut state) = SPINNER_STATE.write() {
+                *state = (*state + 1) % 10;
+            }
+            self.last_spinner_update = now;
+        }
+    }
+    
     fn draw(&mut self) -> Result<()> {
+        // Update spinner if we're processing
+        if self.is_processing {
+            self.update_spinner_state();
+        }
+        
         // Create copies of the data we need to use in the closure
         let messages = self.messages.clone();
         let input = self.input.clone();
@@ -236,6 +286,8 @@ impl Tui {
             InputMode::Normal => false,
             InputMode::Editing => true,
         };
+        let is_processing = self.is_processing;
+        let progress_message = self.progress_message.clone();
         
         // Update max scroll value based on current message content and terminal size
         let terminal_height = self.terminal.size()?.height as usize;
@@ -252,22 +304,45 @@ impl Tui {
 
         self.terminal.draw(|f| {
             // Create main layout
+            let mut constraints = vec![Constraint::Min(1), Constraint::Length(3)];
+            
+            // Add progress area if processing
+            if is_processing {
+                constraints.insert(1, Constraint::Length(1));
+            }
+            
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
+                .constraints(constraints)
                 .split(f.size());
 
             // Create message area
             let message_area = chunks[0];
 
-            // Create input area
-            let input_area = chunks[1];
+            // Create progress area if processing
+            if is_processing {
+                // Render progress indicator
+                let spinner_char = Self::get_spinner_char();
+                let progress_text = if let Some(msg) = progress_message {
+                    format!("{} {}", spinner_char, msg)
+                } else {
+                    format!("{} Processing...", spinner_char)
+                };
+                
+                let progress_widget = Paragraph::new(progress_text)
+                    .style(Style::default().fg(Color::Yellow));
+                f.render_widget(progress_widget, chunks[1]);
+                
+                // Render input (using cloned data)
+                Self::render_input_static(f, chunks[2], &input, input_mode);
+            } else {
+                // Render input without progress area
+                let input_area = chunks[1];
+                Self::render_input_static(f, input_area, &input, input_mode);
+            }
 
             // Render messages (using cloned data)
             Self::render_messages_static(f, message_area, &messages);
-
-            // Render input (using cloned data)
-            Self::render_input_static(f, input_area, &input, input_mode);
         })?;
 
         Ok(())
@@ -447,9 +522,15 @@ impl Tui {
         Ok(false)
     }
 
+    // Set progress message
+    fn set_progress(&mut self, message: Option<String>) {
+        self.progress_message = message;
+    }
+    
     async fn send_message(&mut self, message: String, app: &mut crate::app::App) -> Result<()> {
-        // Set processing flag
+        // Set processing flag and message
         self.is_processing = true;
+        self.set_progress(Some("Sending message to Claude...".to_string()));
         self.draw()?;
         
         // Let the app process the message
@@ -457,8 +538,9 @@ impl Tui {
         // and emitting events to update the UI
         app.process_user_message(message).await?;
         
-        // Reset processing flag
+        // Reset processing flag and message
         self.is_processing = false;
+        self.set_progress(None);
         
         // Reset scroll to follow newest messages
         Self::set_scroll_offset(0);
