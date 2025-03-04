@@ -4,15 +4,14 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use futures_util::StreamExt;
 use ratatui::Terminal;
-use ratatui::backend::{Backend, CrosstermBackend};
+use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
@@ -27,12 +26,15 @@ enum InputMode {
     Editing,
 }
 
+// Static scroll data to allow access from static methods
+static SCROLL_OFFSET: RwLock<usize> = RwLock::new(0);
+static MAX_SCROLL: RwLock<usize> = RwLock::new(0);
+
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     input: String,
     input_mode: InputMode,
     messages: Vec<FormattedMessage>,
-    scroll_offset: usize,
     is_processing: bool,
 }
 
@@ -51,12 +53,19 @@ impl Tui {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
+        // Reset scroll values
+        if let Ok(mut offset) = SCROLL_OFFSET.write() {
+            *offset = 0;
+        }
+        if let Ok(mut max) = MAX_SCROLL.write() {
+            *max = 0;
+        }
+        
         Ok(Self {
             terminal,
             input: String::new(),
             input_mode: InputMode::Normal,
             messages: Vec::new(),
-            scroll_offset: 0,
             is_processing: false,
         })
     }
@@ -142,6 +151,10 @@ impl Tui {
                                 content: formatted,
                                 role,
                             });
+                            
+                            // Reset scroll to show most recent content for new messages
+                            // (not for updates to existing messages)
+                            Tui::set_scroll_offset(0);
                         }
                     },
                     crate::app::AppEvent::ToolCallStarted { name } => {
@@ -194,6 +207,27 @@ impl Tui {
         })
     }
 
+    // Static helper functions for scroll management
+    fn get_scroll_offset() -> usize {
+        SCROLL_OFFSET.read().map(|offset| *offset).unwrap_or(0)
+    }
+    
+    fn set_scroll_offset(offset: usize) {
+        if let Ok(mut scroll) = SCROLL_OFFSET.write() {
+            *scroll = offset;
+        }
+    }
+    
+    fn get_max_scroll() -> usize {
+        MAX_SCROLL.read().map(|max| *max).unwrap_or(0)
+    }
+    
+    fn set_max_scroll(max: usize) {
+        if let Ok(mut max_scroll) = MAX_SCROLL.write() {
+            *max_scroll = max;
+        }
+    }
+    
     fn draw(&mut self) -> Result<()> {
         // Create copies of the data we need to use in the closure
         let messages = self.messages.clone();
@@ -202,6 +236,19 @@ impl Tui {
             InputMode::Normal => false,
             InputMode::Editing => true,
         };
+        
+        // Update max scroll value based on current message content and terminal size
+        let terminal_height = self.terminal.size()?.height as usize;
+        let visible_lines = terminal_height.saturating_sub(5); // Adjust for borders and input area
+        let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
+        let max_scroll = total_lines.saturating_sub(visible_lines).max(0);
+        Self::set_max_scroll(max_scroll);
+        
+        // Ensure scroll offset is within bounds
+        let current_offset = Self::get_scroll_offset();
+        if current_offset > max_scroll {
+            Self::set_scroll_offset(max_scroll);
+        }
 
         self.terminal.draw(|f| {
             // Create main layout
@@ -232,6 +279,8 @@ impl Tui {
         area: Rect,
         messages: &[FormattedMessage],
     ) {
+        let scroll_offset = Tui::get_scroll_offset();
+        
         // Create a list of messages
         let messages_list: Vec<ListItem> = messages
             .iter()
@@ -261,8 +310,34 @@ impl Tui {
             })
             .collect();
 
-        let messages_list = List::new(messages_list)
-            .block(Block::default().borders(Borders::ALL).title("Messages"))
+        // Calculate max scroll
+        let max_scroll = if messages.is_empty() {
+            0
+        } else {
+            // Rough calculation of the total lines in all messages
+            let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
+            // Subtract visible lines (approximation)
+            let visible_lines = area.height as usize - 2; // Account for borders
+            total_lines.saturating_sub(visible_lines)
+        };
+
+        // Set the title with scroll indicator if needed
+        let title = if max_scroll > 0 {
+            format!("Messages [{}/{}]", scroll_offset, max_scroll)
+        } else {
+            "Messages".to_string()
+        };
+
+        // Create list with items based on scroll offset
+        let offset = scroll_offset as usize;
+        let visible_messages: Vec<ListItem> = if messages_list.len() > offset {
+            messages_list.into_iter().skip(offset).collect()
+        } else {
+            Vec::new()
+        };
+        
+        let messages_list = List::new(visible_messages)
+            .block(Block::default().borders(Borders::ALL).title(title))
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
             .highlight_symbol("> ");
 
@@ -304,22 +379,43 @@ impl Tui {
                     self.input_mode = InputMode::Editing;
                 }
                 KeyCode::Up => {
-                    if self.scroll_offset > 0 {
-                        self.scroll_offset -= 1;
+                    let current = Self::get_scroll_offset();
+                    if current > 0 {
+                        Self::set_scroll_offset(current - 1);
                     }
                 }
                 KeyCode::Down => {
-                    self.scroll_offset += 1;
+                    let current = Self::get_scroll_offset();
+                    let max = Self::get_max_scroll();
+                    if current < max {
+                        Self::set_scroll_offset(current + 1);
+                    }
                 }
                 KeyCode::PageUp => {
-                    if self.scroll_offset > 10 {
-                        self.scroll_offset -= 10;
+                    let current = Self::get_scroll_offset();
+                    let page_size = 10;
+                    if current > page_size {
+                        Self::set_scroll_offset(current - page_size);
                     } else {
-                        self.scroll_offset = 0;
+                        Self::set_scroll_offset(0);
                     }
                 }
                 KeyCode::PageDown => {
-                    self.scroll_offset += 10;
+                    let current = Self::get_scroll_offset();
+                    let max = Self::get_max_scroll();
+                    let page_size = 10;
+                    if current + page_size < max {
+                        Self::set_scroll_offset(current + page_size);
+                    } else {
+                        Self::set_scroll_offset(max);
+                    }
+                }
+                KeyCode::Home => {
+                    Self::set_scroll_offset(0);
+                }
+                KeyCode::End => {
+                    let max = Self::get_max_scroll();
+                    Self::set_scroll_offset(max);
                 }
                 _ => {}
             },
@@ -363,6 +459,9 @@ impl Tui {
         
         // Reset processing flag
         self.is_processing = false;
+        
+        // Reset scroll to follow newest messages
+        Self::set_scroll_offset(0);
         
         Ok(())
     }

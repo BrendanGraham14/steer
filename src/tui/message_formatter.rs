@@ -5,7 +5,7 @@ use syntect::highlighting::{ThemeSet, Style as SyntectStyle};
 use syntect::parsing::SyntaxSet;
 
 /// Format a message for display in the terminal
-pub fn format_message(content: &str, role: crate::app::Role) -> Vec<Line<'static>> {
+pub fn format_message(content: &str, _role: crate::app::Role) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut in_code_block = false;
     let mut code_block_content = String::new();
