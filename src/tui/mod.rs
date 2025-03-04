@@ -85,9 +85,22 @@ impl Tui {
     }
 
     pub async fn run(&mut self, app: &mut crate::app::App, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> Result<()> {
+        // Spawn a task to handle events from the app - do this first to set up shared message state
+        let mut event_handle = self.spawn_event_handler(event_rx);
+        
         // Welcome message
         self.add_system_message("Welcome to Claude Code! Type your query and press Enter to send.");
         self.add_system_message("Press Ctrl+C to exit, Ctrl+S to toggle input mode.");
+
+        // Sync messages to the shared state
+        if let Some(shared) = &self.shared_messages {
+            // Update the shared messages
+            if let Ok(mut messages) = shared.try_lock() {
+                *messages = self.messages.clone();
+                crate::utils::logging::info("tui.run", 
+                    &format!("Initialized shared messages with welcome messages. Count: {}", messages.len()));
+            }
+        }
 
         // Add the system prompt to the conversation
         let system_prompt = if app.has_memory_file() {
@@ -102,9 +115,6 @@ impl Tui {
         };
         
         app.add_system_message(system_prompt.content.clone());
-        
-        // Spawn a task to handle events from the app
-        let mut event_handle = self.spawn_event_handler(event_rx);
 
         loop {
             // Draw UI
@@ -172,7 +182,7 @@ impl Tui {
                         for msg in messages.iter_mut() {
                             if msg.role == role {
                                 // Update the existing message
-                                msg.content = format_message(&content, role.clone());
+                                msg.content = format_message(&content, role); // Role now implements Copy
                                 found = true;
                                 break;
                             }
@@ -180,11 +190,23 @@ impl Tui {
                         
                         // If not found, add a new message
                         if !found {
-                            let formatted = format_message(&content, role.clone());
+                            let formatted = format_message(&content, role); // Role now implements Copy
                             messages.push(FormattedMessage {
                                 content: formatted,
                                 role,
                             });
+                            
+                            // Debug info with proper logging
+                            let content_summary = if content.len() > 50 { 
+                                format!("{}...", &content[..50]) 
+                            } else { 
+                                content.clone() 
+                            };
+                            crate::utils::logging::debug("tui.event_handler", 
+                                &format!("Added new message to shared state. Role: {:?}, Content summary: {:?}", 
+                                     role, content_summary));
+                            crate::utils::logging::debug("tui.event_handler", 
+                                &format!("Messages count in shared: {}", messages.len()));
                             
                             // Reset scroll to show most recent content for new messages
                             // (not for updates to existing messages)
@@ -289,11 +311,35 @@ impl Tui {
     // Sync messages from the shared state if available
     fn sync_messages(&mut self) {
         if let Some(shared) = &self.shared_messages {
-            // Try to acquire the lock for a short time to avoid blocking
-            if let Ok(messages) = shared.try_lock() {
-                // Replace our messages with the latest from the shared state
-                self.messages = messages.clone();
+            // Try to acquire the lock with a timeout - using try_lock with a retry strategy
+            let max_attempts = 5;
+            let mut attempts = 0;
+            let mut success = false;
+            
+            while attempts < max_attempts && !success {
+                if let Ok(messages) = shared.try_lock() {
+                    // Debug with proper logging
+                    crate::utils::logging::debug("tui.sync_messages", 
+                        &format!("Syncing messages from shared state. Count: {}", messages.len()));
+                    // Replace our messages with the latest from the shared state
+                    self.messages = messages.clone();
+                    crate::utils::logging::debug("tui.sync_messages", 
+                        &format!("Local message count after sync: {}", self.messages.len()));
+                    success = true;
+                } else {
+                    // Small delay before retry
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    attempts += 1;
+                }
             }
+            
+            if !success {
+                crate::utils::logging::warn("tui.sync_messages", 
+                    &format!("Failed to acquire lock for syncing messages after {} attempts", max_attempts));
+            }
+        } else {
+            crate::utils::logging::warn("tui.sync_messages", 
+                "No shared messages reference available");
         }
     }
     
@@ -305,6 +351,9 @@ impl Tui {
         
         // Sync messages from shared state before drawing
         self.sync_messages();
+        
+        // Debug to check messages before rendering
+        crate::utils::logging::debug("tui.draw", &format!("Drawing UI with {} messages", self.messages.len()));
         
         // Create copies of the data we need to use in the closure
         let messages = self.messages.clone();
@@ -381,6 +430,12 @@ impl Tui {
         area: Rect,
         messages: &[FormattedMessage],
     ) {
+        crate::utils::logging::debug("tui.render_messages", &format!("Rendering messages. Count: {}", messages.len()));
+        for (i, msg) in messages.iter().enumerate() {
+            crate::utils::logging::debug("tui.render_messages", 
+                &format!("  Message {}: Role {:?}, Content lines: {}", i, msg.role, msg.content.len()));
+        }
+        
         let scroll_offset = Tui::get_scroll_offset();
         
         // Create a list of messages

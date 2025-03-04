@@ -32,7 +32,7 @@ dirs = "5.0"
 colored = "2.0"
 syntect = "5.1"   # Syntax highlighting
 home = "0.5"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 dotenv = "0.15.0"
 
 # File manipulation

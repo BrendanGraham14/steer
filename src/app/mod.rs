@@ -90,8 +90,26 @@ impl App {
     /// Emit an event to update the UI
     fn emit_event(&self, event: AppEvent) {
         if let Some(sender) = &self.event_sender {
-            // Since this is a fire-and-forget scenario, we can ignore send errors
-            let _ = sender.try_send(event);
+            // Since this is a fire-and-forget scenario, we can log send errors
+            match sender.try_send(event.clone()) {
+                Ok(_) => {
+                    // Log successful event sending for debugging
+                    if let AppEvent::MessageAdded { role, content } = &event {
+                        crate::utils::logging::debug("app.emit_event",
+                            &format!("Sent MessageAdded event, role: {:?}, content length: {}", 
+                            role, content.len()));
+                    } else {
+                        crate::utils::logging::debug("app.emit_event",
+                            &format!("Sent event: {:?}", event));
+                    }
+                },
+                Err(e) => {
+                    crate::utils::logging::error("app.emit_event",
+                        &format!("Failed to send event: {:?}", e));
+                }
+            }
+        } else {
+            crate::utils::logging::error("app.emit_event", "No event sender available");
         }
     }
     

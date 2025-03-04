@@ -1,3 +1,5 @@
+pub mod logging;
+
 use std::path::Path;
 
 /// Returns true if the path exists and is a git repository

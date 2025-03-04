@@ -20,6 +20,10 @@ struct Cli {
     /// API Key for Claude (can also be set via CLAUDE_API_KEY env var)
     #[arg(short, long, env = "CLAUDE_API_KEY")]
     api_key: Option<String>,
+    
+    /// Enable debug logging to file
+    #[arg(long)]
+    debug: bool,
 
     /// Subcommands
     #[command(subcommand)]
@@ -45,6 +49,25 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    
+    // Initialize logging system with appropriate level based on debug flag
+    let log_level = if cli.debug {
+        utils::logging::LogLevel::Debug
+    } else {
+        utils::logging::LogLevel::Info
+    };
+    
+    // Initialize the home directory for logs
+    let home = dirs::home_dir();
+    let log_path = home.map(|h| h.join(".claude-code").join("debug.log"));
+    
+    // Initialize logger
+    utils::logging::Logger::init(log_path.as_deref(), log_level)?;
+    
+    utils::logging::info("main", "Claude Code application starting");
+    if cli.debug {
+        utils::logging::info("main", "Debug logging enabled");
+    }
     
     // Load .env file if it exists
     dotenv().ok();
@@ -95,20 +118,47 @@ async fn main() -> Result<()> {
     // Start the TUI app
     let app_config = app::AppConfig {
         api_key,
-        // Add more configuration as needed
+        // Add more configuration options if needed in the future
     };
     
     // Initialize the app
-    let mut app = app::App::new(app_config)?;
+    utils::logging::info("main", "Initializing application");
+    let mut app = match app::App::new(app_config) {
+        Ok(app) => app,
+        Err(e) => {
+            utils::logging::error("main", &format!("Failed to initialize app: {}", e));
+            eprintln!("Error: Failed to initialize application: {}", e);
+            return Err(e);
+        }
+    };
     
     // Initialize the TUI
-    let mut tui = tui::Tui::new()?;
+    utils::logging::info("main", "Initializing TUI");
+    let mut tui = match tui::Tui::new() {
+        Ok(tui) => tui,
+        Err(e) => {
+            utils::logging::error("main", &format!("Failed to initialize TUI: {}", e));
+            eprintln!("Error: Failed to initialize terminal UI: {}", e);
+            return Err(e);
+        }
+    };
     
     // Set up the event channel for app → TUI communication
+    utils::logging::info("main", "Setting up event channel");
     let event_rx = app.setup_event_channel();
     
     // Run the TUI with the app
-    tui.run(&mut app, event_rx).await?;
+    utils::logging::info("main", "Starting application main loop");
+    match tui.run(&mut app, event_rx).await {
+        Ok(_) => {
+            utils::logging::info("main", "Application terminated normally");
+        },
+        Err(e) => {
+            utils::logging::error("main", &format!("Application error: {}", e));
+            eprintln!("Error: {}", e);
+            return Err(e);
+        }
+    }
     
     Ok(())
 }
