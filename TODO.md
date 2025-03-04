@@ -92,39 +92,30 @@ This document tracks both the completed work and remaining tasks for the Claude 
 ### Core Functionality
 - [ ] Improve terminal-based chat interface (TUI)
 
-### Agent System
-- [x] Main Agent implementation
-- [x] Dispatch Agent for search operations
-- [x] Command filtering for security
-- [x] System prompt generation with environment context
-
 ### Environment Management
 - [x] CLAUDE.md memory file handling
+- [x] .env file support for API key
 
 ### User Experience
 - [ ] Improve input field with command history and editing
-- [ ] Enhance Markdown rendering in terminal
-- [ ] Add progress indicators for long-running operations
+- [ ] Enhance Markdown rendering in terminal (Priority 1)
+- [ ] Add progress indicators for long-running operations (Priority 1)
 - [ ] Implement clear visual distinction between user and assistant messages
 - [ ] Add input history navigation
 - [ ] Add status indicators for processing state
-- [ ] Implement proper scrolling in the TUI
+- [ ] Implement proper scrolling in the TUI (Priority 1)
 
 ### Configuration and Persistence
 - [ ] Conversation history storage
 - [ ] Project-specific settings
 
 ### API Client
+- [x] Fix system message format (top-level parameter)
 - [ ] Improve streaming response handling
-- [ ] Add proper tool call parsing from Claude responses
-- [ ] Add support for tool call detection and execution
-- [ ] Add response parsing for different content types
 - [ ] Support different Claude models
 
 ### Additional Features
-- [ ] Implement the dispatch agent functionality
 - [ ] Add conversation saving and loading
-- [ ] Add support for CLAUDE.md memory file
 - [ ] Implement command completion for the bash tool
 
 ### Testing and Documentation
@@ -132,10 +123,3 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [ ] Integration tests
 - [ ] User documentation
 - [ ] Example usage scenarios
-
-### Security
-- [ ] Improve command filter implementation
-- [ ] Enhance safe handling of file access
-- [ ] Improve API key secure storage
-- [ ] Add input validation and sanitization
-- [ ] Enhance Security filtering for the Bash tool
