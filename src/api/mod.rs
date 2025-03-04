@@ -47,27 +47,44 @@ pub struct CompletionResponse {
     content: Vec<ContentBlock>,
     model: String,
     role: String,
+    #[serde(default)]
     stop_reason: Option<String>,
+    #[serde(default)]
     stop_sequence: Option<String>,
+    #[serde(default)]
     usage: Usage,
+    // Allow other fields for API flexibility
+    #[serde(flatten)]
+    extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text { 
+        text: String,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
     #[serde(rename = "tool_use")]
     ToolUse { 
         id: String,
         name: String, 
         input: serde_json::Value,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
     },
+    // Add a catch-all variant for future API additions
+    #[serde(other)]
+    Unknown,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Usage {
+    #[serde(default)]
     input_tokens: usize,
+    #[serde(default)]
     output_tokens: usize,
 }
 
@@ -75,29 +92,41 @@ pub struct Usage {
 pub struct StreamingCompletionResponse {
     #[serde(rename = "type")]
     response_type: String,
+    #[serde(default)]
     message: Option<CompletionResponse>,
+    #[serde(default)]
     delta: Option<Delta>,
+    #[serde(default)]
     usage: Option<Usage>,
+    // Additional fields that might be in newer API versions
+    #[serde(flatten)]
+    extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Delta {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     tool_use: Option<ToolUseDelta>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     stop_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     stop_sequence: Option<String>,
+    // Allow other fields for API flexibility
+    #[serde(flatten)]
+    extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolUseDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     parameters: Option<serde_json::Value>,
+    // Allow other fields for API flexibility
+    #[serde(flatten)]
+    extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub struct CompletionStream {
@@ -257,6 +286,8 @@ impl Client {
                                 let delta: StreamingCompletionResponse = match serde_json::from_str(data) {
                                     Ok(d) => d,
                                     Err(e) => {
+                                        // Try to print the raw data for debugging
+                                        println!("Failed to parse delta. Raw data: {}", data);
                                         yield Err(anyhow::anyhow!("Failed to parse delta: {}", e));
                                         continue;
                                     }
@@ -295,7 +326,7 @@ impl Client {
         // Extract text from the response
         let mut result = String::new();
         for content in response.content {
-            if let ContentBlock::Text { text } = content {
+            if let ContentBlock::Text { text, .. } = content {
                 result.push_str(&text);
             }
         }
@@ -313,7 +344,7 @@ impl CompletionResponse {
     /// Extract all tool calls from the response
     pub fn extract_tool_calls(&self) -> Vec<ToolCall> {
         self.content.iter().filter_map(|block| {
-            if let ContentBlock::ToolUse { id, name, input } = block {
+            if let ContentBlock::ToolUse { id, name, input, .. } = block {
                 Some(ToolCall {
                     name: name.clone(),
                     parameters: input.clone(),
@@ -328,7 +359,7 @@ impl CompletionResponse {
     /// Extract all text content from the response
     pub fn extract_text(&self) -> String {
         self.content.iter().filter_map(|block| {
-            if let ContentBlock::Text { text } = block {
+            if let ContentBlock::Text { text, .. } = block {
                 Some(text.clone())
             } else {
                 None
