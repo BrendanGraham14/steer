@@ -54,6 +54,7 @@ pub struct App {
     pub tool_executor: ToolExecutor,
     pub api_client: crate::api::Client,
     pub memory: MemoryManager,
+    pub command_filter: Option<crate::tools::command_filter::CommandFilter>,
     event_sender: Option<Sender<AppEvent>>,
 }
 
@@ -65,6 +66,7 @@ impl App {
         let tool_executor = ToolExecutor::new();
         let api_client = crate::api::Client::new(&config.api_key);
         let memory = MemoryManager::new(&env_info.working_directory);
+        let command_filter = Some(crate::tools::command_filter::CommandFilter::new(&config.api_key));
         
         Ok(Self {
             config,
@@ -73,6 +75,7 @@ impl App {
             tool_executor,
             api_client,
             memory,
+            command_filter,
             event_sender: None,
         })
     }

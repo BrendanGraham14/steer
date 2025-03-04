@@ -4,42 +4,85 @@ use tokio::time::timeout;
 use std::time::Duration;
 use regex::Regex;
 
+/// Bash tool implementation
+pub struct Bash {
+    command_filter: Option<crate::tools::command_filter::CommandFilter>,
+}
+
+impl Bash {
+    /// Create a new Bash tool
+    pub fn new() -> Self {
+        Self {
+            command_filter: None,
+        }
+    }
+    
+    /// Create a new Bash tool with a command filter
+    pub fn with_command_filter(api_key: &str) -> Self {
+        Self {
+            command_filter: Some(crate::tools::command_filter::CommandFilter::new(api_key)),
+        }
+    }
+    
+    /// Execute a bash command
+    pub async fn execute(&self, command: &str) -> Result<String> {
+        // Default timeout: 1 hour
+        self.execute_with_timeout(command, 3_600_000).await
+    }
+    
+    /// Execute a bash command with a timeout
+    pub async fn execute_with_timeout(&self, command: &str, timeout_ms: u64) -> Result<String> {
+        // First check the basic banned commands
+        if is_banned_command(command) {
+            return Err(anyhow::anyhow!("This command is not allowed for security reasons"));
+        }
+        
+        // If we have a command filter, use it for enhanced security
+        if let Some(filter) = &self.command_filter {
+            // Check if the command is allowed
+            let is_allowed = filter.is_command_allowed(command).await?;
+            if !is_allowed {
+                return Err(anyhow::anyhow!("This command was blocked by the command filter. It may contain command injection or use disallowed commands."));
+            }
+        }
+        
+        // Execute the command with a timeout
+        let timeout_duration = Duration::from_millis(timeout_ms);
+        let command_owned = command.to_string(); // Clone the command to move into the closure
+        let result = timeout(timeout_duration, tokio::task::spawn_blocking(move || {
+            Command::new("bash")
+                .arg("-c")
+                .arg(command_owned)
+                .output()
+        })).await
+          .context("Command execution timed out")?
+          .context("Failed to execute command")?
+          .context("Command execution failed")?;
+
+        // Combine stdout and stderr
+        let mut output = String::from_utf8_lossy(&result.stdout).to_string();
+        
+        if !result.stderr.is_empty() {
+            if !output.is_empty() {
+                output.push_str("\n\n");
+            }
+            output.push_str("stderr:\n");
+            output.push_str(&String::from_utf8_lossy(&result.stderr));
+        }
+
+        if !result.status.success() {
+            output.push_str(&format!("\n\nCommand exited with status: {}", result.status));
+        }
+
+        Ok(output)
+    }
+}
+
 /// Execute a bash command with a timeout
 pub async fn execute_bash(command: &str, timeout_ms: u64) -> Result<String> {
-    // Check for banned commands
-    if is_banned_command(command) {
-        return Err(anyhow::anyhow!("This command is not allowed for security reasons"));
-    }
-
-    // Execute the command with a timeout
-    let timeout_duration = Duration::from_millis(timeout_ms);
-    let command_owned = command.to_string(); // Clone the command to move into the closure
-    let result = timeout(timeout_duration, tokio::task::spawn_blocking(move || {
-        Command::new("bash")
-            .arg("-c")
-            .arg(command_owned)
-            .output()
-    })).await
-      .context("Command execution timed out")?
-      .context("Failed to execute command")?
-      .context("Command execution failed")?;
-
-    // Combine stdout and stderr
-    let mut output = String::from_utf8_lossy(&result.stdout).to_string();
-    
-    if !result.stderr.is_empty() {
-        if !output.is_empty() {
-            output.push_str("\n\n");
-        }
-        output.push_str("stderr:\n");
-        output.push_str(&String::from_utf8_lossy(&result.stderr));
-    }
-
-    if !result.status.success() {
-        output.push_str(&format!("\n\nCommand exited with status: {}", result.status));
-    }
-
-    Ok(output)
+    // Create a new Bash tool and execute the command
+    let bash = Bash::new();
+    bash.execute_with_timeout(command, timeout_ms).await
 }
 
 /// Check if a command is banned

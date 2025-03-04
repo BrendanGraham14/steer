@@ -3,6 +3,7 @@ use serde_json::Value;
 
 // Export the modules for testing and direct use
 pub mod bash;
+pub mod command_filter;
 pub mod dispatch_agent;
 pub mod edit;
 pub mod glob_tool;
