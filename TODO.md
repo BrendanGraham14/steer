@@ -99,7 +99,7 @@ This document tracks both the completed work and remaining tasks for the Claude 
 ### User Experience
 - [ ] Improve input field with command history and editing
 - [ ] Enhance Markdown rendering in terminal (Priority 1)
-- [ ] Add progress indicators for long-running operations (Priority 1)
+- [x] Add progress indicators for long-running operations (Priority 1)
 - [ ] Implement clear visual distinction between user and assistant messages
 - [ ] Add input history navigation
 - [ ] Add status indicators for processing state
