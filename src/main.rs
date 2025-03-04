@@ -37,8 +37,8 @@ enum Commands {
     Clear,
     /// Compact the conversation to save context space
     Compact,
-    /// Show help information
-    Help,
+    /// Show detailed help information
+    Info,
 }
 
 #[tokio::main]
@@ -75,9 +75,9 @@ async fn main() -> Result<()> {
                 println!("Compacting conversation is not yet implemented.");
                 return Ok(());
             }
-            Commands::Help => {
+            Commands::Info => {
                 // TODO: Implement detailed help
-                println!("Detailed help not yet implemented. Use --help for basic commands.");
+                println!("Detailed information not yet implemented. Use --help for basic commands.");
                 return Ok(());
             }
         }
