@@ -103,7 +103,7 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [ ] Implement clear visual distinction between user and assistant messages
 - [ ] Add input history navigation
 - [ ] Add status indicators for processing state
-- [ ] Implement proper scrolling in the TUI (Priority 1)
+- [x] Implement proper scrolling in the TUI (Priority 1)
 
 ### Configuration and Persistence
 - [ ] Conversation history storage
