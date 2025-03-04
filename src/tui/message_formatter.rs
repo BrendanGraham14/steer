@@ -1,9 +1,8 @@
-use ratatui::text::{Line, Span, Text};
-use ratatui::style::{Color, Style, Modifier};
+use ratatui::text::{Line, Span};
+use ratatui::style::{Color, Style};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{ThemeSet, Style as SyntectStyle};
 use syntect::parsing::SyntaxSet;
-use syntect::util::as_24_bit_terminal_escaped;
 
 /// Format a message for display in the terminal
 pub fn format_message(content: &str, role: crate::app::Role) -> Vec<Line<'static>> {

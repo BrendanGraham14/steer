@@ -9,12 +9,13 @@ use ratatui::Terminal;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
 
 mod message_formatter;
 
@@ -60,15 +61,17 @@ impl Tui {
         })
     }
 
-    pub async fn run(&mut self, app: &mut crate::app::App) -> Result<()> {
+    pub async fn run(&mut self, app: &mut crate::app::App, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> Result<()> {
         // Welcome message
         self.add_system_message("Welcome to Claude Code! Type your query and press Enter to send.");
         self.add_system_message("Press Ctrl+C to exit, Ctrl+S to toggle input mode.");
 
         // Add the system prompt to the conversation
         let system_prompt = crate::api::messages::create_system_prompt(app.environment_info());
-        app.conversation
-            .add_system_message(system_prompt.content.clone());
+        app.add_system_message(system_prompt.content.clone());
+        
+        // Spawn a task to handle events from the app
+        let mut event_handle = self.spawn_event_handler(event_rx);
 
         loop {
             // Draw UI
@@ -82,6 +85,13 @@ impl Tui {
                     }
                 }
             }
+            
+            // Check if the event handler has exited
+            if event_handle.is_finished() {
+                // Recreate the event handler if it has exited
+                event_rx = app.setup_event_channel();
+                event_handle = self.spawn_event_handler(event_rx);
+            }
         }
 
         // Restore terminal
@@ -91,6 +101,87 @@ impl Tui {
         self.terminal.show_cursor()?;
 
         Ok(())
+    }
+    
+    // Spawn a task to handle events from the app
+    fn spawn_event_handler(&self, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> JoinHandle<()> {
+        // Clone the messages Vec to move into the task
+        let messages = Arc::new(Mutex::new(self.messages.clone()));
+        
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                let mut messages = messages.lock().await;
+                
+                match event {
+                    crate::app::AppEvent::MessageAdded { role, content } => {
+                        // Check if we have a matching message already (for updates)
+                        let mut found = false;
+                        for msg in messages.iter_mut() {
+                            if msg.role == role {
+                                // Update the existing message
+                                msg.content = format_message(&content, role.clone());
+                                found = true;
+                                break;
+                            }
+                        }
+                        
+                        // If not found, add a new message
+                        if !found {
+                            let formatted = format_message(&content, role.clone());
+                            messages.push(FormattedMessage {
+                                content: formatted,
+                                role,
+                            });
+                        }
+                    },
+                    crate::app::AppEvent::ToolCallStarted { name } => {
+                        let formatted = format_message(&format!("Starting tool call: {}", name), crate::app::Role::System);
+                        messages.push(FormattedMessage {
+                            content: formatted,
+                            role: crate::app::Role::System,
+                        });
+                    },
+                    crate::app::AppEvent::ToolCallCompleted { name, result: _ } => {
+                        let formatted = format_message(&format!("Tool {} executed successfully", name), crate::app::Role::System);
+                        messages.push(FormattedMessage {
+                            content: formatted,
+                            role: crate::app::Role::System,
+                        });
+                    },
+                    crate::app::AppEvent::ToolCallFailed { name, error } => {
+                        let formatted = format_message(&format!("Tool {} failed: {}", name, error), crate::app::Role::System);
+                        messages.push(FormattedMessage {
+                            content: formatted,
+                            role: crate::app::Role::System,
+                        });
+                    },
+                    crate::app::AppEvent::ThinkingStarted => {
+                        let formatted = format_message("Thinking...", crate::app::Role::System);
+                        messages.push(FormattedMessage {
+                            content: formatted,
+                            role: crate::app::Role::System,
+                        });
+                    },
+                    crate::app::AppEvent::ThinkingCompleted => {
+                        // No need to add a message for this
+                    },
+                    crate::app::AppEvent::CommandResponse { content } => {
+                        let formatted = format_message(&content, crate::app::Role::System);
+                        messages.push(FormattedMessage {
+                            content: formatted,
+                            role: crate::app::Role::System,
+                        });
+                    },
+                    crate::app::AppEvent::Error { message } => {
+                        let formatted = format_message(&format!("Error: {}", message), crate::app::Role::System);
+                        messages.push(FormattedMessage {
+                            content: formatted,
+                            role: crate::app::Role::System,
+                        });
+                    },
+                }
+            }
+        })
     }
 
     fn draw(&mut self) -> Result<()> {
@@ -190,63 +281,6 @@ impl Tui {
         }
     }
 
-    fn render_messages(&self, f: &mut ratatui::Frame<'_>, area: Rect) {
-        // Create a list of messages
-        let messages: Vec<ListItem> = self
-            .messages
-            .iter()
-            .map(|m| {
-                let header_style = match m.role {
-                    crate::app::Role::User => Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                    crate::app::Role::Assistant => Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                    crate::app::Role::System => Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                    crate::app::Role::Tool => Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                };
-
-                // Create header
-                let header = Line::from(Span::styled(format!("[ {} ]", m.role), header_style));
-
-                // Create a list item with content
-                let mut lines = vec![header];
-                lines.extend(m.content.clone());
-                ListItem::new(lines)
-            })
-            .collect();
-
-        let messages_list = List::new(messages)
-            .block(Block::default().borders(Borders::ALL).title("Messages"))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-            .highlight_symbol("> ");
-
-        f.render_widget(messages_list, area);
-    }
-
-    fn render_input(&self, f: &mut ratatui::Frame<'_>, area: Rect) {
-        let input_style = match self.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        };
-
-        let input = Paragraph::new(ratatui::text::Text::from(self.input.as_str()))
-            .style(input_style)
-            .block(Block::default().borders(Borders::ALL).title("Input"));
-
-        f.render_widget(input, area);
-
-        // Show cursor in editing mode
-        if let InputMode::Editing = self.input_mode {
-            f.set_cursor(area.x + 1 + self.input.chars().count() as u16, area.y + 1);
-        }
-    }
-
     async fn handle_input(&mut self, key: KeyEvent, app: &mut crate::app::App) -> Result<bool> {
         match self.input_mode {
             InputMode::Normal => match key.code {
@@ -308,157 +342,18 @@ impl Tui {
     }
 
     async fn send_message(&mut self, message: String, app: &mut crate::app::App) -> Result<()> {
-        // Add user message to app and UI
-        app.add_user_message(message.clone());
-        self.add_user_message(&message);
-
         // Set processing flag
         self.is_processing = true;
         self.draw()?;
-
-        // Special command handling
-        if message.starts_with("/") {
-            let response = app.handle_command(&message).await?;
-            self.add_system_message(&response);
-            self.is_processing = false;
-            return Ok(());
-        }
-
-        // Processing indicator
-        self.add_system_message("Thinking...");
-
-        // Create a placeholder for assistant message
-        app.add_assistant_message(String::new());
-        self.add_assistant_message("");
-
-        // Get tools
-        let tools = Some(crate::api::tools::Tool::all());
-
-        // Get a response from Claude (with streaming)
-        let mut stream = app.get_claude_response_streaming(Some(&tools.as_ref().unwrap()));
-
-        // Process the stream
-        let mut response = String::new();
-
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(text) => {
-                    // Update the placeholder message
-                    response.push_str(&text);
-
-                    // Update the last message in the UI
-                    if let Some(last) = self.messages.last_mut() {
-                        let formatted = format_message(&response, crate::app::Role::Assistant);
-                        last.content = formatted;
-                    }
-
-                    // Update the last message in the app
-                    if let Some(last) = app.conversation.messages.last_mut() {
-                        last.content = response.clone();
-                    }
-
-                    // Redraw UI
-                    self.draw()?;
-                }
-                Err(e) => {
-                    self.add_system_message(&format!("Error: {}", e));
-                    break;
-                }
-            }
-        }
-
-        // Now that we have the complete response, let's check for tool calls
-        // For now, we'll just check for patterns in the text
-        // In the future, the API client should properly detect tool calls in streaming responses
-        if response.contains("<tool_use>")
-            || response.contains("<function_calls>")
-            || response.contains("<function_calls>")
-        {
-            self.add_system_message("Tool calls detected - processing");
-
-            // Get a non-streaming response to properly parse tool calls
-            // This is just a temporary solution until proper streaming tool call detection is implemented
-            let resp = app
-                .get_claude_response(Some(&tools.as_ref().unwrap()))
-                .await?;
-
-            if resp.has_tool_calls() {
-                let tool_calls = resp.extract_tool_calls();
-
-                // Execute all tool calls
-                for tool_call in &tool_calls {
-                    self.add_system_message(&format!("Executing tool: {}", tool_call.name));
-
-                    match app.execute_tool(tool_call).await {
-                        Ok(result) => {
-                            // Add tool result to the conversation
-                            app.conversation.add_message(
-                                crate::app::Role::Tool,
-                                format!("Tool result from {}: {}", tool_call.name, result),
-                            );
-
-                            // Display tool result in the UI
-                            self.add_system_message(&format!(
-                                "Tool {} executed successfully",
-                                tool_call.name
-                            ));
-                        }
-                        Err(e) => {
-                            self.add_system_message(&format!(
-                                "Error executing tool {}: {}",
-                                tool_call.name, e
-                            ));
-                        }
-                    }
-                }
-
-                // Continue the conversation with the tool results
-                self.add_system_message("Continuing conversation with tool results...");
-
-                // Get another response from Claude including the tool results
-                let mut continuation_stream =
-                    app.get_claude_response_streaming(Some(&tools.as_ref().unwrap()));
-
-                // Add a placeholder for the new assistant message
-                app.add_assistant_message(String::new());
-                self.add_assistant_message("");
-
-                // Process the continuation response
-                let mut continuation_response = String::new();
-
-                while let Some(chunk) = continuation_stream.next().await {
-                    match chunk {
-                        Ok(text) => {
-                            // Update the message
-                            continuation_response.push_str(&text);
-
-                            // Update the last message in the UI
-                            if let Some(last) = self.messages.last_mut() {
-                                let formatted = format_message(
-                                    &continuation_response,
-                                    crate::app::Role::Assistant,
-                                );
-                                last.content = formatted;
-                            }
-
-                            // Update the last message in the app
-                            if let Some(last) = app.conversation.messages.last_mut() {
-                                last.content = continuation_response.clone();
-                            }
-
-                            // Redraw UI
-                            self.draw()?;
-                        }
-                        Err(e) => {
-                            self.add_system_message(&format!("Error: {}", e));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
+        
+        // Let the app process the message
+        // The app will handle adding messages to the conversation
+        // and emitting events to update the UI
+        app.process_user_message(message).await?;
+        
+        // Reset processing flag
         self.is_processing = false;
+        
         Ok(())
     }
 
@@ -483,6 +378,14 @@ impl Tui {
         self.messages.push(FormattedMessage {
             content: formatted,
             role: crate::app::Role::System,
+        });
+    }
+    
+    fn add_tool_message(&mut self, content: &str) {
+        let formatted = format_message(content, crate::app::Role::Tool);
+        self.messages.push(FormattedMessage {
+            content: formatted,
+            role: crate::app::Role::Tool,
         });
     }
 }

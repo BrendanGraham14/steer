@@ -1,26 +1,15 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::process::Command;
-use std::path::Path;
-use regex::Regex;
-use glob::glob;
-use std::fs;
 
-mod bash;
-mod edit;
-mod glob_tool;
-mod grep_tool;
-mod ls;
-mod replace;
-mod view;
+// Export the modules for testing and direct use
+pub mod bash;
+pub mod edit;
+pub mod glob_tool;
+pub mod grep_tool;
+pub mod ls;
+pub mod replace;
+pub mod view;
 
-pub use bash::execute_bash;
-pub use edit::edit_file;
-pub use glob_tool::glob_search;
-pub use grep_tool::grep_search;
-pub use ls::list_directory;
-pub use replace::replace_file;
-pub use view::view_file;
 
 /// Execute a tool based on the name and parameters
 pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {

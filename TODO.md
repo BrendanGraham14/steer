@@ -78,14 +78,14 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [x] Complete the critical compilation fixes
 - [x] Attempt to compile and run the project
 - [x] Fix compilation errors
-- [ ] Test basic functionality and fix any runtime issues
-- [ ] Test basic functionality including:
-  - [ ] Connecting to Claude API
-  - [ ] Sending/receiving messages
-  - [ ] Tool execution (bash, ls, view, etc.)
-- [ ] Enhance tool call handling in streaming responses
-- [ ] Improve error handling throughout the codebase
-- [ ] Add unit tests for core components
+- [x] Test basic functionality and fix any runtime issues
+- [x] Test basic functionality including:
+  - [x] Connecting to Claude API
+  - [x] Sending/receiving messages
+  - [x] Tool execution (bash, ls, view, etc.)
+- [x] Enhance tool call handling in streaming responses
+- [x] Improve error handling throughout the codebase
+- [x] Add unit tests for core components
 
 ## Remaining Tasks
 

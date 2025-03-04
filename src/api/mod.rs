@@ -1,9 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use async_stream::stream;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
@@ -14,7 +11,7 @@ pub mod messages;
 pub mod tools;
 
 pub use messages::Message;
-pub use tools::{Tool, ToolCall, ToolResult};
+pub use tools::{Tool, ToolCall};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -59,7 +56,11 @@ pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "tool_use")]
-    ToolUse { name: String, parameters: serde_json::Value },
+    ToolUse { 
+        id: String,
+        name: String, 
+        input: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -159,6 +160,10 @@ impl Client {
             stream: None,
         };
 
+        // Print the request body for debugging
+        let request_json = serde_json::to_string_pretty(&request).unwrap();
+        println!("API Request Body: {}", request_json);
+        
         let response = self
             .client
             .post(API_URL)
@@ -302,11 +307,11 @@ impl CompletionResponse {
     /// Extract all tool calls from the response
     pub fn extract_tool_calls(&self) -> Vec<ToolCall> {
         self.content.iter().filter_map(|block| {
-            if let ContentBlock::ToolUse { name, parameters } = block {
+            if let ContentBlock::ToolUse { id, name, input } = block {
                 Some(ToolCall {
                     name: name.clone(),
-                    parameters: parameters.clone(),
-                    id: None, // We don't have IDs in the raw API response
+                    parameters: input.clone(),
+                    id: Some(id.clone()),
                 })
             } else {
                 None

@@ -17,7 +17,7 @@ struct Cli {
     directory: Option<std::path::PathBuf>,
 
     /// API Key for Claude (can also be set via CLAUDE_API_KEY env var)
-    #[arg(short, long, env("CLAUDE_API_KEY"))]
+    #[arg(short, long, env = "CLAUDE_API_KEY")]
     api_key: Option<String>,
 
     /// Subcommands
@@ -94,8 +94,17 @@ async fn main() -> Result<()> {
         // Add more configuration as needed
     };
     
+    // Initialize the app
     let mut app = app::App::new(app_config)?;
-    app.run().await?;
+    
+    // Initialize the TUI
+    let mut tui = tui::Tui::new()?;
+    
+    // Set up the event channel for app → TUI communication
+    let event_rx = app.setup_event_channel();
+    
+    // Run the TUI with the app
+    tui.run(&mut app, event_rx).await?;
     
     Ok(())
 }

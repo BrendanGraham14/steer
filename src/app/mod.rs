@@ -1,5 +1,6 @@
 use anyhow::Result;
-use std::sync::Arc;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use futures_util::future::BoxFuture;
 
 mod conversation;
 mod environment;
@@ -8,6 +9,34 @@ mod tool_executor;
 pub use conversation::{Conversation, Message, Role};
 pub use environment::EnvironmentInfo;
 pub use tool_executor::ToolExecutor;
+
+/// Events emitted by the App to update the UI
+#[derive(Debug, Clone)]
+pub enum AppEvent {
+    MessageAdded {
+        role: Role,
+        content: String,
+    },
+    ToolCallStarted {
+        name: String,
+    },
+    ToolCallCompleted {
+        name: String,
+        result: String,
+    },
+    ToolCallFailed {
+        name: String,
+        error: String,
+    },
+    ThinkingStarted,
+    ThinkingCompleted,
+    CommandResponse {
+        content: String,
+    },
+    Error {
+        message: String,
+    },
+}
 
 /// Configuration for the application
 pub struct AppConfig {
@@ -22,6 +51,7 @@ pub struct App {
     pub env_info: EnvironmentInfo,
     pub tool_executor: ToolExecutor,
     pub api_client: crate::api::Client,
+    event_sender: Option<Sender<AppEvent>>,
 }
 
 impl App {
@@ -38,7 +68,23 @@ impl App {
             env_info,
             tool_executor,
             api_client,
+            event_sender: None,
         })
+    }
+    
+    /// Set up the event channel for UI updates
+    pub fn setup_event_channel(&mut self) -> Receiver<AppEvent> {
+        let (tx, rx) = mpsc::channel(100);
+        self.event_sender = Some(tx);
+        rx
+    }
+    
+    /// Emit an event to update the UI
+    fn emit_event(&self, event: AppEvent) {
+        if let Some(sender) = &self.event_sender {
+            // Since this is a fire-and-forget scenario, we just ignore errors
+            let _ = sender.try_send(event);
+        }
     }
     
     /// Run the application
@@ -46,20 +92,49 @@ impl App {
         // Initialize TUI
         let mut tui = crate::tui::Tui::new()?;
         
+        // Set up event channel
+        let event_receiver = self.setup_event_channel();
+        
         // Run the main event loop
-        tui.run(self).await?;
+        tui.run(self, event_receiver).await?;
         
         Ok(())
     }
     
     /// Add a user message to the conversation
     pub fn add_user_message(&mut self, content: String) {
-        self.conversation.add_message(Role::User, content);
+        self.conversation.add_message(Role::User, content.clone());
+        self.emit_event(AppEvent::MessageAdded {
+            role: Role::User,
+            content,
+        });
     }
     
     /// Add an assistant message to the conversation
     pub fn add_assistant_message(&mut self, content: String) {
-        self.conversation.add_message(Role::Assistant, content);
+        self.conversation.add_message(Role::Assistant, content.clone());
+        self.emit_event(AppEvent::MessageAdded {
+            role: Role::Assistant,
+            content,
+        });
+    }
+    
+    /// Add a tool message to the conversation
+    pub fn add_tool_message(&mut self, content: String) {
+        self.conversation.add_message(Role::Tool, content.clone());
+        self.emit_event(AppEvent::MessageAdded {
+            role: Role::Tool,
+            content,
+        });
+    }
+    
+    /// Add a system message to the conversation
+    pub fn add_system_message(&mut self, content: String) {
+        self.conversation.add_message(Role::System, content.clone());
+        self.emit_event(AppEvent::MessageAdded {
+            role: Role::System,
+            content,
+        });
     }
     
     /// Get the current conversation
@@ -72,54 +147,144 @@ impl App {
         &self.env_info
     }
     
-    /// Send a message to Claude and get a response
-    pub async fn send_message_to_claude(&mut self, message: String) -> Result<String> {
-        // Add message to conversation
-        self.add_user_message(message);
+    /// Process a user message and handle the entire flow
+    pub async fn process_user_message(&mut self, message: String) -> Result<()> {
+        // Add user message to conversation
+        self.add_user_message(message.clone());
         
-        // Get tools
-        let tools = Some(crate::api::tools::Tool::all());
+        // Special command handling
+        if message.starts_with("/") {
+            let response = self.handle_command(&message).await?;
+            self.emit_event(AppEvent::CommandResponse { 
+                content: response.clone() 
+            });
+            return Ok(());
+        }
         
-        // Get response
-        let response = self.get_claude_response(Some(&tools.as_ref().unwrap())).await?;
+        // Signal that we're thinking
+        self.emit_event(AppEvent::ThinkingStarted);
         
-        // Check for tool calls
-        if response.has_tool_calls() {
+        // Get the response from Claude (streaming)
+        let result = self.handle_streaming_response().await;
+        
+        // Signal that thinking is complete
+        self.emit_event(AppEvent::ThinkingCompleted);
+        
+        // Handle any errors
+        if let Err(e) = result {
+            self.emit_event(AppEvent::Error { 
+                message: e.to_string() 
+            });
+            return Err(e);
+        }
+        
+        Ok(())
+    }
+    
+    /// Handle streaming response from Claude
+    fn handle_streaming_response<'a>(&'a mut self) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            // Get tools
+            let tools = Some(crate::api::tools::Tool::all());
+            
+            // Create a stream for the response
+            let mut stream = self.get_claude_response_streaming(Some(&tools.as_ref().unwrap()));
+            
+            // Create a placeholder for the assistant's message
+            let mut response_text = String::new();
+            self.add_assistant_message(response_text.clone());
+            
+            // Get the index of the placeholder message
+            let msg_index = self.conversation.messages.len() - 1;
+            
+            // Process the stream
+            use futures_util::StreamExt;
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(text) => {
+                        // Update the message
+                        response_text.push_str(&text);
+                        
+                        // Update the message in the conversation
+                        if let Some(msg) = self.conversation.messages.get_mut(msg_index) {
+                            msg.content = response_text.clone();
+                        }
+                        
+                        // Emit an event to update the UI
+                        self.emit_event(AppEvent::MessageAdded {
+                            role: Role::Assistant,
+                            content: response_text.clone(),
+                        });
+                    },
+                    Err(e) => {
+                        self.emit_event(AppEvent::Error { 
+                            message: format!("Streaming error: {}", e) 
+                        });
+                        return Err(e.into());
+                    }
+                }
+            }
+            
+            // Now check for tool calls in the complete response
+            // We need a non-streaming response to properly parse tool calls
+            let complete_response = self.get_claude_response(Some(&tools.as_ref().unwrap())).await?;
+            
+            if complete_response.has_tool_calls() {
+                // Process tool calls
+                self.process_tool_calls(&complete_response).await?;
+            }
+            
+            Ok(())
+        })
+    }
+    
+    /// Process tool calls from Claude's response
+    fn process_tool_calls<'a>(&'a mut self, response: &'a crate::api::CompletionResponse) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
             // Extract tool calls
             let tool_calls = response.extract_tool_calls();
             
             // Execute all tool calls
             for tool_call in &tool_calls {
+                // Signal that we're starting a tool call
+                self.emit_event(AppEvent::ToolCallStarted { 
+                    name: tool_call.name.clone() 
+                });
+                
                 // Execute the tool
                 match self.execute_tool(tool_call).await {
                     Ok(result) => {
                         // Add tool result to the conversation
-                        self.conversation.add_message(Role::Tool, 
-                            format!("Tool result from {}: {}", tool_call.name, result));
+                        let tool_message = format!("Tool result from {}: {}", tool_call.name, result);
+                        self.add_tool_message(tool_message);
+                        
+                        // Signal that the tool call completed
+                        self.emit_event(AppEvent::ToolCallCompleted { 
+                            name: tool_call.name.clone(), 
+                            result: result.clone() 
+                        });
                     },
                     Err(e) => {
                         // Log the error
-                        self.conversation.add_message(Role::Tool, 
-                            format!("Error executing tool {}: {}", tool_call.name, e));
+                        let error_message = format!("Error executing tool {}: {}", tool_call.name, e);
+                        self.add_tool_message(error_message);
+                        
+                        // Signal that the tool call failed
+                        self.emit_event(AppEvent::ToolCallFailed { 
+                            name: tool_call.name.clone(), 
+                            error: e.to_string() 
+                        });
                     }
                 }
             }
             
             // Continue the conversation with the tool results
-            let final_response = self.get_claude_response(Some(&tools.as_ref().unwrap())).await?;
+            if !tool_calls.is_empty() {
+                self.handle_streaming_response().await?;
+            }
             
-            // Add the final response to the conversation
-            let text = final_response.extract_text();
-            self.add_assistant_message(text.clone());
-            
-            Ok(text)
-        } else {
-            // Add the response to the conversation
-            let text = response.extract_text();
-            self.add_assistant_message(text.clone());
-            
-            Ok(text)
-        }
+            Ok(())
+        })
     }
     
     /// Execute a tool call
