@@ -40,6 +40,8 @@ pub struct Tui {
     // Progress tracking
     progress_message: Option<String>,
     last_spinner_update: std::time::Instant,
+    // Shared messages (updated by event handler)
+    shared_messages: Option<Arc<Mutex<Vec<FormattedMessage>>>>,
 }
 
 #[derive(Clone)]
@@ -78,6 +80,7 @@ impl Tui {
             is_processing: false,
             progress_message: None,
             last_spinner_update: std::time::Instant::now(),
+            shared_messages: None,
         })
     }
 
@@ -134,9 +137,14 @@ impl Tui {
     }
     
     // Spawn a task to handle events from the app
-    fn spawn_event_handler(&self, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> JoinHandle<()> {
+    fn spawn_event_handler(&mut self, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> JoinHandle<()> {
         // Clone the messages Vec to move into the task
         let messages = Arc::new(Mutex::new(self.messages.clone()));
+        
+        // Create a shared messages reference that will be updated by the event handler
+        // and can be retrieved by the main TUI instance
+        let shared_messages = Arc::clone(&messages);
+        self.shared_messages = Some(shared_messages);
         
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
@@ -273,11 +281,30 @@ impl Tui {
         }
     }
     
+    // This function isn't needed after our refactoring
+    // fn update_shared_messages(&mut self, shared: Arc<Mutex<Vec<FormattedMessage>>>) {
+    //     self.shared_messages = Some(shared);
+    // }
+    
+    // Sync messages from the shared state if available
+    fn sync_messages(&mut self) {
+        if let Some(shared) = &self.shared_messages {
+            // Try to acquire the lock for a short time to avoid blocking
+            if let Ok(messages) = shared.try_lock() {
+                // Replace our messages with the latest from the shared state
+                self.messages = messages.clone();
+            }
+        }
+    }
+    
     fn draw(&mut self) -> Result<()> {
         // Update spinner if we're processing
         if self.is_processing {
             self.update_spinner_state();
         }
+        
+        // Sync messages from shared state before drawing
+        self.sync_messages();
         
         // Create copies of the data we need to use in the closure
         let messages = self.messages.clone();
@@ -536,7 +563,23 @@ impl Tui {
         // Let the app process the message
         // The app will handle adding messages to the conversation
         // and emitting events to update the UI
-        app.process_user_message(message).await?;
+        match app.process_user_message(message.clone()).await {
+            Ok(_) => {},
+            Err(e) => {
+                // Force update UI with error message if API call failed
+                self.add_system_message(&format!("Error: {}", e));
+                self.draw()?;
+                
+                // Reset processing flag and message
+                self.is_processing = false;
+                self.set_progress(None);
+                return Err(e);
+            }
+        }
+        
+        // Try one more UI refresh to make sure we display updated messages
+        self.sync_messages();
+        self.draw()?;
         
         // Reset processing flag and message
         self.is_processing = false;
@@ -544,6 +587,9 @@ impl Tui {
         
         // Reset scroll to follow newest messages
         Self::set_scroll_offset(0);
+        
+        // Draw once more after processing is complete
+        self.draw()?;
         
         Ok(())
     }

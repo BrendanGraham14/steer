@@ -90,7 +90,7 @@ impl App {
     /// Emit an event to update the UI
     fn emit_event(&self, event: AppEvent) {
         if let Some(sender) = &self.event_sender {
-            // Since this is a fire-and-forget scenario, we just ignore errors
+            // Since this is a fire-and-forget scenario, we can ignore send errors
             let _ = sender.try_send(event);
         }
     }
