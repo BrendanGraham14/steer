@@ -1,18 +1,20 @@
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use futures_util::StreamExt;
+use ratatui::Terminal;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
-use ratatui::Terminal;
 use std::io;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::time::Duration;
-use futures_util::StreamExt;
+use tokio::sync::Mutex;
 
 mod message_formatter;
 
@@ -65,7 +67,8 @@ impl Tui {
 
         // Add the system prompt to the conversation
         let system_prompt = crate::api::messages::create_system_prompt(app.environment_info());
-        app.conversation.add_system_message(system_prompt.content.clone());
+        app.conversation
+            .add_system_message(system_prompt.content.clone());
 
         loop {
             // Draw UI
@@ -83,10 +86,8 @@ impl Tui {
 
         // Restore terminal
         disable_raw_mode().context("Failed to disable raw mode")?;
-        execute!(
-            self.terminal.backend_mut(),
-            LeaveAlternateScreen
-        ).context("Failed to leave alternate screen")?;
+        execute!(self.terminal.backend_mut(), LeaveAlternateScreen)
+            .context("Failed to leave alternate screen")?;
         self.terminal.show_cursor()?;
 
         Ok(())
@@ -100,51 +101,57 @@ impl Tui {
             InputMode::Normal => false,
             InputMode::Editing => true,
         };
-        
+
         self.terminal.draw(|f| {
             // Create main layout
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(1),
-                    Constraint::Length(3),
-                ].as_ref())
+                .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
                 .split(f.size());
 
             // Create message area
             let message_area = chunks[0];
-            
+
             // Create input area
             let input_area = chunks[1];
 
             // Render messages (using cloned data)
             Self::render_messages_static(f, message_area, &messages);
-            
+
             // Render input (using cloned data)
             Self::render_input_static(f, input_area, &input, input_mode);
         })?;
 
         Ok(())
     }
-    
+
     // Static version of render_messages that doesn't borrow self
-    fn render_messages_static(f: &mut ratatui::Frame<'_>, area: Rect, messages: &[FormattedMessage]) {
+    fn render_messages_static(
+        f: &mut ratatui::Frame<'_>,
+        area: Rect,
+        messages: &[FormattedMessage],
+    ) {
         // Create a list of messages
         let messages_list: Vec<ListItem> = messages
             .iter()
             .map(|m| {
                 let header_style = match m.role {
-                    crate::app::Role::User => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                    crate::app::Role::Assistant => Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
-                    crate::app::Role::System => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    crate::app::Role::Tool => Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    crate::app::Role::User => Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                    crate::app::Role::Assistant => Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                    crate::app::Role::System => Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                    crate::app::Role::Tool => Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
                 };
 
                 // Create header
-                let header = Line::from(Span::styled(
-                    format!("[ {} ]", m.role), 
-                    header_style
-                ));
+                let header = Line::from(Span::styled(format!("[ {} ]", m.role), header_style));
 
                 // Create a list item with content
                 let mut lines = vec![header];
@@ -160,7 +167,7 @@ impl Tui {
 
         f.render_widget(messages_list, area);
     }
-    
+
     // Static version of render_input that doesn't borrow self
     fn render_input_static(f: &mut ratatui::Frame<'_>, area: Rect, input: &str, is_editing: bool) {
         let input_style = if is_editing {
@@ -174,35 +181,38 @@ impl Tui {
             .block(Block::default().borders(Borders::ALL).title("Input"));
 
         f.render_widget(paragraph, area);
-        
+
         // Show cursor in editing mode
         if is_editing {
             // Get the input string length for cursor positioning
             let string_len = input.chars().count() as u16;
-            f.set_cursor(
-                area.x + 1 + string_len,
-                area.y + 1,
-            );
+            f.set_cursor(area.x + 1 + string_len, area.y + 1);
         }
     }
 
     fn render_messages(&self, f: &mut ratatui::Frame<'_>, area: Rect) {
         // Create a list of messages
-        let messages: Vec<ListItem> = self.messages
+        let messages: Vec<ListItem> = self
+            .messages
             .iter()
             .map(|m| {
                 let header_style = match m.role {
-                    crate::app::Role::User => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                    crate::app::Role::Assistant => Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
-                    crate::app::Role::System => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    crate::app::Role::Tool => Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    crate::app::Role::User => Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                    crate::app::Role::Assistant => Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                    crate::app::Role::System => Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                    crate::app::Role::Tool => Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
                 };
 
                 // Create header
-                let header = Line::from(Span::styled(
-                    format!("[ {} ]", m.role), 
-                    header_style
-                ));
+                let header = Line::from(Span::styled(format!("[ {} ]", m.role), header_style));
 
                 // Create a list item with content
                 let mut lines = vec![header];
@@ -230,13 +240,10 @@ impl Tui {
             .block(Block::default().borders(Borders::ALL).title("Input"));
 
         f.render_widget(input, area);
-        
+
         // Show cursor in editing mode
         if let InputMode::Editing = self.input_mode {
-            f.set_cursor(
-                area.x + 1 + self.input.chars().count() as u16,
-                area.y + 1,
-            );
+            f.set_cursor(area.x + 1 + self.input.chars().count() as u16, area.y + 1);
         }
     }
 
@@ -304,11 +311,11 @@ impl Tui {
         // Add user message to app and UI
         app.add_user_message(message.clone());
         self.add_user_message(&message);
-        
+
         // Set processing flag
         self.is_processing = true;
         self.draw()?;
-        
+
         // Special command handling
         if message.starts_with("/") {
             let response = app.handle_command(&message).await?;
@@ -316,40 +323,40 @@ impl Tui {
             self.is_processing = false;
             return Ok(());
         }
-        
+
         // Processing indicator
         self.add_system_message("Thinking...");
-        
+
         // Create a placeholder for assistant message
         app.add_assistant_message(String::new());
         self.add_assistant_message("");
-        
+
         // Get tools
         let tools = Some(crate::api::tools::Tool::all());
-        
+
         // Get a response from Claude (with streaming)
         let mut stream = app.get_claude_response_streaming(Some(&tools.as_ref().unwrap()));
-        
+
         // Process the stream
         let mut response = String::new();
-        
+
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(text) => {
                     // Update the placeholder message
                     response.push_str(&text);
-                    
+
                     // Update the last message in the UI
                     if let Some(last) = self.messages.last_mut() {
                         let formatted = format_message(&response, crate::app::Role::Assistant);
                         last.content = formatted;
                     }
-                    
+
                     // Update the last message in the app
                     if let Some(last) = app.conversation.messages.last_mut() {
                         last.content = response.clone();
                     }
-                    
+
                     // Redraw UI
                     self.draw()?;
                 }
@@ -359,69 +366,86 @@ impl Tui {
                 }
             }
         }
-        
+
         // Now that we have the complete response, let's check for tool calls
         // For now, we'll just check for patterns in the text
         // In the future, the API client should properly detect tool calls in streaming responses
-        if response.contains("<tool_use>") || response.contains("<function_calls>") || response.contains("<function_calls>") {
+        if response.contains("<tool_use>")
+            || response.contains("<function_calls>")
+            || response.contains("<function_calls>")
+        {
             self.add_system_message("Tool calls detected - processing");
-            
+
             // Get a non-streaming response to properly parse tool calls
             // This is just a temporary solution until proper streaming tool call detection is implemented
-            let resp = app.get_claude_response(Some(&tools.as_ref().unwrap())).await?;
-            
+            let resp = app
+                .get_claude_response(Some(&tools.as_ref().unwrap()))
+                .await?;
+
             if resp.has_tool_calls() {
                 let tool_calls = resp.extract_tool_calls();
-                
+
                 // Execute all tool calls
                 for tool_call in &tool_calls {
                     self.add_system_message(&format!("Executing tool: {}", tool_call.name));
-                    
+
                     match app.execute_tool(tool_call).await {
                         Ok(result) => {
                             // Add tool result to the conversation
-                            app.conversation.add_message(crate::app::Role::Tool, 
-                                format!("Tool result from {}: {}", tool_call.name, result));
-                            
+                            app.conversation.add_message(
+                                crate::app::Role::Tool,
+                                format!("Tool result from {}: {}", tool_call.name, result),
+                            );
+
                             // Display tool result in the UI
-                            self.add_system_message(&format!("Tool {} executed successfully", tool_call.name));
-                        },
+                            self.add_system_message(&format!(
+                                "Tool {} executed successfully",
+                                tool_call.name
+                            ));
+                        }
                         Err(e) => {
-                            self.add_system_message(&format!("Error executing tool {}: {}", tool_call.name, e));
+                            self.add_system_message(&format!(
+                                "Error executing tool {}: {}",
+                                tool_call.name, e
+                            ));
                         }
                     }
                 }
-                
+
                 // Continue the conversation with the tool results
                 self.add_system_message("Continuing conversation with tool results...");
-                
+
                 // Get another response from Claude including the tool results
-                let mut continuation_stream = app.get_claude_response_streaming(Some(&tools.as_ref().unwrap()));
-                
+                let mut continuation_stream =
+                    app.get_claude_response_streaming(Some(&tools.as_ref().unwrap()));
+
                 // Add a placeholder for the new assistant message
                 app.add_assistant_message(String::new());
                 self.add_assistant_message("");
-                
+
                 // Process the continuation response
                 let mut continuation_response = String::new();
-                
+
                 while let Some(chunk) = continuation_stream.next().await {
                     match chunk {
                         Ok(text) => {
                             // Update the message
                             continuation_response.push_str(&text);
-                            
+
                             // Update the last message in the UI
                             if let Some(last) = self.messages.last_mut() {
-                                let formatted = format_message(&continuation_response, crate::app::Role::Assistant);
+                                let formatted = format_message(
+                                    &continuation_response,
+                                    crate::app::Role::Assistant,
+                                );
                                 last.content = formatted;
                             }
-                            
+
                             // Update the last message in the app
                             if let Some(last) = app.conversation.messages.last_mut() {
                                 last.content = continuation_response.clone();
                             }
-                            
+
                             // Redraw UI
                             self.draw()?;
                         }
@@ -433,27 +457,11 @@ impl Tui {
                 }
             }
         }
-        
+
         self.is_processing = false;
         Ok(())
     }
-    
-    // This method is no longer needed - tool execution is now handled in the App layer
-    
-    // This method is no longer needed - app.handle_command is used instead
-    async fn handle_command(&mut self, command: &str, app: &mut crate::app::App) -> Result<()> {
-        // Check for exit command - this is the only command we handle here
-        if command == "/exit" {
-            return Ok(());
-        }
-        
-        // All other commands are handled by the App layer
-        let response = app.handle_command(command).await?;
-        self.add_system_message(&response);
-        
-        Ok(())
-    }
-    
+
     fn add_user_message(&mut self, content: &str) {
         let formatted = format_message(content, crate::app::Role::User);
         self.messages.push(FormattedMessage {
@@ -461,7 +469,7 @@ impl Tui {
             role: crate::app::Role::User,
         });
     }
-    
+
     fn add_assistant_message(&mut self, content: &str) {
         let formatted = format_message(content, crate::app::Role::Assistant);
         self.messages.push(FormattedMessage {
@@ -469,7 +477,7 @@ impl Tui {
             role: crate::app::Role::Assistant,
         });
     }
-    
+
     fn add_system_message(&mut self, content: &str) {
         let formatted = format_message(content, crate::app::Role::System);
         self.messages.push(FormattedMessage {
