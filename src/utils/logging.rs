@@ -86,7 +86,7 @@ impl Logger {
         }
         
         // Get timestamp for the log entry
-        let timestamp = SystemTime::now()
+        let _timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
