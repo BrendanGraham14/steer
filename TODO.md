@@ -91,6 +91,7 @@ This document tracks both the completed work and remaining tasks for the Claude 
 
 ### Core Functionality
 - [ ] Improve terminal-based chat interface (TUI)
+- [x] Fix message display in TUI - prevent system messages from appearing in conversation
 
 ### Environment Management
 - [x] CLAUDE.md memory file handling
@@ -102,8 +103,10 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [x] Add progress indicators for long-running operations (Priority 1)
 - [ ] Implement clear visual distinction between user and assistant messages
 - [ ] Add input history navigation
-- [ ] Add status indicators for processing state
+- [x] Add status indicators for processing state
 - [x] Implement proper scrolling in the TUI (Priority 1)
+- [x] Fix assistant response display issues (stuck on "Thinking...")
+- [x] Fix message ordering in conversation display
 
 ### Configuration and Persistence
 - [ ] Conversation history storage
@@ -113,6 +116,7 @@ This document tracks both the completed work and remaining tasks for the Claude 
 - [x] Fix system message format (top-level parameter)
 - [x] Improve streaming response handling
 - [ ] Support different Claude models
+- [x] Fix system messages showing up in conversation UI
 
 ### Additional Features
 - [ ] Add conversation saving and loading

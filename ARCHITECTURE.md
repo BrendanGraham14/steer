@@ -14,23 +14,23 @@ The application is structured into the following layers:
 - Responsible for communication with the Claude API
 - Handles authentication, request formatting, and response parsing
 - Manages streaming responses from Claude
-- **Current issue**: Tool call parsing needs to be improved for streaming responses
+- Formats tool calls and tool results according to Claude API requirements
 
 ### 2. App Layer (`src/app/`)
 - Core application logic
 - Manages application state
 - Coordinates between the API, tools, and UI
-- **Planned improvement**: Should be responsible for tool execution, not the UI
+- Handles message processing and tool execution via ToolExecutor
 
 ### 3. Tools Layer (`src/tools/`)
 - Implementations of various tools (bash, glob, grep, ls, view, edit, replace)
 - Each tool encapsulates its specific functionality
-- **Current state**: Tools are executed directly from the UI layer
+- Tools communicate with the App layer, not directly with UI
 
 ### 4. UI Layer (`src/tui/`)
 - Terminal user interface using ratatui
 - Handles user input and display
-- **Current issue**: Currently has too much responsibility, including executing tools
+- Renders messages and handles formatting
 
 ### 5. Configuration (`src/config/`)
 - Manages application configuration
@@ -38,26 +38,11 @@ The application is structured into the following layers:
 
 ### 6. Utilities (`src/utils/`)
 - Common utility functions used across the application
+- Provides logging and error handling facilities
 
-## Current Architecture Issues
+## Current Architecture
 
-The primary architectural issue is that the UI layer (TUI) is currently responsible for executing tools, which violates the separation of concerns principle:
-
-1. The TUI module directly calls tool execution functions
-2. The TUI parses and processes tool calls from Claude's responses
-3. The TUI manages the flow of tool execution results back to Claude
-
-This creates several problems:
-- Makes the UI code complex and difficult to test
-- Tightly couples the UI to the business logic
-- Makes it harder to switch to a different UI in the future
-- Complicates error handling
-
-## Planned Architecture Improvements
-
-### 1. Tool Execution Refactoring
-
-Move tool execution responsibility from the UI layer to the App layer:
+The application follows a layered architecture with clear separation of concerns:
 
 ```
                     ┌──────────────┐
@@ -81,84 +66,148 @@ Move tool execution responsibility from the UI layer to the App layer:
                     └──────────────┘
 ```
 
-1. Create a `ToolExecutor` in the App layer that will:
-   - Receive tool calls from the API client
-   - Execute the appropriate tools
-   - Manage the results
-   - Handle retries and errors
+### Message Flow
 
-2. Update the API client to properly parse tool calls and pass them to the App layer
-
-3. Simplify the TUI to focus only on:
-   - Displaying messages and results
-   - Collecting user input
-   - Rendering the interface
-
-### 2. Message Flow
-
-The revised message flow will be:
+The current message flow is:
 
 1. User enters a message in the TUI
 2. TUI sends the message to the App layer
-3. App layer sends the message to the API layer
-4. API layer sends the message to Claude and receives a response
-5. API layer returns the response to the App layer
-6. If the response contains tool calls:
-   - App layer identifies and processes the tool calls
-   - App layer executes the tools using the ToolExecutor
-   - App layer sends the results back to the API layer to continue the conversation
-7. App layer passes the final response to the TUI for display
+3. App layer adds the message to the conversation
+4. App layer sends the conversation to the API layer
+5. API layer sends the messages to Claude and receives a response
+6. API layer returns the response to the App layer
+7. App layer processes the response:
+   - Adds the assistant's message to the conversation
+   - If tool calls are present, processes them via ToolExecutor
+   - Formats tool results as special messages in the conversation
+   - If necessary, continues the conversation with tool results
+8. App layer sends events to the TUI for display
 
-This ensures that:
-- TUI only communicates with the App layer, never directly with the API
-- App layer manages all the business logic and state
-- Tool execution is handled in the appropriate layer
-- Each layer has clear, single responsibilities
+## Message Tracking and Recent Improvements
 
-### 3. Error Handling
+Recent improvements focused on fixing tool response handling with the Claude API:
 
-Improve error handling throughout the application:
+1. **Proper Tool Result Formatting**:
+   - Tool results are now properly sent to Claude as user messages with a specialized JSON structure
+   - Empty tool results are handled gracefully and don't cause API errors
 
-1. API layer: Handle API errors and connection issues
-2. App layer: Handle tool execution errors and state management issues
-3. TUI layer: Handle display and user input errors
+2. **Message Content Validation**:
+   - Added checks to prevent empty messages from being sent to the API
+   - Added safeguards to ensure tool results are never empty or malformed
 
-## Implementation Plan
+## Message Handling Protocol
 
-1. ✅ Create a ToolExecutor in the App layer
-2. ✅ Update the API client to parse tool calls correctly
-3. ✅ Refactor the TUI to remove tool execution logic
-4. ✅ Update message passing between layers
-5. ✅ Implement proper error handling
+The system uses a standardized message handling protocol with robust ID tracking to maintain consistent message order and display.
 
-## Implemented Changes (March 2025)
+### 1. Message ID Structure
 
-1. **ToolExecutor**:
-   - Created a dedicated ToolExecutor class in the App layer
-   - Implemented single and parallel tool execution methods
-   - Added tool call ID support for better tracking
+Each message has a unique ID with the following structure:
+- **Message Type Prefix**: "user_", "assistant_", "tool_", "system_"
+- **Timestamp**: Unix timestamp in seconds
+- **Optional Counter**: A random or sequential component to avoid collisions
+- **Format**: `{prefix}{timestamp}_{counter}`
 
-2. **API Client Improvements**:
-   - Added methods to extract tool calls from Claude responses
-   - Implemented text extraction from mixed-content responses
-   - Added helper methods to detect and process tool calls
+Example: `assistant_1709557832_a43f` for an assistant message
 
-3. **App Layer Enhancements**:
-   - Added methods for executing tools through the ToolExecutor
-   - Added methods for sending messages and handling tools
-   - Implemented command handling in the App layer
-   - Added conversation management methods
+### 2. Event Types
 
-4. **TUI Simplification**:
-   - Removed direct API client dependency
-   - Removed direct tool execution code
-   - Made TUI delegate all business logic to App layer
-   - Simplified message flow through App layer
+The system uses specific event types to distinguish between message creation and updates:
 
-5. **Proper Messaging Flow**:
-   - TUI now only handles display and user input
-   - App layer coordinates all conversation flow
-   - App layer manages tool execution and results
-   - API client handles Claude communication details
+```rust
+pub enum AppEvent {
+    // Create a new message
+    MessageAdded {
+        role: Role,
+        content: String,
+        id: String,
+    },
+    
+    // Update an existing message (for streaming or modifications)
+    MessageUpdated {
+        id: String,
+        content: String,
+    },
+    
+    // Tool events
+    ToolCallStarted { name: String, id: Option<String> },
+    ToolCallCompleted { name: String, result: String, id: Option<String> },
+    ToolCallFailed { name: String, error: String, id: Option<String> },
+    
+    // Processing indicators
+    ThinkingStarted,
+    ThinkingCompleted,
+    
+    // Command and error handling
+    CommandResponse { content: String, id: Option<String> },
+    Error { message: String },
+}
+```
 
-This refactoring has created a cleaner architecture with proper separation of concerns, making the codebase more maintainable, testable, and extensible.
+### 3. Message Lifecycle Protocol
+
+The protocol for message handling follows these rules:
+
+1. **Message Creation**: 
+   - Each new message emits exactly one `MessageAdded` event
+   - Message IDs are unique and follow the required format
+   - System messages are created but filtered from UI display
+
+2. **Streaming Updates**:
+   - Initial empty assistant message is created with `MessageAdded`
+   - All subsequent content chunks use `MessageUpdated` with the same ID
+   - The protocol prevents duplicate `MessageAdded` events for the same message
+
+3. **Tool Execution**:
+   - Tool calls follow the sequence: `ToolCallStarted` → `ToolCallCompleted` or `ToolCallFailed`
+   - Tool results appear as separate messages with their own IDs
+   - Tool messages include references to their parent message ID for tracking
+
+4. **UI Event Processing**:
+   - UI processes events by ID, not by role or order received
+   - For `MessageAdded`: Creates a new message in the display
+   - For `MessageUpdated`: Finds the existing message by ID and updates content
+   - UI maintains a lookup table of message IDs for efficient updates
+
+### 4. Implementation Details
+
+The message handling implementation includes:
+
+1. **App Layer**:
+   - Generates unique, collision-resistant message IDs
+   - Emits the correct event type (Added vs Updated) based on message lifecycle
+   - During streaming, updates the same message rather than creating duplicates
+   - Tracks relationships between messages, tools, and their results
+
+2. **UI Layer**:
+   - Processes events in the order received
+   - Maintains a fast lookup system for message IDs
+   - Applies updates to the correct message based on ID matching
+   - Uses ID-based lookups instead of role-based heuristics
+   - Filters system messages from display
+
+3. **Synchronization Process**:
+   - Uses robust synchronization mechanisms for shared state
+   - Implements ordering guarantees for message updates
+   - Logs detailed events for debugging message flow
+
+### 5. Message Data Model
+
+The message data model supports this protocol:
+
+```rust
+pub struct Message {
+    pub id: String,          // Unique identifier
+    pub role: Role,          // User, Assistant, Tool, System
+    pub content: String,     // Message content
+    pub timestamp: u64,      // Creation timestamp
+    pub parent_id: Option<String>, // Optional reference to parent message
+}
+
+pub struct FormattedMessage {
+    pub id: String,          // Same ID as the original message
+    pub role: Role,          // Same role as the original message
+    pub content: Vec<Line>,  // Formatted content for display
+}
+```
+
+This protocol ensures consistent message handling across the application.
