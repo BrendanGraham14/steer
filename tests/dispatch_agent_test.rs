@@ -1,5 +1,5 @@
 use anyhow::Result;
-use claude_code_rs::tools::dispatch_agent::DispatchAgent;
+use coder::tools::dispatch_agent::DispatchAgent;
 use dotenv::dotenv;
 use std::env;
 

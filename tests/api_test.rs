@@ -1,22 +1,14 @@
 use anyhow::Result;
-use claude_code_rs::api::{Client, Message, Tool, ToolCall};
+use coder::api::messages::{ContentBlock, MessageContent, StructuredContent};
+use coder::api::{Client, Message, Tool, ToolCall};
 use dotenv::dotenv;
 use std::env;
 
 #[tokio::test]
 #[ignore]
 async fn test_claude_api_basic() {
-    // Load environment variables from .env file
     dotenv().ok();
-
-    // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return;
-        }
-    };
+    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
 
     // Create client
     let client = Client::new(&api_key);
@@ -24,7 +16,10 @@ async fn test_claude_api_basic() {
     // Create a simple message
     let messages = vec![Message {
         role: "user".to_string(),
-        content: "What is 2+2?".to_string(),
+        content_type: MessageContent::Text {
+            content: "What is 2+2?".to_string(),
+        },
+        id: None,
     }];
 
     // Call Claude API
@@ -54,13 +49,7 @@ async fn test_claude_api_with_tools() {
     dotenv().ok();
 
     // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return;
-        }
-    };
+    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
 
     // Create client
     let client = Client::new(&api_key);
@@ -71,7 +60,10 @@ async fn test_claude_api_with_tools() {
     // Create a message that will use a tool
     let messages = vec![Message {
         role: "user".to_string(),
-        content: "Please list the files in the current directory using the LS tool".to_string(),
+        content_type: MessageContent::Text {
+            content: "Please list the files in the current directory using the LS tool".to_string(),
+        },
+        id: None,
     }];
 
     // Call Claude API with tools
@@ -108,70 +100,58 @@ async fn test_claude_api_with_tools() {
         serde_json::to_string_pretty(&first_tool_call.parameters).unwrap()
     );
 
-    // Execute the tool manually
-    let result = execute_tool(first_tool_call).await;
+    let result =
+        coder::tools::execute_tool(&first_tool_call.name, &first_tool_call.parameters)
+            .await;
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
 
     println!("Tool result: {}", result.unwrap());
     println!("Tools API test passed successfully!");
 }
 
-#[tokio::test]
-#[ignore]
-async fn test_streaming_response() -> Result<()> {
-    // Load environment variables from .env file
+async fn test_claude_api_with_tool_response() {
     dotenv().ok();
-
-    // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return Ok(());
-        }
-    };
-
-    // Create client
+    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
     let client = Client::new(&api_key);
 
-    // Create a simple message
-    let messages = vec![Message {
-        role: "user".to_string(),
-        content: "Write a short poem about Rust programming".to_string(),
-    }];
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content_type: MessageContent::Text {
+                content: "Please list the files in the current directory using the LS tool"
+                    .to_string(),
+            },
+            id: None,
+        },
+        Message {
+            role: "assistant".to_string(),
+            content_type: MessageContent::StructuredContent {
+                content: StructuredContent(vec![ContentBlock::ToolUse {
+                    id: "this-is-the-id".to_string(),
+                    name: "ls".to_string(),
+                    input: serde_json::Value::Null,
+                }]),
+            },
+            id: None,
+        },
+        Message {
+            role: "user".to_string(),
+            content_type: MessageContent::StructuredContent {
+                content: StructuredContent(vec![
+                    ContentBlock::ToolResult {
+                        tool_use_id: "this-is-the-id".to_string(),
+                        content: "foo".to_string(),
+                    },
+                    ContentBlock::Text {
+                        text: "list it again".to_string(),
+                    },
+                ]),
+            },
+            id: None,
+        },
+    ];
 
-    // Get streaming response
-    let mut stream = client.complete_streaming(messages, None, None);
+    let response = client.complete(messages, None, None).await;
 
-    // Process the stream
-    use futures_util::StreamExt;
-    let mut text = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(content) => {
-                println!("Received chunk: {}", content);
-                text.push_str(&content);
-            }
-            Err(e) => {
-                println!("Stream error: {}", e);
-                assert!(false, "Stream error: {}", e);
-            }
-        }
-    }
-
-    // Verify we got a reasonable response
-    assert!(!text.is_empty(), "Response text should not be empty");
-    assert!(text.contains("Rust"), "Response should mention Rust");
-
-    println!("Final response: {}", text);
-    println!("Streaming API test passed successfully!");
-
-    Ok(())
-}
-
-// Helper function to execute a tool call
-async fn execute_tool(tool_call: &ToolCall) -> Result<String> {
-    // Use the top-level execute_tool function from the tools module
-    claude_code_rs::tools::execute_tool(&tool_call.name, &tool_call.parameters).await
+    assert!(response.is_ok(), "API call failed: {:?}", response.err());
 }

@@ -57,9 +57,18 @@ async fn main() -> Result<()> {
         utils::logging::LogLevel::Info
     };
     
-    // Initialize the home directory for logs
+    // Create a timestamped log file
+    let now = chrono::Local::now();
+    let timestamp = now.format("%Y%m%d_%H%M%S");
     let home = dirs::home_dir();
-    let log_path = home.map(|h| h.join(".claude-code").join("debug.log"));
+    let log_path = home.map(|h| h.join(".claude-code").join(format!("{}.log", timestamp)));
+    
+    // Create the directory if it doesn't exist
+    if let Some(path) = &log_path {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
     
     // Initialize logger
     utils::logging::Logger::init(log_path.as_deref(), log_level)?;

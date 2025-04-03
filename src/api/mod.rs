@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
-use reqwest::{self, header};
-use serde::{Deserialize, Serialize};
 use async_stream::stream;
-use std::pin::Pin;
-use std::task::{Context as TaskContext, Poll};
 use futures_core::Stream;
 use futures_util::StreamExt;
+use reqwest::{self, header};
+use serde::{Deserialize, Serialize};
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll};
 
 pub mod messages;
 pub mod tools;
@@ -62,15 +62,15 @@ pub struct CompletionResponse {
 #[serde(tag = "type")]
 pub enum ContentBlock {
     #[serde(rename = "text")]
-    Text { 
+    Text {
         text: String,
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
     #[serde(rename = "tool_use")]
-    ToolUse { 
+    ToolUse {
         id: String,
-        name: String, 
+        name: String,
         input: serde_json::Value,
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
@@ -144,10 +144,7 @@ impl Stream for CompletionStream {
 impl Client {
     pub fn new(api_key: &str) -> Self {
         let mut headers = header::HeaderMap::new();
-        headers.insert(
-            "x-api-key",
-            header::HeaderValue::from_str(api_key).unwrap(),
-        );
+        headers.insert("x-api-key", header::HeaderValue::from_str(api_key).unwrap());
         headers.insert(
             "anthropic-version",
             header::HeaderValue::from_static("2023-06-01"),
@@ -193,10 +190,8 @@ impl Client {
             stream: None,
         };
 
-        // For debug purposes, uncomment the following lines
-        // let request_json = serde_json::to_string_pretty(&request).unwrap();
-        // eprintln!("API Request Body: {}", request_json);
-        
+        crate::utils::logging::debug("API Request messages", &format!("{:?}", request.messages));
+
         let response = self
             .client
             .post(API_URL)
@@ -217,153 +212,49 @@ impl Client {
 
         Ok(completion)
     }
-
-    /// Complete a prompt with Claude with streaming
-    pub fn complete_streaming(
-        &self,
-        messages: Vec<Message>,
-        system: Option<String>,
-        tools: Option<Vec<Tool>>,
-    ) -> CompletionStream {
-        let request = CompletionRequest {
-            model: self.model.clone(),
-            messages,
-            max_tokens: 4000,
-            system,
-            tools,
-            temperature: Some(0.7),
-            top_p: None,
-            top_k: None,
-            stream: Some(true),
-        };
-
-        let client = self.client.clone();
-        
-        let stream = stream! {
-            let response = match client.post(API_URL)
-                .json(&request)
-                .send()
-                .await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        yield Err(anyhow::anyhow!("Failed to send request: {}", e));
-                        return;
-                    }
-                };
-
-            if !response.status().is_success() {
-                let error_text = match response.text().await {
-                    Ok(text) => text,
-                    Err(e) => format!("Failed to get error text: {}", e),
-                };
-                yield Err(anyhow::anyhow!("API error: {}", error_text));
-                return;
-            }
-
-            let mut stream = response.bytes_stream();
-            let mut accumulated_text = String::new();
-
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        let chunk_str = match std::str::from_utf8(&chunk) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                yield Err(anyhow::anyhow!("Failed to parse chunk as UTF-8: {}", e));
-                                continue;
-                            }
-                        };
-
-                        // The stream is a series of SSE events
-                        for line in chunk_str.lines() {
-                            if line.starts_with("data: ") {
-                                let data = &line[6..]; // Skip "data: "
-                                if data == "[DONE]" {
-                                    // End of stream
-                                    break;
-                                }
-
-                                let delta: StreamingCompletionResponse = match serde_json::from_str(data) {
-                                    Ok(d) => d,
-                                    Err(e) => {
-                                        // For debug purposes, uncomment the following line
-                                        // eprintln!("Failed to parse delta. Raw data: {}", data);
-                                        yield Err(anyhow::anyhow!("Failed to parse delta: {}", e));
-                                        continue;
-                                    }
-                                };
-
-                                if let Some(delta) = delta.delta {
-                                    if let Some(text) = delta.text {
-                                        accumulated_text.push_str(&text);
-                                        yield Ok(text);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        yield Err(anyhow::anyhow!("Error reading stream: {}", e));
-                    }
-                }
-            }
-        };
-
-        CompletionStream {
-            response: Box::pin(stream),
-        }
-    }
-
-    /// Generate a summary of a conversation
-    pub async fn generate_summary(&self, prompt: &str) -> Result<String> {
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }];
-
-        let response = self.complete(messages, None, None).await?;
-        
-        // Extract text from the response
-        let mut result = String::new();
-        for content in response.content {
-            if let ContentBlock::Text { text, .. } = content {
-                result.push_str(&text);
-            }
-        }
-        
-        Ok(result)
-    }
 }
 
 impl CompletionResponse {
     /// Check if the response contains any tool calls
     pub fn has_tool_calls(&self) -> bool {
-        self.content.iter().any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+        self.content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
     }
-    
+
     /// Extract all tool calls from the response
     pub fn extract_tool_calls(&self) -> Vec<ToolCall> {
-        self.content.iter().filter_map(|block| {
-            if let ContentBlock::ToolUse { id, name, input, .. } = block {
-                Some(ToolCall {
-                    name: name.clone(),
-                    parameters: input.clone(),
-                    id: Some(id.clone()),
-                })
-            } else {
-                None
-            }
-        }).collect()
+        self.content
+            .iter()
+            .filter_map(|block| {
+                if let ContentBlock::ToolUse {
+                    id, name, input, ..
+                } = block
+                {
+                    Some(ToolCall {
+                        name: name.clone(),
+                        parameters: input.clone(),
+                        id: Some(id.clone()),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
-    
+
     /// Extract all text content from the response
     pub fn extract_text(&self) -> String {
-        self.content.iter().filter_map(|block| {
-            if let ContentBlock::Text { text, .. } = block {
-                Some(text.clone())
-            } else {
-                None
-            }
-        }).collect::<Vec<String>>().join("")
+        self.content
+            .iter()
+            .filter_map(|block| {
+                if let ContentBlock::Text { text, .. } = block {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("")
     }
 }

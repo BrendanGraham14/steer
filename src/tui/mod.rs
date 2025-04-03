@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
 mod message_formatter;
@@ -48,6 +48,7 @@ pub struct Tui {
 pub struct FormattedMessage {
     content: Vec<Line<'static>>,
     role: crate::app::Role,
+    id: String,
 }
 
 impl Tui {
@@ -66,12 +67,12 @@ impl Tui {
         if let Ok(mut max) = MAX_SCROLL.write() {
             *max = 0;
         }
-        
+
         // Reset spinner state
         if let Ok(mut spinner) = SPINNER_STATE.write() {
             *spinner = 0;
         }
-        
+
         Ok(Self {
             terminal,
             input: String::new(),
@@ -84,21 +85,26 @@ impl Tui {
         })
     }
 
-    pub async fn run(&mut self, app: &mut crate::app::App, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        app: &mut crate::app::App,
+        mut event_rx: mpsc::Receiver<crate::app::AppEvent>,
+    ) -> Result<()> {
         // Spawn a task to handle events from the app - do this first to set up shared message state
         let mut event_handle = self.spawn_event_handler(event_rx);
-        
-        // Welcome message
-        self.add_system_message("Welcome to Claude Code! Type your query and press Enter to send.");
-        self.add_system_message("Press Ctrl+C to exit, Ctrl+S to toggle input mode.");
 
         // Sync messages to the shared state
         if let Some(shared) = &self.shared_messages {
             // Update the shared messages
             if let Ok(mut messages) = shared.try_lock() {
                 *messages = self.messages.clone();
-                crate::utils::logging::info("tui.run", 
-                    &format!("Initialized shared messages with welcome messages. Count: {}", messages.len()));
+                crate::utils::logging::info(
+                    "tui.run",
+                    &format!(
+                        "Initialized shared messages with welcome messages. Count: {}",
+                        messages.len()
+                    ),
+                );
             }
         }
 
@@ -106,15 +112,19 @@ impl Tui {
         let system_prompt = if app.has_memory_file() {
             // Use the memory-enhanced system prompt
             crate::api::messages::create_system_prompt_with_memory(
-                app.environment_info(), 
-                app.memory_content()
+                app.environment_info(),
+                app.memory_content(),
             )
         } else {
             // Use the regular system prompt
             crate::api::messages::create_system_prompt(app.environment_info())
         };
-        
-        app.add_system_message(system_prompt.content.clone());
+
+        let content = match &system_prompt.content_type {
+            crate::api::messages::MessageContent::Text { content } => content.clone(),
+            _ => "System prompt".to_string(),
+        };
+        app.add_system_message(content);
 
         loop {
             // Draw UI
@@ -128,7 +138,7 @@ impl Tui {
                     }
                 }
             }
-            
+
             // Check if the event handler has exited
             if event_handle.is_finished() {
                 // Recreate the event handler if it has exited
@@ -145,21 +155,24 @@ impl Tui {
 
         Ok(())
     }
-    
+
     // Spawn a task to handle events from the app
-    fn spawn_event_handler(&mut self, mut event_rx: mpsc::Receiver<crate::app::AppEvent>) -> JoinHandle<()> {
+    fn spawn_event_handler(
+        &mut self,
+        mut event_rx: mpsc::Receiver<crate::app::AppEvent>,
+    ) -> JoinHandle<()> {
         // Clone the messages Vec to move into the task
         let messages = Arc::new(Mutex::new(self.messages.clone()));
-        
+
         // Create a shared messages reference that will be updated by the event handler
         // and can be retrieved by the main TUI instance
         let shared_messages = Arc::clone(&messages);
         self.shared_messages = Some(shared_messages);
-        
+
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 let mut messages = messages.lock().await;
-                
+
                 // Update the progress message based on events
                 match &event {
                     crate::app::AppEvent::ThinkingStarted => {
@@ -167,97 +180,489 @@ impl Tui {
                             *state = 0; // Reset spinner state
                         }
                     }
-                    crate::app::AppEvent::ToolCallStarted { name: _ } => {
+                    crate::app::AppEvent::ToolCallStarted { name: _, id: _ } => {
                         if let Ok(mut state) = SPINNER_STATE.write() {
                             *state = 0; // Reset spinner state
                         }
                     }
                     _ => {}
                 }
-                
+
                 match event {
-                    crate::app::AppEvent::MessageAdded { role, content } => {
-                        // Check if we have a matching message already (for updates)
+                    crate::app::AppEvent::MessageAdded { role, content, id } => {
+                        // Skip system messages - don't add them to the UI
+                        if role == crate::app::Role::System {
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                "Skipping system message - not adding to conversation display",
+                            );
+                            continue;
+                        }
+
+                        // Check if a message with this ID already exists
                         let mut found = false;
-                        for msg in messages.iter_mut() {
-                            if msg.role == role {
-                                // Update the existing message
-                                msg.content = format_message(&content, role); // Role now implements Copy
+                        for (idx, msg) in messages.iter_mut().enumerate() {
+                            if msg.id == id {
+                                // This is a duplicate MessageAdded event or ID collision
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Message with ID {} already exists at index {} - updating content",
+                                        id, idx
+                                    ),
+                                );
+                                msg.content = format_message(&content, role);
                                 found = true;
                                 break;
                             }
                         }
-                        
-                        // If not found, add a new message
+
+                        // If thinking message exists and this is a new assistant message, replace the thinking message
+                        if !found && role == crate::app::Role::Assistant {
+                            for (idx, msg) in messages.iter_mut().enumerate().rev() {
+                                if msg.role == role {
+                                    // Check if this is a thinking message
+                                    let content_str = msg
+                                        .content
+                                        .iter()
+                                        .filter_map(|line| line.spans.first())
+                                        .map(|span| span.content.to_string())
+                                        .collect::<Vec<String>>()
+                                        .join(" ");
+
+                                    if content_str.trim() == "Thinking..."
+                                        || content_str.trim()
+                                            == "Processing complete. Waiting for response..."
+                                    {
+                                        // Replace the thinking message with this new content
+                                        crate::utils::logging::debug(
+                                            "tui.event_handler",
+                                            &format!(
+                                                "Replacing thinking message at index {} with new message ID {}",
+                                                idx, id
+                                            ),
+                                        );
+                                        msg.content = format_message(&content, role);
+                                        msg.id = id.clone(); // Update ID
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // If still not found, add a new message
                         if !found {
-                            let formatted = format_message(&content, role); // Role now implements Copy
+                            let formatted = format_message(&content, role);
                             messages.push(FormattedMessage {
                                 content: formatted,
                                 role,
+                                id: id.clone(),
                             });
-                            
+
                             // Debug info with proper logging
-                            let content_summary = if content.len() > 50 { 
-                                format!("{}...", &content[..50]) 
-                            } else { 
-                                content.clone() 
+                            let content_summary = if content.len() > 50 {
+                                format!("{}...", &content[..50])
+                            } else {
+                                content.clone()
                             };
-                            crate::utils::logging::debug("tui.event_handler", 
-                                &format!("Added new message to shared state. Role: {:?}, Content summary: {:?}", 
-                                     role, content_summary));
-                            crate::utils::logging::debug("tui.event_handler", 
-                                &format!("Messages count in shared: {}", messages.len()));
-                            
-                            // Reset scroll to show most recent content for new messages
-                            // (not for updates to existing messages)
-                            Tui::set_scroll_offset(0);
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                &format!(
+                                    "Added new message to shared state. Role: {:?}, ID: {}, Content summary: {:?}",
+                                    role, id, content_summary
+                                ),
+                            );
                         }
-                    },
-                    crate::app::AppEvent::ToolCallStarted { name } => {
-                        let formatted = format_message(&format!("Starting tool call: {}", name), crate::app::Role::System);
+
+                        // Reset scroll to show most recent content
+                        Tui::set_scroll_offset(0);
+                    }
+                    crate::app::AppEvent::MessageUpdated { id, content } => {
+                        // Print debug info about all messages before updating
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!(
+                                "MessageUpdated event for ID: {}, message count: {}",
+                                id,
+                                messages.len()
+                            ),
+                        );
+
+                        // Log all message IDs for debugging
+                        let all_ids: Vec<(usize, &str, &crate::app::Role)> = messages
+                            .iter()
+                            .enumerate()
+                            .map(|(i, m)| (i, m.id.as_str(), &m.role))
+                            .collect();
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!("All message IDs: {:?}", all_ids),
+                        );
+
+                        // Find the message with the given ID and update its content
+                        let mut found = false;
+                        for (idx, msg) in messages.iter_mut().enumerate() {
+                            if msg.id == id {
+                                // Found the message to update
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "MessageUpdated: Updating message with ID {} at index {}, role: {:?}",
+                                        id, idx, msg.role
+                                    ),
+                                );
+
+                                // Get a preview of old content for debugging
+                                let old_content_preview = msg
+                                    .content
+                                    .iter()
+                                    .take(1)
+                                    .filter_map(|line| line.spans.first())
+                                    .map(|span| span.content.to_string())
+                                    .collect::<Vec<String>>()
+                                    .join(" ");
+                                let new_content_preview = if content.len() > 30 {
+                                    format!("{}...", &content[..30])
+                                } else {
+                                    content.clone()
+                                };
+
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Content change: \"{}\" -> \"{}\"",
+                                        old_content_preview, new_content_preview
+                                    ),
+                                );
+
+                                // Update the content
+                                msg.content = format_message(&content, msg.role);
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if !found {
+                            // Could not find a message with this ID - this shouldn't happen
+                            // but we'll log it and handle it gracefully
+                            crate::utils::logging::warn(
+                                "tui.event_handler",
+                                &format!(
+                                    "MessageUpdated: No message found with ID {}. Content: {}...",
+                                    id,
+                                    &content.chars().take(30).collect::<String>()
+                                ),
+                            );
+
+                            // As a fallback, look for any message that might be a thinking message
+                            for (idx, msg) in messages.iter_mut().enumerate().rev() {
+                                if msg.role == crate::app::Role::Assistant {
+                                    // Check if this is a thinking message
+                                    let content_str = msg
+                                        .content
+                                        .iter()
+                                        .filter_map(|line| line.spans.first())
+                                        .map(|span| span.content.to_string())
+                                        .collect::<Vec<String>>()
+                                        .join(" ");
+
+                                    if content_str.trim() == "Thinking..."
+                                        || content_str.trim()
+                                            == "Processing complete. Waiting for response..."
+                                    {
+                                        // Replace the thinking message
+                                        crate::utils::logging::debug(
+                                            "tui.event_handler",
+                                            &format!(
+                                                "MessageUpdated: Using thinking message at index {} with ID {} as fallback",
+                                                idx, msg.id
+                                            ),
+                                        );
+                                        msg.content = format_message(&content, msg.role);
+                                        msg.id = id.clone(); // Update ID to match
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // If still not found, create a new assistant message as last resort
+                            if !found {
+                                crate::utils::logging::warn(
+                                    "tui.event_handler",
+                                    "MessageUpdated: Creating new assistant message as fallback",
+                                );
+                                let formatted =
+                                    format_message(&content, crate::app::Role::Assistant);
+                                messages.push(FormattedMessage {
+                                    content: formatted,
+                                    role: crate::app::Role::Assistant,
+                                    id: id.clone(),
+                                });
+                            }
+                        }
+                    }
+                    crate::app::AppEvent::ToolCallStarted { name, id } => {
+                        // Generate an ID if one wasn't provided
+                        let tool_id = id.clone().unwrap_or_else(|| {
+                            format!(
+                                "tool_{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .expect("Time went backwards")
+                                    .as_secs()
+                            )
+                        });
+
+                        let formatted = format_message(
+                            &format!("Starting tool call: {}", name),
+                            crate::app::Role::Tool,
+                        );
                         messages.push(FormattedMessage {
                             content: formatted,
-                            role: crate::app::Role::System,
+                            role: crate::app::Role::Tool,
+                            id: tool_id,
                         });
-                    },
-                    crate::app::AppEvent::ToolCallCompleted { name, result: _ } => {
-                        let formatted = format_message(&format!("Tool {} executed successfully", name), crate::app::Role::System);
+                    }
+                    crate::app::AppEvent::ToolCallCompleted {
+                        name,
+                        result: _,
+                        id,
+                    } => {
+                        // Generate an ID if one wasn't provided
+                        let tool_id = id.clone().unwrap_or_else(|| {
+                            format!(
+                                "tool_{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .expect("Time went backwards")
+                                    .as_secs()
+                            )
+                        });
+
+                        let formatted = format_message(
+                            &format!("Tool {} executed successfully", name),
+                            crate::app::Role::Tool,
+                        );
                         messages.push(FormattedMessage {
                             content: formatted,
-                            role: crate::app::Role::System,
+                            role: crate::app::Role::Tool,
+                            id: tool_id,
                         });
-                    },
-                    crate::app::AppEvent::ToolCallFailed { name, error } => {
-                        let formatted = format_message(&format!("Tool {} failed: {}", name, error), crate::app::Role::System);
+                    }
+                    crate::app::AppEvent::ToolCallFailed { name, error, id } => {
+                        // Generate an ID if one wasn't provided
+                        let tool_id = id.clone().unwrap_or_else(|| {
+                            format!(
+                                "tool_{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .expect("Time went backwards")
+                                    .as_secs()
+                            )
+                        });
+
+                        let formatted = format_message(
+                            &format!("Tool {} failed: {}", name, error),
+                            crate::app::Role::Tool,
+                        );
                         messages.push(FormattedMessage {
                             content: formatted,
-                            role: crate::app::Role::System,
+                            role: crate::app::Role::Tool,
+                            id: tool_id,
                         });
-                    },
+                    }
                     crate::app::AppEvent::ThinkingStarted => {
-                        let formatted = format_message("Thinking...", crate::app::Role::System);
-                        messages.push(FormattedMessage {
-                            content: formatted,
-                            role: crate::app::Role::System,
-                        });
-                    },
+                        // Generate a unique ID for the thinking message
+                        // Use the same format as in conversation.rs
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .expect("Time went backwards")
+                            .as_secs();
+
+                        let random_suffix = format!("{:04x}", (timestamp % 10000));
+                        let thinking_id = format!("assistant_{}{}", timestamp, random_suffix);
+
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!("ThinkingStarted: Creating thinking ID: {}", thinking_id),
+                        );
+
+                        // Check if we already have an Assistant message to update
+                        let mut found = false;
+                        for (idx, msg) in messages.iter_mut().enumerate().rev() {
+                            if msg.role == crate::app::Role::Assistant {
+                                // If the last Assistant message exists, update it to "Thinking..."
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Updating existing assistant message at index {} with ID {} to 'Thinking...'",
+                                        idx, msg.id
+                                    ),
+                                );
+                                msg.content =
+                                    format_message("Thinking...", crate::app::Role::Assistant);
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        // If no existing Assistant message found, add a new one
+                        if !found {
+                            let formatted =
+                                format_message("Thinking...", crate::app::Role::Assistant);
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                &format!(
+                                    "Adding new 'Thinking...' message with ID {}",
+                                    thinking_id
+                                ),
+                            );
+                            messages.push(FormattedMessage {
+                                content: formatted,
+                                role: crate::app::Role::Assistant,
+                                id: thinking_id,
+                            });
+                        }
+
+                        // Verify message order after adding thinking message
+                        let message_ids = messages
+                            .iter()
+                            .map(|m| m.id.as_str())
+                            .collect::<Vec<&str>>();
+                        let message_roles = messages
+                            .iter()
+                            .map(|m| format!("{:?}", m.role))
+                            .collect::<Vec<String>>();
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!("Message IDs after ThinkingStarted: {:?}", message_ids),
+                        );
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!("Message roles after ThinkingStarted: {:?}", message_roles),
+                        );
+                    }
                     crate::app::AppEvent::ThinkingCompleted => {
-                        // No need to add a message for this
-                    },
-                    crate::app::AppEvent::CommandResponse { content } => {
-                        let formatted = format_message(&content, crate::app::Role::System);
+                        // We'll handle thinking completed in a better way.
+                        // First log all assistant messages to see if we have real content already
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!(
+                                "ThinkingCompleted event received, message count: {}",
+                                messages.len()
+                            ),
+                        );
+
+                        // Print details of all assistant messages for debugging
+                        for (idx, msg) in messages.iter().enumerate() {
+                            if msg.role == crate::app::Role::Assistant {
+                                let content_preview = msg
+                                    .content
+                                    .iter()
+                                    .take(1)
+                                    .filter_map(|line| line.spans.first())
+                                    .map(|span| span.content.to_string())
+                                    .collect::<Vec<String>>()
+                                    .join(" ");
+
+                                let trimmed = if content_preview.len() > 30 {
+                                    format!("{}...", &content_preview[..30])
+                                } else {
+                                    content_preview
+                                };
+
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Assistant message at idx {}: ID={}, Content preview: \"{}\"",
+                                        idx, msg.id, trimmed
+                                    ),
+                                );
+                            }
+                        }
+
+                        // Instead of just breaking after first assistant message,
+                        // check all messages and only update ones that still have "Thinking..."
+                        let mut updated_any = false;
+                        for (idx, msg) in messages.iter_mut().enumerate() {
+                            if msg.role == crate::app::Role::Assistant {
+                                // Get first line of content for checking
+                                let content_str = msg
+                                    .content
+                                    .iter()
+                                    .filter_map(|line| line.spans.first())
+                                    .map(|span| span.content.to_string())
+                                    .collect::<Vec<String>>()
+                                    .join(" ");
+
+                                // Only update if it's still a placeholder message
+                                if content_str.trim() == "Thinking..." {
+                                    crate::utils::logging::debug(
+                                        "tui.event_handler",
+                                        &format!(
+                                            "ThinkingCompleted: Updating 'Thinking...' message at index {} with ID {}",
+                                            idx, msg.id
+                                        ),
+                                    );
+
+                                    // Update to waiting message but keep same ID
+                                    msg.content = format_message(
+                                        "Processing complete. Waiting for response...",
+                                        crate::app::Role::Assistant,
+                                    );
+                                    updated_any = true;
+                                }
+                            }
+                        }
+
+                        if !updated_any {
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                "ThinkingCompleted: No 'Thinking...' messages found to update",
+                            );
+                        }
+                    }
+                    crate::app::AppEvent::CommandResponse { content, id } => {
+                        // Generate an ID if one wasn't provided
+                        let cmd_id = id.clone().unwrap_or_else(|| {
+                            format!(
+                                "cmd_{}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .expect("Time went backwards")
+                                    .as_secs()
+                            )
+                        });
+
+                        let formatted = format_message(&content, crate::app::Role::Assistant);
                         messages.push(FormattedMessage {
                             content: formatted,
-                            role: crate::app::Role::System,
+                            role: crate::app::Role::Assistant,
+                            id: cmd_id,
                         });
-                    },
+                    }
                     crate::app::AppEvent::Error { message } => {
-                        let formatted = format_message(&format!("Error: {}", message), crate::app::Role::System);
+                        // Generate an error ID
+                        let error_id = format!(
+                            "error_{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .expect("Time went backwards")
+                                .as_secs()
+                        );
+
+                        let formatted = format_message(
+                            &format!("Error: {}", message),
+                            crate::app::Role::Assistant,
+                        );
                         messages.push(FormattedMessage {
                             content: formatted,
-                            role: crate::app::Role::System,
+                            role: crate::app::Role::Assistant,
+                            id: error_id,
                         });
-                    },
+                    }
                 }
             }
         })
@@ -267,30 +672,30 @@ impl Tui {
     fn get_scroll_offset() -> usize {
         SCROLL_OFFSET.read().map(|offset| *offset).unwrap_or(0)
     }
-    
+
     fn set_scroll_offset(offset: usize) {
         if let Ok(mut scroll) = SCROLL_OFFSET.write() {
             *scroll = offset;
         }
     }
-    
+
     fn get_max_scroll() -> usize {
         MAX_SCROLL.read().map(|max| *max).unwrap_or(0)
     }
-    
+
     fn set_max_scroll(max: usize) {
         if let Ok(mut max_scroll) = MAX_SCROLL.write() {
             *max_scroll = max;
         }
     }
-    
+
     // Get current spinner character
     fn get_spinner_char() -> &'static str {
         const SPINNER_CHARS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let state = SPINNER_STATE.read().map(|s| *s).unwrap_or(0) % SPINNER_CHARS.len();
         SPINNER_CHARS[state]
     }
-    
+
     // Update spinner state
     fn update_spinner_state(&mut self) {
         let now = std::time::Instant::now();
@@ -302,59 +707,104 @@ impl Tui {
             self.last_spinner_update = now;
         }
     }
-    
+
     // This function isn't needed after our refactoring
     // fn update_shared_messages(&mut self, shared: Arc<Mutex<Vec<FormattedMessage>>>) {
     //     self.shared_messages = Some(shared);
     // }
-    
+
     // Sync messages from the shared state if available
     fn sync_messages(&mut self) {
         if let Some(shared) = &self.shared_messages {
-            // Try to acquire the lock with a timeout - using try_lock with a retry strategy
+            // Use a more reliable approach with better error handling and retry
             let max_attempts = 5;
             let mut attempts = 0;
             let mut success = false;
-            
+
             while attempts < max_attempts && !success {
-                if let Ok(messages) = shared.try_lock() {
-                    // Debug with proper logging
-                    crate::utils::logging::debug("tui.sync_messages", 
-                        &format!("Syncing messages from shared state. Count: {}", messages.len()));
-                    // Replace our messages with the latest from the shared state
-                    self.messages = messages.clone();
-                    crate::utils::logging::debug("tui.sync_messages", 
-                        &format!("Local message count after sync: {}", self.messages.len()));
-                    success = true;
-                } else {
-                    // Small delay before retry
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                    attempts += 1;
+                match shared.try_lock() {
+                    Ok(messages) => {
+                        // Log message counts before and after for debugging
+                        let shared_count = messages.len();
+                        let local_count = self.messages.len();
+
+                        crate::utils::logging::debug(
+                            "tui.sync_messages",
+                            &format!(
+                                "Syncing messages: shared:{} -> local:{}",
+                                shared_count, local_count
+                            ),
+                        );
+
+                        // Only replace our messages if the shared state has messages
+                        if !messages.is_empty() {
+                            self.messages = messages.clone();
+
+                            // Verify we have all messages in the right order
+                            let ids: Vec<String> =
+                                self.messages.iter().map(|m| m.id.clone()).collect();
+                            crate::utils::logging::debug(
+                                "tui.sync_messages",
+                                &format!("Message IDs after sync: {:?}", ids),
+                            );
+                        } else {
+                            crate::utils::logging::warn(
+                                "tui.sync_messages",
+                                "Shared message vector is empty, keeping local messages",
+                            );
+                        }
+
+                        success = true;
+                    }
+                    Err(_) => {
+                        // Exponential backoff strategy
+                        let delay = std::time::Duration::from_millis(5 * (1 << attempts));
+                        std::thread::sleep(delay);
+                        attempts += 1;
+
+                        crate::utils::logging::debug(
+                            "tui.sync_messages",
+                            &format!(
+                                "Failed to acquire lock, retry {}/{}",
+                                attempts, max_attempts
+                            ),
+                        );
+                    }
                 }
             }
-            
+
             if !success {
-                crate::utils::logging::warn("tui.sync_messages", 
-                    &format!("Failed to acquire lock for syncing messages after {} attempts", max_attempts));
+                crate::utils::logging::warn(
+                    "tui.sync_messages",
+                    &format!(
+                        "Failed to acquire lock for syncing messages after {} attempts",
+                        max_attempts
+                    ),
+                );
             }
         } else {
-            crate::utils::logging::warn("tui.sync_messages", 
-                "No shared messages reference available");
+            crate::utils::logging::warn(
+                "tui.sync_messages",
+                "No shared messages reference available",
+            );
         }
     }
-    
+
     fn draw(&mut self) -> Result<()> {
         // Update spinner if we're processing
         if self.is_processing {
             self.update_spinner_state();
         }
-        
+
         // Sync messages from shared state before drawing
         self.sync_messages();
-        
+
         // Debug to check messages before rendering
-        crate::utils::logging::debug("tui.draw", &format!("Drawing UI with {} messages", self.messages.len()));
-        
+        crate::utils::logging::debug(
+            "tui.draw",
+            &format!("Drawing UI with {} messages", self.messages.len()),
+        );
+
         // Create copies of the data we need to use in the closure
         let messages = self.messages.clone();
         let input = self.input.clone();
@@ -364,14 +814,14 @@ impl Tui {
         };
         let is_processing = self.is_processing;
         let progress_message = self.progress_message.clone();
-        
+
         // Update max scroll value based on current message content and terminal size
         let terminal_height = self.terminal.size()?.height as usize;
         let visible_lines = terminal_height.saturating_sub(5); // Adjust for borders and input area
         let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
         let max_scroll = total_lines.saturating_sub(visible_lines).max(0);
         Self::set_max_scroll(max_scroll);
-        
+
         // Ensure scroll offset is within bounds
         let current_offset = Self::get_scroll_offset();
         if current_offset > max_scroll {
@@ -381,12 +831,12 @@ impl Tui {
         self.terminal.draw(|f| {
             // Create main layout
             let mut constraints = vec![Constraint::Min(1), Constraint::Length(3)];
-            
+
             // Add progress area if processing
             if is_processing {
                 constraints.insert(1, Constraint::Length(1));
             }
-            
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
@@ -404,11 +854,11 @@ impl Tui {
                 } else {
                     format!("{} Processing...", spinner_char)
                 };
-                
-                let progress_widget = Paragraph::new(progress_text)
-                    .style(Style::default().fg(Color::Yellow));
+
+                let progress_widget =
+                    Paragraph::new(progress_text).style(Style::default().fg(Color::Yellow));
                 f.render_widget(progress_widget, chunks[1]);
-                
+
                 // Render input (using cloned data)
                 Self::render_input_static(f, chunks[2], &input, input_mode);
             } else {
@@ -430,42 +880,141 @@ impl Tui {
         area: Rect,
         messages: &[FormattedMessage],
     ) {
-        crate::utils::logging::debug("tui.render_messages", &format!("Rendering messages. Count: {}", messages.len()));
-        for (i, msg) in messages.iter().enumerate() {
-            crate::utils::logging::debug("tui.render_messages", 
-                &format!("  Message {}: Role {:?}, Content lines: {}", i, msg.role, msg.content.len()));
-        }
-        
+        // crate::utils::logging::debug(
+        //     "tui.render_messages",
+        //     &format!("Rendering messages. Count: {}", messages.len()),
+        // );
+        // for (i, msg) in messages.iter().enumerate() {
+        //     crate::utils::logging::debug(
+        //         "tui.render_messages",
+        //         &format!(
+        //             "  Message {}: Role {:?}, Content lines: {}",
+        //             i,
+        //             msg.role,
+        //             msg.content.len()
+        //         ),
+        //     );
+        // }
+
         let scroll_offset = Tui::get_scroll_offset();
-        
-        // Create a list of messages
-        let messages_list: Vec<ListItem> = messages
+
+        // Check if we have any user messages - this indicates the conversation has started
+        let has_user_messages = messages.iter().any(|m| m.role == crate::app::Role::User);
+
+        // Handle welcome messages specially - they're the first two if no user input yet
+        let (welcome_messages, conversation_messages): (
+            Vec<&FormattedMessage>,
+            Vec<&FormattedMessage>,
+        ) = if !has_user_messages && messages.len() >= 2 {
+            // First two are welcome messages, rest are conversation
+            let (welcome, rest) = messages.split_at(2);
+            (
+                welcome
+                    .iter()
+                    .filter(|m| m.role != crate::app::Role::System)
+                    .collect(),
+                rest.iter()
+                    .filter(|m| m.role != crate::app::Role::System)
+                    .collect(),
+            )
+        } else {
+            // If user message exists, all messages are conversation messages
+            (
+                Vec::new(),
+                messages
+                    .iter()
+                    .filter(|m| m.role != crate::app::Role::System)
+                    .collect(),
+            )
+        };
+
+        // // Log the message categorization
+        // crate::utils::logging::debug(
+        //     "tui.render_messages",
+        //     &format!(
+        //         "Welcome messages: {}, Conversation messages: {}",
+        //         welcome_messages.len(),
+        //         conversation_messages.len()
+        //     ),
+        // );
+
+        // Create display items for all messages in proper order
+        let mut messages_list: Vec<ListItem> = Vec::new();
+
+        // Add welcome messages with special styling if there are any
+        if !welcome_messages.is_empty() {
+            // Create a welcome box with all welcome messages concatenated
+            let mut welcome_content = Vec::new();
+            welcome_content.push(Line::from(Span::styled(
+                "Welcome to Claude Code",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            welcome_content.push(Line::from(Span::styled(
+                "Type your query and press Enter to send.",
+                Style::default().fg(Color::White),
+            )));
+
+            // Add each welcome message as content without role headers
+            for m in welcome_messages.iter() {
+                welcome_content.extend(m.content.clone());
+                welcome_content.push(Line::from("")); // Add blank line between welcome messages
+            }
+
+            // Add as a single item with special styling
+            messages_list
+                .push(ListItem::new(welcome_content).style(Style::default().fg(Color::Yellow)));
+        }
+
+        // For conversation messages, maintain the original order
+        // Log conversation message counts for debugging
+        let user_count = conversation_messages
             .iter()
-            .map(|m| {
-                let header_style = match m.role {
-                    crate::app::Role::User => Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                    crate::app::Role::Assistant => Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                    crate::app::Role::System => Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                    crate::app::Role::Tool => Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                };
+            .filter(|m| m.role == crate::app::Role::User)
+            .count();
+        let assistant_count = conversation_messages
+            .iter()
+            .filter(|m| m.role == crate::app::Role::Assistant)
+            .count();
+        let tool_count = conversation_messages
+            .iter()
+            .filter(|m| m.role == crate::app::Role::Tool)
+            .count();
 
-                // Create header
-                let header = Line::from(Span::styled(format!("[ {} ]", m.role), header_style));
+        // crate::utils::logging::debug(
+        //     "tui.render_messages",
+        //     &format!(
+        //         "User msgs: {}, Assistant msgs: {}, Tool msgs: {}",
+        //         user_count, assistant_count, tool_count
+        //     ),
+        // );
 
-                // Create a list item with content
-                let mut lines = vec![header];
-                lines.extend(m.content.clone());
-                ListItem::new(lines)
-            })
-            .collect();
+        // Add conversation messages in their original order
+        for m in conversation_messages {
+            let header_style = match m.role {
+                crate::app::Role::User => Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+                crate::app::Role::Assistant => Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+                crate::app::Role::Tool => Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+                crate::app::Role::System => Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            };
+
+            // Create header
+            let header = Line::from(Span::styled(format!("[ {} ]", m.role), header_style));
+
+            // Create a list item with content
+            let mut lines = vec![header];
+            lines.extend(m.content.clone());
+            messages_list.push(ListItem::new(lines));
+        }
 
         // Calculate max scroll
         let max_scroll = if messages.is_empty() {
@@ -492,7 +1041,7 @@ impl Tui {
         } else {
             Vec::new()
         };
-        
+
         let messages_list = List::new(visible_messages)
             .block(Block::default().borders(Borders::ALL).title(title))
             .highlight_style(Style::default().add_modifier(Modifier::BOLD))
@@ -608,76 +1157,108 @@ impl Tui {
     fn set_progress(&mut self, message: Option<String>) {
         self.progress_message = message;
     }
-    
+
     async fn send_message(&mut self, message: String, app: &mut crate::app::App) -> Result<()> {
         // Set processing flag and message
         self.is_processing = true;
         self.set_progress(Some("Sending message to Claude...".to_string()));
         self.draw()?;
-        
+
         // Let the app process the message
         // The app will handle adding messages to the conversation
         // and emitting events to update the UI
         match app.process_user_message(message.clone()).await {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 // Force update UI with error message if API call failed
-                self.add_system_message(&format!("Error: {}", e));
+                self.add_assistant_message(&format!("Error: {}", e));
                 self.draw()?;
-                
+
                 // Reset processing flag and message
                 self.is_processing = false;
                 self.set_progress(None);
                 return Err(e);
             }
         }
-        
+
         // Try one more UI refresh to make sure we display updated messages
         self.sync_messages();
         self.draw()?;
-        
+
         // Reset processing flag and message
         self.is_processing = false;
         self.set_progress(None);
-        
+
         // Reset scroll to follow newest messages
         Self::set_scroll_offset(0);
-        
+
         // Draw once more after processing is complete
         self.draw()?;
-        
+
         Ok(())
     }
 
     fn add_user_message(&mut self, content: &str) {
+        let id = format!(
+            "local_user_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs()
+        );
         let formatted = format_message(content, crate::app::Role::User);
         self.messages.push(FormattedMessage {
             content: formatted,
             role: crate::app::Role::User,
+            id,
         });
     }
 
     fn add_assistant_message(&mut self, content: &str) {
+        let id = format!(
+            "local_assistant_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs()
+        );
         let formatted = format_message(content, crate::app::Role::Assistant);
         self.messages.push(FormattedMessage {
             content: formatted,
             role: crate::app::Role::Assistant,
+            id,
         });
     }
 
     fn add_system_message(&mut self, content: &str) {
+        let id = format!(
+            "local_system_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs()
+        );
         let formatted = format_message(content, crate::app::Role::System);
         self.messages.push(FormattedMessage {
             content: formatted,
             role: crate::app::Role::System,
+            id,
         });
     }
-    
+
     fn add_tool_message(&mut self, content: &str) {
+        let id = format!(
+            "local_tool_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs()
+        );
         let formatted = format_message(content, crate::app::Role::Tool);
         self.messages.push(FormattedMessage {
             content: formatted,
             role: crate::app::Role::Tool,
+            id,
         });
     }
 }

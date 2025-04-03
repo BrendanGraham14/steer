@@ -2,17 +2,21 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use anyhow::Result;
-use claude_code_rs::app::MemoryManager;
+use coder::app::MemoryManager;
 
 #[test]
 fn test_memory_manager() -> Result<()> {
     // Get the OS temp directory
     let temp_dir = env::temp_dir();
     
-    // Create a test directory
-    let test_dir = temp_dir.join("claude_memory_test");
+    // Create a test directory with unique name
+    let test_dir = temp_dir.join(format!("memory_test_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs()
+    ));
+    // Make sure it doesn't exist
     if test_dir.exists() {
-        // Clean up any old test directory
         fs::remove_dir_all(&test_dir)?;
     }
     fs::create_dir(&test_dir)?;

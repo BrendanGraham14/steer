@@ -15,3 +15,5 @@ Thumbs.db
 
 # Local configuration
 .env
+
+**/CLAUDE.local.md

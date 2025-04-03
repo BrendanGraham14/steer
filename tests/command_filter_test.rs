@@ -1,5 +1,5 @@
 use anyhow::Result;
-use claude_code_rs::tools::command_filter::CommandFilter;
+use coder::tools::command_filter::CommandFilter;
 use dotenv::dotenv;
 use std::env;
 

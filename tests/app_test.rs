@@ -1,6 +1,6 @@
 use anyhow::Result;
-use claude_code_rs::app::{App, AppConfig};
-use claude_code_rs::api::ToolCall;
+use coder::app::{App, AppConfig};
+use coder::api::ToolCall;
 use dotenv::dotenv;
 use std::env;
 

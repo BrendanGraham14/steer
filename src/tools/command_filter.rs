@@ -101,11 +101,17 @@ impl CommandFilter {
         let messages = vec![
             crate::api::Message {
                 role: "system".to_string(),
-                content: "Your task is to process Bash commands that an AI coding agent wants to run.".to_string(),
+                content_type: crate::api::messages::MessageContent::Text {
+                    content: "Your task is to process Bash commands that an AI coding agent wants to run.".to_string(),
+                },
+                id: None,
             },
             crate::api::Message {
                 role: "user".to_string(),
-                content: user_message,
+                content_type: crate::api::messages::MessageContent::Text {
+                    content: user_message,
+                },
+                id: None,
             },
         ];
         

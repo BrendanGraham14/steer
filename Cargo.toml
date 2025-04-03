@@ -1,8 +1,8 @@
 [package]
-name = "claude-code-rs"
+name = "coder"
 version = "0.1.0"
-edition = "2024"                                                     # edition 2024 is now stable
-description = "A command line tool for pair programming with Claude"
+edition = "2024"                         
+description = "Coding agent utilities."
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 
 [dependencies]
