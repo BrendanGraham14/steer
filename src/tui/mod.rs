@@ -49,6 +49,9 @@ pub struct FormattedMessage {
     content: Vec<Line<'static>>,
     role: crate::app::Role,
     id: String,
+    full_tool_result: Option<String>,
+    is_truncated: bool,
+    tool_name: Option<String>,
 }
 
 impl Tui {
@@ -246,6 +249,9 @@ impl Tui {
                                     content: formatted,
                                     role,
                                     id: id.clone(),
+                                    full_tool_result: None,
+                                    is_truncated: false,
+                                    tool_name: None,
                                 });
 
                                 // Debug info with proper logging
@@ -335,74 +341,141 @@ impl Tui {
                         }
                     }
                     crate::app::AppEvent::ToolCallStarted { name, id } => {
-                        // Generate an ID if one wasn't provided
+                        // Use the provided ID directly. Generate one only if absolutely necessary,
+                        // but Claude *should* always provide one for tool_use.
                         let tool_id = id.clone().unwrap_or_else(|| {
-                            format!(
-                                "tool_{}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .expect("Time went backwards")
-                                    .as_secs()
-                            )
+                            crate::utils::logging::warn(
+                                "tui.event_handler",
+                                "ToolCallStarted received without an ID. Generating temporary ID.",
+                            );
+                            format!("tool_start_{}", chrono::Utc::now().timestamp_millis())
                         });
 
-                        let formatted = format_message(
-                            &format!("Starting tool call: {}", name),
-                            crate::app::Role::Tool,
-                        );
-                        messages.push(FormattedMessage {
-                            content: formatted,
-                            role: crate::app::Role::Tool,
-                            id: tool_id,
-                        });
+                        // Check if a message with this ID already exists (e.g., retry)
+                        if messages.iter().any(|m| m.id == tool_id) {
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                &format!(
+                                    "ToolCallStarted: Message with ID {} already exists. Updating content.",
+                                    tool_id
+                                ),
+                            );
+                            // Update existing placeholder if needed
+                            if let Some(msg) = messages.iter_mut().find(|m| m.id == tool_id) {
+                                let placeholder_content = format!("Executing tool: {}", name);
+                                msg.content =
+                                    format_message(&placeholder_content, crate::app::Role::Tool);
+                                msg.role = crate::app::Role::Tool;
+                                msg.full_tool_result = None; // Ensure no stale result
+                                msg.is_truncated = false;
+                                msg.tool_name = Some(name);
+                            }
+                        } else {
+                            // Add a placeholder message
+                            let placeholder_content = format!("Executing tool: {}", name);
+                            let formatted =
+                                format_message(&placeholder_content, crate::app::Role::Tool);
+                            messages.push(FormattedMessage {
+                                content: formatted,
+                                role: crate::app::Role::Tool,
+                                id: tool_id,
+                                full_tool_result: None,
+                                is_truncated: false,
+                                tool_name: Some(name),
+                            });
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                &format!(
+                                    "ToolCallStarted: Added placeholder message with ID {}",
+                                    messages.last().unwrap().id
+                                ),
+                            );
+                        }
+                        Tui::set_scroll_offset(0); // Scroll to show placeholder
                     }
                     crate::app::AppEvent::ToolCallCompleted {
-                        name,
-                        result: _,
+                        name: _,
+                        result,
                         id,
                     } => {
-                        // Generate an ID if one wasn't provided
-                        let tool_id = id.clone().unwrap_or_else(|| {
-                            format!(
-                                "tool_{}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .expect("Time went backwards")
-                                    .as_secs()
-                            )
-                        });
+                        // Must have an ID to update the correct placeholder
+                        if let Some(tool_id) = id {
+                            // Find the existing placeholder message
+                            if let Some(msg) = messages.iter_mut().find(|m| m.id == tool_id) {
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!("ToolCallCompleted: Updating message ID {}", tool_id),
+                                );
 
-                        let formatted = format_message(
-                            &format!("Tool {} executed successfully", name),
-                            crate::app::Role::Tool,
-                        );
-                        messages.push(FormattedMessage {
-                            content: formatted,
-                            role: crate::app::Role::Tool,
-                            id: tool_id,
-                        });
+                                const MAX_PREVIEW_LINES: usize = 5;
+                                let lines: Vec<&str> = result.lines().collect();
+                                let preview_lines: Vec<&str> =
+                                    lines.iter().take(MAX_PREVIEW_LINES).copied().collect();
+                                let mut display_content_str = preview_lines.join("\n");
+
+                                let is_truncated = lines.len() > MAX_PREVIEW_LINES;
+                                if is_truncated {
+                                    display_content_str.push_str("\n...");
+                                }
+
+                                // Update the message content and state
+                                msg.content =
+                                    format_message(&display_content_str, crate::app::Role::Tool);
+                                msg.full_tool_result = Some(result); // Store the full result
+                                msg.is_truncated = is_truncated; // Store the truncated state
+                            // Role remains Tool
+                            } else {
+                                // Placeholder not found - this might happen if TUI clears messages or event order is wrong
+                                crate::utils::logging::warn(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "ToolCallCompleted: No placeholder message found with ID {} to update.",
+                                        tool_id
+                                    ),
+                                );
+                                // Optionally, add a new message here as a fallback, though it might mess up order
+                            }
+                        } else {
+                            crate::utils::logging::error(
+                                "tui.event_handler",
+                                "ToolCallCompleted event received without an ID. Cannot update placeholder.",
+                            );
+                        }
                     }
-                    crate::app::AppEvent::ToolCallFailed { name, error, id } => {
-                        // Generate an ID if one wasn't provided
-                        let tool_id = id.clone().unwrap_or_else(|| {
-                            format!(
-                                "tool_{}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .expect("Time went backwards")
-                                    .as_secs()
-                            )
-                        });
-
-                        let formatted = format_message(
-                            &format!("Tool {} failed: {}", name, error),
-                            crate::app::Role::Tool,
-                        );
-                        messages.push(FormattedMessage {
-                            content: formatted,
-                            role: crate::app::Role::Tool,
-                            id: tool_id,
-                        });
+                    crate::app::AppEvent::ToolCallFailed { name: _, error, id } => {
+                        // Must have an ID to update the correct placeholder
+                        if let Some(tool_id) = id {
+                            // Find the existing placeholder message
+                            if let Some(msg) = messages.iter_mut().find(|m| m.id == tool_id) {
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "ToolCallFailed: Updating message ID {} with error",
+                                        tool_id
+                                    ),
+                                );
+                                let error_content = format!("Tool failed: {}", error);
+                                msg.content =
+                                    format_message(&error_content, crate::app::Role::Tool);
+                                // Ensure result fields are cleared
+                                msg.full_tool_result = None;
+                                msg.is_truncated = false;
+                                // Role remains Tool
+                            } else {
+                                crate::utils::logging::warn(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "ToolCallFailed: No placeholder message found with ID {} to update.",
+                                        tool_id
+                                    ),
+                                );
+                            }
+                        } else {
+                            crate::utils::logging::error(
+                                "tui.event_handler",
+                                "ToolCallFailed event received without an ID. Cannot update placeholder.",
+                            );
+                        }
                     }
                     crate::app::AppEvent::ThinkingStarted => {
                         // Check if the last message is already an Assistant placeholder
@@ -460,6 +533,9 @@ impl Tui {
                                 content: formatted,
                                 role: crate::app::Role::Assistant,
                                 id: thinking_id,
+                                full_tool_result: None,
+                                is_truncated: false,
+                                tool_name: None,
                             });
                             // Reset spinner state
                             if let Ok(mut state) = SPINNER_STATE.write() {
@@ -549,6 +625,9 @@ impl Tui {
                             content: formatted,
                             role: crate::app::Role::Assistant,
                             id: cmd_id,
+                            full_tool_result: None,
+                            is_truncated: false,
+                            tool_name: None,
                         });
                     }
                     crate::app::AppEvent::Error { message } => {
@@ -569,7 +648,75 @@ impl Tui {
                             content: formatted,
                             role: crate::app::Role::Assistant,
                             id: error_id,
+                            full_tool_result: None,
+                            is_truncated: false,
+                            tool_name: None,
                         });
+                    }
+                    crate::app::AppEvent::ToggleMessageTruncation { id } => {
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            &format!("Received ToggleMessageTruncation event for ID: {}", id),
+                        );
+                        if let Some(msg) = messages.iter_mut().find(|m| m.id == id) {
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                &format!("Found message to toggle: ID {}", id),
+                            );
+                            if msg.full_tool_result.is_some() {
+                                msg.is_truncated = !msg.is_truncated;
+                                let full_result = msg.full_tool_result.as_ref().unwrap(); // Safe due to check above
+
+                                if msg.is_truncated {
+                                    // Generate and format the preview
+                                    const MAX_PREVIEW_LINES: usize = 5;
+                                    let lines: Vec<&str> = full_result.lines().collect();
+                                    let preview_lines: Vec<&str> =
+                                        lines.iter().take(MAX_PREVIEW_LINES).copied().collect();
+                                    let mut display_content_str = preview_lines.join(
+                                        "
+",
+                                    );
+                                    if lines.len() > MAX_PREVIEW_LINES {
+                                        display_content_str.push_str(
+                                            "
+...",
+                                        );
+                                    }
+                                    msg.content = format_message(
+                                        &display_content_str,
+                                        crate::app::Role::Tool,
+                                    );
+                                } else {
+                                    // Format the full result
+                                    msg.content =
+                                        format_message(full_result, crate::app::Role::Tool);
+                                }
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Toggled truncation for message ID: {}. New state: is_truncated={}",
+                                        id, msg.is_truncated
+                                    ),
+                                );
+                            } else {
+                                crate::utils::logging::warn(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Message {} found, but has no full_tool_result to toggle.",
+                                        id
+                                    ),
+                                );
+                            }
+                        } else {
+                            crate::utils::logging::warn(
+                                "tui.event_handler",
+                                &format!(
+                                    "ToggleMessageTruncation: No message found with ID {}",
+                                    id
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -916,11 +1063,34 @@ impl Tui {
             };
 
             // Create header
-            let header = Line::from(Span::styled(format!("[ {} ]", m.role), header_style));
+            let header_text = match m.role {
+                crate::app::Role::Tool => {
+                    if let Some(name) = &m.tool_name {
+                        format!("[ Tool: {} ]", name)
+                    } else {
+                        "[ Tool ]".to_string() // Fallback if name is missing
+                    }
+                }
+                _ => format!("[ {} ]", m.role), // Use default role display otherwise
+            };
+            let header = Line::from(Span::styled(header_text, header_style));
 
             // Create a list item with content
             let mut lines = vec![header];
             lines.extend(m.content.clone());
+
+            // Add expand/collapse hint for tool messages with results
+            if m.role == crate::app::Role::Tool && m.full_tool_result.is_some() {
+                let hint_text = if m.is_truncated {
+                    "[Ctrl+R to expand]"
+                } else {
+                    "[Ctrl+R to collapse]"
+                };
+                let hint_style = Style::default().fg(Color::DarkGray);
+                lines.push(Line::from("")); // Add a blank line before hint
+                lines.push(Line::from(Span::styled(hint_text, hint_style)));
+            }
+
             messages_list.push(ListItem::new(lines));
         }
 
@@ -1031,6 +1201,57 @@ impl Tui {
                     let max = Self::get_max_scroll();
                     Self::set_scroll_offset(max);
                 }
+                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::utils::logging::debug(
+                        "tui.handle_input",
+                        "Ctrl+R pressed. Syncing messages...",
+                    );
+                    // Sync messages first to ensure we have the latest state locally
+                    self.sync_messages();
+
+                    crate::utils::logging::debug(
+                        "tui.handle_input",
+                        &format!(
+                            "Current local messages count after sync: {}",
+                            self.messages.len()
+                        ),
+                    );
+
+                    // Find the ID of the last message that is a tool result
+                    let last_tool_msg_id = self.messages.iter().rev().find_map(|msg| {
+                        crate::utils::logging::debug(
+                            "tui.handle_input",
+                            &format!(
+                                "Checking message ID {} (Role: {:?}, HasResult: {})",
+                                msg.id,
+                                msg.role,
+                                msg.full_tool_result.is_some()
+                            ),
+                        );
+                        if msg.role == crate::app::Role::Tool && msg.full_tool_result.is_some() {
+                            Some(msg.id.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(id_to_toggle) = last_tool_msg_id {
+                        crate::utils::logging::debug(
+                            "tui.handle_input",
+                            &format!(
+                                "Found last tool message ID to toggle: {}. Requesting toggle.",
+                                id_to_toggle
+                            ),
+                        );
+                        // Ask the App instance to emit the toggle event
+                        app.toggle_message_truncation(id_to_toggle);
+                    } else {
+                        crate::utils::logging::debug(
+                            "tui.handle_input",
+                            "Ctrl+R pressed, but no tool message found to toggle in local messages.",
+                        );
+                    }
+                }
                 _ => {}
             },
             InputMode::Editing => match key.code {
@@ -1119,6 +1340,9 @@ impl Tui {
             content: formatted,
             role: crate::app::Role::User,
             id,
+            full_tool_result: None,
+            is_truncated: false,
+            tool_name: None,
         });
     }
 
@@ -1135,6 +1359,9 @@ impl Tui {
             content: formatted,
             role: crate::app::Role::Assistant,
             id,
+            full_tool_result: None,
+            is_truncated: false,
+            tool_name: None,
         });
     }
 
@@ -1151,6 +1378,9 @@ impl Tui {
             content: formatted,
             role: crate::app::Role::System,
             id,
+            full_tool_result: None,
+            is_truncated: false,
+            tool_name: None,
         });
     }
 
@@ -1167,6 +1397,9 @@ impl Tui {
             content: formatted,
             role: crate::app::Role::Tool,
             id,
+            full_tool_result: None,
+            is_truncated: false,
+            tool_name: None,
         });
     }
 }

@@ -44,6 +44,9 @@ pub enum AppEvent {
         content: String,
         id: Option<String>,
     },
+    ToggleMessageTruncation {
+        id: String,
+    },
     Error {
         message: String,
     },
@@ -170,11 +173,15 @@ impl App {
 
     pub fn add_message(&mut self, message: Message) {
         self.conversation.messages.push(message.clone());
-        self.emit_event(AppEvent::MessageAdded {
-            role: message.role,
-            content: message.content_string(),
-            id: message.id,
-        });
+        // Only emit MessageAdded for non-tool messages
+        // Tool messages will be handled by ToolCallStarted/Completed/Failed events
+        if message.role != Role::Tool {
+            self.emit_event(AppEvent::MessageAdded {
+                role: message.role,
+                content: message.content_string(),
+                id: message.id,
+            });
+        }
     }
 
     /// Get the current conversation
@@ -628,5 +635,17 @@ impl App {
     /// Get the entire content of the memory file
     pub fn memory_content(&self) -> &str {
         self.memory.content()
+    }
+
+    // New method to trigger the toggle event
+    pub fn toggle_message_truncation(&self, id: String) {
+        crate::utils::logging::debug(
+            "app.toggle_message_truncation",
+            &format!(
+                "Attempting to emit ToggleMessageTruncation event for ID: {}",
+                id
+            ),
+        );
+        self.emit_event(AppEvent::ToggleMessageTruncation { id });
     }
 }
