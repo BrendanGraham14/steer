@@ -41,30 +41,27 @@ impl Logger {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            
+
             // Open the log file (create if it doesn't exist, append if it does)
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)?;
-            
+            let file = OpenOptions::new().create(true).append(true).open(path)?;
+
             Some(Arc::new(Mutex::new(file)))
         } else {
             None
         };
-        
+
         let logger = Logger {
             file,
             level,
             enabled: true,
         };
-        
+
         // Set the global logger instance
         let _ = LOGGER.set(Arc::new(Mutex::new(logger)));
-        
+
         Ok(())
     }
-    
+
     /// Get the global logger instance
     pub fn get() -> Arc<Mutex<Logger>> {
         LOGGER.get().cloned().unwrap_or_else(|| {
@@ -77,26 +74,26 @@ impl Logger {
             Arc::new(Mutex::new(logger))
         })
     }
-    
+
     /// Write a message to the log
     pub fn log(&self, level: LogLevel, module: &str, message: &str) -> io::Result<()> {
         // Skip if logging is disabled or if the message level is below the logger level
         if !self.enabled || level < self.level {
             return Ok(());
         }
-        
+
         // Get timestamp for the log entry
         let _timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let now = chrono::Local::now();
         let time_str = now.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-        
+
         // Format the log entry
         let entry = format!("[{}] [{}] [{}]: {}\n", time_str, level, module, message);
-        
+
         if let Some(file_lock) = &self.file {
             if let Ok(mut file) = file_lock.lock() {
                 // Write to the log file
@@ -104,15 +101,15 @@ impl Logger {
                 file.flush()?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Enable or disable logging
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
-    
+
     /// Change the log level
     pub fn set_level(&mut self, level: LogLevel) {
         self.level = level;
@@ -152,9 +149,9 @@ pub fn init_logging() -> io::Result<()> {
     // Default log file in the user's home directory with timestamp
     let now = chrono::Local::now();
     let timestamp = now.format("%Y%m%d_%H%M%S");
-    
+
     let home = dirs::home_dir();
-    let log_path = home.map(|h| h.join(".claude-code").join(format!("{}.log", timestamp)));
-    
+    let log_path = home.map(|h| h.join(".coder").join(format!("{}.log", timestamp)));
+
     Logger::init(log_path.as_deref(), LogLevel::Debug)
 }
