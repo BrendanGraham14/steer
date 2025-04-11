@@ -101,144 +101,6 @@ impl Message {
         }
     }
 
-    pub fn from_app_message(
-        app_message: &crate::app::Message,
-        next_messages: &[crate::app::Message],
-    ) -> Self {
-        // Extract the message content
-        let content_string = app_message.content_string();
-        let is_empty = content_string.trim().is_empty();
-        let message_id = app_message.id.clone();
-
-        if is_empty && app_message.role != crate::app::Role::Assistant {
-            // Log warning about empty content
-            crate::utils::logging::warn(
-                "message.from_app_message",
-                &format!(
-                    "Found empty content for role {:?}, substituting placeholder",
-                    app_message.role
-                ),
-            );
-
-            // Return placeholder content for non-assistant empty messages
-            return Self {
-                role: "user".to_string(),
-                content_type: MessageContent::Text {
-                    content: "Message with no content".to_string(),
-                },
-                id: Some(message_id),
-            };
-        }
-
-        match app_message.role {
-            crate::app::Role::System => Self {
-                role: "system".to_string(),
-                content_type: MessageContent::Text {
-                    content: content_string,
-                },
-                id: Some(message_id),
-            },
-            crate::app::Role::User => {
-                // Check if this is a special tool result message
-                match &app_message.content {
-                    crate::app::conversation::MessageContent::ToolResult {
-                        tool_use_id,
-                        result,
-                    } => {
-                        return Self::new_tool_result_with_id(
-                            tool_use_id,
-                            result.clone(),
-                            message_id,
-                        );
-                    }
-                    _ => {}
-                }
-
-                // Regular user message
-                Message {
-                    role: "user".to_string(),
-                    content_type: MessageContent::Text {
-                        content: content_string,
-                    },
-                    id: Some(message_id),
-                }
-            }
-            crate::app::Role::Assistant => {
-                // Check for tool calls in this message
-                match &app_message.content {
-                    crate::app::conversation::MessageContent::ToolCalls(tool_calls) => {
-                        // Convert tool calls to our strongly typed ContentBlock format
-                        let mut content_blocks = Vec::new();
-
-                        for tool_call in tool_calls {
-                            content_blocks.push(ContentBlock::ToolUse {
-                                id: tool_call.id.clone(),
-                                name: tool_call.name.clone(),
-                                input: tool_call.parameters.clone(),
-                            });
-                        }
-
-                        return Message {
-                            role: "assistant".to_string(),
-                            content_type: MessageContent::StructuredContent {
-                                content: StructuredContent(content_blocks),
-                            },
-                            id: Some(message_id),
-                        };
-                    }
-                    _ => {}
-                }
-
-                // Check if there are any tool result messages after this assistant message
-                for msg in next_messages {
-                    if msg.role == crate::app::Role::Tool {
-                        // Check for tool result content
-                        if let crate::app::conversation::MessageContent::ToolResult {
-                            tool_use_id,
-                            result,
-                        } = &msg.content
-                        {
-                            // Create a properly typed tool result content block
-                            let content = StructuredContent(vec![ContentBlock::ToolResult {
-                                tool_use_id: tool_use_id.clone(),
-                                content: result.clone(),
-                            }]);
-
-                            return Message {
-                                role: "user".to_string(),
-                                content_type: MessageContent::StructuredContent { content },
-                                id: Some(message_id),
-                            };
-                        }
-                    } else {
-                        // Stop looking for tool messages once we hit a non-tool message
-                        break;
-                    }
-                }
-
-                // If no tool results found, return regular assistant message
-                Message {
-                    role: "assistant".to_string(),
-                    content_type: MessageContent::Text {
-                        content: content_string,
-                    },
-                    id: Some(message_id),
-                }
-            }
-            crate::app::Role::Tool => {
-                // Regular tool messages - displayed to user but not sent to API
-                // Convert to a user message with plain text
-                Message {
-                    role: "user".to_string(),
-                    content_type: MessageContent::Text {
-                        content: content_string,
-                    },
-                    id: Some(message_id),
-                }
-            }
-        }
-    }
-
     pub fn get_content_string(&self) -> String {
         match &self.content_type {
             MessageContent::Text { content } => content.clone(),
@@ -279,71 +141,219 @@ impl Message {
 pub fn convert_conversation(
     conversation: &crate::app::Conversation,
 ) -> (Vec<Message>, Option<String>) {
-    let mut messages = Vec::new();
+    let mut api_messages = Vec::new();
     let mut system_content = None;
+    // Use iter().peekable() to group consecutive tool messages
+    let mut app_messages_iter = conversation.messages.iter().peekable();
 
-    for (i, msg) in conversation.messages.iter().enumerate() {
-        match msg.role {
+    while let Some(app_msg) = app_messages_iter.next() {
+        match app_msg.role {
             crate::app::Role::System => {
-                // Store system message content
-                let content_string = msg.content_string();
-                if !content_string.trim().is_empty() {
-                    if let crate::app::conversation::MessageContent::Text(content) = &msg.content {
+                // Store system message content if not empty
+                if let crate::app::conversation::MessageContent::Text(content) = &app_msg.content {
+                    if !content.trim().is_empty() {
                         system_content = Some(content.clone());
                     }
                 }
             }
-            _ => {
-                // Get content string to check if empty
-                let content_string = msg.content_string();
-
-                // Skip empty messages except for assistants (Claude API allows empty assistant messages)
-                if !content_string.trim().is_empty() || msg.role == crate::app::Role::Assistant {
-                    // Get remaining messages for look-ahead
-                    let remaining_messages = &conversation.messages[i + 1..];
-
-                    // Add message types to the messages array
-                    let api_message = Message::from_app_message(msg, remaining_messages);
-
-                    // Check the content isn't empty (except for assistant messages)
-                    let is_empty = match &api_message.content_type {
-                        MessageContent::Text { content } => content.trim().is_empty(),
-                        MessageContent::StructuredContent { content } => content.0.is_empty(),
-                    };
-
-                    if !is_empty || api_message.role == "assistant" {
-                        messages.push(api_message);
+            crate::app::Role::User => {
+                // Handle User messages (only text content is expected here for API format)
+                if let crate::app::conversation::MessageContent::Text(content) = &app_msg.content {
+                    // Skip empty user messages
+                    if !content.trim().is_empty() {
+                        api_messages.push(Message {
+                            role: "user".to_string(),
+                            content_type: MessageContent::Text {
+                                content: content.clone(),
+                            },
+                            // Use the app message ID if needed later
+                            id: Some(app_msg.id.clone()),
+                        });
                     } else {
+                        crate::utils::logging::debug(
+                            "messages.convert_conversation",
+                            &format!("Skipping empty user message with ID: {}", app_msg.id),
+                        );
+                    }
+                } else {
+                    // Log if user message has unexpected content type
+                    crate::utils::logging::warn(
+                        "messages.convert_conversation",
+                        &format!(
+                            "User message ID {} has unexpected content type: {:?}, skipping.",
+                            app_msg.id, app_msg.content
+                        ),
+                    );
+                }
+            }
+            crate::app::Role::Assistant => {
+                // Handle Assistant messages
+                match &app_msg.content {
+                    crate::app::conversation::MessageContent::Text(content) => {
+                        // Assistant messages can be empty (e.g., only tool calls followed)
+                        api_messages.push(Message {
+                            role: "assistant".to_string(),
+                            content_type: MessageContent::Text {
+                                content: content.clone(),
+                            },
+                            id: Some(app_msg.id.clone()),
+                        });
+                    }
+                    crate::app::conversation::MessageContent::ToolCalls(tool_calls) => {
+                        // Convert app::ToolCall to api::ContentBlock::ToolUse
+                        let content_blocks: Vec<ContentBlock> = tool_calls
+                            .iter()
+                            .map(|tc| ContentBlock::ToolUse {
+                                // Ensure the tool call ID is present for the API
+                                id: tc.id.clone(),
+                                name: tc.name.clone(),
+                                input: tc.parameters.clone(),
+                            })
+                            .collect();
+
+                        // Only add if there are actual tool calls
+                        if !content_blocks.is_empty() {
+                            api_messages.push(Message {
+                                role: "assistant".to_string(),
+                                content_type: MessageContent::StructuredContent {
+                                    content: StructuredContent(content_blocks),
+                                },
+                                id: Some(app_msg.id.clone()),
+                            });
+                        } else {
+                            crate::utils::logging::warn(
+                                "messages.convert_conversation",
+                                &format!(
+                                    "Assistant message ID {} had ToolCalls content but was empty, skipping.",
+                                    app_msg.id
+                                ),
+                            );
+                        }
+                    }
+                    _ => {
+                        // Log if assistant message has unexpected content (e.g., ToolResult)
                         crate::utils::logging::warn(
                             "messages.convert_conversation",
                             &format!(
-                                "Skipping empty content message with role {}",
-                                api_message.role
+                                "Assistant message ID {} has unexpected content type: {:?}, skipping.",
+                                app_msg.id, app_msg.content
                             ),
                         );
                     }
                 }
             }
+            crate::app::Role::Tool => {
+                // Group consecutive Tool messages into a single API user message
+                let mut tool_results = Vec::new();
+                // Use the ID of the first tool message in the sequence for the API message ID
+                let first_tool_msg_id = app_msg.id.clone();
+
+                // Process the first tool message
+                if let crate::app::conversation::MessageContent::ToolResult {
+                    tool_use_id,
+                    result,
+                } = &app_msg.content
+                {
+                    tool_results.push(ContentBlock::ToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        // Ensure content is never empty string for the API, use placeholder if needed.
+                        // Although Claude might handle empty strings, let's be safe.
+                        content: if result.trim().is_empty() {
+                            "(No output)".to_string()
+                        } else {
+                            result.clone()
+                        },
+                    });
+                } else {
+                    crate::utils::logging::error(
+                        "messages.convert_conversation",
+                        &format!(
+                            "Message ID {} has Role::Tool but unexpected content: {:?}",
+                            app_msg.id, app_msg.content
+                        ),
+                    );
+                    // Skip this message and continue iteration
+                    continue;
+                }
+
+                // Peek ahead and consume subsequent Tool messages
+                while let Some(next_msg) = app_messages_iter.peek() {
+                    if next_msg.role == crate::app::Role::Tool {
+                        // Consume the message from the iterator
+                        let consumed_msg = app_messages_iter.next().unwrap(); // Safe due to peek
+                        if let crate::app::conversation::MessageContent::ToolResult {
+                            tool_use_id,
+                            result,
+                        } = &consumed_msg.content
+                        {
+                            tool_results.push(ContentBlock::ToolResult {
+                                tool_use_id: tool_use_id.clone(),
+                                content: if result.trim().is_empty() {
+                                    "(No output)".to_string()
+                                } else {
+                                    result.clone()
+                                },
+                            });
+                        } else {
+                            crate::utils::logging::error(
+                                "messages.convert_conversation",
+                                &format!(
+                                    "Message ID {} has Role::Tool but unexpected content: {:?}",
+                                    consumed_msg.id, consumed_msg.content
+                                ),
+                            );
+                            // Continue processing other tool messages if any
+                        }
+                    } else {
+                        // Next message is not Role::Tool, stop grouping
+                        break;
+                    }
+                }
+
+                // Add the grouped tool results as a single API user message
+                if !tool_results.is_empty() {
+                    api_messages.push(Message {
+                        role: "user".to_string(),
+                        content_type: MessageContent::StructuredContent {
+                            content: StructuredContent(tool_results),
+                        },
+                        id: Some(first_tool_msg_id), // Use ID of the first tool message
+                    });
+                }
+            }
         }
     }
 
-    // Ensure we don't end with an empty message that's not an assistant
-    if let Some(last) = messages.last() {
-        let is_empty = match &last.content_type {
-            MessageContent::Text { content } => content.trim().is_empty(),
-            MessageContent::StructuredContent { content } => content.0.is_empty(),
-        };
+    // Ensure the last message isn't an empty non-assistant *text* message.
+    // API allows empty assistant messages and expects tool results.
+    if let Some(last) = api_messages.last() {
+        let mut remove_last = false;
+        if last.role == "user" {
+            if let MessageContent::Text { content } = &last.content_type {
+                if content.trim().is_empty() {
+                    remove_last = true;
+                }
+            }
+        }
+        // Optional: uncomment to also remove empty assistant text messages if they are last
+        /* else if last.role == "assistant" {
+            if let MessageContent::Text { content } = &last.content_type {
+               if content.trim().is_empty() {
+                   remove_last = true;
+               }
+           }
+        } */
 
-        if is_empty && last.role != "assistant" {
+        if remove_last {
             crate::utils::logging::warn(
                 "messages.convert_conversation",
-                "Last message had empty content and wasn't from the assistant, removing it",
+                "Last message was an empty non-assistant text message, removing it.",
             );
-            messages.pop();
+            api_messages.pop();
         }
     }
 
-    (messages, system_content)
+    (api_messages, system_content)
 }
 
 /// Create a system prompt message based on the environment
@@ -469,30 +479,27 @@ mod tests {
         assert_eq!(messages[0].get_content_string(), "Hello");
 
         // The assistant message is converted to a user message with structured content
-        assert_eq!(messages[1].role, "user");
-        match &messages[1].content_type {
-            MessageContent::StructuredContent { content } => {
-                let array = &content.0;
-                assert_eq!(array.len(), 1);
-                if let ContentBlock::ToolResult { tool_use_id, content } = &array[0] {
-                    assert_eq!(tool_use_id, "tool_1");
-                    assert_eq!(content, "Result 1");
-                } else {
-                    panic!("Expected ToolResult");
-                }
-            }
-            _ => panic!("Expected StructuredContent"),
-        }
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].get_content_string(), "Let me check something");
 
         // The tool message is converted to a user message with text content
         assert_eq!(messages[2].role, "user");
         match &messages[2].content_type {
-            MessageContent::Text { content } => {
-                assert!(content.contains("Tool Result from"));
-                assert!(content.contains("tool_1"));
-                assert!(content.contains("Result 1"));
+            MessageContent::StructuredContent { content } => {
+                let array = &content.0;
+                assert_eq!(array.len(), 1); // Expect one ToolResult block
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = &array[0]
+                {
+                    assert_eq!(tool_use_id, "tool_1");
+                    assert_eq!(content, "Result 1");
+                } else {
+                    panic!("Expected ToolResult block inside StructuredContent");
+                }
             }
-            _ => panic!("Expected Text content"),
+            _ => panic!("Expected StructuredContent for tool result"),
         }
     }
 
@@ -522,46 +529,46 @@ mod tests {
         let (messages, system) = convert_conversation(&conv);
         println!("Multiple tool messages: {:?}", messages);
 
-        assert_eq!(messages.len(), 4); // Now expecting 4 messages (user, assistant, and 2 tool results)
+        assert_eq!(messages.len(), 3); // Now expecting 3 messages (user, assistant, and 1 tool result)
         assert!(system.is_none());
 
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].get_content_string(), "Hello");
 
         // The assistant message is converted to a user message with structured content for the first tool
-        assert_eq!(messages[1].role, "user");
-        match &messages[1].content_type {
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].get_content_string(), "Let me check something");
+
+        // The tool result is grouped into a single user message with StructuredContent
+        assert_eq!(messages[2].role, "user");
+        match &messages[2].content_type {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
-                assert_eq!(array.len(), 1);
+                assert_eq!(array.len(), 2);
 
-                if let ContentBlock::ToolResult { tool_use_id, content } = &array[0] {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = &array[0]
+                {
                     assert_eq!(tool_use_id, "tool_1");
                     assert_eq!(content, "Result 1");
                 } else {
-                    panic!("Expected ToolResult");
+                    panic!("Expected ToolResult at index 0");
+                }
+
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = &array[1]
+                {
+                    assert_eq!(tool_use_id, "tool_2");
+                    assert_eq!(content, "Result 2");
+                } else {
+                    panic!("Expected ToolResult at index 1");
                 }
             }
-            _ => panic!("Expected StructuredContent"),
-        }
-
-        // Two tool results are each converted to user messages with human-readable format
-        assert_eq!(messages[2].role, "user");
-        match &messages[2].content_type {
-            MessageContent::Text { content } => {
-                assert!(content.contains("Tool Result from"));
-                assert!(content.contains("tool_1"));
-            }
-            _ => panic!("Expected Text content"),
-        }
-
-        assert_eq!(messages[3].role, "user");
-        match &messages[3].content_type {
-            MessageContent::Text { content } => {
-                assert!(content.contains("Tool Result from"));
-                assert!(content.contains("tool_2"));
-            }
-            _ => panic!("Expected Text content"),
+            _ => panic!("Expected StructuredContent for grouped tool results"),
         }
     }
 
@@ -590,20 +597,8 @@ mod tests {
         assert_eq!(messages[0].get_content_string(), "Hello");
 
         // Second message is a structured user message with tool result
-        assert_eq!(messages[1].role, "user");
-        match &messages[1].content_type {
-            MessageContent::StructuredContent { content } => {
-                let array = &content.0;
-                assert_eq!(array.len(), 1);
-                if let ContentBlock::ToolResult { tool_use_id, content } = &array[0] {
-                    assert_eq!(tool_use_id, "empty_tool");
-                    assert_eq!(content, "");
-                } else {
-                    panic!("Expected ToolResult");
-                }
-            }
-            _ => panic!("Expected StructuredContent"),
-        }
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].get_content_string(), "Let me check something");
 
         // Third message is the tool message converted to text
         assert_eq!(messages[2].role, "user");
@@ -664,12 +659,21 @@ mod tests {
         // Tool message is preserved as a user message with readable format
         assert_eq!(messages[2].role, "user");
         match &messages[2].content_type {
-            MessageContent::Text { content } => {
-                assert!(content.contains("Tool Result from"));
-                assert!(content.contains("tool_1"));
-                assert!(content.contains("Result 1"));
+            MessageContent::StructuredContent { content } => {
+                let array = &content.0;
+                assert_eq!(array.len(), 1); // Expect one ToolResult block
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = &array[0]
+                {
+                    assert_eq!(tool_use_id, "tool_1");
+                    assert_eq!(content, "Result 1");
+                } else {
+                    panic!("Expected ToolResult block inside StructuredContent");
+                }
             }
-            _ => panic!("Expected Text content"),
+            _ => panic!("Expected StructuredContent for tool result"),
         }
 
         // The subsequent user message should be included as is

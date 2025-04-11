@@ -173,14 +173,10 @@ impl Tui {
             while let Some(event) = event_rx.recv().await {
                 let mut messages = messages.lock().await;
 
-                // Update the progress message based on events
+                // Simplified spinner state updates
                 match &event {
-                    crate::app::AppEvent::ThinkingStarted => {
-                        if let Ok(mut state) = SPINNER_STATE.write() {
-                            *state = 0; // Reset spinner state
-                        }
-                    }
-                    crate::app::AppEvent::ToolCallStarted { name: _, id: _ } => {
+                    crate::app::AppEvent::ThinkingStarted
+                    | crate::app::AppEvent::ToolCallStarted { .. } => {
                         if let Ok(mut state) = SPINNER_STATE.write() {
                             *state = 0; // Reset spinner state
                         }
@@ -190,7 +186,6 @@ impl Tui {
 
                 match event {
                     crate::app::AppEvent::MessageAdded { role, content, id } => {
-                        // Skip system messages - don't add them to the UI
                         if role == crate::app::Role::System {
                             crate::utils::logging::debug(
                                 "tui.event_handler",
@@ -199,30 +194,13 @@ impl Tui {
                             continue;
                         }
 
-                        // Check if a message with this ID already exists
-                        let mut found = false;
-                        for (idx, msg) in messages.iter_mut().enumerate() {
-                            if msg.id == id {
-                                // This is a duplicate MessageAdded event or ID collision
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Message with ID {} already exists at index {} - updating content",
-                                        id, idx
-                                    ),
-                                );
-                                msg.content = format_message(&content, role);
-                                found = true;
-                                break;
-                            }
-                        }
+                        let mut message_updated = false;
 
-                        // If thinking message exists and this is a new assistant message, replace the thinking message
-                        if !found && role == crate::app::Role::Assistant {
-                            for (idx, msg) in messages.iter_mut().enumerate().rev() {
-                                if msg.role == role {
-                                    // Check if this is a thinking message
-                                    let content_str = msg
+                        // Check if the LAST message is a placeholder and this new message is the Assistant's response
+                        if role == crate::app::Role::Assistant {
+                            if let Some(last_msg) = messages.last_mut() {
+                                if last_msg.role == crate::app::Role::Assistant {
+                                    let last_content_str = last_msg
                                         .content
                                         .iter()
                                         .filter_map(|line| line.spans.first())
@@ -230,49 +208,60 @@ impl Tui {
                                         .collect::<Vec<String>>()
                                         .join(" ");
 
-                                    if content_str.trim() == "Thinking..."
-                                        || content_str.trim()
+                                    if last_content_str.trim() == "Thinking..."
+                                        || last_content_str.trim()
                                             == "Processing complete. Waiting for response..."
                                     {
-                                        // Replace the thinking message with this new content
                                         crate::utils::logging::debug(
                                             "tui.event_handler",
                                             &format!(
-                                                "Replacing thinking message at index {} with new message ID {}",
-                                                idx, id
+                                                "Replacing last placeholder message (ID {}) with new message ID {}",
+                                                last_msg.id, id
                                             ),
                                         );
-                                        msg.content = format_message(&content, role);
-                                        msg.id = id.clone(); // Update ID
-                                        found = true;
-                                        break;
+                                        // Update the last message completely
+                                        last_msg.content = format_message(&content, role);
+                                        last_msg.id = id.clone();
+                                        // Keep the original role (Assistant)
+                                        message_updated = true;
                                     }
                                 }
                             }
                         }
 
-                        // If still not found, add a new message
-                        if !found {
-                            let formatted = format_message(&content, role);
-                            messages.push(FormattedMessage {
-                                content: formatted,
-                                role,
-                                id: id.clone(),
-                            });
-
-                            // Debug info with proper logging
-                            let content_summary = if content.len() > 50 {
-                                format!("{}...", &content[..50])
+                        // If we didn't update the last message, add this as a new message
+                        if !message_updated {
+                            // Check for ID collision before adding (optional but good practice)
+                            if messages.iter().any(|m| m.id == id) {
+                                crate::utils::logging::warn(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "MessageAdded: ID {} already exists. Skipping add.",
+                                        id
+                                    ),
+                                );
                             } else {
-                                content.clone()
-                            };
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                &format!(
-                                    "Added new message to shared state. Role: {:?}, ID: {}, Content summary: {:?}",
-                                    role, id, content_summary
-                                ),
-                            );
+                                let formatted = format_message(&content, role);
+                                messages.push(FormattedMessage {
+                                    content: formatted,
+                                    role,
+                                    id: id.clone(),
+                                });
+
+                                // Debug info with proper logging
+                                let content_summary = if content.len() > 50 {
+                                    format!("{}...", &content[..50])
+                                } else {
+                                    content.clone()
+                                };
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    &format!(
+                                        "Added new message to shared state. Role: {:?}, ID: {}, Content summary: {:?}",
+                                        role, id, content_summary
+                                    ),
+                                );
+                            }
                         }
 
                         // Reset scroll to show most recent content
@@ -289,27 +278,16 @@ impl Tui {
                             ),
                         );
 
-                        // Log all message IDs for debugging
-                        let all_ids: Vec<(usize, &str, &crate::app::Role)> = messages
-                            .iter()
-                            .enumerate()
-                            .map(|(i, m)| (i, m.id.as_str(), &m.role))
-                            .collect();
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!("All message IDs: {:?}", all_ids),
-                        );
-
                         // Find the message with the given ID and update its content
                         let mut found = false;
-                        for (idx, msg) in messages.iter_mut().enumerate() {
+                        for msg in messages.iter_mut() {
                             if msg.id == id {
                                 // Found the message to update
                                 crate::utils::logging::debug(
                                     "tui.event_handler",
                                     &format!(
-                                        "MessageUpdated: Updating message with ID {} at index {}, role: {:?}",
-                                        id, idx, msg.role
+                                        "MessageUpdated: Updating message with ID {}, role: {:?}",
+                                        id, msg.role
                                     ),
                                 );
 
@@ -336,7 +314,7 @@ impl Tui {
                                     ),
                                 );
 
-                                // Update the content
+                                // Update the content using the message's existing role
                                 msg.content = format_message(&content, msg.role);
                                 found = true;
                                 break;
@@ -344,8 +322,8 @@ impl Tui {
                         }
 
                         if !found {
-                            // Could not find a message with this ID - this shouldn't happen
-                            // but we'll log it and handle it gracefully
+                            // Could not find a message with this ID - log it.
+                            // Do NOT add a new message or use fallback logic.
                             crate::utils::logging::warn(
                                 "tui.event_handler",
                                 &format!(
@@ -354,53 +332,6 @@ impl Tui {
                                     &content.chars().take(30).collect::<String>()
                                 ),
                             );
-
-                            // As a fallback, look for any message that might be a thinking message
-                            for (idx, msg) in messages.iter_mut().enumerate().rev() {
-                                if msg.role == crate::app::Role::Assistant {
-                                    // Check if this is a thinking message
-                                    let content_str = msg
-                                        .content
-                                        .iter()
-                                        .filter_map(|line| line.spans.first())
-                                        .map(|span| span.content.to_string())
-                                        .collect::<Vec<String>>()
-                                        .join(" ");
-
-                                    if content_str.trim() == "Thinking..."
-                                        || content_str.trim()
-                                            == "Processing complete. Waiting for response..."
-                                    {
-                                        // Replace the thinking message
-                                        crate::utils::logging::debug(
-                                            "tui.event_handler",
-                                            &format!(
-                                                "MessageUpdated: Using thinking message at index {} with ID {} as fallback",
-                                                idx, msg.id
-                                            ),
-                                        );
-                                        msg.content = format_message(&content, msg.role);
-                                        msg.id = id.clone(); // Update ID to match
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            // If still not found, create a new assistant message as last resort
-                            if !found {
-                                crate::utils::logging::warn(
-                                    "tui.event_handler",
-                                    "MessageUpdated: Creating new assistant message as fallback",
-                                );
-                                let formatted =
-                                    format_message(&content, crate::app::Role::Assistant);
-                                messages.push(FormattedMessage {
-                                    content: formatted,
-                                    role: crate::app::Role::Assistant,
-                                    id: id.clone(),
-                                });
-                            }
                         }
                     }
                     crate::app::AppEvent::ToolCallStarted { name, id } => {
@@ -474,79 +405,79 @@ impl Tui {
                         });
                     }
                     crate::app::AppEvent::ThinkingStarted => {
-                        // Generate a unique ID for the thinking message
-                        // Use the same format as in conversation.rs
-                        let timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .expect("Time went backwards")
-                            .as_secs();
+                        // Check if the last message is already an Assistant placeholder
+                        let mut placeholder_exists = false;
+                        if let Some(last_msg) = messages.last() {
+                            if last_msg.role == crate::app::Role::Assistant {
+                                let last_content_str = last_msg
+                                    .content
+                                    .iter()
+                                    .filter_map(|line| line.spans.first())
+                                    .map(|span| span.content.to_string())
+                                    .collect::<Vec<String>>()
+                                    .join(" ");
 
-                        let random_suffix = format!("{:04x}", (timestamp % 10000));
-                        let thinking_id = format!("assistant_{}{}", timestamp, random_suffix);
-
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!("ThinkingStarted: Creating thinking ID: {}", thinking_id),
-                        );
-
-                        // Check if we already have an Assistant message to update
-                        let mut found = false;
-                        for (idx, msg) in messages.iter_mut().enumerate().rev() {
-                            if msg.role == crate::app::Role::Assistant {
-                                // If the last Assistant message exists, update it to "Thinking..."
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Updating existing assistant message at index {} with ID {} to 'Thinking...'",
-                                        idx, msg.id
-                                    ),
-                                );
-                                msg.content =
-                                    format_message("Thinking...", crate::app::Role::Assistant);
-                                found = true;
-                                break;
+                                if last_content_str.trim() == "Thinking..."
+                                    || last_content_str.trim()
+                                        == "Processing complete. Waiting for response..."
+                                {
+                                    placeholder_exists = true;
+                                }
                             }
                         }
 
-                        // If no existing Assistant message found, add a new one
-                        if !found {
-                            let formatted =
-                                format_message("Thinking...", crate::app::Role::Assistant);
+                        if placeholder_exists {
+                            crate::utils::logging::debug(
+                                "tui.event_handler",
+                                "ThinkingStarted: Placeholder already exists.",
+                            );
+                            // Reset spinner state anyway
+                            if let Ok(mut state) = SPINNER_STATE.write() {
+                                *state = 0;
+                            }
+                        } else {
+                            // Add a new placeholder message
+                            let timestamp = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .expect("Time went backwards")
+                                .as_secs();
+                            let random_suffix = format!("{:04x}", (timestamp % 10000));
+                            // Use a more specific ID prefix for placeholders
+                            let thinking_id =
+                                format!("assistant_thinking_{}{}", timestamp, random_suffix);
+
                             crate::utils::logging::debug(
                                 "tui.event_handler",
                                 &format!(
-                                    "Adding new 'Thinking...' message with ID {}",
+                                    "ThinkingStarted: Adding new placeholder ID: {}",
                                     thinking_id
                                 ),
                             );
+
+                            let formatted =
+                                format_message("Thinking...", crate::app::Role::Assistant);
                             messages.push(FormattedMessage {
                                 content: formatted,
                                 role: crate::app::Role::Assistant,
                                 id: thinking_id,
                             });
+                            // Reset spinner state
+                            if let Ok(mut state) = SPINNER_STATE.write() {
+                                *state = 0;
+                            }
                         }
 
-                        // Verify message order after adding thinking message
+                        // Verify message order after potentially adding thinking message
                         let message_ids = messages
                             .iter()
                             .map(|m| m.id.as_str())
                             .collect::<Vec<&str>>();
-                        let message_roles = messages
-                            .iter()
-                            .map(|m| format!("{:?}", m.role))
-                            .collect::<Vec<String>>();
                         crate::utils::logging::debug(
                             "tui.event_handler",
                             &format!("Message IDs after ThinkingStarted: {:?}", message_ids),
                         );
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!("Message roles after ThinkingStarted: {:?}", message_roles),
-                        );
                     }
                     crate::app::AppEvent::ThinkingCompleted => {
-                        // We'll handle thinking completed in a better way.
-                        // First log all assistant messages to see if we have real content already
                         crate::utils::logging::debug(
                             "tui.event_handler",
                             &format!(
@@ -555,41 +486,10 @@ impl Tui {
                             ),
                         );
 
-                        // Print details of all assistant messages for debugging
-                        for (idx, msg) in messages.iter().enumerate() {
-                            if msg.role == crate::app::Role::Assistant {
-                                let content_preview = msg
-                                    .content
-                                    .iter()
-                                    .take(1)
-                                    .filter_map(|line| line.spans.first())
-                                    .map(|span| span.content.to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(" ");
-
-                                let trimmed = if content_preview.len() > 30 {
-                                    format!("{}...", &content_preview[..30])
-                                } else {
-                                    content_preview
-                                };
-
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Assistant message at idx {}: ID={}, Content preview: \"{}\"",
-                                        idx, msg.id, trimmed
-                                    ),
-                                );
-                            }
-                        }
-
-                        // Instead of just breaking after first assistant message,
-                        // check all messages and only update ones that still have "Thinking..."
-                        let mut updated_any = false;
-                        for (idx, msg) in messages.iter_mut().enumerate() {
-                            if msg.role == crate::app::Role::Assistant {
-                                // Get first line of content for checking
-                                let content_str = msg
+                        // Update the *last* message only if it's an Assistant "Thinking..." placeholder
+                        if let Some(last_msg) = messages.last_mut() {
+                            if last_msg.role == crate::app::Role::Assistant {
+                                let content_str = last_msg
                                     .content
                                     .iter()
                                     .filter_map(|line| line.spans.first())
@@ -597,30 +497,38 @@ impl Tui {
                                     .collect::<Vec<String>>()
                                     .join(" ");
 
-                                // Only update if it's still a placeholder message
+                                // Only update if it's still the "Thinking..." placeholder
                                 if content_str.trim() == "Thinking..." {
                                     crate::utils::logging::debug(
                                         "tui.event_handler",
                                         &format!(
-                                            "ThinkingCompleted: Updating 'Thinking...' message at index {} with ID {}",
-                                            idx, msg.id
+                                            "ThinkingCompleted: Updating last message (ID {}) to 'Processing complete...'",
+                                            last_msg.id
                                         ),
                                     );
 
-                                    // Update to waiting message but keep same ID
-                                    msg.content = format_message(
+                                    // Update to waiting message but keep same ID for now
+                                    // The subsequent MessageAdded event will replace this message including ID
+                                    last_msg.content = format_message(
                                         "Processing complete. Waiting for response...",
                                         crate::app::Role::Assistant,
                                     );
-                                    updated_any = true;
+                                } else {
+                                    crate::utils::logging::debug(
+                                        "tui.event_handler",
+                                        "ThinkingCompleted: Last message not 'Thinking...'. No update.",
+                                    );
                                 }
+                            } else {
+                                crate::utils::logging::debug(
+                                    "tui.event_handler",
+                                    "ThinkingCompleted: Last message not Assistant. No update.",
+                                );
                             }
-                        }
-
-                        if !updated_any {
+                        } else {
                             crate::utils::logging::debug(
                                 "tui.event_handler",
-                                "ThinkingCompleted: No 'Thinking...' messages found to update",
+                                "ThinkingCompleted: No messages found.",
                             );
                         }
                     }

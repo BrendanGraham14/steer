@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::messages;
 
@@ -37,10 +37,7 @@ pub struct ToolCall {
 pub enum MessageContent {
     Text(String),
     ToolCalls(Vec<ToolCall>),
-    ToolResult {
-        tool_use_id: String,
-        result: String,
-    },
+    ToolResult { tool_use_id: String, result: String },
 }
 
 impl MessageContent {
@@ -48,11 +45,17 @@ impl MessageContent {
         match self {
             Self::Text(content) => content.clone(),
             Self::ToolCalls(tool_calls) => {
-                format!("<tool_calls>{}</tool_calls>", serde_json::to_string(tool_calls).unwrap_or_default())
-            },
-            Self::ToolResult { tool_use_id, result } => {
+                format!(
+                    "<tool_calls>{}</tool_calls>",
+                    serde_json::to_string(tool_calls).unwrap_or_default()
+                )
+            }
+            Self::ToolResult {
+                tool_use_id,
+                result,
+            } => {
                 format!("Tool Result from {}: {}", tool_use_id, result)
-            },
+            }
         }
     }
 }
@@ -71,7 +74,7 @@ impl Message {
         let message_content = MessageContent::Text(content);
         Self::new_with_content(role, message_content)
     }
-    
+
     pub fn new_with_content(role: Role, content: MessageContent) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -98,7 +101,7 @@ impl Message {
             id,
         }
     }
-    
+
     pub fn content_string(&self) -> String {
         self.content.as_text()
     }
@@ -121,7 +124,7 @@ impl Conversation {
         let message = Message::new(role, content);
         self.messages.push(message);
     }
-    
+
     pub fn add_message_with_content(&mut self, role: Role, content: MessageContent) {
         let message = Message::new_with_content(role, content);
         self.messages.push(message);
@@ -134,90 +137,21 @@ impl Conversation {
     pub fn add_system_message(&mut self, content: String) {
         self.add_message(Role::System, content);
     }
-    
+
     pub fn add_tool_call(&mut self, tool_call: ToolCall) {
-        // Check if the last message is from the assistant and already has tool calls
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == Role::Assistant {
-                match &mut last.content {
-                    MessageContent::ToolCalls(tool_calls) => {
-                        tool_calls.push(tool_call);
-                        return;
-                    }
-                    MessageContent::Text(text) if text.trim().is_empty() => {
-                        // Replace empty text with tool calls
-                        last.content = MessageContent::ToolCalls(vec![tool_call]);
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        
-        // Otherwise, create a new assistant message with tool calls
+        // Add a new assistant message dedicated to tool calls.
+        // The app logic will handle adding text messages separately if needed.
         self.add_message_with_content(Role::Assistant, MessageContent::ToolCalls(vec![tool_call]));
     }
-    
+
     pub fn add_tool_result(&mut self, tool_use_id: String, result: String) {
         self.add_message_with_content(
-            Role::Tool, 
-            MessageContent::ToolResult { 
-                tool_use_id, 
-                result 
-            }
+            Role::Tool,
+            MessageContent::ToolResult {
+                tool_use_id,
+                result,
+            },
         );
-    }
-
-    pub fn to_api_messages(&self) -> Vec<serde_json::Value> {
-        self.messages
-            .iter()
-            .map(|msg| {
-                let role_str = match msg.role {
-                    Role::System => "system",
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Tool => "tool", // Note: Anthropic API may handle tools differently
-                };
-
-                match &msg.content {
-                    MessageContent::Text(content) => {
-                        // Create the message JSON with text content
-                        serde_json::json!({
-                            "role": role_str,
-                            "content": {
-                                "type": "text",
-                                "text": content
-                            }
-                        })
-                    },
-                    MessageContent::ToolCalls(tool_calls) => {
-                        // Create message JSON with tool calls
-                        serde_json::json!({
-                            "role": role_str,
-                            "content": tool_calls.iter().map(|tc| {
-                                serde_json::json!({
-                                    "type": "tool_use",
-                                    "id": tc.id,
-                                    "name": tc.name,
-                                    "parameters": tc.parameters
-                                })
-                            }).collect::<Vec<_>>()
-                        })
-                    },
-                    MessageContent::ToolResult { tool_use_id, result } => {
-                        // Create message JSON with tool result
-                        serde_json::json!({
-                            "role": "user",
-                            "content": [{
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": result
-                            }]
-                        })
-                    }
-                }
-            })
-            .collect()
     }
 
     /// Get the system prompt if present

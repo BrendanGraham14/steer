@@ -250,12 +250,44 @@ impl App {
                 ),
             );
 
-            // Add the assistant message with the complete response
-            crate::utils::logging::debug(
-                "app.handle_response",
-                "Adding assistant message with complete response",
-            );
-            self.add_assistant_message(response_text);
+            // Add the assistant message with the complete response text *only* if there is text
+            if !response_text.trim().is_empty() {
+                crate::utils::logging::debug(
+                    "app.handle_response",
+                    "Adding assistant message with response text",
+                );
+                self.add_assistant_message(response_text);
+            } else if complete_response.has_tool_calls() {
+                // If there's no text but there are tool calls, we still need an assistant message
+                // to attach the tool calls to in the conversation history.
+                // The conversion logic will handle turning this into the correct API format.
+                crate::utils::logging::debug(
+                    "app.handle_response",
+                    "Adding assistant message for tool calls (no text)",
+                );
+                // Add message with ToolCalls content
+                let tool_calls_for_conv: Vec<ToolCall> = complete_response
+                    .extract_tool_calls()
+                    .into_iter()
+                    .map(|api_tc| ToolCall {
+                        id: api_tc.id.unwrap_or_default(), // Ensure ID exists
+                        name: api_tc.name,
+                        parameters: api_tc.parameters,
+                    })
+                    .collect();
+
+                if !tool_calls_for_conv.is_empty() {
+                    self.conversation.add_message_with_content(
+                        Role::Assistant,
+                        MessageContent::ToolCalls(tool_calls_for_conv),
+                    );
+                } else {
+                    crate::utils::logging::warn(
+                        "app.handle_response",
+                        "Response indicated tool calls, but none were extracted.",
+                    );
+                }
+            }
 
             // For debugging, dump all message IDs in the conversation
             let all_messages: Vec<(usize, &str, &Role)> = self
@@ -276,7 +308,7 @@ impl App {
                     "app.handle_response",
                     "Found tool calls in the response, processing them",
                 );
-                // Process tool calls
+                // Process tool calls - this will add the ToolResult messages
                 self.process_tool_calls(&complete_response).await?;
             } else {
                 crate::utils::logging::debug(
@@ -303,59 +335,6 @@ impl App {
                 return Ok(());
             }
 
-            // Create a collection of tool results
-            let mut tool_results = Vec::new();
-
-            // Instead of always adding a new assistant message, check if we should update existing one
-            let assistant_response = response.extract_text();
-            let new_message_needed = self
-                .conversation
-                .messages
-                .last()
-                .map(|last_msg| {
-                    last_msg.role != Role::Assistant || 
-                        match &last_msg.content {
-                            MessageContent::Text(text) => text.trim().is_empty(),
-                            _ => false,
-                        }
-                })
-                .unwrap_or(true);
-
-            if new_message_needed {
-                crate::utils::logging::debug(
-                    "app.process_tool_calls",
-                    "Adding new assistant message for tool call response",
-                );
-                self.add_assistant_message(assistant_response);
-            } else {
-                if let Some(last_msg) = self.conversation.messages.last() {
-                    let id = last_msg.id.clone();
-
-                    crate::utils::logging::debug(
-                        "app.process_tool_calls",
-                        &format!(
-                            "Updating existing assistant message (ID: {}) with tool call response",
-                            id
-                        ),
-                    );
-
-                    if let Some(msg) = self.conversation.messages.last_mut() {
-                        msg.content = MessageContent::Text(assistant_response.clone());
-                    }
-
-                    self.emit_event(AppEvent::MessageUpdated {
-                        id,
-                        content: assistant_response,
-                    });
-                } else {
-                    crate::utils::logging::warn(
-                        "app.process_tool_calls",
-                        "Expected to find last message for updating but none was found. Adding new message.",
-                    );
-                    self.add_assistant_message(assistant_response);
-                }
-            }
-
             // Execute all tool calls
             for tool_call in &tool_calls {
                 // Signal that we're starting a tool call
@@ -375,14 +354,31 @@ impl App {
                         });
                         // Collect tool result if we have an ID
                         if let Some(tool_id) = &tool_call.id {
-                            tool_results.push((tool_id.clone(), result));
+                            // Add tool result directly to the conversation
+                            self.conversation.add_tool_result(tool_id.clone(), result);
                         }
                     }
                     Err(e) => {
                         // Log the error
                         let error_message =
                             format!("Error executing tool {}: {}", tool_call.name, e);
-                        self.add_tool_message(error_message);
+                        crate::utils::logging::error("app.process_tool_calls", &error_message);
+
+                        // Add the error as a ToolResult to the conversation
+                        if let Some(tool_id) = &tool_call.id {
+                            // Use a standard prefix for error results
+                            let error_result_content = format!("Error: {}", e.to_string());
+                            self.conversation
+                                .add_tool_result(tool_id.clone(), error_result_content);
+                        } else {
+                            crate::utils::logging::error(
+                                "app.process_tool_calls",
+                                &format!(
+                                    "Tool call {} failed but had no ID, cannot add ToolResult",
+                                    tool_call.name
+                                ),
+                            );
+                        }
 
                         // Signal that the tool call failed
                         self.emit_event(AppEvent::ToolCallFailed {
@@ -394,51 +390,32 @@ impl App {
                 }
             }
 
-            // Process tool results - create a new API-compatible message sequence
-            if !tool_results.is_empty() {
-                // Create JSON structure for the tool results
-                let mut result_blocks = Vec::new();
-                for (tool_id, content) in tool_results {
-                    // Ensure content is never empty, as Claude API rejects empty content
-                    let safe_content = if content.trim().is_empty() {
-                        "No output".to_string()
-                    } else {
-                        content
-                    };
+            // Process tool results - this now means sending the conversation *with* results back to Claude
+            // Check if any tool results were actually added (ignore errors for now)
+            let has_tool_results = self
+                .conversation
+                .messages
+                .iter()
+                .any(|m| m.role == Role::Tool);
 
-                    result_blocks.push(serde_json::json!({
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": safe_content
-                    }));
-                }
-
-                // Add proper structured tool result messages to the conversation
-                if !result_blocks.is_empty() {
-                    // Add tool results as structured messages using our new enum
-                    for result_block in result_blocks {
-                        if let (Some(tool_id), Some(content)) = (
-                            result_block.get("tool_use_id").and_then(|v| v.as_str()),
-                            result_block.get("content").and_then(|v| v.as_str())
-                        ) {
-                            self.conversation.add_message_with_content(
-                                Role::Tool,
-                                conversation::MessageContent::ToolResult {
-                                    tool_use_id: tool_id.to_string(),
-                                    result: content.to_string(),
-                                }
-                            );
-                        }
-                    }
-                    
-                    // Continue the conversation with the tool results
-                    self.handle_response().await?;
-                } else {
-                    crate::utils::logging::warn(
-                        "app.process_tool_calls",
-                        "Skipping empty tool results",
-                    );
-                }
+            if has_tool_results {
+                // We have tool results in the conversation, so send the updated conversation back to Claude
+                crate::utils::logging::debug(
+                    "app.process_tool_calls",
+                    "Conversation updated with tool results, continuing interaction.",
+                );
+                // Continue the conversation with the tool results included
+                // The handle_response function will be called again, triggering get_claude_response
+                // which reads the current state of self.conversation
+                // Note: Ensure no infinite loops if Claude keeps calling tools without progress.
+                // Consider adding a turn limit or other guards.
+                self.handle_response().await?;
+            } else {
+                crate::utils::logging::debug(
+                    "app.process_tool_calls",
+                    "No successful tool results were added, ending turn.",
+                );
+                // If no successful results (only errors without IDs perhaps), we might stop here.
             }
 
             Ok(())
