@@ -115,15 +115,9 @@ This document tracks both the completed work and remaining tasks for the Claude 
 ### API Client
 - [x] Fix system message format (top-level parameter)
 - [x] Improve streaming response handling
-- [ ] Support different Claude models
+- [ ] Support different models (Claude, OpenAI, Gemini, Grok)
 - [x] Fix system messages showing up in conversation UI
 
 ### Additional Features
 - [ ] Add conversation saving and loading
 - [ ] Implement command completion for the bash tool
-
-### Testing and Documentation
-- [ ] Unit tests for core components
-- [ ] Integration tests
-- [ ] User documentation
-- [ ] Example usage scenarios
