@@ -2,17 +2,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Represents a message to be sent to the Claude API
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
     pub role: String,
     #[serde(flatten)]
-    pub content_type: MessageContent,
+    pub content: MessageContent,
     #[serde(skip_serializing)]
     pub id: Option<String>,
 }
 
 /// Content types for Claude API messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum MessageContent {
     /// Simple text content
@@ -22,12 +22,12 @@ pub enum MessageContent {
 }
 
 /// Represents structured content blocks for messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(transparent)]
 pub struct StructuredContent(pub Vec<ContentBlock>);
 
 /// Different types of content blocks used in structured messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
     /// A tool result block from executing a tool
@@ -35,8 +35,11 @@ pub enum ContentBlock {
     ToolResult {
         /// ID of the tool use this result is for
         tool_use_id: String,
-        /// Result content from the tool execution
-        content: String,
+        /// Result content from the tool execution (must be an array of content blocks)
+        content: Vec<ContentBlock>,
+        /// Optional field indicating if the tool failed
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
     },
 
     /// A tool call from the assistant
@@ -62,78 +65,8 @@ impl Message {
     pub fn new_user(content: String) -> Self {
         Message {
             role: "user".to_string(),
-            content_type: MessageContent::Text { content },
+            content: MessageContent::Text { content },
             id: None,
-        }
-    }
-
-    pub fn new_system_with_id(content: String, id: String) -> Self {
-        Message {
-            role: "system".to_string(),
-            content_type: MessageContent::Text { content },
-            id: Some(id),
-        }
-    }
-
-    pub fn new_tool_result(tool_use_id: &str, result: String) -> Self {
-        let content = StructuredContent(vec![ContentBlock::ToolResult {
-            tool_use_id: tool_use_id.to_string(),
-            content: result,
-        }]);
-
-        Message {
-            role: "user".to_string(),
-            content_type: MessageContent::StructuredContent { content },
-            id: None,
-        }
-    }
-
-    pub fn new_tool_result_with_id(tool_use_id: &str, result: String, id: String) -> Self {
-        let content = StructuredContent(vec![ContentBlock::ToolResult {
-            tool_use_id: tool_use_id.to_string(),
-            content: result,
-        }]);
-
-        Message {
-            role: "user".to_string(),
-            content_type: MessageContent::StructuredContent { content },
-            id: Some(id),
-        }
-    }
-
-    pub fn get_content_string(&self) -> String {
-        match &self.content_type {
-            MessageContent::Text { content } => content.clone(),
-            MessageContent::StructuredContent { content } => {
-                let blocks = &content.0;
-                if blocks.is_empty() {
-                    return "[]".to_string();
-                }
-
-                // Format the content blocks
-                let formatted: Vec<String> = blocks
-                    .iter()
-                    .map(|block| match block {
-                        ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                        } => {
-                            format!("Tool Result from {}: {}", tool_use_id, content)
-                        }
-                        ContentBlock::ToolUse { id, name, input } => {
-                            format!(
-                                "Tool Use {}: {} with parameters: {}",
-                                id,
-                                name,
-                                serde_json::to_string_pretty(input).unwrap_or_default()
-                            )
-                        }
-                        ContentBlock::Text { text } => text.clone(),
-                    })
-                    .collect();
-
-                formatted.join("\n")
-            }
         }
     }
 }
@@ -163,7 +96,7 @@ pub fn convert_conversation(
                     if !content.trim().is_empty() {
                         api_messages.push(Message {
                             role: "user".to_string(),
-                            content_type: MessageContent::Text {
+                            content: MessageContent::Text {
                                 content: content.clone(),
                             },
                             // Use the app message ID if needed later
@@ -193,7 +126,7 @@ pub fn convert_conversation(
                         // Assistant messages can be empty (e.g., only tool calls followed)
                         api_messages.push(Message {
                             role: "assistant".to_string(),
-                            content_type: MessageContent::Text {
+                            content: MessageContent::Text {
                                 content: content.clone(),
                             },
                             id: Some(app_msg.id.clone()),
@@ -215,7 +148,7 @@ pub fn convert_conversation(
                         if !content_blocks.is_empty() {
                             api_messages.push(Message {
                                 role: "assistant".to_string(),
-                                content_type: MessageContent::StructuredContent {
+                                content: MessageContent::StructuredContent {
                                     content: StructuredContent(content_blocks),
                                 },
                                 id: Some(app_msg.id.clone()),
@@ -254,15 +187,20 @@ pub fn convert_conversation(
                     result,
                 } = &app_msg.content
                 {
+                    // Determine if the result indicates an error (simple check)
+                    let is_error = result.starts_with("Error:");
+                    let result_content = if result.trim().is_empty() {
+                        "(No output)".to_string()
+                    } else {
+                        result.clone()
+                    };
+
                     tool_results.push(ContentBlock::ToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        // Ensure content is never empty string for the API, use placeholder if needed.
-                        // Although Claude might handle empty strings, let's be safe.
-                        content: if result.trim().is_empty() {
-                            "(No output)".to_string()
-                        } else {
-                            result.clone()
-                        },
+                        content: vec![ContentBlock::Text {
+                            text: result_content,
+                        }],
+                        is_error: if is_error { Some(true) } else { None },
                     });
                 } else {
                     crate::utils::logging::error(
@@ -286,13 +224,18 @@ pub fn convert_conversation(
                             result,
                         } = &consumed_msg.content
                         {
+                            let is_error = result.starts_with("Error:");
+                            let result_content = if result.trim().is_empty() {
+                                "(No output)".to_string()
+                            } else {
+                                result.clone()
+                            };
                             tool_results.push(ContentBlock::ToolResult {
                                 tool_use_id: tool_use_id.clone(),
-                                content: if result.trim().is_empty() {
-                                    "(No output)".to_string()
-                                } else {
-                                    result.clone()
-                                },
+                                content: vec![ContentBlock::Text {
+                                    text: result_content,
+                                }],
+                                is_error: if is_error { Some(true) } else { None },
                             });
                         } else {
                             crate::utils::logging::error(
@@ -314,7 +257,7 @@ pub fn convert_conversation(
                 if !tool_results.is_empty() {
                     api_messages.push(Message {
                         role: "user".to_string(),
-                        content_type: MessageContent::StructuredContent {
+                        content: MessageContent::StructuredContent {
                             content: StructuredContent(tool_results),
                         },
                         id: Some(first_tool_msg_id), // Use ID of the first tool message
@@ -329,7 +272,7 @@ pub fn convert_conversation(
     if let Some(last) = api_messages.last() {
         let mut remove_last = false;
         if last.role == "user" {
-            if let MessageContent::Text { content } = &last.content_type {
+            if let MessageContent::Text { content } = &last.content {
                 if content.trim().is_empty() {
                     remove_last = true;
                 }
@@ -374,7 +317,7 @@ pub fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> Message {
 
     Message {
         role: "system".to_string(),
-        content_type: MessageContent::Text { content: prompt },
+        content: MessageContent::Text { content: prompt },
         id: None,
     }
 }
@@ -388,7 +331,7 @@ pub fn create_system_prompt_with_memory(
     let base_prompt = create_system_prompt(env_info);
 
     // Extract the content from the base prompt
-    let base_content = match &base_prompt.content_type {
+    let base_content = match &base_prompt.content {
         MessageContent::Text { content } => content.clone(),
         _ => "".to_string(),
     };
@@ -410,7 +353,7 @@ pub fn create_system_prompt_with_memory(
 
     Message {
         role: "system".to_string(),
-        content_type: MessageContent::Text { content: prompt },
+        content: MessageContent::Text { content: prompt },
         id: None,
     }
 }
@@ -435,10 +378,20 @@ mod tests {
         assert!(system.is_none());
 
         assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].get_content_string(), "Hello");
+        assert_eq!(
+            messages[0].content,
+            MessageContent::Text {
+                content: "Hello".to_string()
+            }
+        );
 
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].get_content_string(), "Hi there!");
+        assert_eq!(
+            messages[1].content,
+            MessageContent::Text {
+                content: "Hi there!".to_string()
+            }
+        );
     }
 
     #[test]
@@ -476,25 +429,42 @@ mod tests {
         assert!(system.is_none());
 
         assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].get_content_string(), "Hello");
+        assert_eq!(
+            messages[0].content,
+            MessageContent::Text {
+                content: "Hello".to_string()
+            }
+        );
 
         // The assistant message is converted to a user message with structured content
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].get_content_string(), "Let me check something");
+        assert_eq!(
+            messages[1].content,
+            MessageContent::Text {
+                content: "Let me check something".to_string()
+            }
+        );
 
         // The tool message is converted to a user message with text content
         assert_eq!(messages[2].role, "user");
-        match &messages[2].content_type {
+        match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
                 assert_eq!(array.len(), 1); // Expect one ToolResult block
                 if let ContentBlock::ToolResult {
                     tool_use_id,
-                    content,
+                    content: result_blocks, // Updated field name
+                    is_error,
                 } = &array[0]
                 {
                     assert_eq!(tool_use_id, "tool_1");
-                    assert_eq!(content, "Result 1");
+                    assert!(is_error.is_none() || !is_error.unwrap()); // Check it's not an error
+                    assert_eq!(result_blocks.len(), 1);
+                    if let ContentBlock::Text { text } = &result_blocks[0] {
+                        assert_eq!(text, "Result 1");
+                    } else {
+                        panic!("Expected inner Text block");
+                    }
                 } else {
                     panic!("Expected ToolResult block inside StructuredContent");
                 }
@@ -533,37 +503,59 @@ mod tests {
         assert!(system.is_none());
 
         assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].get_content_string(), "Hello");
+        assert_eq!(
+            messages[0].content,
+            MessageContent::Text {
+                content: "Hello".to_string()
+            }
+        );
 
         // The assistant message is converted to a user message with structured content for the first tool
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].get_content_string(), "Let me check something");
+        assert_eq!(
+            messages[1].content,
+            MessageContent::Text {
+                content: "Let me check something".to_string()
+            }
+        );
 
         // The tool result is grouped into a single user message with StructuredContent
         assert_eq!(messages[2].role, "user");
-        match &messages[2].content_type {
+        match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
                 assert_eq!(array.len(), 2);
 
                 if let ContentBlock::ToolResult {
                     tool_use_id,
-                    content,
+                    content: result_blocks, // Updated field name
+                    is_error: _,            // Ignore is_error
                 } = &array[0]
                 {
                     assert_eq!(tool_use_id, "tool_1");
-                    assert_eq!(content, "Result 1");
+                    assert_eq!(result_blocks.len(), 1);
+                    if let ContentBlock::Text { text } = &result_blocks[0] {
+                        assert_eq!(text, "Result 1");
+                    } else {
+                        panic!("Expected inner Text block at index 0");
+                    }
                 } else {
                     panic!("Expected ToolResult at index 0");
                 }
 
                 if let ContentBlock::ToolResult {
                     tool_use_id,
-                    content,
+                    content: result_blocks, // Updated field name
+                    is_error: _,            // Ignore is_error
                 } = &array[1]
                 {
                     assert_eq!(tool_use_id, "tool_2");
-                    assert_eq!(content, "Result 2");
+                    assert_eq!(result_blocks.len(), 1);
+                    if let ContentBlock::Text { text } = &result_blocks[0] {
+                        assert_eq!(text, "Result 2");
+                    } else {
+                        panic!("Expected inner Text block at index 1");
+                    }
                 } else {
                     panic!("Expected ToolResult at index 1");
                 }
@@ -594,17 +586,36 @@ mod tests {
         assert!(system.is_none());
 
         assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].get_content_string(), "Hello");
+        assert_eq!(
+            messages[0].content,
+            MessageContent::Text {
+                content: "Hello".to_string()
+            }
+        );
 
         // Second message is a structured user message with tool result
         assert_eq!(messages[1].role, "assistant");
-        assert_eq!(messages[1].get_content_string(), "Let me check something");
+        assert_eq!(
+            messages[1].content,
+            MessageContent::Text {
+                content: "Let me check something".to_string()
+            }
+        );
 
         // Third message is the tool message converted to text
         assert_eq!(messages[2].role, "user");
-        let content = messages[2].get_content_string();
-        assert!(content.contains("Tool Result from"));
-        assert!(content.contains("empty_tool"));
+        assert_eq!(
+            messages[2].content,
+            MessageContent::StructuredContent {
+                content: StructuredContent(vec![ContentBlock::ToolResult {
+                    tool_use_id: "empty_tool".to_string(),
+                    content: vec![ContentBlock::Text {
+                        text: "(No output)".to_string(),
+                    }],
+                    is_error: None,
+                }]),
+            }
+        );
     }
 
     #[test]
@@ -638,11 +649,16 @@ mod tests {
         assert!(system.is_none());
 
         assert_eq!(messages[0].role, "user");
-        assert_eq!(messages[0].get_content_string(), "Hello");
+        assert_eq!(
+            messages[0].content,
+            MessageContent::Text {
+                content: "Hello".to_string()
+            }
+        );
 
         // The assistant message with tool calls
         assert_eq!(messages[1].role, "assistant");
-        match &messages[1].content_type {
+        match &messages[1].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
                 assert_eq!(array.len(), 1);
@@ -658,17 +674,24 @@ mod tests {
 
         // Tool message is preserved as a user message with readable format
         assert_eq!(messages[2].role, "user");
-        match &messages[2].content_type {
+        match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
                 assert_eq!(array.len(), 1); // Expect one ToolResult block
                 if let ContentBlock::ToolResult {
                     tool_use_id,
-                    content,
+                    content: result_blocks,
+                    is_error,
                 } = &array[0]
                 {
                     assert_eq!(tool_use_id, "tool_1");
-                    assert_eq!(content, "Result 1");
+                    assert!(is_error.is_none() || !is_error.unwrap());
+                    assert_eq!(result_blocks.len(), 1);
+                    if let ContentBlock::Text { text } = &result_blocks[0] {
+                        assert_eq!(text, "Result 1");
+                    } else {
+                        panic!("Expected inner Text block");
+                    }
                 } else {
                     panic!("Expected ToolResult block inside StructuredContent");
                 }
@@ -678,6 +701,11 @@ mod tests {
 
         // The subsequent user message should be included as is
         assert_eq!(messages[3].role, "user");
-        assert_eq!(messages[3].get_content_string(), "What about this?");
+        assert_eq!(
+            messages[3].content,
+            MessageContent::Text {
+                content: "What about this?".to_string()
+            }
+        );
     }
 }

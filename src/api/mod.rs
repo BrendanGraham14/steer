@@ -192,6 +192,19 @@ impl Client {
 
         crate::utils::logging::debug("API Request messages", &format!("{:?}", request.messages));
 
+        // Log the full request payload as JSON for detailed debugging
+        match serde_json::to_string_pretty(&request) {
+            Ok(json_payload) => {
+                crate::utils::logging::debug("Full API Request Payload (JSON)", &json_payload);
+            }
+            Err(e) => {
+                crate::utils::logging::error(
+                    "API Request Serialization Error",
+                    &format!("Failed to serialize request to JSON: {}", e),
+                );
+            }
+        }
+
         let response = self
             .client
             .post(API_URL)

@@ -16,7 +16,7 @@ async fn test_claude_api_basic() {
     // Create a simple message
     let messages = vec![Message {
         role: "user".to_string(),
-        content_type: MessageContent::Text {
+        content: MessageContent::Text {
             content: "What is 2+2?".to_string(),
         },
         id: None,
@@ -60,7 +60,7 @@ async fn test_claude_api_with_tools() {
     // Create a message that will use a tool
     let messages = vec![Message {
         role: "user".to_string(),
-        content_type: MessageContent::Text {
+        content: MessageContent::Text {
             content: "Please list the files in the current directory using the LS tool".to_string(),
         },
         id: None,
@@ -101,14 +101,15 @@ async fn test_claude_api_with_tools() {
     );
 
     let result =
-        coder::tools::execute_tool(&first_tool_call.name, &first_tool_call.parameters)
-            .await;
+        coder::tools::execute_tool(&first_tool_call.name, &first_tool_call.parameters).await;
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
 
     println!("Tool result: {}", result.unwrap());
     println!("Tools API test passed successfully!");
 }
 
+#[tokio::test]
+#[ignore]
 async fn test_claude_api_with_tool_response() {
     dotenv().ok();
     let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
@@ -117,7 +118,7 @@ async fn test_claude_api_with_tool_response() {
     let messages = vec![
         Message {
             role: "user".to_string(),
-            content_type: MessageContent::Text {
+            content: MessageContent::Text {
                 content: "Please list the files in the current directory using the LS tool"
                     .to_string(),
             },
@@ -125,7 +126,7 @@ async fn test_claude_api_with_tool_response() {
         },
         Message {
             role: "assistant".to_string(),
-            content_type: MessageContent::StructuredContent {
+            content: MessageContent::StructuredContent {
                 content: StructuredContent(vec![ContentBlock::ToolUse {
                     id: "this-is-the-id".to_string(),
                     name: "ls".to_string(),
@@ -136,11 +137,14 @@ async fn test_claude_api_with_tool_response() {
         },
         Message {
             role: "user".to_string(),
-            content_type: MessageContent::StructuredContent {
+            content: MessageContent::StructuredContent {
                 content: StructuredContent(vec![
                     ContentBlock::ToolResult {
                         tool_use_id: "this-is-the-id".to_string(),
-                        content: "foo".to_string(),
+                        content: vec![ContentBlock::Text {
+                            text: "foo".to_string(),
+                        }],
+                        is_error: None,
                     },
                     ContentBlock::Text {
                         text: "list it again".to_string(),

@@ -201,7 +201,7 @@ impl Conversation {
 
         let prompt_messages = vec![messages::Message {
             role: "user".to_string(),
-            content_type: messages::MessageContent::Text {
+            content: messages::MessageContent::Text {
                 content: summary_prompt,
             },
             id: None,

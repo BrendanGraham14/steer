@@ -24,9 +24,8 @@ mod message_formatter;
 
 use message_formatter::format_message;
 
-const MAX_INPUT_HEIGHT: u16 = 80; // Max height for the input area
+const MAX_INPUT_HEIGHT: u16 = 80;
 
-// Restore the helper function to convert Crossterm KeyCode to tui_textarea Key
 fn crossterm_keycode_to_textarea_key(kc: crossterm::event::KeyCode) -> tui_textarea::Key {
     use crossterm::event::KeyCode as CrosstermKC;
     use tui_textarea::Key as TextareaKey;
@@ -155,7 +154,7 @@ impl Tui {
                 crate::api::messages::create_system_prompt(app_guard.environment_info())
             };
 
-            let content = match &system_prompt.content_type {
+            let content = match &system_prompt.content {
                 crate::api::messages::MessageContent::Text { content } => content.clone(),
                 _ => "System prompt".to_string(), // Should not happen for system prompt
             };
@@ -202,7 +201,7 @@ impl Tui {
                             "tui.run",
                             &format!("Terminal resized to {}x{}", width, height),
                         );
-                        // TUI might redraw automatically, or you might force a redraw if needed
+                        // TUI should redraw automatically
                     }
                     Event::FocusGained => {
                         crate::utils::logging::debug("tui.run", "Terminal focus gained");
