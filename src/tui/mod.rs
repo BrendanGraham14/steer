@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -7,7 +10,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::io;
@@ -15,10 +18,37 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
+use tui_textarea::{Input, Key, TextArea};
 
 mod message_formatter;
 
 use message_formatter::format_message;
+
+const MAX_INPUT_HEIGHT: u16 = 80; // Max height for the input area
+
+// Restore the helper function to convert Crossterm KeyCode to tui_textarea Key
+fn crossterm_keycode_to_textarea_key(kc: crossterm::event::KeyCode) -> tui_textarea::Key {
+    use crossterm::event::KeyCode as CrosstermKC;
+    use tui_textarea::Key as TextareaKey;
+
+    match kc {
+        CrosstermKC::Backspace => TextareaKey::Backspace,
+        CrosstermKC::Enter => TextareaKey::Enter,
+        CrosstermKC::Left => TextareaKey::Left,
+        CrosstermKC::Right => TextareaKey::Right,
+        CrosstermKC::Up => TextareaKey::Up,
+        CrosstermKC::Down => TextareaKey::Down,
+        CrosstermKC::Tab => TextareaKey::Tab,
+        CrosstermKC::Delete => TextareaKey::Delete,
+        CrosstermKC::Insert => TextareaKey::Null, // Map Insert to Null as tui_textarea doesn't have it
+        CrosstermKC::F(n) => TextareaKey::F(n),
+        CrosstermKC::Char(c) => TextareaKey::Char(c),
+        CrosstermKC::Null => TextareaKey::Null,
+        CrosstermKC::Esc => TextareaKey::Esc,
+        // Map other potentially unsupported keys to Null for now
+        _ => TextareaKey::Null,
+    }
+}
 
 // UI States
 enum InputMode {
@@ -33,7 +63,7 @@ static SPINNER_STATE: RwLock<usize> = RwLock::new(0);
 
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
-    input: String,
+    textarea: TextArea<'static>,
     input_mode: InputMode,
     messages: Vec<FormattedMessage>,
     is_processing: Arc<RwLock<bool>>,
@@ -58,6 +88,13 @@ impl Tui {
     pub fn new() -> Result<Self> {
         // Setup terminal
         enable_raw_mode().context("Failed to enable raw mode")?;
+        // Try enabling keyboard enhancement flags (specifically MODIFY_OTHER_KEYS)
+        // This *might* help distinguish Shift+Enter, but depends on terminal support.
+        execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+            EnableBracketedPaste
+        )?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen).context("Failed to enter alternate screen")?;
         let backend = CrosstermBackend::new(stdout);
@@ -76,9 +113,19 @@ impl Tui {
             *spinner = 0;
         }
 
+        // Initialize TextArea
+        let mut textarea = TextArea::default();
+        textarea.set_block(
+            ratatui::widgets::Block::default()
+                .borders(Borders::ALL)
+                .title("Input (Ctrl+S or i to edit, Enter to send, Esc to exit)"),
+        );
+        textarea.set_placeholder_text("Enter your message here...");
+        textarea.set_style(Style::default());
+
         Ok(Self {
             terminal,
-            input: String::new(),
+            textarea,
             input_mode: InputMode::Normal,
             messages: Vec::new(),
             is_processing: Arc::new(RwLock::new(false)),
@@ -91,7 +138,7 @@ impl Tui {
     pub async fn run(
         &mut self,
         app: Arc<Mutex<crate::app::App>>,
-        mut event_rx: mpsc::Receiver<crate::app::AppEvent>,
+        event_rx: mpsc::Receiver<crate::app::AppEvent>,
     ) -> Result<()> {
         // Spawn event handler first
         let event_handle = self.spawn_event_handler(event_rx);
@@ -122,13 +169,56 @@ impl Tui {
         loop {
             self.draw()?;
 
-            if crossterm::event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    // Pass the Arc<Mutex<App>> to handle_input
-                    if self.handle_input(key, Arc::clone(&app)).await? {
-                        break;
+            // Use crossterm event polling and reading
+            if event::poll(Duration::from_millis(100))? {
+                match event::read()? {
+                    // Read the event first
+                    Event::Key(key) => {
+                        // Handle key events
+                        // Pass the crossterm KeyEvent to handle_input
+                        if self.handle_input(key, Arc::clone(&app)).await? {
+                            break; // Exit condition
+                        }
                     }
+                    Event::Paste(data) => {
+                        // Handle paste event only when editing
+                        if matches!(self.input_mode, InputMode::Editing) {
+                            // Normalize potential '\r\n' or '\r' to '\n'
+                            let normalized_data = data.replace("\r\n", "\n").replace("\r", "\n");
+                            // Insert the normalized string into the text area
+                            self.textarea.insert_str(&normalized_data);
+                            crate::utils::logging::debug(
+                                "tui.run",
+                                &format!(
+                                    "Pasted {} characters into textarea (normalized)",
+                                    normalized_data.len()
+                                ),
+                            );
+                        }
+                    }
+                    Event::Resize(width, height) => {
+                        // Handle resize events (optional, but good practice)
+                        crate::utils::logging::debug(
+                            "tui.run",
+                            &format!("Terminal resized to {}x{}", width, height),
+                        );
+                        // TUI might redraw automatically, or you might force a redraw if needed
+                    }
+                    Event::FocusGained => {
+                        crate::utils::logging::debug("tui.run", "Terminal focus gained");
+                        // May need EnableFocusChange command enabled at setup
+                    }
+                    Event::FocusLost => {
+                        crate::utils::logging::debug("tui.run", "Terminal focus lost");
+                        // May need EnableFocusChange command enabled at setup
+                    }
+                    // Ignore mouse events for now unless needed
+                    Event::Mouse(_) => {}
+                    // Catch-all for other events we don't handle explicitly
+                    _ => {}
                 }
+            } else {
+                // poll timed out, no event
             }
 
             // Check if the event handler task has panicked or exited unexpectedly
@@ -161,6 +251,12 @@ impl Tui {
         disable_raw_mode().context("Failed to disable raw mode")?;
         execute!(self.terminal.backend_mut(), LeaveAlternateScreen)
             .context("Failed to leave alternate screen")?;
+        execute!(
+            self.terminal.backend_mut(),
+            PopKeyboardEnhancementFlags, // Keep existing flag pop
+            DisableBracketedPaste
+        )
+        .context("Failed to pop keyboard enhancement flags or disable bracketed paste")?;
         self.terminal.show_cursor()?;
 
         Ok(())
@@ -705,15 +801,9 @@ impl Tui {
                                     let lines: Vec<&str> = full_result.lines().collect();
                                     let preview_lines: Vec<&str> =
                                         lines.iter().take(MAX_PREVIEW_LINES).copied().collect();
-                                    let mut display_content_str = preview_lines.join(
-                                        "
-",
-                                    );
+                                    let mut display_content_str = preview_lines.join("\n");
                                     if lines.len() > MAX_PREVIEW_LINES {
-                                        display_content_str.push_str(
-                                            "
-...",
-                                        );
+                                        display_content_str.push_str("\n...");
                                     }
                                     msg.content = format_message(
                                         &display_content_str,
@@ -800,11 +890,6 @@ impl Tui {
             self.last_spinner_update = now;
         }
     }
-
-    // This function isn't needed after our refactoring
-    // fn update_shared_messages(&mut self, shared: Arc<Mutex<Vec<FormattedMessage>>>) {
-    //     self.shared_messages = Some(shared);
-    // }
 
     // Sync messages from the shared state if available
     fn sync_messages(&mut self) {
@@ -900,68 +985,81 @@ impl Tui {
 
         // Create copies of the data we need to use in the closure
         let messages = self.messages.clone();
-        let input = self.input.clone();
-        let input_mode = match self.input_mode {
-            InputMode::Normal => false,
-            InputMode::Editing => true,
-        };
         let is_processing = *self.is_processing.read().unwrap();
         let progress_message = self.progress_message.clone();
 
-        // Update max scroll value based on current message content and terminal size
-        let terminal_height = self.terminal.size()?.height as usize;
-        let visible_lines = terminal_height.saturating_sub(5); // Adjust for borders and input area
-        let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
-        let max_scroll = total_lines.saturating_sub(visible_lines).max(0);
-        Self::set_max_scroll(max_scroll);
-
-        // Ensure scroll offset is within bounds
-        let current_offset = Self::get_scroll_offset();
-        if current_offset > max_scroll {
-            Self::set_scroll_offset(max_scroll);
-        }
+        // Get the textarea widget reference for rendering
+        let textarea_ref = &self.textarea;
+        let is_editing = matches!(self.input_mode, InputMode::Editing);
 
         self.terminal.draw(|f| {
-            // Create main layout
-            let mut constraints = vec![Constraint::Min(1), Constraint::Length(3)];
+            let total_height = f.size().height;
 
-            // Add progress area if processing
+            // Calculate dynamic input height
+            let input_width = f.size().width.saturating_sub(2); // Account for block borders
+            // Correctly calculate required height based on lines + borders
+            let required_input_height =
+                (textarea_ref.lines().len().max(1) as u16).saturating_add(2);
+            let input_height = required_input_height
+                .min(MAX_INPUT_HEIGHT)
+                .min(total_height); // Clamp height
+
+            // Define constraints based on state and calculated input height
+            let mut constraints = Vec::new();
+            constraints.push(Constraint::Min(1)); // Message area takes remaining space
+
             if is_processing {
-                constraints.insert(1, Constraint::Length(1));
+                constraints.push(Constraint::Length(1)); // Progress area
             }
+
+            constraints.push(Constraint::Length(input_height)); // Input area height
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints(constraints)
                 .split(f.size());
 
-            // Create message area
-            let message_area = chunks[0];
+            let message_area_index = 0;
+            let progress_area_index = if is_processing { Some(1) } else { None };
+            let input_area_index = if is_processing { 2 } else { 1 };
 
-            // Create progress area if processing
+            let message_area = chunks[message_area_index];
+            let input_area = chunks[input_area_index];
+
+            // Update max scroll for message area AFTER calculating layout
+            let message_area_height = message_area.height as usize;
+            let visible_lines = message_area_height.saturating_sub(2); // Adjust for borders
+            let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
+            let max_scroll = total_lines.saturating_sub(visible_lines).max(0);
+            Self::set_max_scroll(max_scroll);
+
+            // Ensure scroll offset is within bounds
+            let current_offset = Self::get_scroll_offset();
+            if current_offset > max_scroll {
+                Self::set_scroll_offset(max_scroll);
+            }
+
+            // Render progress area if processing
             if is_processing {
-                // Render progress indicator
+                let progress_area = chunks[progress_area_index.unwrap()]; // Safe unwrap due to logic above
                 let spinner_char = Self::get_spinner_char();
-                let progress_text = if let Some(msg) = progress_message {
+                let progress_text = if let Some(msg) = &progress_message {
                     format!("{} {}", spinner_char, msg)
                 } else {
                     format!("{} Processing...", spinner_char)
                 };
-
                 let progress_widget =
                     Paragraph::new(progress_text).style(Style::default().fg(Color::Yellow));
-                f.render_widget(progress_widget, chunks[1]);
-
-                // Render input (using cloned data)
-                Self::render_input_static(f, chunks[2], &input, input_mode);
-            } else {
-                // Render input without progress area
-                let input_area = chunks[1];
-                Self::render_input_static(f, input_area, &input, input_mode);
+                f.render_widget(progress_widget, progress_area);
             }
 
-            // Render messages (using cloned data)
+            // Render messages
             Self::render_messages_static(f, message_area, &messages);
+
+            // Render input area (TextArea)
+            f.render_widget(textarea_ref.widget(), input_area);
+
+            // Cursor is handled by the TextArea widget itself when rendered
         })?;
 
         Ok(())
@@ -1166,43 +1264,26 @@ impl Tui {
         f.render_widget(messages_list, area);
     }
 
-    // Static version of render_input that doesn't borrow self
-    fn render_input_static(f: &mut ratatui::Frame<'_>, area: Rect, input: &str, is_editing: bool) {
-        let input_style = if is_editing {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default()
-        };
-
-        let paragraph = Paragraph::new(ratatui::text::Text::from(input))
-            .style(input_style)
-            .block(Block::default().borders(Borders::ALL).title("Input"));
-
-        f.render_widget(paragraph, area);
-
-        // Show cursor in editing mode
-        if is_editing {
-            // Get the input string length for cursor positioning
-            let string_len = input.chars().count() as u16;
-            f.set_cursor(area.x + 1 + string_len, area.y + 1);
-        }
-    }
-
     async fn handle_input(
         &mut self,
-        key: KeyEvent,
+        key: KeyEvent, // Use crossterm's KeyEvent
         app: Arc<Mutex<crate::app::App>>,
     ) -> Result<bool> {
         match self.input_mode {
             InputMode::Normal => match key.code {
+                // Use crossterm KeyCode and KeyModifiers
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return Ok(true);
                 }
                 KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.input_mode = InputMode::Editing;
+                    // Set textarea style for editing mode
+                    self.textarea.set_style(Style::default().yellow());
                 }
                 KeyCode::Char('i') => {
                     self.input_mode = InputMode::Editing;
+                    // Set textarea style for editing mode
+                    self.textarea.set_style(Style::default().yellow());
                 }
                 KeyCode::Up => {
                     let current = Self::get_scroll_offset();
@@ -1219,22 +1300,14 @@ impl Tui {
                 }
                 KeyCode::PageUp => {
                     let current = Self::get_scroll_offset();
-                    let page_size = 10;
-                    if current > page_size {
-                        Self::set_scroll_offset(current - page_size);
-                    } else {
-                        Self::set_scroll_offset(0);
-                    }
+                    let page_size = self.terminal.size()?.height.saturating_sub(5) as usize;
+                    Self::set_scroll_offset(current.saturating_sub(page_size));
                 }
                 KeyCode::PageDown => {
                     let current = Self::get_scroll_offset();
                     let max = Self::get_max_scroll();
-                    let page_size = 10;
-                    if current + page_size < max {
-                        Self::set_scroll_offset(current + page_size);
-                    } else {
-                        Self::set_scroll_offset(max);
-                    }
+                    let page_size = self.terminal.size()?.height.saturating_sub(5) as usize;
+                    Self::set_scroll_offset((current + page_size).min(max));
                 }
                 KeyCode::Home => {
                     Self::set_scroll_offset(0);
@@ -1248,9 +1321,7 @@ impl Tui {
                         "tui.handle_input",
                         "Ctrl+R pressed. Syncing messages...",
                     );
-                    // Sync messages first to ensure we have the latest state locally
                     self.sync_messages();
-
                     crate::utils::logging::debug(
                         "tui.handle_input",
                         &format!(
@@ -1258,8 +1329,6 @@ impl Tui {
                             self.messages.len()
                         ),
                     );
-
-                    // Find the ID of the last message that is a tool result
                     let last_tool_msg_id = self.messages.iter().rev().find_map(|msg| {
                         crate::utils::logging::debug(
                             "tui.handle_input",
@@ -1276,7 +1345,6 @@ impl Tui {
                             None
                         }
                     });
-
                     if let Some(id_to_toggle) = last_tool_msg_id {
                         crate::utils::logging::debug(
                             "tui.handle_input",
@@ -1285,8 +1353,6 @@ impl Tui {
                                 id_to_toggle
                             ),
                         );
-                        // Ask the App instance to emit the toggle event
-                        // Lock the app to call the method
                         app.lock().await.toggle_message_truncation(id_to_toggle);
                     } else {
                         crate::utils::logging::debug(
@@ -1297,40 +1363,61 @@ impl Tui {
                 }
                 _ => {}
             },
-            InputMode::Editing => match key.code {
-                KeyCode::Enter => {
-                    // Check if the app is currently processing a message
-                    if *self.is_processing.read().unwrap() {
-                        // Still block sending if is_processing is true
-                        crate::utils::logging::debug(
-                            "tui.handle_input",
-                            "Enter pressed while processing, message sending blocked.",
-                        );
-                    } else {
-                        // If not processing, send the message
-                        let message = self.input.drain(..).collect::<String>();
-                        if !message.is_empty() {
-                            // Pass the Arc<Mutex<App>> clone to send_message
-                            self.send_message(message, Arc::clone(&app)).await?;
-                        }
+            InputMode::Editing => {
+                // Manually construct Input using the helper function
+                let ta_key = crossterm_keycode_to_textarea_key(key.code);
+                let input = Input {
+                    key: ta_key,
+                    ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+                    alt: key.modifiers.contains(KeyModifiers::ALT),
+                    shift: key.modifiers.contains(KeyModifiers::SHIFT),
+                };
+
+                match input {
+                    Input { key: Key::Esc, .. } => {
                         self.input_mode = InputMode::Normal;
+                        self.textarea.set_style(Style::default());
                     }
-                }
-                KeyCode::Char(c) => {
-                    if c == 'c' && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    Input {
+                        key: Key::Enter,
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    } => {
+                        if *self.is_processing.read().unwrap() {
+                            crate::utils::logging::debug(
+                                "tui.handle_input",
+                                "Enter pressed while processing, message sending blocked.",
+                            );
+                        } else {
+                            let message = self.textarea.lines().join(
+                                "\n", // Keep newline fix
+                            );
+                            if !message.trim().is_empty() {
+                                let message_to_send = message;
+                                self.textarea.select_all();
+                                self.textarea.delete_char();
+                                self.send_message(message_to_send, Arc::clone(&app)).await?;
+                                self.input_mode = InputMode::Normal;
+                                self.textarea.set_style(Style::default());
+                            } else {
+                                self.input_mode = InputMode::Normal;
+                                self.textarea.set_style(Style::default());
+                            }
+                        }
+                    }
+                    Input { // Use the manually constructed input here
+                        key: Key::Char('c'),
+                        ctrl: true,
+                        .. // alt and shift flags are part of the Input struct
+                    } => {
                         return Ok(true);
-                    } else {
-                        self.input.push(c);
+                    }
+                    _ => {
+                        self.textarea.input(input);
                     }
                 }
-                KeyCode::Backspace => {
-                    self.input.pop();
-                }
-                KeyCode::Esc => {
-                    self.input_mode = InputMode::Normal;
-                }
-                _ => {}
-            },
+            }
         }
 
         Ok(false)
