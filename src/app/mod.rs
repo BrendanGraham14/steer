@@ -137,20 +137,6 @@ impl App {
         }
     }
 
-    /// Run the application
-    pub async fn run(&mut self) -> Result<()> {
-        // Initialize TUI
-        let mut tui = crate::tui::Tui::new()?;
-
-        // Set up event channel
-        let event_receiver = self.setup_event_channel();
-
-        // Run the main event loop
-        tui.run(self, event_receiver).await?;
-
-        Ok(())
-    }
-
     pub fn add_user_message(&mut self, content: String) {
         let message = Message::new(Role::User, content);
         self.add_message(message);

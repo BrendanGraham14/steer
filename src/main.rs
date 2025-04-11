@@ -4,6 +4,7 @@ use dotenv::dotenv;
 use std::panic;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Mutex;
 
 mod api;
 mod app;
@@ -73,13 +74,14 @@ async fn main() -> Result<()> {
     // Set up signal handler for SIGINT, SIGTERM
     #[cfg(not(windows))]
     {
-        use tokio::signal::unix::{signal, SignalKind};
-        
+        use tokio::signal::unix::{SignalKind, signal};
+
         let sigterm_terminal = terminal_clone.clone();
         tokio::spawn(async move {
-            let mut sigterm = signal(SignalKind::terminate()).expect("Failed to set up SIGTERM handler");
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to set up SIGTERM handler");
             sigterm.recv().await;
-            
+
             // Clean up terminal if in raw mode
             if sigterm_terminal.load(Ordering::SeqCst) {
                 let _ = crossterm::terminal::disable_raw_mode();
@@ -89,15 +91,16 @@ async fn main() -> Result<()> {
                 );
                 utils::logging::info("signal_handler", "Received SIGTERM, terminal cleaned up");
             }
-            
+
             std::process::exit(0);
         });
-        
+
         let sigint_terminal = terminal_clone.clone();
         tokio::spawn(async move {
-            let mut sigint = signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+            let mut sigint =
+                signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
             sigint.recv().await;
-            
+
             // Clean up terminal if in raw mode
             if sigint_terminal.load(Ordering::SeqCst) {
                 let _ = crossterm::terminal::disable_raw_mode();
@@ -107,7 +110,7 @@ async fn main() -> Result<()> {
                 );
                 utils::logging::info("signal_handler", "Received SIGINT, terminal cleaned up");
             }
-            
+
             std::process::exit(0);
         });
     }
@@ -176,7 +179,7 @@ async fn main() -> Result<()> {
 
     // Initialize the app
     utils::logging::info("main", "Initializing application");
-    let mut app = match app::App::new(app_config) {
+    let app = match app::App::new(app_config) {
         Ok(app) => app,
         Err(e) => {
             utils::logging::error("main", &format!("Failed to initialize app: {}", e));
@@ -184,32 +187,33 @@ async fn main() -> Result<()> {
             return Err(e);
         }
     };
+    let app = Arc::new(Mutex::new(app));
 
     // Set up panic hook to ensure terminal is reset if the app crashes
     let orig_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
-        // Always attempt to disable raw mode on panic
         let terminal_result = crossterm::terminal::disable_raw_mode();
-        let screen_result = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::terminal::LeaveAlternateScreen
+        let screen_result =
+            crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+
+        utils::logging::error(
+            "panic_hook",
+            &format!("Application panicked: {}", panic_info),
         );
-        
-        // Log the panic and any terminal cleanup failures
-        utils::logging::error("panic_hook", &format!("Application panicked: {}", panic_info));
-        
+
         if let Err(e) = terminal_result {
             utils::logging::error("panic_hook", &format!("Failed to disable raw mode: {}", e));
         }
-        
+
         if let Err(e) = screen_result {
-            utils::logging::error("panic_hook", &format!("Failed to leave alternate screen: {}", e));
+            utils::logging::error(
+                "panic_hook",
+                &format!("Failed to leave alternate screen: {}", e),
+            );
         }
-        
-        // Print error to stderr
+
         eprintln!("\nERROR: Application crashed: {}", panic_info);
-        
-        // Call the original panic handler
+
         orig_hook(panic_info);
     }));
 
@@ -223,21 +227,24 @@ async fn main() -> Result<()> {
             return Err(e);
         }
     };
-    
+
     // Mark that terminal is now in raw mode
     terminal_in_raw_mode.store(true, Ordering::SeqCst);
 
     // Set up the event channel for app → TUI communication
     utils::logging::info("main", "Setting up event channel");
-    let event_rx = app.setup_event_channel();
+    let event_rx = {
+        let mut app_guard = app.lock().await;
+        app_guard.setup_event_channel()
+    };
 
     // Run the TUI with the app
     utils::logging::info("main", "Starting application main loop");
-    let result = tui.run(&mut app, event_rx).await;
-    
+    let result = tui.run(Arc::clone(&app), event_rx).await;
+
     // Mark terminal as no longer in raw mode
     terminal_in_raw_mode.store(false, Ordering::SeqCst);
-    
+
     match result {
         Ok(_) => {
             utils::logging::info("main", "Application terminated normally");

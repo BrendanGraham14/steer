@@ -36,7 +36,7 @@ pub struct Tui {
     input: String,
     input_mode: InputMode,
     messages: Vec<FormattedMessage>,
-    is_processing: bool,
+    is_processing: Arc<RwLock<bool>>,
     // Progress tracking
     progress_message: Option<String>,
     last_spinner_update: std::time::Instant,
@@ -81,7 +81,7 @@ impl Tui {
             input: String::new(),
             input_mode: InputMode::Normal,
             messages: Vec::new(),
-            is_processing: false,
+            is_processing: Arc::new(RwLock::new(false)),
             progress_message: None,
             last_spinner_update: std::time::Instant::now(),
             shared_messages: None,
@@ -90,63 +90,70 @@ impl Tui {
 
     pub async fn run(
         &mut self,
-        app: &mut crate::app::App,
+        app: Arc<Mutex<crate::app::App>>,
         mut event_rx: mpsc::Receiver<crate::app::AppEvent>,
     ) -> Result<()> {
-        // Spawn a task to handle events from the app - do this first to set up shared message state
-        let mut event_handle = self.spawn_event_handler(event_rx);
+        // Spawn event handler first
+        let event_handle = self.spawn_event_handler(event_rx);
 
-        // Sync messages to the shared state
-        if let Some(shared) = &self.shared_messages {
-            // Update the shared messages
-            if let Ok(mut messages) = shared.try_lock() {
-                *messages = self.messages.clone();
-                crate::utils::logging::info(
-                    "tui.run",
-                    &format!(
-                        "Initialized shared messages with welcome messages. Count: {}",
-                        messages.len()
-                    ),
-                );
-            }
-        }
+        // Lock App to add system prompt and setup event channel if not already done
+        let system_prompt_content = {
+            let mut app_guard = app.lock().await;
+            let system_prompt = if app_guard.has_memory_file() {
+                crate::api::messages::create_system_prompt_with_memory(
+                    app_guard.environment_info(),
+                    app_guard.memory_content(),
+                )
+            } else {
+                crate::api::messages::create_system_prompt(app_guard.environment_info())
+            };
 
-        // Add the system prompt to the conversation
-        let system_prompt = if app.has_memory_file() {
-            // Use the memory-enhanced system prompt
-            crate::api::messages::create_system_prompt_with_memory(
-                app.environment_info(),
-                app.memory_content(),
-            )
-        } else {
-            // Use the regular system prompt
-            crate::api::messages::create_system_prompt(app.environment_info())
+            let content = match &system_prompt.content_type {
+                crate::api::messages::MessageContent::Text { content } => content.clone(),
+                _ => "System prompt".to_string(), // Should not happen for system prompt
+            };
+            // Add system message via app method to ensure consistency
+            app_guard.add_system_message(content.clone());
+            content // Return for potential local use if needed, though app manages state
         };
+        // Note: System messages aren't usually displayed directly, handled by App/API logic.
 
-        let content = match &system_prompt.content_type {
-            crate::api::messages::MessageContent::Text { content } => content.clone(),
-            _ => "System prompt".to_string(),
-        };
-        app.add_system_message(content);
-
+        // Main TUI Loop
         loop {
-            // Draw UI
             self.draw()?;
 
-            // Handle input
             if crossterm::event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    if self.handle_input(key, app).await? {
+                    // Pass the Arc<Mutex<App>> to handle_input
+                    if self.handle_input(key, Arc::clone(&app)).await? {
                         break;
                     }
                 }
             }
 
-            // Check if the event handler has exited
+            // Check if the event handler task has panicked or exited unexpectedly
             if event_handle.is_finished() {
-                // Recreate the event handler if it has exited
-                event_rx = app.setup_event_channel();
-                event_handle = self.spawn_event_handler(event_rx);
+                // Attempt to log the exit reason
+                match event_handle.await {
+                    Ok(_) => crate::utils::logging::warn(
+                        "tui.run",
+                        "Event handler task finished unexpectedly without error.",
+                    ),
+                    Err(e) => crate::utils::logging::error(
+                        "tui.run",
+                        &format!("Event handler task panicked: {:?}", e),
+                    ),
+                }
+                // Decide on recovery strategy: maybe break, maybe restart handler?
+                // For now, break the loop as state might be inconsistent.
+                crate::utils::logging::error(
+                    "tui.run",
+                    "Exiting TUI due to event handler termination.",
+                );
+                break;
+                // Example of restarting handler (use with caution):
+                // event_rx = { app.lock().await.setup_event_channel() };
+                // event_handle = self.spawn_event_handler(event_rx);
             }
         }
 
@@ -164,29 +171,54 @@ impl Tui {
         &mut self,
         mut event_rx: mpsc::Receiver<crate::app::AppEvent>,
     ) -> JoinHandle<()> {
-        // Clone the messages Vec to move into the task
+        // Clone shared state for the task
         let messages = Arc::new(Mutex::new(self.messages.clone()));
+        let is_processing = Arc::clone(&self.is_processing);
 
-        // Create a shared messages reference that will be updated by the event handler
-        // and can be retrieved by the main TUI instance
+        // Store the shared messages reference in the Tui instance
         let shared_messages = Arc::clone(&messages);
         self.shared_messages = Some(shared_messages);
 
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
-                let mut messages = messages.lock().await;
+                // Lock messages once per event processing cycle
+                let mut messages_guard = messages.lock().await;
 
-                // Simplified spinner state updates
+                // Update processing state based on event type
                 match &event {
-                    crate::app::AppEvent::ThinkingStarted
-                    | crate::app::AppEvent::ToolCallStarted { .. } => {
+                    crate::app::AppEvent::ThinkingStarted => {
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            "Setting is_processing = true",
+                        );
+                        if let Ok(mut processing) = is_processing.write() {
+                            *processing = true;
+                        }
+                        // Reset spinner state
                         if let Ok(mut state) = SPINNER_STATE.write() {
-                            *state = 0; // Reset spinner state
+                            *state = 0;
                         }
                     }
-                    _ => {}
+                    crate::app::AppEvent::ThinkingCompleted
+                    | crate::app::AppEvent::Error { .. } => {
+                        crate::utils::logging::debug(
+                            "tui.event_handler",
+                            "Setting is_processing = false",
+                        );
+                        if let Ok(mut processing) = is_processing.write() {
+                            *processing = false;
+                        }
+                    }
+                    // Keep spinner reset for tool calls as well
+                    crate::app::AppEvent::ToolCallStarted { .. } => {
+                        if let Ok(mut state) = SPINNER_STATE.write() {
+                            *state = 0;
+                        }
+                    }
+                    _ => {} // Other events don't directly change the main processing state
                 }
 
+                // Now handle the specific event logic using the locked messages_guard
                 match event {
                     crate::app::AppEvent::MessageAdded { role, content, id } => {
                         if role == crate::app::Role::System {
@@ -201,7 +233,7 @@ impl Tui {
 
                         // Check if the LAST message is a placeholder and this new message is the Assistant's response
                         if role == crate::app::Role::Assistant {
-                            if let Some(last_msg) = messages.last_mut() {
+                            if let Some(last_msg) = messages_guard.last_mut() {
                                 if last_msg.role == crate::app::Role::Assistant {
                                     let last_content_str = last_msg
                                         .content
@@ -235,7 +267,7 @@ impl Tui {
                         // If we didn't update the last message, add this as a new message
                         if !message_updated {
                             // Check for ID collision before adding (optional but good practice)
-                            if messages.iter().any(|m| m.id == id) {
+                            if messages_guard.iter().any(|m| m.id == id) {
                                 crate::utils::logging::warn(
                                     "tui.event_handler",
                                     &format!(
@@ -245,7 +277,7 @@ impl Tui {
                                 );
                             } else {
                                 let formatted = format_message(&content, role);
-                                messages.push(FormattedMessage {
+                                messages_guard.push(FormattedMessage {
                                     content: formatted,
                                     role,
                                     id: id.clone(),
@@ -280,13 +312,13 @@ impl Tui {
                             &format!(
                                 "MessageUpdated event for ID: {}, message count: {}",
                                 id,
-                                messages.len()
+                                messages_guard.len()
                             ),
                         );
 
                         // Find the message with the given ID and update its content
                         let mut found = false;
-                        for msg in messages.iter_mut() {
+                        for msg in messages_guard.iter_mut() {
                             if msg.id == id {
                                 // Found the message to update
                                 crate::utils::logging::debug(
@@ -352,7 +384,7 @@ impl Tui {
                         });
 
                         // Check if a message with this ID already exists (e.g., retry)
-                        if messages.iter().any(|m| m.id == tool_id) {
+                        if messages_guard.iter().any(|m| m.id == tool_id) {
                             crate::utils::logging::debug(
                                 "tui.event_handler",
                                 &format!(
@@ -361,7 +393,7 @@ impl Tui {
                                 ),
                             );
                             // Update existing placeholder if needed
-                            if let Some(msg) = messages.iter_mut().find(|m| m.id == tool_id) {
+                            if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == tool_id) {
                                 let placeholder_content = format!("Executing tool: {}", name);
                                 msg.content =
                                     format_message(&placeholder_content, crate::app::Role::Tool);
@@ -375,10 +407,10 @@ impl Tui {
                             let placeholder_content = format!("Executing tool: {}", name);
                             let formatted =
                                 format_message(&placeholder_content, crate::app::Role::Tool);
-                            messages.push(FormattedMessage {
+                            messages_guard.push(FormattedMessage {
                                 content: formatted,
                                 role: crate::app::Role::Tool,
-                                id: tool_id,
+                                id: tool_id.clone(),
                                 full_tool_result: None,
                                 is_truncated: false,
                                 tool_name: Some(name),
@@ -387,7 +419,7 @@ impl Tui {
                                 "tui.event_handler",
                                 &format!(
                                     "ToolCallStarted: Added placeholder message with ID {}",
-                                    messages.last().unwrap().id
+                                    messages_guard.last().unwrap().id
                                 ),
                             );
                         }
@@ -401,7 +433,7 @@ impl Tui {
                         // Must have an ID to update the correct placeholder
                         if let Some(tool_id) = id {
                             // Find the existing placeholder message
-                            if let Some(msg) = messages.iter_mut().find(|m| m.id == tool_id) {
+                            if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == tool_id) {
                                 crate::utils::logging::debug(
                                     "tui.event_handler",
                                     &format!("ToolCallCompleted: Updating message ID {}", tool_id),
@@ -446,7 +478,7 @@ impl Tui {
                         // Must have an ID to update the correct placeholder
                         if let Some(tool_id) = id {
                             // Find the existing placeholder message
-                            if let Some(msg) = messages.iter_mut().find(|m| m.id == tool_id) {
+                            if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == tool_id) {
                                 crate::utils::logging::debug(
                                     "tui.event_handler",
                                     &format!(
@@ -480,7 +512,7 @@ impl Tui {
                     crate::app::AppEvent::ThinkingStarted => {
                         // Check if the last message is already an Assistant placeholder
                         let mut placeholder_exists = false;
-                        if let Some(last_msg) = messages.last() {
+                        if let Some(last_msg) = messages_guard.last() {
                             if last_msg.role == crate::app::Role::Assistant {
                                 let last_content_str = last_msg
                                     .content
@@ -529,7 +561,7 @@ impl Tui {
 
                             let formatted =
                                 format_message("Thinking...", crate::app::Role::Assistant);
-                            messages.push(FormattedMessage {
+                            messages_guard.push(FormattedMessage {
                                 content: formatted,
                                 role: crate::app::Role::Assistant,
                                 id: thinking_id,
@@ -544,7 +576,7 @@ impl Tui {
                         }
 
                         // Verify message order after potentially adding thinking message
-                        let message_ids = messages
+                        let message_ids = messages_guard
                             .iter()
                             .map(|m| m.id.as_str())
                             .collect::<Vec<&str>>();
@@ -558,12 +590,12 @@ impl Tui {
                             "tui.event_handler",
                             &format!(
                                 "ThinkingCompleted event received, message count: {}",
-                                messages.len()
+                                messages_guard.len()
                             ),
                         );
 
                         // Update the *last* message only if it's an Assistant "Thinking..." placeholder
-                        if let Some(last_msg) = messages.last_mut() {
+                        if let Some(last_msg) = messages_guard.last_mut() {
                             if last_msg.role == crate::app::Role::Assistant {
                                 let content_str = last_msg
                                     .content
@@ -621,7 +653,7 @@ impl Tui {
                         });
 
                         let formatted = format_message(&content, crate::app::Role::Assistant);
-                        messages.push(FormattedMessage {
+                        messages_guard.push(FormattedMessage {
                             content: formatted,
                             role: crate::app::Role::Assistant,
                             id: cmd_id,
@@ -644,7 +676,7 @@ impl Tui {
                             &format!("Error: {}", message),
                             crate::app::Role::Assistant,
                         );
-                        messages.push(FormattedMessage {
+                        messages_guard.push(FormattedMessage {
                             content: formatted,
                             role: crate::app::Role::Assistant,
                             id: error_id,
@@ -658,7 +690,7 @@ impl Tui {
                             "tui.event_handler",
                             &format!("Received ToggleMessageTruncation event for ID: {}", id),
                         );
-                        if let Some(msg) = messages.iter_mut().find(|m| m.id == id) {
+                        if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == id) {
                             crate::utils::logging::debug(
                                 "tui.event_handler",
                                 &format!("Found message to toggle: ID {}", id),
@@ -719,7 +751,13 @@ impl Tui {
                         }
                     }
                 }
+                // Drop the lock guard at the end of the loop iteration
+                drop(messages_guard);
             }
+            crate::utils::logging::warn(
+                "tui.event_handler",
+                "Event receiver channel closed. Exiting handler task.",
+            );
         })
     }
 
@@ -847,7 +885,7 @@ impl Tui {
 
     fn draw(&mut self) -> Result<()> {
         // Update spinner if we're processing
-        if self.is_processing {
+        if *self.is_processing.read().unwrap() {
             self.update_spinner_state();
         }
 
@@ -867,7 +905,7 @@ impl Tui {
             InputMode::Normal => false,
             InputMode::Editing => true,
         };
-        let is_processing = self.is_processing;
+        let is_processing = *self.is_processing.read().unwrap();
         let progress_message = self.progress_message.clone();
 
         // Update max scroll value based on current message content and terminal size
@@ -1150,7 +1188,11 @@ impl Tui {
         }
     }
 
-    async fn handle_input(&mut self, key: KeyEvent, app: &mut crate::app::App) -> Result<bool> {
+    async fn handle_input(
+        &mut self,
+        key: KeyEvent,
+        app: Arc<Mutex<crate::app::App>>,
+    ) -> Result<bool> {
         match self.input_mode {
             InputMode::Normal => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1244,7 +1286,8 @@ impl Tui {
                             ),
                         );
                         // Ask the App instance to emit the toggle event
-                        app.toggle_message_truncation(id_to_toggle);
+                        // Lock the app to call the method
+                        app.lock().await.toggle_message_truncation(id_to_toggle);
                     } else {
                         crate::utils::logging::debug(
                             "tui.handle_input",
@@ -1256,11 +1299,22 @@ impl Tui {
             },
             InputMode::Editing => match key.code {
                 KeyCode::Enter => {
-                    let message = self.input.drain(..).collect::<String>();
-                    if !message.is_empty() {
-                        self.send_message(message, app).await?;
+                    // Check if the app is currently processing a message
+                    if *self.is_processing.read().unwrap() {
+                        // Still block sending if is_processing is true
+                        crate::utils::logging::debug(
+                            "tui.handle_input",
+                            "Enter pressed while processing, message sending blocked.",
+                        );
+                    } else {
+                        // If not processing, send the message
+                        let message = self.input.drain(..).collect::<String>();
+                        if !message.is_empty() {
+                            // Pass the Arc<Mutex<App>> clone to send_message
+                            self.send_message(message, Arc::clone(&app)).await?;
+                        }
+                        self.input_mode = InputMode::Normal;
                     }
-                    self.input_mode = InputMode::Normal;
                 }
                 KeyCode::Char(c) => {
                     if c == 'c' && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -1287,46 +1341,60 @@ impl Tui {
         self.progress_message = message;
     }
 
-    async fn send_message(&mut self, message: String, app: &mut crate::app::App) -> Result<()> {
-        // Set processing flag and message
-        self.is_processing = true;
-        self.set_progress(Some("Sending message to Claude...".to_string()));
-        self.draw()?;
+    async fn send_message(
+        &mut self,
+        message: String,
+        app: Arc<Mutex<crate::app::App>>,
+    ) -> Result<()> {
+        // No longer set is_processing here. Rely on ThinkingStarted event.
+        // self.set_progress(Some("Sending message to Claude...".to_string()));
+        // self.draw()?; // Initial draw might not be needed, event handler will trigger redraws
 
-        // Let the app process the message
-        // The app will handle adding messages to the conversation
-        // and emitting events to update the UI
-        match app.process_user_message(message.clone()).await {
-            Ok(_) => {}
-            Err(e) => {
-                // Force update UI with error message if API call failed
-                self.add_assistant_message(&format!("Error: {}", e));
-                self.draw()?;
+        // Add the user message locally *immediately* for responsiveness
+        // The App will also add it, but this makes it appear instantly
+        self.add_user_message(&message);
+        self.draw()?; // Draw immediately after adding local user message
 
-                // Reset processing flag and message
-                self.is_processing = false;
-                self.set_progress(None);
-                return Err(e);
+        // Spawn the potentially long-running processing task
+        tokio::spawn(async move {
+            crate::utils::logging::debug("tui.send_message task", "Locking app mutex");
+            let mut app_guard = app.lock().await;
+            crate::utils::logging::debug(
+                "tui.send_message task",
+                "App mutex locked, calling process_user_message",
+            );
+            // The App::process_user_message method will handle adding the message
+            // to its conversation state and emitting events (ThinkingStarted, etc.)
+            if let Err(e) = app_guard.process_user_message(message).await {
+                // Log error from process_user_message if it returns an error
+                // App::process_user_message should ideally emit an AppEvent::Error itself,
+                // but we log here just in case.
+                crate::utils::logging::error(
+                    "tui.send_message task",
+                    &format!("Error in app.process_user_message: {}", e),
+                );
+                // Optionally, emit an error event from here if needed, though App should do it.
+                // app_guard.emit_event(AppEvent::Error { message: e.to_string() });
             }
-        }
+            crate::utils::logging::debug(
+                "tui.send_message task",
+                "process_user_message finished, releasing app mutex",
+            );
+            // Mutex guard is dropped here
+        });
 
-        // Try one more UI refresh to make sure we display updated messages
-        self.sync_messages();
-        self.draw()?;
+        // No longer set is_processing = false or reset progress here.
+        // Let the event handler manage state based on ThinkingCompleted/Error events.
 
-        // Reset processing flag and message
-        self.is_processing = false;
-        self.set_progress(None);
-
-        // Reset scroll to follow newest messages
+        // Reset scroll to follow newest messages after *initiating* send
         Self::set_scroll_offset(0);
 
-        // Draw once more after processing is complete
-        self.draw()?;
+        // TUI loop continues drawing, event handler updates state, making UI responsive.
 
         Ok(())
     }
 
+    // Helper to add user message locally before App confirms via event
     fn add_user_message(&mut self, content: &str) {
         let id = format!(
             "local_user_{}",
