@@ -1423,11 +1423,6 @@ impl Tui {
         Ok(false)
     }
 
-    // Set progress message
-    fn set_progress(&mut self, message: Option<String>) {
-        self.progress_message = message;
-    }
-
     async fn send_message(
         &mut self,
         message: String,
@@ -1494,63 +1489,6 @@ impl Tui {
         self.messages.push(FormattedMessage {
             content: formatted,
             role: crate::app::Role::User,
-            id,
-            full_tool_result: None,
-            is_truncated: false,
-            tool_name: None,
-        });
-    }
-
-    fn add_assistant_message(&mut self, content: &str) {
-        let id = format!(
-            "local_assistant_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_secs()
-        );
-        let formatted = format_message(content, crate::app::Role::Assistant);
-        self.messages.push(FormattedMessage {
-            content: formatted,
-            role: crate::app::Role::Assistant,
-            id,
-            full_tool_result: None,
-            is_truncated: false,
-            tool_name: None,
-        });
-    }
-
-    fn add_system_message(&mut self, content: &str) {
-        let id = format!(
-            "local_system_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_secs()
-        );
-        let formatted = format_message(content, crate::app::Role::System);
-        self.messages.push(FormattedMessage {
-            content: formatted,
-            role: crate::app::Role::System,
-            id,
-            full_tool_result: None,
-            is_truncated: false,
-            tool_name: None,
-        });
-    }
-
-    fn add_tool_message(&mut self, content: &str) {
-        let id = format!(
-            "local_tool_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_secs()
-        );
-        let formatted = format_message(content, crate::app::Role::Tool);
-        self.messages.push(FormattedMessage {
-            content: formatted,
-            role: crate::app::Role::Tool,
             id,
             full_tool_result: None,
             is_truncated: false,
