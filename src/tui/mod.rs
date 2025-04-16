@@ -684,36 +684,36 @@ impl Tui {
             InputMode::AwaitingApproval => "Approval Required (y/n, Shift+Tab=always, Esc=deny)",
             InputMode::ConfirmExit => "Really quit? (y/N)",
         };
-        let mut input_block = Block::<'a>::default()
-            .borders(Borders::ALL)
-            .title(input_title)
-            .style(input_border_style);
 
-        if is_processing {
+        let title_line = if is_processing {
             let progress_msg = progress_message.as_deref().unwrap_or_default();
-            let title: ratatui::text::Text =
-                format!(" {} Processing {} ", &spinner_char, progress_msg).into();
-            let final_title: ratatui::text::Text = if input_mode == InputMode::AwaitingApproval {
-                format!(
-                    " {} {} ",
-                    &spinner_char,
-                    progress_message.as_deref().unwrap_or("Awaiting Approval")
+            let input_title_span = Span::styled(input_title, Style::default());
+
+            let processing_span = if input_mode == InputMode::AwaitingApproval {
+                Span::styled(
+                    format!(
+                        "{} {} - ",
+                        &spinner_char,
+                        progress_message.as_deref().unwrap_or("Awaiting Approval")
+                    ),
+                    Style::default().white(),
                 )
-                .into()
             } else {
-                title
+                Span::styled(
+                    format!("{} Processing {} ", &spinner_char, progress_msg),
+                    Style::default().white(),
+                )
             };
-            input_block = input_block.title(
-                final_title
-                    .lines
-                    .get(0)
-                    .cloned()
-                    .unwrap_or_default()
-                    .style(final_title.style)
-                    .white(),
-            );
-        }
-        input_block
+
+            Line::from(vec![processing_span, input_title_span])
+        } else {
+            Line::from(input_title)
+        };
+
+        Block::<'a>::default()
+            .borders(Borders::ALL)
+            .title(title_line)
+            .style(input_border_style)
     }
 
     fn render_ui_static(
