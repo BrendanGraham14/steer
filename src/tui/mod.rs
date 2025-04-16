@@ -39,6 +39,7 @@ enum InputMode {
     Normal,
     Editing,
     AwaitingApproval,
+    ConfirmExit,
 }
 
 pub struct Tui {
@@ -673,11 +674,15 @@ impl Tui {
             InputMode::AwaitingApproval => {
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
             }
+            InputMode::ConfirmExit => Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
         };
         let input_title: &str = match input_mode {
             InputMode::Editing => "Input (Esc to stop editing, Enter to send)",
-            InputMode::Normal => "Input (i or Ctrl+S to edit, Enter to send, q to quit)",
+            InputMode::Normal => "Input (i to edit, Enter to send, Ctrl+C to exit)",
             InputMode::AwaitingApproval => "Approval Required (y/n, Shift+Tab=always, Esc=deny)",
+            InputMode::ConfirmExit => "Really quit? (y/N)",
         };
         let mut input_block = Block::<'a>::default()
             .borders(Borders::ALL)
@@ -928,21 +933,21 @@ impl Tui {
                     }
                 }
                 // Half Page Scroll Down (d/Ctrl+d in Normal Mode only)
-                KeyCode::Char('d') if self.input_mode == InputMode::Normal => {
-                    if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
-                    {
-                        let current_offset = self.get_scroll_offset();
-                        let max_scroll = self.get_max_scroll();
-                        let new_offset = (current_offset + half_page_height).min(max_scroll);
-                        if new_offset > current_offset {
-                            // Check if scroll actually happened
-                            self.set_scroll_offset(new_offset);
-                            if new_offset == max_scroll {
-                                self.user_scrolled_away = false; // Reached bottom
-                            }
+                KeyCode::Char('d')
+                    if (self.input_mode == InputMode::Normal
+                        && key.modifiers == KeyModifiers::NONE) =>
+                {
+                    let current_offset = self.get_scroll_offset();
+                    let max_scroll = self.get_max_scroll();
+                    let new_offset = (current_offset + half_page_height).min(max_scroll);
+                    if new_offset > current_offset {
+                        // Check if scroll actually happened
+                        self.set_scroll_offset(new_offset);
+                        if new_offset == max_scroll {
+                            self.user_scrolled_away = false; // Reached bottom
                         }
-                        return Ok(None); // Just scroll
                     }
+                    return Ok(None); // Just scroll
                 }
 
                 // Toggle Tool Result Truncation (Ctrl+R)
@@ -990,6 +995,35 @@ impl Tui {
             }
         } // End of `if self.input_mode != InputMode::AwaitingApproval`
 
+        // Handle Ctrl+C globally to exit, regardless of mode (except maybe Approval?)
+        // This is needed because raw mode intercepts the keypress before the OS generates SIGINT
+        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+            match self.input_mode {
+                InputMode::ConfirmExit => {
+                    return Ok(Some(InputAction::Exit));
+                }
+                _ => {
+                    debug(
+                        "tui.handle_input",
+                        "Ctrl+C detected, entering ConfirmExit mode.",
+                    );
+                    self.input_mode = InputMode::ConfirmExit;
+                    return Ok(None); // Change mode, no immediate action
+                }
+            }
+        }
+
+        // Handle Ctrl+D to exit immediately
+        if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL
+        // Avoid conflict with editor movement
+        {
+            debug(
+                "tui.handle_input",
+                "Ctrl+D detected, triggering immediate Exit action.",
+            );
+            return Ok(Some(InputAction::Exit)); // Immediate exit
+        }
+
         // --- Mode-specific handling ---
         match self.input_mode {
             InputMode::Editing => {
@@ -1020,19 +1054,6 @@ impl Tui {
                     Input { key: Key::Esc, .. } => {
                         self.input_mode = InputMode::Normal;
                     }
-                    // Handle Ctrl+S as stop editing (alternative to Esc)
-                    Input {
-                        key: Key::Char('s'),
-                        ctrl: true,
-                        ..
-                    }
-                    | Input {
-                        key: Key::Char('S'),
-                        ctrl: true,
-                        ..
-                    } => {
-                        self.input_mode = InputMode::Normal;
-                    }
                     // Default: Pass key to textarea
                     input => {
                         // Only pass input if no action was already determined (like scrolling)
@@ -1050,12 +1071,6 @@ impl Tui {
                         KeyCode::Char('i') | KeyCode::Char('I') => {
                             self.input_mode = InputMode::Editing;
                         }
-                        // Start editing via Ctrl+S
-                        KeyCode::Char('s') | KeyCode::Char('S')
-                            if key.modifiers == KeyModifiers::CONTROL =>
-                        {
-                            self.input_mode = InputMode::Editing;
-                        }
                         // Send message directly if Enter is pressed in Normal mode
                         KeyCode::Enter => {
                             let current_input = self.textarea.lines().join("\n"); // Use newline char
@@ -1069,10 +1084,6 @@ impl Tui {
                                 new_textarea.set_style(self.textarea.style());
                                 self.textarea = new_textarea;
                             }
-                        }
-                        // Quit
-                        KeyCode::Char('q') | KeyCode::Char('Q') => {
-                            action = Some(InputAction::Exit);
                         }
                         // Toggle Tool Result Truncation (Ctrl+R)
                         KeyCode::Char('r') | KeyCode::Char('R')
@@ -1150,6 +1161,20 @@ impl Tui {
                             self.progress_message = None; // Clear progress
                         }
                         _ => {} // Ignore other keys in this mode
+                    }
+                }
+            }
+            InputMode::ConfirmExit => {
+                match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        action = Some(InputAction::Exit); // Confirm exit
+                    }
+                    KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                        action = Some(InputAction::Exit);
+                    }
+                    _ => {
+                        // Any other key cancels
+                        self.input_mode = InputMode::Normal; // Go back to normal mode
                     }
                 }
             }
