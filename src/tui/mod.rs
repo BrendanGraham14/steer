@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -9,108 +9,102 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
-use std::io;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
-use tokio::task::JoinHandle;
+use std::io::{self, Stdout};
+use std::time::{Duration, Instant};
 use tui_textarea::{Input, Key, TextArea};
+
+use tokio::select;
+
+use crate::app::command::AppCommand;
+use crate::app::{AppEvent, Role};
+use crate::utils::logging::{debug, error, info, warn};
+use tokio::{
+    sync::mpsc::{self},
+    task::JoinHandle,
+};
 
 mod message_formatter;
 
-use message_formatter::format_message;
+use message_formatter::{format_message, format_tool_preview, format_tool_result_block};
 
-const MAX_INPUT_HEIGHT: u16 = 80;
-
-fn crossterm_keycode_to_textarea_key(kc: crossterm::event::KeyCode) -> tui_textarea::Key {
-    use crossterm::event::KeyCode as CrosstermKC;
-    use tui_textarea::Key as TextareaKey;
-
-    match kc {
-        CrosstermKC::Backspace => TextareaKey::Backspace,
-        CrosstermKC::Enter => TextareaKey::Enter,
-        CrosstermKC::Left => TextareaKey::Left,
-        CrosstermKC::Right => TextareaKey::Right,
-        CrosstermKC::Up => TextareaKey::Up,
-        CrosstermKC::Down => TextareaKey::Down,
-        CrosstermKC::Tab => TextareaKey::Tab,
-        CrosstermKC::Delete => TextareaKey::Delete,
-        CrosstermKC::Insert => TextareaKey::Null, // Map Insert to Null as tui_textarea doesn't have it
-        CrosstermKC::F(n) => TextareaKey::F(n),
-        CrosstermKC::Char(c) => TextareaKey::Char(c),
-        CrosstermKC::Null => TextareaKey::Null,
-        CrosstermKC::Esc => TextareaKey::Esc,
-        // Map other potentially unsupported keys to Null for now
-        _ => TextareaKey::Null,
-    }
-}
+const MAX_INPUT_HEIGHT: u16 = 10;
+const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
 // UI States
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum InputMode {
     Normal,
     Editing,
+    AwaitingApproval,
 }
 
-// Static data to allow access from static methods
-static SCROLL_OFFSET: RwLock<usize> = RwLock::new(0);
-static MAX_SCROLL: RwLock<usize> = RwLock::new(0);
-static SPINNER_STATE: RwLock<usize> = RwLock::new(0);
-
 pub struct Tui {
-    terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: Terminal<CrosstermBackend<Stdout>>,
     textarea: TextArea<'static>,
     input_mode: InputMode,
-    messages: Vec<FormattedMessage>,
-    is_processing: Arc<RwLock<bool>>,
+    messages: Vec<FormattedMessage>, // No Arc<Mutex<>>
+    is_processing: bool,             // No Arc<RwLock<>>
     // Progress tracking
-    progress_message: Option<String>,
-    last_spinner_update: std::time::Instant,
-    // Shared messages (updated by event handler)
-    shared_messages: Option<Arc<Mutex<Vec<FormattedMessage>>>>,
+    progress_message: Option<String>, // No Arc<Mutex<>>
+    last_spinner_update: Instant,
+    spinner_state: usize, // Spinner state is now instance state
+    // Tool approval related state
+    command_tx: mpsc::Sender<AppCommand>, // Store directly, required
+    approval_request: Option<(String, String, serde_json::Value)>, // No Arc<Mutex<>>
+    // Scroll state
+    scroll_offset: usize,
+    max_scroll: usize,
+    // Store messages with their original block structure for potential later use
+    // (e.g., toggling raw tool result view if needed)
+    raw_messages: Vec<crate::app::Message>,
 }
 
 #[derive(Clone)]
 pub struct FormattedMessage {
     content: Vec<Line<'static>>,
-    role: crate::app::Role,
+    role: Role,
     id: String,
     full_tool_result: Option<String>,
     is_truncated: bool,
     tool_name: Option<String>,
 }
 
+// Define possible actions that might need async processing (for sending commands)
+#[derive(Debug)]
+enum InputAction {
+    SendMessage(String),
+    ToggleMessageTruncation(String),
+    ApproveToolNormal(String),
+    ApproveToolAlways(String),
+    DenyTool(String),
+    Exit,
+}
+
 impl Tui {
-    pub fn new() -> Result<Self> {
+    pub fn new(command_tx: mpsc::Sender<AppCommand>) -> Result<Self> {
         // Setup terminal
-        enable_raw_mode().context("Failed to enable raw mode")?;
-        // Try enabling keyboard enhancement flags (specifically MODIFY_OTHER_KEYS)
-        // This *might* help distinguish Shift+Enter, but depends on terminal support.
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
         execute!(
-            io::stdout(),
+            stdout,
+            EnterAlternateScreen,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
             EnableBracketedPaste
         )?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen).context("Failed to enter alternate screen")?;
         let backend = CrosstermBackend::new(stdout);
-        let terminal = Terminal::new(backend).context("Failed to create terminal")?;
+        let terminal = Terminal::new(backend)?;
 
-        // Reset scroll values
-        if let Ok(mut offset) = SCROLL_OFFSET.write() {
-            *offset = 0;
-        }
-        if let Ok(mut max) = MAX_SCROLL.write() {
-            *max = 0;
-        }
-
-        // Reset spinner state
-        if let Ok(mut spinner) = SPINNER_STATE.write() {
-            *spinner = 0;
-        }
+        // Reset scroll values - Removed static access
+        // if let Ok(mut offset) = SCROLL_OFFSET.write() {
+        //     *offset = 0;
+        // }
+        // if let Ok(mut max) = MAX_SCROLL.write() {
+        //     *max = 0;
+        // }
 
         // Initialize TextArea
         let mut textarea = TextArea::default();
@@ -126,1372 +120,1182 @@ impl Tui {
             terminal,
             textarea,
             input_mode: InputMode::Normal,
-            messages: Vec::new(),
-            is_processing: Arc::new(RwLock::new(false)),
-            progress_message: None,
-            last_spinner_update: std::time::Instant::now(),
-            shared_messages: None,
+            messages: Vec::new(),   // Initialize directly
+            is_processing: false,   // Initialize directly
+            progress_message: None, // Initialize directly
+            last_spinner_update: Instant::now(),
+            spinner_state: 0,         // Initialize spinner state
+            command_tx,               // Store the sender
+            approval_request: None,   // Initialize directly
+            scroll_offset: 0,         // Initialize scroll offset
+            max_scroll: 0,            // Initialize max scroll
+            raw_messages: Vec::new(), // Initialize raw_messages
         })
     }
 
-    pub async fn run(
-        &mut self,
-        app: Arc<Mutex<crate::app::App>>,
-        event_rx: mpsc::Receiver<crate::app::AppEvent>,
-    ) -> Result<()> {
-        // Spawn event handler first
-        let event_handle = self.spawn_event_handler(event_rx);
-
-        // Lock App to add system prompt and setup event channel if not already done
-        let system_prompt_content = {
-            let mut app_guard = app.lock().await;
-            let system_prompt = if app_guard.has_memory_file() {
-                crate::api::messages::create_system_prompt_with_memory(
-                    app_guard.environment_info(),
-                    app_guard.memory_content(),
-                )
-            } else {
-                crate::api::messages::create_system_prompt(app_guard.environment_info())
-            };
-
-            let content = match &system_prompt.content {
-                crate::api::messages::MessageContent::Text { content } => content.clone(),
-                _ => "System prompt".to_string(), // Should not happen for system prompt
-            };
-            // Add system message via app method to ensure consistency
-            app_guard.add_system_message(content.clone());
-            content // Return for potential local use if needed, though app manages state
-        };
-        // Note: System messages aren't usually displayed directly, handled by App/API logic.
-
-        // Main TUI Loop
-        loop {
-            self.draw()?;
-
-            // Use crossterm event polling and reading
-            if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
-                    // Read the event first
-                    Event::Key(key) => {
-                        // Handle key events
-                        // Pass the crossterm KeyEvent to handle_input
-                        if self.handle_input(key, Arc::clone(&app)).await? {
-                            break; // Exit condition
-                        }
-                    }
-                    Event::Paste(data) => {
-                        // Handle paste event only when editing
-                        if matches!(self.input_mode, InputMode::Editing) {
-                            // Normalize potential '\r\n' or '\r' to '\n'
-                            let normalized_data = data.replace("\r\n", "\n").replace("\r", "\n");
-                            // Insert the normalized string into the text area
-                            self.textarea.insert_str(&normalized_data);
-                            crate::utils::logging::debug(
-                                "tui.run",
-                                &format!(
-                                    "Pasted {} characters into textarea (normalized)",
-                                    normalized_data.len()
-                                ),
-                            );
-                        }
-                    }
-                    Event::Resize(width, height) => {
-                        // Handle resize events (optional, but good practice)
-                        crate::utils::logging::debug(
-                            "tui.run",
-                            &format!("Terminal resized to {}x{}", width, height),
-                        );
-                        // TUI should redraw automatically
-                    }
-                    Event::FocusGained => {
-                        crate::utils::logging::debug("tui.run", "Terminal focus gained");
-                        // May need EnableFocusChange command enabled at setup
-                    }
-                    Event::FocusLost => {
-                        crate::utils::logging::debug("tui.run", "Terminal focus lost");
-                        // May need EnableFocusChange command enabled at setup
-                    }
-                    // Ignore mouse events for now unless needed
-                    Event::Mouse(_) => {}
-                    // Catch-all for other events we don't handle explicitly
-                    _ => {}
-                }
-            } else {
-                // poll timed out, no event
-            }
-
-            // Check if the event handler task has panicked or exited unexpectedly
-            if event_handle.is_finished() {
-                // Attempt to log the exit reason
-                match event_handle.await {
-                    Ok(_) => crate::utils::logging::warn(
-                        "tui.run",
-                        "Event handler task finished unexpectedly without error.",
-                    ),
-                    Err(e) => crate::utils::logging::error(
-                        "tui.run",
-                        &format!("Event handler task panicked: {:?}", e),
-                    ),
-                }
-                // Decide on recovery strategy: maybe break, maybe restart handler?
-                // For now, break the loop as state might be inconsistent.
-                crate::utils::logging::error(
-                    "tui.run",
-                    "Exiting TUI due to event handler termination.",
-                );
-                break;
-                // Example of restarting handler (use with caution):
-                // event_rx = { app.lock().await.setup_event_channel() };
-                // event_handle = self.spawn_event_handler(event_rx);
-            }
-        }
-
-        // Restore terminal
-        disable_raw_mode().context("Failed to disable raw mode")?;
-        execute!(self.terminal.backend_mut(), LeaveAlternateScreen)
-            .context("Failed to leave alternate screen")?;
+    // Cleanup function to restore terminal
+    fn cleanup_terminal(&mut self) -> Result<()> {
         execute!(
             self.terminal.backend_mut(),
-            PopKeyboardEnhancementFlags, // Keep existing flag pop
-            DisableBracketedPaste
-        )
-        .context("Failed to pop keyboard enhancement flags or disable bracketed paste")?;
-        self.terminal.show_cursor()?;
-
+            LeaveAlternateScreen,
+            DisableBracketedPaste,
+            PopKeyboardEnhancementFlags
+        )?;
+        disable_raw_mode()?;
         Ok(())
     }
 
-    // Spawn a task to handle events from the app
-    fn spawn_event_handler(
-        &mut self,
-        mut event_rx: mpsc::Receiver<crate::app::AppEvent>,
-    ) -> JoinHandle<()> {
-        // Clone shared state for the task
-        let messages = Arc::new(Mutex::new(self.messages.clone()));
-        let is_processing = Arc::clone(&self.is_processing);
-
-        // Store the shared messages reference in the Tui instance
-        let shared_messages = Arc::clone(&messages);
-        self.shared_messages = Some(shared_messages);
-
-        tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                // Lock messages once per event processing cycle
-                let mut messages_guard = messages.lock().await;
-
-                // Update processing state based on event type
-                match &event {
-                    crate::app::AppEvent::ThinkingStarted => {
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            "Setting is_processing = true",
-                        );
-                        if let Ok(mut processing) = is_processing.write() {
-                            *processing = true;
-                        }
-                        // Reset spinner state
-                        if let Ok(mut state) = SPINNER_STATE.write() {
-                            *state = 0;
-                        }
-                    }
-                    crate::app::AppEvent::ThinkingCompleted
-                    | crate::app::AppEvent::Error { .. } => {
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            "Setting is_processing = false",
-                        );
-                        if let Ok(mut processing) = is_processing.write() {
-                            *processing = false;
-                        }
-                    }
-                    // Keep spinner reset for tool calls as well
-                    crate::app::AppEvent::ToolCallStarted { .. } => {
-                        if let Ok(mut state) = SPINNER_STATE.write() {
-                            *state = 0;
-                        }
-                    }
-                    _ => {} // Other events don't directly change the main processing state
-                }
-
-                // Now handle the specific event logic using the locked messages_guard
-                match event {
-                    crate::app::AppEvent::MessageAdded { role, content, id } => {
-                        if role == crate::app::Role::System {
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                "Skipping system message - not adding to conversation display",
-                            );
-                            continue;
-                        }
-
-                        let mut message_updated = false;
-
-                        // Check if the LAST message is a placeholder and this new message is the Assistant's response
-                        if role == crate::app::Role::Assistant {
-                            if let Some(last_msg) = messages_guard.last_mut() {
-                                if last_msg.role == crate::app::Role::Assistant {
-                                    let last_content_str = last_msg
-                                        .content
-                                        .iter()
-                                        .filter_map(|line| line.spans.first())
-                                        .map(|span| span.content.to_string())
-                                        .collect::<Vec<String>>()
-                                        .join(" ");
-
-                                    if last_content_str.trim() == "Thinking..."
-                                        || last_content_str.trim()
-                                            == "Processing complete. Waiting for response..."
-                                    {
-                                        crate::utils::logging::debug(
-                                            "tui.event_handler",
-                                            &format!(
-                                                "Replacing last placeholder message (ID {}) with new message ID {}",
-                                                last_msg.id, id
-                                            ),
-                                        );
-                                        // Update the last message completely
-                                        last_msg.content = format_message(&content, role);
-                                        last_msg.id = id.clone();
-                                        // Keep the original role (Assistant)
-                                        message_updated = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        // If we didn't update the last message, add this as a new message
-                        if !message_updated {
-                            // Check for ID collision before adding (optional but good practice)
-                            if messages_guard.iter().any(|m| m.id == id) {
-                                crate::utils::logging::warn(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "MessageAdded: ID {} already exists. Skipping add.",
-                                        id
-                                    ),
-                                );
-                            } else {
-                                let formatted = format_message(&content, role);
-                                messages_guard.push(FormattedMessage {
-                                    content: formatted,
-                                    role,
-                                    id: id.clone(),
-                                    full_tool_result: None,
-                                    is_truncated: false,
-                                    tool_name: None,
-                                });
-
-                                // Debug info with proper logging
-                                let content_summary = if content.len() > 50 {
-                                    format!("{}...", &content[..50])
-                                } else {
-                                    content.clone()
-                                };
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Added new message to shared state. Role: {:?}, ID: {}, Content summary: {:?}",
-                                        role, id, content_summary
-                                    ),
-                                );
-                            }
-                        }
-
-                        // Reset scroll to show most recent content
-                        Tui::set_scroll_offset(0);
-                    }
-                    crate::app::AppEvent::MessageUpdated { id, content } => {
-                        // Print debug info about all messages before updating
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!(
-                                "MessageUpdated event for ID: {}, message count: {}",
-                                id,
-                                messages_guard.len()
-                            ),
-                        );
-
-                        // Find the message with the given ID and update its content
-                        let mut found = false;
-                        for msg in messages_guard.iter_mut() {
-                            if msg.id == id {
-                                // Found the message to update
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "MessageUpdated: Updating message with ID {}, role: {:?}",
-                                        id, msg.role
-                                    ),
-                                );
-
-                                // Get a preview of old content for debugging
-                                let old_content_preview = msg
-                                    .content
-                                    .iter()
-                                    .take(1)
-                                    .filter_map(|line| line.spans.first())
-                                    .map(|span| span.content.to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(" ");
-                                let new_content_preview = if content.len() > 30 {
-                                    format!("{}...", &content[..30])
-                                } else {
-                                    content.clone()
-                                };
-
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Content change: \"{}\" -> \"{}\"",
-                                        old_content_preview, new_content_preview
-                                    ),
-                                );
-
-                                // Update the content using the message's existing role
-                                msg.content = format_message(&content, msg.role);
-                                found = true;
-                                break;
-                            }
-                        }
-
-                        if !found {
-                            // Could not find a message with this ID - log it.
-                            // Do NOT add a new message or use fallback logic.
-                            crate::utils::logging::warn(
-                                "tui.event_handler",
-                                &format!(
-                                    "MessageUpdated: No message found with ID {}. Content: {}...",
-                                    id,
-                                    &content.chars().take(30).collect::<String>()
-                                ),
-                            );
-                        }
-                    }
-                    crate::app::AppEvent::ToolCallStarted { name, id } => {
-                        // Use the provided ID directly. Generate one only if absolutely necessary,
-                        // but Claude *should* always provide one for tool_use.
-                        let tool_id = id.clone().unwrap_or_else(|| {
-                            crate::utils::logging::warn(
-                                "tui.event_handler",
-                                "ToolCallStarted received without an ID. Generating temporary ID.",
-                            );
-                            format!("tool_start_{}", chrono::Utc::now().timestamp_millis())
-                        });
-
-                        // Check if a message with this ID already exists (e.g., retry)
-                        if messages_guard.iter().any(|m| m.id == tool_id) {
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                &format!(
-                                    "ToolCallStarted: Message with ID {} already exists. Updating content.",
-                                    tool_id
-                                ),
-                            );
-                            // Update existing placeholder if needed
-                            if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == tool_id) {
-                                let placeholder_content = format!("Executing tool: {}", name);
-                                msg.content =
-                                    format_message(&placeholder_content, crate::app::Role::Tool);
-                                msg.role = crate::app::Role::Tool;
-                                msg.full_tool_result = None; // Ensure no stale result
-                                msg.is_truncated = false;
-                                msg.tool_name = Some(name);
-                            }
-                        } else {
-                            // Add a placeholder message
-                            let placeholder_content = format!("Executing tool: {}", name);
-                            let formatted =
-                                format_message(&placeholder_content, crate::app::Role::Tool);
-                            messages_guard.push(FormattedMessage {
-                                content: formatted,
-                                role: crate::app::Role::Tool,
-                                id: tool_id.clone(),
-                                full_tool_result: None,
-                                is_truncated: false,
-                                tool_name: Some(name),
-                            });
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                &format!(
-                                    "ToolCallStarted: Added placeholder message with ID {}",
-                                    messages_guard.last().unwrap().id
-                                ),
-                            );
-                        }
-                        Tui::set_scroll_offset(0); // Scroll to show placeholder
-                    }
-                    crate::app::AppEvent::ToolCallCompleted {
-                        name: _,
-                        result,
-                        id,
-                    } => {
-                        // Must have an ID to update the correct placeholder
-                        if let Some(tool_id) = id {
-                            // Find the existing placeholder message
-                            if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == tool_id) {
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!("ToolCallCompleted: Updating message ID {}", tool_id),
-                                );
-
-                                const MAX_PREVIEW_LINES: usize = 5;
-                                let lines: Vec<&str> = result.lines().collect();
-                                let preview_lines: Vec<&str> =
-                                    lines.iter().take(MAX_PREVIEW_LINES).copied().collect();
-                                let mut display_content_str = preview_lines.join("\n");
-
-                                let is_truncated = lines.len() > MAX_PREVIEW_LINES;
-                                if is_truncated {
-                                    display_content_str.push_str("\n...");
-                                }
-
-                                // Update the message content and state
-                                msg.content =
-                                    format_message(&display_content_str, crate::app::Role::Tool);
-                                msg.full_tool_result = Some(result); // Store the full result
-                                msg.is_truncated = is_truncated; // Store the truncated state
-                            // Role remains Tool
-                            } else {
-                                // Placeholder not found - this might happen if TUI clears messages or event order is wrong
-                                crate::utils::logging::warn(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "ToolCallCompleted: No placeholder message found with ID {} to update.",
-                                        tool_id
-                                    ),
-                                );
-                                // Optionally, add a new message here as a fallback, though it might mess up order
-                            }
-                        } else {
-                            crate::utils::logging::error(
-                                "tui.event_handler",
-                                "ToolCallCompleted event received without an ID. Cannot update placeholder.",
-                            );
-                        }
-                    }
-                    crate::app::AppEvent::ToolCallFailed { name: _, error, id } => {
-                        // Must have an ID to update the correct placeholder
-                        if let Some(tool_id) = id {
-                            // Find the existing placeholder message
-                            if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == tool_id) {
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "ToolCallFailed: Updating message ID {} with error",
-                                        tool_id
-                                    ),
-                                );
-                                let error_content = format!("Tool failed: {}", error);
-                                msg.content =
-                                    format_message(&error_content, crate::app::Role::Tool);
-                                // Ensure result fields are cleared
-                                msg.full_tool_result = None;
-                                msg.is_truncated = false;
-                                // Role remains Tool
-                            } else {
-                                crate::utils::logging::warn(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "ToolCallFailed: No placeholder message found with ID {} to update.",
-                                        tool_id
-                                    ),
-                                );
-                            }
-                        } else {
-                            crate::utils::logging::error(
-                                "tui.event_handler",
-                                "ToolCallFailed event received without an ID. Cannot update placeholder.",
-                            );
-                        }
-                    }
-                    crate::app::AppEvent::ThinkingStarted => {
-                        // Check if the last message is already an Assistant placeholder
-                        let mut placeholder_exists = false;
-                        if let Some(last_msg) = messages_guard.last() {
-                            if last_msg.role == crate::app::Role::Assistant {
-                                let last_content_str = last_msg
-                                    .content
-                                    .iter()
-                                    .filter_map(|line| line.spans.first())
-                                    .map(|span| span.content.to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(" ");
-
-                                if last_content_str.trim() == "Thinking..."
-                                    || last_content_str.trim()
-                                        == "Processing complete. Waiting for response..."
-                                {
-                                    placeholder_exists = true;
-                                }
-                            }
-                        }
-
-                        if placeholder_exists {
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                "ThinkingStarted: Placeholder already exists.",
-                            );
-                            // Reset spinner state anyway
-                            if let Ok(mut state) = SPINNER_STATE.write() {
-                                *state = 0;
-                            }
-                        } else {
-                            // Add a new placeholder message
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .expect("Time went backwards")
-                                .as_secs();
-                            let random_suffix = format!("{:04x}", (timestamp % 10000));
-                            // Use a more specific ID prefix for placeholders
-                            let thinking_id =
-                                format!("assistant_thinking_{}{}", timestamp, random_suffix);
-
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                &format!(
-                                    "ThinkingStarted: Adding new placeholder ID: {}",
-                                    thinking_id
-                                ),
-                            );
-
-                            let formatted =
-                                format_message("Thinking...", crate::app::Role::Assistant);
-                            messages_guard.push(FormattedMessage {
-                                content: formatted,
-                                role: crate::app::Role::Assistant,
-                                id: thinking_id,
-                                full_tool_result: None,
-                                is_truncated: false,
-                                tool_name: None,
-                            });
-                            // Reset spinner state
-                            if let Ok(mut state) = SPINNER_STATE.write() {
-                                *state = 0;
-                            }
-                        }
-
-                        // Verify message order after potentially adding thinking message
-                        let message_ids = messages_guard
-                            .iter()
-                            .map(|m| m.id.as_str())
-                            .collect::<Vec<&str>>();
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!("Message IDs after ThinkingStarted: {:?}", message_ids),
-                        );
-                    }
-                    crate::app::AppEvent::ThinkingCompleted => {
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!(
-                                "ThinkingCompleted event received, message count: {}",
-                                messages_guard.len()
-                            ),
-                        );
-
-                        // Update the *last* message only if it's an Assistant "Thinking..." placeholder
-                        if let Some(last_msg) = messages_guard.last_mut() {
-                            if last_msg.role == crate::app::Role::Assistant {
-                                let content_str = last_msg
-                                    .content
-                                    .iter()
-                                    .filter_map(|line| line.spans.first())
-                                    .map(|span| span.content.to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(" ");
-
-                                // Only update if it's still the "Thinking..." placeholder
-                                if content_str.trim() == "Thinking..." {
-                                    crate::utils::logging::debug(
-                                        "tui.event_handler",
-                                        &format!(
-                                            "ThinkingCompleted: Updating last message (ID {}) to 'Processing complete...'",
-                                            last_msg.id
-                                        ),
-                                    );
-
-                                    // Update to waiting message but keep same ID for now
-                                    // The subsequent MessageAdded event will replace this message including ID
-                                    last_msg.content = format_message(
-                                        "Processing complete. Waiting for response...",
-                                        crate::app::Role::Assistant,
-                                    );
-                                } else {
-                                    crate::utils::logging::debug(
-                                        "tui.event_handler",
-                                        "ThinkingCompleted: Last message not 'Thinking...'. No update.",
-                                    );
-                                }
-                            } else {
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    "ThinkingCompleted: Last message not Assistant. No update.",
-                                );
-                            }
-                        } else {
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                "ThinkingCompleted: No messages found.",
-                            );
-                        }
-                    }
-                    crate::app::AppEvent::CommandResponse { content, id } => {
-                        // Generate an ID if one wasn't provided
-                        let cmd_id = id.clone().unwrap_or_else(|| {
-                            format!(
-                                "cmd_{}",
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .expect("Time went backwards")
-                                    .as_secs()
-                            )
-                        });
-
-                        let formatted = format_message(&content, crate::app::Role::Assistant);
-                        messages_guard.push(FormattedMessage {
-                            content: formatted,
-                            role: crate::app::Role::Assistant,
-                            id: cmd_id,
-                            full_tool_result: None,
-                            is_truncated: false,
-                            tool_name: None,
-                        });
-                    }
-                    crate::app::AppEvent::Error { message } => {
-                        // Generate an error ID
-                        let error_id = format!(
-                            "error_{}",
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .expect("Time went backwards")
-                                .as_secs()
-                        );
-
-                        let formatted = format_message(
-                            &format!("Error: {}", message),
-                            crate::app::Role::Assistant,
-                        );
-                        messages_guard.push(FormattedMessage {
-                            content: formatted,
-                            role: crate::app::Role::Assistant,
-                            id: error_id,
-                            full_tool_result: None,
-                            is_truncated: false,
-                            tool_name: None,
-                        });
-                    }
-                    crate::app::AppEvent::ToggleMessageTruncation { id } => {
-                        crate::utils::logging::debug(
-                            "tui.event_handler",
-                            &format!("Received ToggleMessageTruncation event for ID: {}", id),
-                        );
-                        if let Some(msg) = messages_guard.iter_mut().find(|m| m.id == id) {
-                            crate::utils::logging::debug(
-                                "tui.event_handler",
-                                &format!("Found message to toggle: ID {}", id),
-                            );
-                            if msg.full_tool_result.is_some() {
-                                msg.is_truncated = !msg.is_truncated;
-                                let full_result = msg.full_tool_result.as_ref().unwrap(); // Safe due to check above
-
-                                if msg.is_truncated {
-                                    // Generate and format the preview
-                                    const MAX_PREVIEW_LINES: usize = 5;
-                                    let lines: Vec<&str> = full_result.lines().collect();
-                                    let preview_lines: Vec<&str> =
-                                        lines.iter().take(MAX_PREVIEW_LINES).copied().collect();
-                                    let mut display_content_str = preview_lines.join("\n");
-                                    if lines.len() > MAX_PREVIEW_LINES {
-                                        display_content_str.push_str("\n...");
-                                    }
-                                    msg.content = format_message(
-                                        &display_content_str,
-                                        crate::app::Role::Tool,
-                                    );
-                                } else {
-                                    // Format the full result
-                                    msg.content =
-                                        format_message(full_result, crate::app::Role::Tool);
-                                }
-                                crate::utils::logging::debug(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Toggled truncation for message ID: {}. New state: is_truncated={}",
-                                        id, msg.is_truncated
-                                    ),
-                                );
-                            } else {
-                                crate::utils::logging::warn(
-                                    "tui.event_handler",
-                                    &format!(
-                                        "Message {} found, but has no full_tool_result to toggle.",
-                                        id
-                                    ),
-                                );
-                            }
-                        } else {
-                            crate::utils::logging::warn(
-                                "tui.event_handler",
-                                &format!(
-                                    "ToggleMessageTruncation: No message found with ID {}",
-                                    id
-                                ),
-                            );
-                        }
+    pub async fn run(&mut self, mut event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
+        // Spawn a task to read terminal events because crossterm::event::read is blocking
+        let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
+        let _input_handle: JoinHandle<()> = tokio::spawn(async move {
+            loop {
+                // Poll for a short duration to avoid blocking the task indefinitely
+                if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+                    let read_result = event::read().map_err(anyhow::Error::from);
+                    if term_event_tx.send(read_result).await.is_err() {
+                        // Receiver dropped, exit task
+                        break;
                     }
                 }
-                // Drop the lock guard at the end of the loop iteration
-                drop(messages_guard);
+                // Add a small sleep to prevent tight looping when no events occur
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            crate::utils::logging::warn(
-                "tui.event_handler",
-                "Event receiver channel closed. Exiting handler task.",
+        });
+
+        let mut should_exit = false;
+        while !should_exit {
+            // Update state needed before drawing (like spinner)
+            self.update_spinner_state();
+
+            // --- Prepare State for Drawing ---
+            let input_mode = self.input_mode; // Copy
+            let is_processing = self.is_processing; // Copy
+            // Clone progress message to detach lifetime from self
+            let progress_message_owned: Option<String> = self.progress_message.clone();
+            // Get owned spinner char to detach lifetime from self
+            let spinner_char_owned: String = self.get_spinner_char(); // Now returns String
+
+            // Create input block using owned/copied data
+            let input_block = Tui::create_input_block_static(
+                // static call
+                input_mode,
+                is_processing,
+                progress_message_owned, // Pass owned Option<String>
+                spinner_char_owned,     // Pass owned String
             );
-        })
-    }
+            // Apply the block to the actual textarea BEFORE the draw call
+            self.textarea.set_block(input_block); // &mut self.textarea
 
-    // Static helper functions for scroll management
-    fn get_scroll_offset() -> usize {
-        SCROLL_OFFSET.read().map(|offset| *offset).unwrap_or(0)
-    }
+            // --- Draw UI ---
+            // Only need immutable references inside the closure, created locally
+            self.terminal.draw(|f| {
+                // &mut self.terminal
+                // Get local immutable refs inside closure
+                let textarea_ref = &self.textarea; // &self.textarea
+                let messages_ref = &self.messages; // &self.messages
 
-    fn set_scroll_offset(offset: usize) {
-        if let Ok(mut scroll) = SCROLL_OFFSET.write() {
-            *scroll = offset;
-        }
-    }
+                // Render UI using static method with local immutable refs
+                if let Err(e) = Tui::render_ui_static(
+                    f,
+                    textarea_ref,
+                    messages_ref,
+                    input_mode, // Use the copied input_mode
+                    self.scroll_offset,
+                    self.max_scroll,
+                ) {
+                    error("tui.run.draw", &format!("UI rendering failed: {}", e));
+                    // Log error within closure
+                }
+            })?;
 
-    fn get_max_scroll() -> usize {
-        MAX_SCROLL.read().map(|max| *max).unwrap_or(0)
-    }
+            // Event Handling with select!
+            select! {
+                // Bias select to prioritize terminal input slightly if needed, but usually not necessary
+                // biased;
 
-    fn set_max_scroll(max: usize) {
-        if let Ok(mut max_scroll) = MAX_SCROLL.write() {
-            *max_scroll = max;
-        }
-    }
-
-    // Get current spinner character
-    fn get_spinner_char() -> &'static str {
-        const SPINNER_CHARS: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let state = SPINNER_STATE.read().map(|s| *s).unwrap_or(0) % SPINNER_CHARS.len();
-        SPINNER_CHARS[state]
-    }
-
-    // Update spinner state
-    fn update_spinner_state(&mut self) {
-        let now = std::time::Instant::now();
-        // Update spinner every 80ms
-        if now.duration_since(self.last_spinner_update).as_millis() >= 80 {
-            if let Ok(mut state) = SPINNER_STATE.write() {
-                *state = (*state + 1) % 10;
-            }
-            self.last_spinner_update = now;
-        }
-    }
-
-    // Sync messages from the shared state if available
-    fn sync_messages(&mut self) {
-        if let Some(shared) = &self.shared_messages {
-            // Use a more reliable approach with better error handling and retry
-            let max_attempts = 5;
-            let mut attempts = 0;
-            let mut success = false;
-
-            while attempts < max_attempts && !success {
-                match shared.try_lock() {
-                    Ok(messages) => {
-                        // Log message counts before and after for debugging
-                        let shared_count = messages.len();
-                        let local_count = self.messages.len();
-
-                        crate::utils::logging::debug(
-                            "tui.sync_messages",
-                            &format!(
-                                "Syncing messages: shared:{} -> local:{}",
-                                shared_count, local_count
-                            ),
-                        );
-
-                        // Only replace our messages if the shared state has messages
-                        if !messages.is_empty() {
-                            self.messages = messages.clone();
-
-                            // Verify we have all messages in the right order
-                            let ids: Vec<String> =
-                                self.messages.iter().map(|m| m.id.clone()).collect();
-                            crate::utils::logging::debug(
-                                "tui.sync_messages",
-                                &format!("Message IDs after sync: {:?}", ids),
-                            );
-                        } else {
-                            crate::utils::logging::warn(
-                                "tui.sync_messages",
-                                "Shared message vector is empty, keeping local messages",
-                            );
+                // Handle terminal input event
+                maybe_term_event = term_event_rx.recv() => {
+                    match maybe_term_event {
+                        Some(Ok(event)) => {
+                            // Handle resize/paste directly
+                            match event {
+                                Event::Resize(_, _) => {
+                                    debug("tui.run", "Terminal resized");
+                                    // Redraw happens implicitly on next loop iteration
+                                }
+                                Event::Paste(data) => {
+                                    if matches!(self.input_mode, InputMode::Editing) {
+                                        let normalized_data = data.replace("\\r\\n", "\\n").replace("\\r", "\\n");
+                                        self.textarea.insert_str(&normalized_data);
+                                        debug("tui.run", &format!("Pasted {} chars", normalized_data.len()));
+                                    }
+                                }
+                                Event::Key(key) => {
+                                    // Process key event using handle_input
+                                    match self.handle_input(key).await {
+                                        Ok(Some(action)) => {
+                                            debug("tui.run", &format!("Handling input action: {:?}", action));
+                                             // Dispatch action (potentially sending commands)
+                                            if self.dispatch_input_action(action).await? {
+                                                 should_exit = true;
+                                            }
+                                        }
+                                        Ok(None) => {} // No action needed
+                                        Err(e) => {
+                                            error("tui.run", &format!("Error handling input: {}", e));
+                                        }
+                                    }
+                                }
+                                Event::FocusGained => debug("tui.run", "Focus gained"),
+                                Event::FocusLost => debug("tui.run", "Focus lost"),
+                                Event::Mouse(_) => {} // Ignore mouse
+                            }
                         }
-
-                        success = true;
-                    }
-                    Err(_) => {
-                        // Exponential backoff strategy
-                        let delay = std::time::Duration::from_millis(5 * (1 << attempts));
-                        std::thread::sleep(delay);
-                        attempts += 1;
-
-                        crate::utils::logging::debug(
-                            "tui.sync_messages",
-                            &format!(
-                                "Failed to acquire lock, retry {}/{}",
-                                attempts, max_attempts
-                            ),
-                        );
+                        Some(Err(e)) => {
+                            error("tui.run", &format!("Error reading terminal event: {}", e));
+                            // Decide if we should exit on error
+                            // should_exit = true;
+                        }
+                        None => {
+                            // Channel closed, input task likely ended
+                            info("tui.run", "Terminal event channel closed.");
+                            should_exit = true;
+                        }
                     }
                 }
-            }
 
-            if !success {
-                crate::utils::logging::warn(
-                    "tui.sync_messages",
+                // Handle application event
+                maybe_app_event = event_rx.recv() => {
+                    match maybe_app_event {
+                        Some(event) => {
+                            // Calculate max scroll based on current messages and terminal size *before* handling event
+                            let all_lines: Vec<Line> = self.messages.iter().flat_map(|fm| fm.content.clone()).collect();
+                            let total_lines_count = all_lines.len();
+                            let terminal_height = self.terminal.size()?.height; // Get current terminal height
+                            let input_height = (self.textarea.lines().len() as u16 + 2).min(MAX_INPUT_HEIGHT).min(terminal_height);
+                            let messages_area_height = terminal_height.saturating_sub(input_height).saturating_sub(2); // Account for borders
+                            let new_max_scroll = if total_lines_count > messages_area_height as usize {
+                                total_lines_count.saturating_sub(messages_area_height as usize)
+                            } else {
+                                0
+                            };
+                            self.set_max_scroll(new_max_scroll);
+
+                            // Process the AppEvent directly using self
+                            self.handle_app_event(event).await;
+                        }
+                        None => {
+                            // App closed the channel, maybe exit?
+                            info("tui.run", "App event channel closed.");
+                            should_exit = true; // Exit if the App task ends
+                        }
+                    }
+                }
+
+                // Add a small timeout to ensure the loop continues even without events
+                // This allows the spinner to update visually.
+                _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2) => {}
+            }
+        }
+
+        // Cleanup terminal before exiting run loop
+        self.cleanup_terminal()?;
+        Ok(())
+    }
+
+    // Removed spawn_event_handler - logic moved into run loop
+
+    // Handle AppEvents directly within Tui
+    async fn handle_app_event(&mut self, event: AppEvent) {
+        // Update is_processing state based on events
+        match event {
+            AppEvent::ThinkingStarted => {
+                debug("tui.handle_app_event", "Setting is_processing = true");
+                self.is_processing = true;
+                self.spinner_state = 0; // Reset spinner
+                self.progress_message = None; // Clear specific progress message initially
+            }
+            AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
+                debug("tui.handle_app_event", "Setting is_processing = false");
+                self.is_processing = false;
+                self.progress_message = None; // Clear progress message
+            }
+            AppEvent::ToolCallStarted { name, id } => {
+                self.spinner_state = 0; // Reset spinner for tool call visual
+                // Optionally update progress message
+                self.progress_message = Some(format!("Executing tool: {}", name));
+                // Add a placeholder message for the tool call if needed for UI sync,
+                // Or rely on the assistant message that contains the ToolCall block.
+                // Current approach: The assistant message containing ToolCall is added via MessageAdded.
+                debug(
+                    "tui.handle_app_event",
+                    &format!("Tool call started: {} ({:?})", name, id),
+                );
+
+                // --- IDEAL: Use content_blocks from AppEvent --- //
+                // Find the corresponding raw message (should have been added just before this event)
+                let raw_msg = self.raw_messages.iter().find(|m| m.id == id).cloned();
+
+                if let Some(raw_msg) = raw_msg {
+                    // Add the raw message to the TUI's internal list
+                    self.raw_messages.push(raw_msg.clone());
+
+                    // Format using the actual blocks
+                    let formatted = format_message(
+                        &raw_msg.content_blocks,
+                        Role::Tool,
+                        self.terminal.size().map(|r| r.width).unwrap_or(100),
+                    );
+
+                    // Check if ID already exists in the TUI's formatted list
+                    if self.messages.iter().any(|m| m.id == id) {
+                        warn(
+                            "tui.handle_app_event",
+                            &format!("MessageAdded: ID {} already exists. Skipping.", id),
+                        );
+                    } else {
+                        let formatted_message = FormattedMessage {
+                            content: formatted,
+                            role: Role::Tool,
+                            id: id.clone(),
+                            full_tool_result: None,
+                            is_truncated: false,
+                            tool_name: None,
+                        };
+                        self.messages.push(formatted_message);
+                        // self.raw_messages.push(crate::app::Message::new_text(role, content.clone())); // Raw message added above
+                        debug("tui.handle_app_event", &format!("Added message ID: {}", id));
+                    }
+                } else {
+                    // This case might happen if the App adds a message but fails to send the event,
+                    // or if the event arrives before the App could add it (less likely).
+                    warn(
+                        "tui.handle_app_event",
+                        &format!(
+                            "MessageAdded event received for ID {}, but corresponding raw message not found yet.",
+                            id
+                        ),
+                    );
+                    // Optionally, add a placeholder formatted message
+                    // let placeholder_block = crate::app::conversation::MessageContentBlock::Text("[Message content pending...]".to_string());
+                    // let formatted = format_message(&[placeholder_block], role);
+                    // ... add formatted message ...
+                }
+
+                self.set_scroll_offset(0); // Scroll to bottom on new message
+            }
+            AppEvent::ToolBatchProgress { batch_id } => {
+                // The TUI no longer receives current/total/name here.
+                // We can log the batch ID or set a generic progress message if needed.
+                debug(
+                    "tui.handle_app_event",
+                    &format!("Processing batch {}", batch_id),
+                );
+                self.progress_message = Some(format!("Processing tool batch {}", batch_id)); // Example message
+                self.is_processing = true; // Ensure processing state is active during batch
+            }
+            AppEvent::MessageAdded {
+                role,
+                content_blocks,
+                id,
+            } => {
+                if role == Role::System {
+                    debug("tui.handle_app_event", "Skipping system message display");
+                    // Still add to raw messages if needed for context/history?
+                    // self.raw_messages.push(crate::app::Message::new_with_blocks(role, content_blocks));
+                    return;
+                }
+
+                // MessageAdded now carries the blocks directly
+                // Add the raw message first
+                let raw_msg = crate::app::Message::new_with_blocks(role, content_blocks.clone());
+                self.raw_messages.push(raw_msg.clone());
+
+                // Format using the actual blocks
+                let formatted = format_message(
+                    &content_blocks,
+                    role,
+                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                );
+
+                // Check if ID already exists in the TUI's formatted list
+                // (Should ideally not happen with unique IDs, but good safety check)
+                if self.messages.iter().any(|m| m.id == id) {
+                    info(
+                        "tui.handle_app_event",
+                        &format!(
+                            "MessageAdded: ID {} already exists. Content blocks: {}. Skipping.",
+                            id,
+                            content_blocks.len()
+                        ),
+                    );
+                } else {
+                    let formatted_message = FormattedMessage {
+                        content: formatted,
+                        role,
+                        id: id.clone(),         // Use the ID from the event
+                        full_tool_result: None, // Initialize appropriately
+                        is_truncated: false,    // Initialize appropriately
+                        // Determine tool_name if it's a ToolCall block
+                        tool_name: content_blocks
+                            .iter()
+                            .find_map(|block| {
+                                if let crate::app::conversation::MessageContentBlock::ToolCall(tc) = block {
+                                    Some(tc.name.clone())
+                                } else if let crate::app::conversation::MessageContentBlock::ToolResult { .. } = block {
+                                    Some("Tool Result".to_string()) // Or extract from ID?
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| {
+                                if role == Role::Tool {
+                                    Some("Tool Result".to_string())
+                                } else {
+                                    None
+                                }
+                            }),
+                    };
+                    self.messages.push(formatted_message);
+                    debug(
+                        "tui.handle_app_event",
+                        &format!(
+                            "Added message ID: {} with {} content blocks",
+                            id,
+                            content_blocks.len()
+                        ),
+                    );
+                }
+
+                self.set_scroll_offset(0); // Scroll to bottom on new message
+            }
+            AppEvent::MessageUpdated { id, content } => {
+                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
+                    debug(
+                        "tui.handle_app_event",
+                        &format!("Updating message ID: {}", id),
+                    );
+                    // Now use the blocks from the raw message
+                    if let Some(raw_msg) = self.raw_messages.iter().find(|m| m.id == id) {
+                        msg.content = format_message(
+                            &raw_msg.content_blocks,
+                            msg.role,
+                            self.terminal.size().map(|r| r.width).unwrap_or(100),
+                        );
+                        debug(
+                            "tui.handle_app_event",
+                            &format!("Updated message ID: {} with new blocks", id),
+                        );
+                    } else {
+                        warn(
+                            "tui.handle_app_event",
+                            &format!("MessageUpdated: Raw message ID {} not found.", id),
+                        );
+                        // Fallback: format the string content as a text block
+                        let block = crate::app::conversation::MessageContentBlock::Text(content);
+                        msg.content = format_message(
+                            &[block],
+                            msg.role,
+                            self.terminal.size().map(|r| r.width).unwrap_or(100),
+                        );
+                    }
+                } else {
+                    warn(
+                        "tui.handle_app_event",
+                        &format!("MessageUpdated: ID {} not found.", id),
+                    );
+                }
+            }
+            AppEvent::ToolCallCompleted {
+                name: _, // Name is implicitly shown in the formatted result block
+                result,
+                id, // Use this ID for the formatted message
+            } => {
+                self.progress_message = None; // Clear progress on completion
+
+                // Create a NEW message to display the tool result
+                debug(
+                    "tui.handle_app_event",
+                    &format!("Adding Tool Result message for ID: {}", id),
+                );
+
+                // Use the tool result formatter directly
+                let formatted_result_lines = format_tool_result_block(
+                    &id,
+                    &result,
+                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                );
+
+                let formatted_message = FormattedMessage {
+                    content: formatted_result_lines,
+                    role: Role::Tool,
+                    id: format!("result_{}", id), // Ensure unique ID for the result display
+                    full_tool_result: Some(result), // Store the full result for toggling
+                    is_truncated: false, // Start untruncated (or apply truncation logic here)
+                    tool_name: None,     // Tool name is part of the formatted block
+                };
+                self.messages.push(formatted_message);
+                self.set_scroll_offset(0); // Scroll to show the result
+            }
+            AppEvent::ToolCallFailed { name, error, id } => {
+                self.progress_message = None; // Clear progress on failure
+
+                // Similar logic to ToolCallCompleted: Assuming this relates to a Role::Tool message
+                // added via MessageAdded.
+                debug(
+                    "tui.handle_app_event",
                     &format!(
-                        "Failed to acquire lock for syncing messages after {} attempts",
-                        max_attempts
+                        "Adding Tool Failure message for ID: {}, Error: {}",
+                        id, error
                     ),
                 );
+
+                // Create a NEW message to display the tool failure
+                let failure_content = format!("Tool '{}' failed: {}.", name, error);
+                let formatted_failure_lines = vec![Line::from(Span::styled(
+                    failure_content,
+                    Style::default().fg(Color::Red),
+                ))];
+
+                let formatted_message = FormattedMessage {
+                    content: formatted_failure_lines,
+                    role: Role::Tool,
+                    id: format!("failed_{}", id), // Ensure unique ID
+                    full_tool_result: Some(format!("Error: {}", error)), // Store error for potential toggle?
+                    is_truncated: false,
+                    tool_name: Some(name),
+                };
+                self.messages.push(formatted_message);
+                self.set_scroll_offset(0);
             }
-        } else {
-            crate::utils::logging::warn(
-                "tui.sync_messages",
-                "No shared messages reference available",
-            );
+            AppEvent::RequestToolApproval {
+                name,
+                parameters,
+                id,
+            } => {
+                // Store approval request state directly on self
+                self.approval_request = Some((id.clone(), name.clone(), parameters));
+                self.progress_message = Some(format!("Waiting for tool approval: {}", name));
+                self.is_processing = true; // Keep spinner active during approval wait
+
+                // Set input mode to AwaitingApproval
+                self.input_mode = InputMode::AwaitingApproval;
+
+                // Add a message indicating approval needed
+                let approval_text = format!(
+                    "Awaiting approval for tool: {} (y/n, Shift+Tab for always)",
+                    name
+                );
+                let block = crate::app::conversation::MessageContentBlock::Text(approval_text);
+                let formatted = format_message(
+                    &[block],
+                    Role::Tool,
+                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                );
+                // Add a placeholder to raw_messages for consistency, though it won't have real blocks
+                self.raw_messages.push(crate::app::Message::new_text(
+                    Role::Tool,
+                    format!("Approval Prompt for {}", name),
+                ));
+                self.messages.push(FormattedMessage {
+                    content: formatted,
+                    role: Role::Tool,
+                    id: format!("approval_{}", id), // Unique ID for this prompt
+                    full_tool_result: None,
+                    is_truncated: false,
+                    tool_name: Some(name.clone()),
+                });
+                self.set_scroll_offset(0);
+            }
+            AppEvent::CommandResponse { content, id: _ } => {
+                let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
+                let block = crate::app::conversation::MessageContentBlock::Text(content.clone()); // Clone content
+                let formatted = format_message(
+                    &[block],
+                    Role::System,
+                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                );
+                self.raw_messages
+                    .push(crate::app::Message::new_text(Role::System, content)); // Use actual content for raw
+                self.messages.push(FormattedMessage {
+                    content: formatted,
+                    role: Role::System,
+                    id: response_id,
+                    full_tool_result: None,
+                    is_truncated: false,
+                    tool_name: None,
+                });
+                self.set_scroll_offset(0);
+            }
+
+            AppEvent::ToggleMessageTruncation { id } => {
+                // Handle toggling directly in TUI state
+                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
+                    if msg.role == Role::Tool {
+                        if let Some(full_result) = &msg.full_tool_result {
+                            msg.is_truncated = !msg.is_truncated;
+                            if msg.is_truncated {
+                                const MAX_PREVIEW_LINES: usize = 5;
+                                let lines: Vec<&str> = full_result.lines().collect();
+                                let preview_content = if lines.len() > MAX_PREVIEW_LINES {
+                                    format!(
+                                        "{}\n... ({} more lines, press 't' to toggle full view)",
+                                        lines
+                                            .iter()
+                                            .take(MAX_PREVIEW_LINES)
+                                            .cloned()
+                                            .collect::<Vec<_>>()
+                                            .join("\n"),
+                                        lines.len() - MAX_PREVIEW_LINES
+                                    )
+                                } else {
+                                    full_result.clone()
+                                };
+                                msg.content = format_tool_preview(
+                                    &preview_content,
+                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                                );
+                            } else {
+                                msg.content = format_tool_preview(
+                                    full_result,
+                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    fn draw(&mut self) -> Result<()> {
-        // Update spinner if we're processing
-        if *self.is_processing.read().unwrap() {
-            self.update_spinner_state();
+    // Instance-based scroll methods
+    fn get_scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    fn set_scroll_offset(&mut self, offset: usize) {
+        // Clamp offset against max_scroll
+        let clamped_offset = offset.min(self.max_scroll);
+        self.scroll_offset = clamped_offset;
+    }
+
+    fn get_max_scroll(&self) -> usize {
+        self.max_scroll
+    }
+
+    fn set_max_scroll(&mut self, max: usize) {
+        self.max_scroll = max;
+        // Adjust current scroll offset if it's now out of bounds
+        if self.scroll_offset > self.max_scroll {
+            self.scroll_offset = self.max_scroll;
         }
+    }
 
-        // Sync messages from shared state before drawing
-        self.sync_messages();
+    // Spinner methods using instance state
+    // Return owned String to avoid lifetime issues with self
+    fn get_spinner_char(&self) -> String {
+        const SPINNER: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
+        SPINNER[self.spinner_state % SPINNER.len()].to_string()
+    }
 
-        // Debug to check messages before rendering
-        crate::utils::logging::debug(
-            "tui.draw",
-            &format!("Drawing UI with {} messages", self.messages.len()),
-        );
+    fn update_spinner_state(&mut self) {
+        if self.last_spinner_update.elapsed() > SPINNER_UPDATE_INTERVAL {
+            self.spinner_state = self.spinner_state.wrapping_add(1);
+            self.last_spinner_update = Instant::now();
+        }
+    }
 
-        // Create copies of the data we need to use in the closure
-        let messages = self.messages.clone();
-        let is_processing = *self.is_processing.read().unwrap();
-        let progress_message = self.progress_message.clone();
-
-        // Get the textarea widget reference for rendering
-        let textarea_ref = &self.textarea;
-        let is_editing = matches!(self.input_mode, InputMode::Editing);
-
-        self.terminal.draw(|f| {
-            let total_height = f.size().height;
-
-            // Calculate dynamic input height
-            let input_width = f.size().width.saturating_sub(2); // Account for block borders
-            // Correctly calculate required height based on lines + borders
-            let required_input_height =
-                (textarea_ref.lines().len().max(1) as u16).saturating_add(2);
-            let input_height = required_input_height
-                .min(MAX_INPUT_HEIGHT)
-                .min(total_height); // Clamp height
-
-            // Define constraints based on state and calculated input height
-            let mut constraints = Vec::new();
-            constraints.push(Constraint::Min(1)); // Message area takes remaining space
-
-            if is_processing {
-                constraints.push(Constraint::Length(1)); // Progress area
+    // Static method to create input block based on state passed in
+    // Takes owned Strings now
+    fn create_input_block_static<'a>(
+        input_mode: InputMode,
+        is_processing: bool,
+        progress_message: Option<String>, // Owned Option<String>
+        spinner_char: String,             // Owned String
+    ) -> Block<'a> {
+        let input_border_style = match input_mode {
+            InputMode::Editing => Style::default().fg(Color::Yellow),
+            InputMode::Normal => Style::default().fg(Color::DarkGray),
+            InputMode::AwaitingApproval => {
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
             }
+        };
+        let input_title: &str = match input_mode {
+            InputMode::Editing => "Input (Esc to stop editing, Enter to send)",
+            InputMode::Normal => "Input (i or Ctrl+S to edit, Enter to send, q to quit)",
+            InputMode::AwaitingApproval => "Approval Required (y/n, Shift+Tab=always, Esc=deny)",
+        };
+        let mut input_block = Block::<'a>::default()
+            .borders(Borders::ALL)
+            .title(input_title)
+            .style(input_border_style);
 
-            constraints.push(Constraint::Length(input_height)); // Input area height
+        if is_processing {
+            let progress_msg = progress_message.as_deref().unwrap_or_default(); // Get &str from owned Option<String>
+            // Add type annotation for title (using ratatui::text::Text)
+            let title: ratatui::text::Text =
+                format!(" {} Processing {} ", &spinner_char, progress_msg).into(); // Use &spinner_char
+            // Use a more specific title if awaiting approval
+            // Add type annotation for final_title
+            let final_title: ratatui::text::Text = if input_mode == InputMode::AwaitingApproval {
+                format!(
+                    " {} {} ",
+                    &spinner_char, // Use &spinner_char
+                    progress_message.as_deref().unwrap_or("Awaiting Approval")  // Get &str
+                )
+                .into()
+            } else {
+                title
+            };
+            // Convert Text to Line for Block::title
+            input_block = input_block.title(
+                // Get the first line from the Text object
+                final_title
+                    .lines
+                    .get(0)
+                    .cloned()
+                    .unwrap_or_default()
+                    .style(final_title.style) // Apply style from Text
+                    .white(),
+            );
+        }
+        input_block
+    }
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(constraints)
-                .split(f.size());
+    // Render UI - Static method
+    fn render_ui_static(
+        f: &mut ratatui::Frame<'_>,
+        textarea: &TextArea<'_>,       // Pass textarea immutably
+        messages: &[FormattedMessage], // Pass messages slice
+        input_mode: InputMode,         // Pass input mode copy
+        scroll_offset: usize,          // Pass scroll state
+        max_scroll: usize,             // Pass scroll state
+    ) -> Result<()> {
+        let total_area = f.area();
+        let input_height = (textarea.lines().len() as u16 + 2) // +2 for borders
+            .min(MAX_INPUT_HEIGHT) // Clamp max height
+            .min(total_area.height); // Clamp to available height
 
-            let message_area_index = 0;
-            let progress_area_index = if is_processing { Some(1) } else { None };
-            let input_area_index = if is_processing { 2 } else { 1 };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(input_height)])
+            .split(f.area());
 
-            let message_area = chunks[message_area_index];
-            let input_area = chunks[input_area_index];
+        let messages_area = chunks[0];
+        let input_area = chunks[1];
 
-            // Update max scroll for message area AFTER calculating layout
-            let message_area_height = message_area.height as usize;
-            let visible_lines = message_area_height.saturating_sub(2); // Adjust for borders
-            let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
-            let max_scroll = total_lines.saturating_sub(visible_lines).max(0);
-            Self::set_max_scroll(max_scroll);
+        // Render Messages
+        Self::render_messages_static(f, messages_area, messages, scroll_offset, max_scroll);
 
-            // Ensure scroll offset is within bounds
-            let current_offset = Self::get_scroll_offset();
-            if current_offset > max_scroll {
-                Self::set_scroll_offset(max_scroll);
+        // Render Text Area
+        f.render_widget(textarea, input_area);
+
+        // Set cursor visibility and position
+        if input_mode == InputMode::Editing {
+            // Calculate cursor position relative to the input area
+            let cursor_col = input_area.x + 1 + textarea.cursor().0 as u16;
+            let cursor_row = input_area.y + 1 + textarea.cursor().1 as u16;
+
+            // Ensure cursor stays within the visible area of the textarea block
+            if cursor_row < input_area.bottom() - 1 && cursor_col < input_area.right() - 1 {
+                // Use set_cursor_position with a Position struct
+                f.set_cursor_position(Position {
+                    x: cursor_col,
+                    y: cursor_row,
+                });
+            } else {
+                // Hide cursor if it would be outside the box (e.g., during scrolling)
+                f.set_cursor_position(Position { x: 0, y: 0 });
             }
-
-            // Render progress area if processing
-            if is_processing {
-                let progress_area = chunks[progress_area_index.unwrap()]; // Safe unwrap due to logic above
-                let spinner_char = Self::get_spinner_char();
-                let progress_text = if let Some(msg) = &progress_message {
-                    format!("{} {}", spinner_char, msg)
-                } else {
-                    format!("{} Processing...", spinner_char)
-                };
-                let progress_widget =
-                    Paragraph::new(progress_text).style(Style::default().fg(Color::Yellow));
-                f.render_widget(progress_widget, progress_area);
-            }
-
-            // Render messages
-            Self::render_messages_static(f, message_area, &messages);
-
-            // Render input area (TextArea)
-            f.render_widget(textarea_ref.widget(), input_area);
-
-            // Cursor is handled by the TextArea widget itself when rendered
-        })?;
+        }
 
         Ok(())
     }
 
-    // Static version of render_messages that doesn't borrow self
+    // Render Messages - Static method (mostly unchanged, uses static scroll)
     fn render_messages_static(
         f: &mut ratatui::Frame<'_>,
         area: Rect,
         messages: &[FormattedMessage],
+        scroll_offset: usize, // Receive scroll state
+        max_scroll: usize,    // Receive scroll state
     ) {
-        // crate::utils::logging::debug(
-        //     "tui.render_messages",
-        //     &format!("Rendering messages. Count: {}", messages.len()),
-        // );
-        // for (i, msg) in messages.iter().enumerate() {
-        //     crate::utils::logging::debug(
-        //         "tui.render_messages",
-        //         &format!(
-        //             "  Message {}: Role {:?}, Content lines: {}",
-        //             i,
-        //             msg.role,
-        //             msg.content.len()
-        //         ),
-        //     );
+        if messages.is_empty() {
+            let placeholder =
+                Paragraph::new("No messages yet...").style(Style::default().fg(Color::DarkGray));
+            f.render_widget(placeholder, area);
+            return;
+        }
+
+        // Flatten message content lines for calculating total height and rendering
+        let all_lines: Vec<Line> = messages.iter().flat_map(|fm| fm.content.clone()).collect();
+        let total_lines_count = all_lines.len();
+
+        let area_height = area.height.saturating_sub(2) as usize; // Subtract borders
+
+        // Max scroll is now passed in, no need to calculate/set here
+        // let max_scroll = if total_lines_count > area_height {
+        //     total_lines_count.saturating_sub(area_height)
+        // } else {
+        //     0
+        // };
+        // Self::set_max_scroll(max_scroll); // Setter removed
+
+        // Use passed-in scroll offset, already clamped by the setter
+        // let scroll_offset = Self::get_scroll_offset().min(max_scroll);
+        // Ensure scroll_offset is updated if it was clamped - handled by setter
+        // if scroll_offset != Self::get_scroll_offset() {
+        //     Self::set_scroll_offset(scroll_offset);
         // }
 
-        let scroll_offset = Tui::get_scroll_offset();
-
-        // Check if we have any user messages - this indicates the conversation has started
-        let has_user_messages = messages.iter().any(|m| m.role == crate::app::Role::User);
-
-        // Handle welcome messages specially - they're the first two if no user input yet
-        let (welcome_messages, conversation_messages): (
-            Vec<&FormattedMessage>,
-            Vec<&FormattedMessage>,
-        ) = if !has_user_messages && messages.len() >= 2 {
-            // First two are welcome messages, rest are conversation
-            let (welcome, rest) = messages.split_at(2);
-            (
-                welcome
-                    .iter()
-                    .filter(|m| m.role != crate::app::Role::System)
-                    .collect(),
-                rest.iter()
-                    .filter(|m| m.role != crate::app::Role::System)
-                    .collect(),
-            )
+        // Create list items from the flattened lines, applying scroll offset manually via slicing
+        let start = scroll_offset.min(total_lines_count.saturating_sub(1)); // Ensure start is within bounds
+        let end = (scroll_offset + area_height).min(total_lines_count); // Calculate end index, clamp to total lines
+        let visible_items: Vec<ListItem> = if start < end {
+            all_lines[start..end]
+                .iter()
+                .cloned()
+                .map(ListItem::new)
+                .collect()
         } else {
-            // If user message exists, all messages are conversation messages
-            (
-                Vec::new(),
-                messages
-                    .iter()
-                    .filter(|m| m.role != crate::app::Role::System)
-                    .collect(),
-            )
+            Vec::new() // Handle case where scroll offset is beyond content
         };
 
-        // // Log the message categorization
-        // crate::utils::logging::debug(
-        //     "tui.render_messages",
-        //     &format!(
-        //         "Welcome messages: {}, Conversation messages: {}",
-        //         welcome_messages.len(),
-        //         conversation_messages.len()
-        //     ),
-        // );
-
-        // Create display items for all messages in proper order
-        let mut messages_list: Vec<ListItem> = Vec::new();
-
-        // Add welcome messages with special styling if there are any
-        if !welcome_messages.is_empty() {
-            // Create a welcome box with all welcome messages concatenated
-            let mut welcome_content = Vec::new();
-            welcome_content.push(Line::from(Span::styled(
-                "Welcome to Claude Code",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            welcome_content.push(Line::from(Span::styled(
-                "Type your query and press Enter to send.",
-                Style::default().fg(Color::White),
-            )));
-
-            // Add each welcome message as content without role headers
-            for m in welcome_messages.iter() {
-                welcome_content.extend(m.content.clone());
-                welcome_content.push(Line::from("")); // Add blank line between welcome messages
-            }
-
-            // Add as a single item with special styling
-            messages_list
-                .push(ListItem::new(welcome_content).style(Style::default().fg(Color::Yellow)));
-        }
-
-        // For conversation messages, maintain the original order
-        // Log conversation message counts for debugging
-        let user_count = conversation_messages
-            .iter()
-            .filter(|m| m.role == crate::app::Role::User)
-            .count();
-        let assistant_count = conversation_messages
-            .iter()
-            .filter(|m| m.role == crate::app::Role::Assistant)
-            .count();
-        let tool_count = conversation_messages
-            .iter()
-            .filter(|m| m.role == crate::app::Role::Tool)
-            .count();
-
-        // crate::utils::logging::debug(
-        //     "tui.render_messages",
-        //     &format!(
-        //         "User msgs: {}, Assistant msgs: {}, Tool msgs: {}",
-        //         user_count, assistant_count, tool_count
-        //     ),
-        // );
-
-        // Add conversation messages in their original order
-        for m in conversation_messages {
-            let header_style = match m.role {
-                crate::app::Role::User => Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-                crate::app::Role::Assistant => Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-                crate::app::Role::Tool => Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-                crate::app::Role::System => Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            };
-
-            // Create header
-            let header_text = match m.role {
-                crate::app::Role::Tool => {
-                    if let Some(name) = &m.tool_name {
-                        format!("[ Tool: {} ]", name)
-                    } else {
-                        "[ Tool ]".to_string() // Fallback if name is missing
-                    }
-                }
-                _ => format!("[ {} ]", m.role), // Use default role display otherwise
-            };
-            let header = Line::from(Span::styled(header_text, header_style));
-
-            // Create a list item with content
-            let mut lines = vec![header];
-            lines.extend(m.content.clone());
-
-            // Add expand/collapse hint for tool messages with results
-            if m.role == crate::app::Role::Tool && m.full_tool_result.is_some() {
-                let hint_text = if m.is_truncated {
-                    "[Ctrl+R to expand]"
-                } else {
-                    "[Ctrl+R to collapse]"
-                };
-                let hint_style = Style::default().fg(Color::DarkGray);
-                lines.push(Line::from("")); // Add a blank line before hint
-                lines.push(Line::from(Span::styled(hint_text, hint_style)));
-            }
-
-            messages_list.push(ListItem::new(lines));
-        }
-
-        // Calculate max scroll
-        let max_scroll = if messages.is_empty() {
-            0
-        } else {
-            // Rough calculation of the total lines in all messages
-            let total_lines = messages.iter().map(|m| m.content.len() + 1).sum::<usize>();
-            // Subtract visible lines (approximation)
-            let visible_lines = area.height as usize - 2; // Account for borders
-            total_lines.saturating_sub(visible_lines)
-        };
-
-        // Set the title with scroll indicator if needed
-        let title = if max_scroll > 0 {
-            format!("Messages [{}/{}]", scroll_offset, max_scroll)
-        } else {
-            "Messages".to_string()
-        };
-
-        // Create list with items based on scroll offset
-        let offset = scroll_offset as usize;
-        let visible_messages: Vec<ListItem> = if messages_list.len() > offset {
-            messages_list.into_iter().skip(offset).collect()
-        } else {
-            Vec::new()
-        };
-
-        let messages_list = List::new(visible_messages)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-            .highlight_symbol("> ");
+        let messages_list =
+            List::new(visible_items) // Use the sliced items
+                .block(Block::default().borders(Borders::ALL).title("Conversation"));
 
         f.render_widget(messages_list, area);
+
+        // Render Scrollbar
+        if max_scroll > 0 {
+            let scrollbar = ratatui::widgets::Scrollbar::new(
+                ratatui::widgets::ScrollbarOrientation::VerticalRight,
+            );
+            // Adjust scrollbar area to be inside the message block borders
+            let scrollbar_area = area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            });
+
+            let mut scrollbar_state =
+                ratatui::widgets::ScrollbarState::new(total_lines_count).position(scroll_offset);
+
+            f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+        }
     }
 
-    async fn handle_input(
-        &mut self,
-        key: KeyEvent, // Use crossterm's KeyEvent
-        app: Arc<Mutex<crate::app::App>>,
-    ) -> Result<bool> {
-        match self.input_mode {
-            InputMode::Normal => match key.code {
-                // Use crossterm KeyCode and KeyModifiers
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    return Ok(true);
+    // Handle user input keys -> returns action to dispatch or None
+    async fn handle_input(&mut self, key: KeyEvent) -> Result<Option<InputAction>> {
+        let mut action = None; // Action to be returned
+
+        // --- Calculate Page Scroll Amount ---
+        // Calculate half page height for Ctrl+U/D scrolling
+        let half_page_height = self
+            .terminal
+            .size()?
+            .height
+            .saturating_sub(self.textarea.lines().len() as u16 + 2) // Input area height approx.
+            .saturating_sub(2) // Message area borders
+            .saturating_div(2) as usize; // Half the message area height
+
+        // Calculate full page height for PageUp/PageDown
+        let full_page_height = half_page_height * 2; // More accurate full page
+
+        // --- Global/Mode-Independent Shortcuts ---
+        match key.code {
+            // Quit (only in Normal mode, moved down for clarity)
+            // KeyCode::Char('q') | KeyCode::Char('Q') if self.input_mode == InputMode::Normal => {
+            //     action = Some(InputAction::Exit);
+            // }
+
+            // Deny Tool (only in Approval mode)
+            KeyCode::Esc if self.input_mode == InputMode::AwaitingApproval => {
+                // Treat Esc as Deny in Approval mode
+                if let Some((id, _, _)) = self.approval_request.take() {
+                    action = Some(InputAction::DenyTool(id));
                 }
-                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.input_mode = InputMode::Editing;
-                    // Set textarea style for editing mode
-                    self.textarea.set_style(Style::default().yellow());
-                }
-                KeyCode::Char('i') => {
-                    self.input_mode = InputMode::Editing;
-                    // Set textarea style for editing mode
-                    self.textarea.set_style(Style::default().yellow());
-                }
-                KeyCode::Up => {
-                    let current = Self::get_scroll_offset();
-                    if current > 0 {
-                        Self::set_scroll_offset(current - 1);
-                    }
-                }
-                KeyCode::Down => {
-                    let current = Self::get_scroll_offset();
-                    let max = Self::get_max_scroll();
-                    if current < max {
-                        Self::set_scroll_offset(current + 1);
-                    }
-                }
+                self.input_mode = InputMode::Normal; // Revert mode
+                self.progress_message = None; // Clear progress
+                return Ok(action); // Return early as mode changed
+            }
+            _ => {} // Other keys handled per mode or below
+        }
+
+        // --- Scrolling (Available in Normal and Editing, but NOT AwaitingApproval) ---
+        if self.input_mode != InputMode::AwaitingApproval {
+            match key.code {
+                // Full Page Scroll
                 KeyCode::PageUp => {
-                    let current = Self::get_scroll_offset();
-                    let page_size = self.terminal.size()?.height.saturating_sub(5) as usize;
-                    Self::set_scroll_offset(current.saturating_sub(page_size));
+                    let current_offset = self.get_scroll_offset();
+                    let new_offset = current_offset.saturating_sub(full_page_height);
+                    self.set_scroll_offset(new_offset);
+                    return Ok(None); // Just scroll
                 }
                 KeyCode::PageDown => {
-                    let current = Self::get_scroll_offset();
-                    let max = Self::get_max_scroll();
-                    let page_size = self.terminal.size()?.height.saturating_sub(5) as usize;
-                    Self::set_scroll_offset((current + page_size).min(max));
+                    let current_offset = self.get_scroll_offset();
+                    let max_scroll = self.get_max_scroll();
+                    let new_offset = (current_offset + full_page_height).min(max_scroll);
+                    self.set_scroll_offset(new_offset);
+                    return Ok(None); // Just scroll
                 }
-                KeyCode::Home => {
-                    Self::set_scroll_offset(0);
-                }
-                KeyCode::End => {
-                    let max = Self::get_max_scroll();
-                    Self::set_scroll_offset(max);
-                }
-                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    crate::utils::logging::debug(
-                        "tui.handle_input",
-                        "Ctrl+R pressed. Syncing messages...",
-                    );
-                    self.sync_messages();
-                    crate::utils::logging::debug(
-                        "tui.handle_input",
-                        &format!(
-                            "Current local messages count after sync: {}",
-                            self.messages.len()
-                        ),
-                    );
-                    let last_tool_msg_id = self.messages.iter().rev().find_map(|msg| {
-                        crate::utils::logging::debug(
-                            "tui.handle_input",
-                            &format!(
-                                "Checking message ID {} (Role: {:?}, HasResult: {})",
-                                msg.id,
-                                msg.role,
-                                msg.full_tool_result.is_some()
-                            ),
-                        );
-                        if msg.role == crate::app::Role::Tool && msg.full_tool_result.is_some() {
-                            Some(msg.id.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(id_to_toggle) = last_tool_msg_id {
-                        crate::utils::logging::debug(
-                            "tui.handle_input",
-                            &format!(
-                                "Found last tool message ID to toggle: {}. Requesting toggle.",
-                                id_to_toggle
-                            ),
-                        );
-                        app.lock().await.toggle_message_truncation(id_to_toggle);
-                    } else {
-                        crate::utils::logging::debug(
-                            "tui.handle_input",
-                            "Ctrl+R pressed, but no tool message found to toggle in local messages.",
-                        );
-                    }
-                }
-                _ => {}
-            },
-            InputMode::Editing => {
-                // Manually construct Input using the helper function
-                let ta_key = crossterm_keycode_to_textarea_key(key.code);
-                let input = Input {
-                    key: ta_key,
-                    ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
-                    alt: key.modifiers.contains(KeyModifiers::ALT),
-                    shift: key.modifiers.contains(KeyModifiers::SHIFT),
-                };
 
-                match input {
-                    Input { key: Key::Esc, .. } => {
-                        self.input_mode = InputMode::Normal;
-                        self.textarea.set_style(Style::default());
+                // Line Scroll (Arrows)
+                KeyCode::Up => {
+                    let current_offset = self.get_scroll_offset();
+                    if current_offset > 0 {
+                        self.set_scroll_offset(current_offset - 1);
                     }
+                    return Ok(None); // Just scroll
+                }
+                KeyCode::Down => {
+                    let current_offset = self.get_scroll_offset();
+                    let max_scroll = self.get_max_scroll();
+                    if current_offset < max_scroll {
+                        self.set_scroll_offset(current_offset + 1);
+                    }
+                    return Ok(None); // Just scroll
+                }
+
+                // Line Scroll (j/k in Normal Mode only)
+                KeyCode::Char('k') if self.input_mode == InputMode::Normal => {
+                    let current_offset = self.get_scroll_offset();
+                    if current_offset > 0 {
+                        self.set_scroll_offset(current_offset - 1);
+                    }
+                    return Ok(None); // Just scroll
+                }
+                KeyCode::Char('j') if self.input_mode == InputMode::Normal => {
+                    let current_offset = self.get_scroll_offset();
+                    let max_scroll = self.get_max_scroll();
+                    if current_offset < max_scroll {
+                        self.set_scroll_offset(current_offset + 1);
+                    }
+                    return Ok(None); // Just scroll
+                }
+
+                // Half Page Scroll (u/d/Ctrl+u/Ctrl+d in Normal Mode only)
+                KeyCode::Char('u') if self.input_mode == InputMode::Normal => {
+                    if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
+                    {
+                        let current_offset = self.get_scroll_offset();
+                        let new_offset = current_offset.saturating_sub(half_page_height);
+                        self.set_scroll_offset(new_offset);
+                        return Ok(None); // Just scroll
+                    }
+                }
+                KeyCode::Char('d') if self.input_mode == InputMode::Normal => {
+                    if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
+                    {
+                        let current_offset = self.get_scroll_offset();
+                        let max_scroll = self.get_max_scroll();
+                        let new_offset = (current_offset + half_page_height).min(max_scroll);
+                        self.set_scroll_offset(new_offset);
+                        return Ok(None); // Just scroll
+                    }
+                }
+
+                // Toggle Tool Result Truncation
+                KeyCode::Char('t') | KeyCode::Char('T') => {
+                    let scroll_offset = self.get_scroll_offset();
+                    // Find the message corresponding to the current view port top
+                    // This is an approximation - ideally we'd track selected message
+                    let mut line_count = 0;
+                    let mut target_message_id = None;
+                    for msg in &self.messages {
+                        let msg_lines = msg.content.len();
+                        if line_count + msg_lines > scroll_offset {
+                            if msg.role == Role::Tool && msg.full_tool_result.is_some() {
+                                target_message_id = Some(msg.id.clone());
+                            }
+                            break; // Found the message at the current scroll offset
+                        }
+                        line_count += msg_lines;
+                    }
+
+                    if let Some(id) = target_message_id {
+                        action = Some(InputAction::ToggleMessageTruncation(id));
+                    } else {
+                        // Maybe check the last message if no specific one found?
+                        if let Some(last_tool_msg) = self
+                            .messages
+                            .iter()
+                            .rev()
+                            .find(|m| m.role == Role::Tool && m.full_tool_result.is_some())
+                        {
+                            action = Some(InputAction::ToggleMessageTruncation(
+                                last_tool_msg.id.clone(),
+                            ));
+                        } else {
+                            debug(
+                                "tui.handle_input",
+                                "No tool message found to toggle truncation",
+                            );
+                        }
+                    }
+                    // No return Ok(None) here as we might set an action
+                }
+                _ => {} // Other keys ignored in this block
+            }
+        } // End of `if self.input_mode != InputMode::AwaitingApproval`
+
+        // --- Mode-specific handling ---
+        match self.input_mode {
+            InputMode::Editing => {
+                match key.into() {
+                    // Send message on Enter (unless Shift+Enter for newline)
                     Input {
                         key: Key::Enter,
                         ctrl: false,
                         alt: false,
-                        shift: false,
+                        shift: false, // Explicitly check shift is NOT pressed
                     } => {
-                        if *self.is_processing.read().unwrap() {
-                            crate::utils::logging::debug(
-                                "tui.handle_input",
-                                "Enter pressed while processing, message sending blocked.",
-                            );
+                        let current_input = self.textarea.lines().join("\n"); // Use newline char
+                        if !current_input.trim().is_empty() {
+                            action = Some(InputAction::SendMessage(current_input));
+                            // Reset textarea fully after sending
+                            let mut new_textarea = TextArea::default();
+                            new_textarea
+                                .set_block(self.textarea.block().cloned().unwrap_or_default());
+                            new_textarea.set_placeholder_text(self.textarea.placeholder_text());
+                            new_textarea.set_style(self.textarea.style());
+                            self.textarea = new_textarea;
+                            self.input_mode = InputMode::Normal; // Switch back after sending
                         } else {
-                            let message = self.textarea.lines().join(
-                                "\n", // Keep newline fix
-                            );
-                            if !message.trim().is_empty() {
-                                let message_to_send = message;
-                                self.textarea.select_all();
-                                self.textarea.delete_char();
-                                self.send_message(message_to_send, Arc::clone(&app)).await?;
-                                self.input_mode = InputMode::Normal;
-                                self.textarea.set_style(Style::default());
-                            } else {
-                                self.input_mode = InputMode::Normal;
-                                self.textarea.set_style(Style::default());
-                            }
+                            self.input_mode = InputMode::Normal; // Switch back even if empty
                         }
                     }
-                    Input { // Use the manually constructed input here
-                        key: Key::Char('c'),
-                        ctrl: true,
-                        .. // alt and shift flags are part of the Input struct
-                    } => {
-                        return Ok(true);
+                    // Stop editing on Esc
+                    Input { key: Key::Esc, .. } => {
+                        self.input_mode = InputMode::Normal;
                     }
-                    _ => {
-                        self.textarea.input(input);
+                    // Handle Ctrl+S as stop editing (alternative to Esc)
+                    Input {
+                        key: Key::Char('s'),
+                        ctrl: true,
+                        ..
+                    }
+                    | Input {
+                        key: Key::Char('S'),
+                        ctrl: true,
+                        ..
+                    } => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    // Default: Pass key to textarea
+                    input => {
+                        // Only pass input if no action was already determined (like scrolling)
+                        if action.is_none() {
+                            self.textarea.input(input);
+                        }
+                    }
+                }
+            }
+            InputMode::Normal => {
+                // Only handle non-scrolling keys here if no action already set
+                if action.is_none() {
+                    match key.code {
+                        // Start editing
+                        KeyCode::Char('i') | KeyCode::Char('I') => {
+                            self.input_mode = InputMode::Editing;
+                        }
+                        // Start editing via Ctrl+S
+                        KeyCode::Char('s') | KeyCode::Char('S')
+                            if key.modifiers == KeyModifiers::CONTROL =>
+                        {
+                            self.input_mode = InputMode::Editing;
+                        }
+                        // Send message directly if Enter is pressed in Normal mode
+                        KeyCode::Enter => {
+                            let current_input = self.textarea.lines().join("\n"); // Use newline char
+                            if !current_input.trim().is_empty() {
+                                action = Some(InputAction::SendMessage(current_input));
+                                // Reset textarea fully after sending
+                                let mut new_textarea = TextArea::default();
+                                new_textarea
+                                    .set_block(self.textarea.block().cloned().unwrap_or_default());
+                                new_textarea.set_placeholder_text(self.textarea.placeholder_text());
+                                new_textarea.set_style(self.textarea.style());
+                                self.textarea = new_textarea;
+                            }
+                        }
+                        // Quit
+                        KeyCode::Char('q') | KeyCode::Char('Q') => {
+                            action = Some(InputAction::Exit);
+                        }
+                        _ => {} // Other keys ignored in Normal mode unless handled globally/as scrolling
+                    }
+                }
+            }
+            InputMode::AwaitingApproval => {
+                // Only handle approval keys here if no action already set
+                if action.is_none() {
+                    match key.code {
+                        // Approve Normal
+                        KeyCode::Char('y') | KeyCode::Char('Y')
+                            if key.modifiers == KeyModifiers::NONE =>
+                        {
+                            if let Some((id, _, _)) = self.approval_request.take() {
+                                action = Some(InputAction::ApproveToolNormal(id));
+                            }
+                            self.input_mode = InputMode::Normal; // Revert mode
+                            self.progress_message = None; // Clear progress
+                        }
+                        // Approve Always (Shift + Tab)
+                        KeyCode::BackTab if key.modifiers == KeyModifiers::SHIFT => {
+                            // Shift+Tab often comes as BackTab + Shift
+                            if let Some((id, _, _)) = self.approval_request.take() {
+                                action = Some(InputAction::ApproveToolAlways(id));
+                            }
+                            self.input_mode = InputMode::Normal; // Revert mode
+                            self.progress_message = None; // Clear progress
+                        }
+                        // Deny
+                        KeyCode::Char('n') | KeyCode::Char('N') /* Esc handled globally */ => {
+                            if let Some((id, _, _)) = self.approval_request.take() {
+                                action = Some(InputAction::DenyTool(id));
+                            }
+                            self.input_mode = InputMode::Normal; // Revert mode
+                            self.progress_message = None; // Clear progress
+                        }
+                        _ => {} // Ignore other keys in this mode
                     }
                 }
             }
         }
 
-        Ok(false)
+        Ok(action)
     }
 
-    async fn send_message(
-        &mut self,
-        message: String,
-        app: Arc<Mutex<crate::app::App>>,
-    ) -> Result<()> {
-        // No longer set is_processing here. Rely on ThinkingStarted event.
-        // self.set_progress(Some("Sending message to Claude...".to_string()));
-        // self.draw()?; // Initial draw might not be needed, event handler will trigger redraws
-
-        // Add the user message locally *immediately* for responsiveness
-        // The App will also add it, but this makes it appear instantly
-        self.add_user_message(&message);
-        self.draw()?; // Draw immediately after adding local user message
-
-        // Spawn the potentially long-running processing task
-        tokio::spawn(async move {
-            crate::utils::logging::debug("tui.send_message task", "Locking app mutex");
-            let mut app_guard = app.lock().await;
-            crate::utils::logging::debug(
-                "tui.send_message task",
-                "App mutex locked, calling process_user_message",
-            );
-            // The App::process_user_message method will handle adding the message
-            // to its conversation state and emitting events (ThinkingStarted, etc.)
-            if let Err(e) = app_guard.process_user_message(message).await {
-                // Log error from process_user_message if it returns an error
-                // App::process_user_message should ideally emit an AppEvent::Error itself,
-                // but we log here just in case.
-                crate::utils::logging::error(
-                    "tui.send_message task",
-                    &format!("Error in app.process_user_message: {}", e),
-                );
-                // Optionally, emit an error event from here if needed, though App should do it.
-                // app_guard.emit_event(AppEvent::Error { message: e.to_string() });
+    // Dispatch action, sending commands if necessary
+    // Returns Ok(true) if the app should exit, Ok(false) otherwise
+    async fn dispatch_input_action(&mut self, action: InputAction) -> Result<bool> {
+        match action {
+            InputAction::SendMessage(message) => {
+                if message.starts_with('/') {
+                    // Send as command
+                    self.command_tx
+                        .send(AppCommand::ExecuteCommand(message))
+                        .await?;
+                } else {
+                    // Now send command to App to process this *already added* message
+                    self.command_tx
+                        .send(AppCommand::ProcessUserInput(message))
+                        .await?;
+                    // Let the App handle adding the message and sending MessageAdded event
+                    // The TUI will display the message when it receives that event
+                }
             }
-            crate::utils::logging::debug(
-                "tui.send_message task",
-                "process_user_message finished, releasing app mutex",
-            );
-            // Mutex guard is dropped here
-        });
+            InputAction::ToggleMessageTruncation(id) => {
+                // Directly modify the message state here
+                let mut found_and_toggled = false;
+                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
+                    if let Some(full_result) = &msg.full_tool_result {
+                        msg.is_truncated = !msg.is_truncated;
 
-        // No longer set is_processing = false or reset progress here.
-        // Let the event handler manage state based on ThinkingCompleted/Error events.
-
-        // Reset scroll to follow newest messages after *initiating* send
-        Self::set_scroll_offset(0);
-
-        // TUI loop continues drawing, event handler updates state, making UI responsive.
-
-        Ok(())
+                        if msg.is_truncated {
+                            const MAX_PREVIEW_LINES: usize = 5;
+                            let lines: Vec<&str> = full_result.lines().collect();
+                            let preview_content = if lines.len() > MAX_PREVIEW_LINES {
+                                format!(
+                                    "{}\n... ({} more lines, press 't' to toggle full view)",
+                                    lines
+                                        .iter()
+                                        .take(MAX_PREVIEW_LINES)
+                                        .cloned()
+                                        .collect::<Vec<_>>()
+                                        .join("\n"),
+                                    lines.len() - MAX_PREVIEW_LINES
+                                )
+                            } else {
+                                full_result.clone()
+                            };
+                            msg.content = format_tool_preview(
+                                &preview_content,
+                                self.terminal.size().map(|r| r.width).unwrap_or(100),
+                            );
+                        } else {
+                            msg.content = format_tool_preview(
+                                full_result,
+                                self.terminal.size().map(|r| r.width).unwrap_or(100),
+                            );
+                        }
+                        found_and_toggled = true;
+                    } else {
+                        warn(
+                            "tui.dispatch",
+                            &format!(
+                                "Message {} found, but has no full_tool_result to toggle.",
+                                id
+                            ),
+                        );
+                    }
+                }
+                if !found_and_toggled {
+                    warn(
+                        "tui.dispatch",
+                        &format!("ToggleMessageTruncation: No message found with ID {}", id),
+                    );
+                }
+                // No command needs to be sent to App for this purely visual toggle
+            }
+            InputAction::ApproveToolNormal(id) => {
+                self.command_tx
+                    .send(AppCommand::HandleToolResponse {
+                        id,
+                        approved: true,
+                        always: false,
+                    })
+                    .await?;
+            }
+            InputAction::ApproveToolAlways(id) => {
+                self.command_tx
+                    .send(AppCommand::HandleToolResponse {
+                        id,
+                        approved: true,
+                        always: true,
+                    })
+                    .await?;
+            }
+            InputAction::DenyTool(id) => {
+                self.command_tx
+                    .send(AppCommand::HandleToolResponse {
+                        id,
+                        approved: false,
+                        always: false,
+                    })
+                    .await?;
+            }
+            InputAction::Exit => {
+                // Signal exit cleanly if possible
+                if let Err(e) = self.command_tx.send(AppCommand::Shutdown).await {
+                    error(
+                        "tui.dispatch",
+                        &format!("Failed to send Shutdown command: {}", e),
+                    );
+                    // Still exit the TUI loop even if shutdown command fails
+                }
+                return Ok(true); // Signal exit
+            }
+        }
+        Ok(false) // Don't exit by default
     }
 
-    // Helper to add user message locally before App confirms via event
-    fn add_user_message(&mut self, content: &str) {
-        let id = format!(
-            "local_user_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_secs()
-        );
-        let formatted = format_message(content, crate::app::Role::User);
-        self.messages.push(FormattedMessage {
-            content: formatted,
-            role: crate::app::Role::User,
-            id,
-            full_tool_result: None,
-            is_truncated: false,
-            tool_name: None,
-        });
+    // Close method (optional, Drop handles cleanup)
+    // pub async fn close(&mut self) -> Result<()> {
+    //     self.cleanup_terminal()?;
+    //     Ok(())
+    // }
+}
+
+// Implement Drop to ensure terminal cleanup happens
+impl Drop for Tui {
+    fn drop(&mut self) {
+        if let Err(e) = self.cleanup_terminal() {
+            // Log error if cleanup fails, but don't panic in drop
+            eprintln!("Failed to cleanup terminal: {}", e);
+            error("Tui::drop", &format!("Failed to cleanup terminal: {}", e));
+        }
     }
 }

@@ -1,6 +1,6 @@
-use anyhow::Result;
+// use anyhow::Result;
 use coder::api::messages::{ContentBlock, MessageContent, StructuredContent};
-use coder::api::{Client, Message, Tool, ToolCall};
+use coder::api::{Client, Message, Tool};
 use dotenv::dotenv;
 use std::env;
 

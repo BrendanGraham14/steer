@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Represents a message to be sent to the Claude API
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -83,96 +82,118 @@ pub fn convert_conversation(
         match app_msg.role {
             crate::app::Role::System => {
                 // Store system message content if not empty
-                if let crate::app::conversation::MessageContent::Text(content) = &app_msg.content {
+                // Assuming system messages are always single text blocks
+                if let Some(crate::app::conversation::MessageContentBlock::Text(content)) =
+                    app_msg.content_blocks.first()
+                {
                     if !content.trim().is_empty() {
                         system_content = Some(content.clone());
                     }
                 }
             }
             crate::app::Role::User => {
-                // Handle User messages (only text content is expected here for API format)
-                if let crate::app::conversation::MessageContent::Text(content) = &app_msg.content {
-                    // Skip empty user messages
-                    if !content.trim().is_empty() {
-                        api_messages.push(Message {
-                            role: "user".to_string(),
-                            content: MessageContent::Text {
-                                content: content.clone(),
-                            },
-                            // Use the app message ID if needed later
-                            id: Some(app_msg.id.clone()),
-                        });
-                    } else {
-                        crate::utils::logging::debug(
-                            "messages.convert_conversation",
-                            &format!("Skipping empty user message with ID: {}", app_msg.id),
-                        );
-                    }
-                } else {
-                    // Log if user message has unexpected content type
-                    crate::utils::logging::warn(
-                        "messages.convert_conversation",
-                        &format!(
-                            "User message ID {} has unexpected content type: {:?}, skipping.",
-                            app_msg.id, app_msg.content
-                        ),
-                    );
-                }
-            }
-            crate::app::Role::Assistant => {
-                // Handle Assistant messages
-                match &app_msg.content {
-                    crate::app::conversation::MessageContent::Text(content) => {
-                        // Assistant messages can be empty (e.g., only tool calls followed)
-                        api_messages.push(Message {
-                            role: "assistant".to_string(),
-                            content: MessageContent::Text {
-                                content: content.clone(),
-                            },
-                            id: Some(app_msg.id.clone()),
-                        });
-                    }
-                    crate::app::conversation::MessageContent::ToolCalls(tool_calls) => {
-                        // Convert app::ToolCall to api::ContentBlock::ToolUse
-                        let content_blocks: Vec<ContentBlock> = tool_calls
-                            .iter()
-                            .map(|tc| ContentBlock::ToolUse {
-                                // Ensure the tool call ID is present for the API
-                                id: tc.id.clone(),
-                                name: tc.name.clone(),
-                                input: tc.parameters.clone(),
-                            })
-                            .collect();
-
-                        // Only add if there are actual tool calls
-                        if !content_blocks.is_empty() {
-                            api_messages.push(Message {
-                                role: "assistant".to_string(),
-                                content: MessageContent::StructuredContent {
-                                    content: StructuredContent(content_blocks),
-                                },
-                                id: Some(app_msg.id.clone()),
-                            });
+                // Handle User messages (should primarily be text blocks)
+                // Combine consecutive text blocks into one string
+                let combined_text = app_msg
+                    .content_blocks
+                    .iter()
+                    .filter_map(|block| {
+                        if let crate::app::conversation::MessageContentBlock::Text(content) = block
+                        {
+                            Some(content.as_str())
                         } else {
                             crate::utils::logging::warn(
                                 "messages.convert_conversation",
                                 &format!(
-                                    "Assistant message ID {} had ToolCalls content but was empty, skipping.",
-                                    app_msg.id
+                                    "User message ID {} contained non-text block: {:?}",
+                                    app_msg.id, block
                                 ),
                             );
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                if !combined_text.trim().is_empty() {
+                    api_messages.push(Message {
+                        role: "user".to_string(),
+                        content: MessageContent::Text {
+                            content: combined_text,
+                        },
+                        id: Some(app_msg.id.clone()),
+                    });
+                } else {
+                    crate::utils::logging::debug(
+                        "messages.convert_conversation",
+                        &format!("Skipping empty user message with ID: {}", app_msg.id),
+                    );
+                }
+            }
+            crate::app::Role::Assistant => {
+                // Assistant messages can contain multiple content blocks (text, tool_use)
+                let api_blocks: Vec<ContentBlock> = app_msg.content_blocks.iter().filter_map(|block| {
+                    match block {
+                        crate::app::conversation::MessageContentBlock::Text(text) => {
+                            // Include text block only if it's not empty
+                            if text.trim().is_empty() {
+                                None
+                            } else {
+                                Some(ContentBlock::Text { text: text.clone() })
+                            }
+                        },
+                        crate::app::conversation::MessageContentBlock::ToolCall(tc) => {
+                            Some(ContentBlock::ToolUse {
+                                id: tc.id.clone(),
+                                name: tc.name.clone(),
+                                input: tc.parameters.clone(),
+                            })
+                        },
+                        crate::app::conversation::MessageContentBlock::ToolResult { .. } => {
+                            // Assistant should not have ToolResult blocks
+                            crate::utils::logging::error(
+                                "messages.convert_conversation",
+                                &format!("Unexpected ToolResult block found in Assistant message ID: {}", app_msg.id)
+                            );
+                            None // Skip this invalid block
                         }
                     }
-                    _ => {
-                        // Log if assistant message has unexpected content (e.g., ToolResult)
-                        crate::utils::logging::warn(
-                            "messages.convert_conversation",
-                            &format!(
-                                "Assistant message ID {} has unexpected content type: {:?}, skipping.",
-                                app_msg.id, app_msg.content
-                            ),
-                        );
-                    }
+                }).collect();
+
+                // Only add the message if there are valid content blocks
+                if !api_blocks.is_empty() {
+                    // Determine content structure: single text block or structured content
+                    let api_content = if api_blocks.len() == 1 {
+                        if let Some(ContentBlock::Text { text }) = api_blocks.first() {
+                            MessageContent::Text {
+                                content: text.clone(),
+                            }
+                        } else {
+                            // Single non-text block (must be ToolUse)
+                            MessageContent::StructuredContent {
+                                content: StructuredContent(api_blocks),
+                            }
+                        }
+                    } else {
+                        // Multiple blocks (text + tool_use, or multiple tool_use)
+                        MessageContent::StructuredContent {
+                            content: StructuredContent(api_blocks),
+                        }
+                    };
+
+                    api_messages.push(Message {
+                        role: "assistant".to_string(),
+                        content: api_content,
+                        id: Some(app_msg.id.clone()),
+                    });
+                } else {
+                    crate::utils::logging::warn(
+                        "messages.convert_conversation",
+                        &format!(
+                            "Assistant message ID {} resulted in no valid content blocks, skipping.",
+                            app_msg.id
+                        ),
+                    );
                 }
             }
             crate::app::Role::Tool => {
@@ -181,37 +202,36 @@ pub fn convert_conversation(
                 // Use the ID of the first tool message in the sequence for the API message ID
                 let first_tool_msg_id = app_msg.id.clone();
 
-                // Process the first tool message
-                if let crate::app::conversation::MessageContent::ToolResult {
-                    tool_use_id,
-                    result,
-                } = &app_msg.content
-                {
-                    // Determine if the result indicates an error (simple check)
-                    let is_error = result.starts_with("Error:");
-                    let result_content = if result.trim().is_empty() {
-                        "(No output)".to_string()
-                    } else {
-                        result.clone()
-                    };
+                // Process the first tool message's blocks
+                for block in &app_msg.content_blocks {
+                    if let crate::app::conversation::MessageContentBlock::ToolResult {
+                        tool_use_id,
+                        result,
+                    } = block
+                    {
+                        let is_error = result.starts_with("Error:");
+                        let result_content = if result.trim().is_empty() {
+                            "(No output)".to_string()
+                        } else {
+                            result.clone()
+                        };
 
-                    tool_results.push(ContentBlock::ToolResult {
-                        tool_use_id: tool_use_id.clone(),
-                        content: vec![ContentBlock::Text {
-                            text: result_content,
-                        }],
-                        is_error: if is_error { Some(true) } else { None },
-                    });
-                } else {
-                    crate::utils::logging::error(
-                        "messages.convert_conversation",
-                        &format!(
-                            "Message ID {} has Role::Tool but unexpected content: {:?}",
-                            app_msg.id, app_msg.content
-                        ),
-                    );
-                    // Skip this message and continue iteration
-                    continue;
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content: vec![ContentBlock::Text {
+                                text: result_content,
+                            }],
+                            is_error: if is_error { Some(true) } else { None },
+                        });
+                    } else {
+                        crate::utils::logging::error(
+                            "messages.convert_conversation",
+                            &format!(
+                                "Message ID {} (part of Tool group) has unexpected content block: {:?}",
+                                app_msg.id, block
+                            ),
+                        );
+                    }
                 }
 
                 // Peek ahead and consume subsequent Tool messages
@@ -219,33 +239,35 @@ pub fn convert_conversation(
                     if next_msg.role == crate::app::Role::Tool {
                         // Consume the message from the iterator
                         let consumed_msg = app_messages_iter.next().unwrap(); // Safe due to peek
-                        if let crate::app::conversation::MessageContent::ToolResult {
-                            tool_use_id,
-                            result,
-                        } = &consumed_msg.content
-                        {
-                            let is_error = result.starts_with("Error:");
-                            let result_content = if result.trim().is_empty() {
-                                "(No output)".to_string()
+                        // Process all blocks within the consumed tool message
+                        for block in &consumed_msg.content_blocks {
+                            if let crate::app::conversation::MessageContentBlock::ToolResult {
+                                tool_use_id,
+                                result,
+                            } = block
+                            {
+                                let is_error = result.starts_with("Error:");
+                                let result_content = if result.trim().is_empty() {
+                                    "(No output)".to_string()
+                                } else {
+                                    result.clone()
+                                };
+                                tool_results.push(ContentBlock::ToolResult {
+                                    tool_use_id: tool_use_id.clone(),
+                                    content: vec![ContentBlock::Text {
+                                        text: result_content,
+                                    }],
+                                    is_error: if is_error { Some(true) } else { None },
+                                });
                             } else {
-                                result.clone()
-                            };
-                            tool_results.push(ContentBlock::ToolResult {
-                                tool_use_id: tool_use_id.clone(),
-                                content: vec![ContentBlock::Text {
-                                    text: result_content,
-                                }],
-                                is_error: if is_error { Some(true) } else { None },
-                            });
-                        } else {
-                            crate::utils::logging::error(
-                                "messages.convert_conversation",
-                                &format!(
-                                    "Message ID {} has Role::Tool but unexpected content: {:?}",
-                                    consumed_msg.id, consumed_msg.content
-                                ),
-                            );
-                            // Continue processing other tool messages if any
+                                crate::utils::logging::error(
+                                    "messages.convert_conversation",
+                                    &format!(
+                                        "Message ID {} (part of Tool group) has unexpected content block: {:?}",
+                                        consumed_msg.id, block
+                                    ),
+                                );
+                            }
                         }
                     } else {
                         // Next message is not Role::Tool, stop grouping
@@ -362,7 +384,7 @@ pub fn create_system_prompt_with_memory(
 mod tests {
     use super::*;
     use crate::app::{
-        Conversation, Message as AppMessage, MessageContent as AppMessageContent, Role,
+        Conversation, Message as AppMessage, MessageContentBlock as AppMessageContentBlock, Role,
         ToolCall as AppToolCall,
     };
 
@@ -416,7 +438,7 @@ mod tests {
         // Add tool result using typed enum
         conv.add_message_with_content(
             Role::Tool,
-            AppMessageContent::ToolResult {
+            AppMessageContentBlock::ToolResult {
                 tool_use_id: "tool_1".to_string(),
                 result: "Result 1".to_string(),
             },
@@ -477,24 +499,23 @@ mod tests {
     fn test_convert_conversation_with_multiple_tool_results() {
         let mut conv = Conversation::new();
         conv.add_message(Role::User, "Hello".to_string());
-        conv.add_message(Role::Assistant, "Let me check something".to_string());
+        // Use new_text constructor
+        conv.messages.push(AppMessage::new_text(
+            Role::Assistant,
+            "Let me check something".to_string(),
+        ));
 
-        // Add two tool results using typed enums - we'll do them separately
-        conv.add_message_with_content(
+        // Add two tool results using new constructor
+        conv.messages.push(AppMessage::new_tool_result(
             Role::Tool,
-            AppMessageContent::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                result: "Result 1".to_string(),
-            },
-        );
-
-        conv.add_message_with_content(
+            "tool_1".to_string(),
+            "Result 1".to_string(),
+        ));
+        conv.messages.push(AppMessage::new_tool_result(
             Role::Tool,
-            AppMessageContent::ToolResult {
-                tool_use_id: "tool_2".to_string(),
-                result: "Result 2".to_string(),
-            },
-        );
+            "tool_2".to_string(),
+            "Result 2".to_string(),
+        ));
 
         let (messages, system) = convert_conversation(&conv);
         println!("Multiple tool messages: {:?}", messages);
@@ -568,16 +589,17 @@ mod tests {
     fn test_convert_conversation_with_empty_tool_results() {
         let mut conv = Conversation::new();
         conv.add_message(Role::User, "Hello".to_string());
-        conv.add_message(Role::Assistant, "Let me check something".to_string());
-        // Add empty tool result - in real use we'd never create one of these,
-        // but we're testing empty result handling
-        conv.add_message_with_content(
+        // Use new_text constructor
+        conv.messages.push(AppMessage::new_text(
+            Role::Assistant,
+            "Let me check something".to_string(),
+        ));
+        // Add empty tool result
+        conv.messages.push(AppMessage::new_tool_result(
             Role::Tool,
-            AppMessageContent::ToolResult {
-                tool_use_id: "empty_tool".to_string(),
-                result: "".to_string(),
-            },
-        );
+            "empty_tool".to_string(),
+            "".to_string(),
+        ));
 
         let (messages, system) = convert_conversation(&conv);
         println!("Empty tool messages: {:?}", messages);
@@ -622,24 +644,22 @@ mod tests {
     fn test_convert_conversation_with_non_tool_messages_after_tool() {
         let mut conv = Conversation::new();
         conv.add_message(Role::User, "Hello".to_string());
-        conv.messages.push(AppMessage {
-            id: "".to_string(),
-            role: Role::Assistant,
-            content: AppMessageContent::ToolCalls(vec![AppToolCall {
+        // Construct assistant message with ToolCall block
+        conv.messages.push(AppMessage::new_with_blocks(
+            Role::Assistant,
+            vec![AppMessageContentBlock::ToolCall(AppToolCall {
                 id: "tool_call_1".to_string(),
                 name: "tool_1".to_string(),
                 parameters: serde_json::Value::Null,
-            }]),
-            timestamp: 0,
-        });
+            })],
+        ));
 
-        conv.add_message_with_content(
+        // Add ToolResult message
+        conv.messages.push(AppMessage::new_tool_result(
             Role::Tool,
-            AppMessageContent::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                result: "Result 1".to_string(),
-            },
-        );
+            "tool_1".to_string(),
+            "Result 1".to_string(),
+        ));
         conv.add_message(Role::User, "What about this?".to_string());
 
         let (messages, system) = convert_conversation(&conv);

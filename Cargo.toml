@@ -39,3 +39,6 @@ dotenv = "0.15.0"
 glob = "0.3"
 regex = "1.9"
 tui-textarea = "*"
+uuid = { version = "1.8.0", features = ["v4"] }
+
+textwrap = "0.16"

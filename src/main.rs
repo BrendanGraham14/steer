@@ -4,7 +4,7 @@ use dotenv::dotenv;
 use std::panic;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Receiver};
 
 mod api;
 mod app;
@@ -12,6 +12,8 @@ mod config;
 mod tools;
 mod tui;
 mod utils;
+
+use app::AppCommand;
 
 /// A command line tool to pair program with Claude
 #[derive(Parser)]
@@ -48,6 +50,66 @@ enum Commands {
     Compact,
     /// Show detailed help information
     Info,
+}
+
+async fn app_actor_loop(
+    mut app: app::App,
+    mut command_rx: Receiver<AppCommand>,
+    mut internal_event_rx: Receiver<app::AppEvent>,
+) -> Result<()> {
+    utils::logging::info("app_actor_loop", "App actor loop started.");
+    loop {
+        tokio::select! {
+            Some(command) = command_rx.recv() => {
+                utils::logging::debug("app_actor_loop", &format!("Received command: {:?}", command));
+                match command {
+                    AppCommand::ProcessUserInput(input) => {
+                        if let Err(e) = app.process_user_message(input).await {
+                             utils::logging::error("app_actor_loop", &format!("Error processing user input: {}", e));
+                             app.emit_event(app::AppEvent::Error { message: e.to_string() });
+                        }
+                    }
+                    AppCommand::HandleToolResponse { id, approved, always } => {
+                        if let Err(e) = app.handle_tool_command_response(id, approved, always).await {
+                            utils::logging::error("app_actor_loop", &format!("Error handling tool command response: {}", e));
+                            app.emit_event(app::AppEvent::Error { message: e.to_string() });
+                        }
+                    }
+                    AppCommand::ToggleMessageTruncation(id) => {
+                         app.toggle_message_truncation(id).await;
+                    }
+                    AppCommand::ExecuteCommand(cmd) => {
+                         if let Err(e) = app.handle_command(&cmd).await {
+                              utils::logging::error("app_actor_loop", &format!("Error executing command: {}", e));
+                         }
+                    }
+                    AppCommand::Shutdown => {
+                        utils::logging::info("app_actor_loop", "Shutdown command received.");
+                        break;
+                    }
+                }
+            },
+            Some(internal_event) = internal_event_rx.recv() => {
+                 utils::logging::debug("app_actor_loop", &format!("Received internal event: {:?}", internal_event));
+                 match internal_event {
+                     app::AppEvent::ToolBatchProgress { batch_id } => {
+                         if let Err(e) = app.handle_batch_progress(batch_id).await {
+                             utils::logging::error("app_actor_loop", &format!("Error handling batch progress: {}", e));
+                         }
+                     }
+                     _ => {
+                        utils::logging::warn("app_actor_loop", &format!("Unhandled internal event: {:?}", internal_event));
+                     }
+                 }
+            },
+            else => {
+                utils::logging::info("app_actor_loop", "Command channel closed or loop broken.");
+                break;
+            }
+        }
+    }
+    utils::logging::info("app_actor_loop", "App actor loop finished.");
+    Ok(())
 }
 
 #[tokio::main]
@@ -171,15 +233,25 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
-    // Start the TUI app
+    // --- App Initialization ---
     let app_config = app::AppConfig {
         api_key,
         // Add more configuration options if needed in the future
     };
 
-    // Initialize the app
     utils::logging::info("main", "Initializing application");
-    let app = match app::App::new(app_config) {
+
+    // Create Event Channel first
+    let (event_tx, event_rx) = mpsc::channel(100);
+
+    // Create Internal Event Channel (App -> Actor Loop for things like batch progress)
+    let (internal_event_tx, internal_event_rx) = mpsc::channel(100);
+
+    // Create Command Channel
+    let (command_tx, command_rx) = mpsc::channel::<AppCommand>(100);
+
+    // Instantiate App - Pass channel senders
+    let mut app = match app::App::new(app_config, event_tx.clone(), internal_event_tx.clone()) {
         Ok(app) => app,
         Err(e) => {
             utils::logging::error("main", &format!("Failed to initialize app: {}", e));
@@ -187,7 +259,10 @@ async fn main() -> Result<()> {
             return Err(e);
         }
     };
-    let app = Arc::new(Mutex::new(app));
+
+    // Spawn the App Actor Task
+    utils::logging::info("main", "Spawning App actor task");
+    let _app_handle = tokio::spawn(app_actor_loop(app, command_rx, internal_event_rx));
 
     // Set up panic hook to ensure terminal is reset if the app crashes
     let orig_hook = panic::take_hook();
@@ -217,9 +292,9 @@ async fn main() -> Result<()> {
         orig_hook(panic_info);
     }));
 
-    // Initialize the TUI
+    // --- TUI Initialization ---
     utils::logging::info("main", "Initializing TUI");
-    let mut tui = match tui::Tui::new() {
+    let mut tui = match tui::Tui::new(command_tx.clone()) {
         Ok(tui) => tui,
         Err(e) => {
             utils::logging::error("main", &format!("Failed to initialize TUI: {}", e));
@@ -231,30 +306,31 @@ async fn main() -> Result<()> {
     // Mark that terminal is now in raw mode
     terminal_in_raw_mode.store(true, Ordering::SeqCst);
 
-    // Set up the event channel for app → TUI communication
-    utils::logging::info("main", "Setting up event channel");
-    let event_rx = {
-        let mut app_guard = app.lock().await;
-        app_guard.setup_event_channel()
-    };
+    // Run the TUI, passing only the event receiver
+    utils::logging::info("main", "Starting TUI task");
+    let tui_handle = tokio::task::spawn(async move { tui.run(event_rx).await });
 
-    // Run the TUI with the app
-    utils::logging::info("main", "Starting application main loop");
-    let result = tui.run(Arc::clone(&app), event_rx).await;
+    // --- Wait for Tasks ---
+    utils::logging::info("main", "Waiting for TUI and App tasks to complete");
 
-    // Mark terminal as no longer in raw mode
+    // Wait for the TUI task to complete first
+    let tui_result = tui_handle.await?;
+
+    // Mark terminal as no longer in raw mode (important after TUI finishes)
     terminal_in_raw_mode.store(false, Ordering::SeqCst);
 
-    match result {
+    // Handle TUI result
+    match tui_result {
         Ok(_) => {
-            utils::logging::info("main", "Application terminated normally");
+            utils::logging::info("main", "TUI terminated normally");
         }
         Err(e) => {
-            utils::logging::error("main", &format!("Application error: {}", e));
-            eprintln!("Error: {}", e);
-            return Err(e);
+            utils::logging::error("main", &format!("TUI task error: {}", e));
+            eprintln!("Error in TUI: {}", e);
+            return Err(e.into());
         }
     }
 
+    utils::logging::info("main", "Application shutting down");
     Ok(())
 }

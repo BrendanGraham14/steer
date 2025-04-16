@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use async_stream::stream;
-use futures_core::Stream;
-use futures_util::StreamExt;
+use futures::Stream;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -15,10 +13,9 @@ pub use tools::{Tool, ToolCall};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
-    api_key: String,
-    client: reqwest::Client,
+    http_client: reqwest::Client,
     model: String,
 }
 
@@ -160,8 +157,7 @@ impl Client {
             .expect("Failed to build HTTP client");
 
         Self {
-            api_key: api_key.to_string(),
-            client,
+            http_client: client,
             model: "claude-3-7-sonnet-20250219".to_string(),
         }
     }
@@ -206,7 +202,7 @@ impl Client {
         }
 
         let response = self
-            .client
+            .http_client
             .post(API_URL)
             .json(&request)
             .send()

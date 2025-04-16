@@ -323,7 +323,7 @@ impl Tool {
         }
     }
 
-        /// Dispatch Agent tool - for handling search operations
+    /// Dispatch Agent tool - for handling search operations
     pub fn dispatch_agent() -> Self {
         let mut properties = serde_json::Map::new();
 
@@ -333,10 +333,7 @@ impl Tool {
             "description".to_string(),
             serde_json::json!("The task for the agent to perform"),
         );
-        properties.insert(
-            "prompt".to_string(),
-            serde_json::Value::Object(prompt_prop),
-        );
+        properties.insert("prompt".to_string(), serde_json::Value::Object(prompt_prop));
 
         Self {
             name: "dispatch_agent".to_string(),

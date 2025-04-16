@@ -1,6 +1,6 @@
 use anyhow::Result;
-use coder::app::{App, AppConfig};
 use coder::api::ToolCall;
+use coder::app::{App, AppConfig};
 use dotenv::dotenv;
 use std::env;
 
@@ -20,16 +20,17 @@ async fn test_app_initialization() -> Result<()> {
     };
 
     // Create app config
-    let app_config = AppConfig {
-        api_key,
-    };
+    let app_config = AppConfig { api_key };
 
     // Initialize the app
     let app = App::new(app_config)?;
-    
+
     // Verify the app was initialized correctly
-    assert!(!app.env_info.working_directory.as_os_str().is_empty(), "Working directory should not be empty");
-    
+    assert!(
+        !app.env_info.working_directory.as_os_str().is_empty(),
+        "Working directory should not be empty"
+    );
+
     println!("App initialization test passed successfully!");
     Ok(())
 }
@@ -50,32 +51,30 @@ async fn test_tool_executor() -> Result<()> {
     };
 
     // Create app config
-    let app_config = AppConfig {
-        api_key,
-    };
+    let app_config = AppConfig { api_key };
 
     // Initialize the app
     let app = App::new(app_config)?;
-    
+
     // Create a tool call for listing the current directory
     let parameters = serde_json::json!({
         "path": "."
     });
-    
+
     let tool_call = ToolCall {
         name: "LS".to_string(),
         parameters,
         id: Some("test-ls-call".to_string()),
     };
-    
+
     // Execute the tool
-    let result = app.execute_tool(&tool_call).await;
-    
+    let result = app.tool_executor.execute_tool(&tool_call).await;
+
     // Verify the tool executed correctly
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
     let output = result?;
     assert!(!output.is_empty(), "Tool output should not be empty");
-    
+
     println!("Tool result: {}", output);
     println!("Tool executor test passed successfully!");
     Ok(())
