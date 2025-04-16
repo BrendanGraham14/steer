@@ -46,9 +46,6 @@ pub enum AppEvent {
         content: String,
         id: String,
     },
-    ToggleMessageTruncation {
-        id: String,
-    },
     RequestToolApproval {
         name: String,
         parameters: serde_json::Value,
@@ -854,24 +851,5 @@ impl App {
 
     pub fn memory_content(&self) -> String {
         self.memory.content().to_string()
-    }
-
-    pub async fn toggle_message_truncation(&mut self, id: String) {
-        let mut conversation_guard = self.conversation.lock().await;
-        let mut found = false;
-        if let Some(message) = conversation_guard.messages.iter_mut().find(|m| m.id == id) {
-            message.toggle_truncation();
-            found = true;
-        }
-        drop(conversation_guard);
-
-        if found {
-            self.emit_event(AppEvent::ToggleMessageTruncation { id });
-        } else {
-            crate::utils::logging::warn(
-                "app.toggle_message_truncation",
-                &format!("Message ID {} not found for truncation toggle.", id),
-            );
-        }
     }
 }

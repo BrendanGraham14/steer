@@ -11,8 +11,6 @@ pub enum AppCommand {
         approved: bool,
         always: bool,
     },
-    /// Toggle message truncation for a specific message ID.
-    ToggleMessageTruncation(String),
     /// Execute a slash command.
     ExecuteCommand(String),
     /// Signal for graceful shutdown.

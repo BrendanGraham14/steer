@@ -577,45 +577,6 @@ impl Tui {
                 });
                 messages_updated = true;
             }
-
-            AppEvent::ToggleMessageTruncation { id } => {
-                // Handle toggling directly in TUI state
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
-                    if msg.role == Role::Tool {
-                        if let Some(full_result) = &msg.full_tool_result {
-                            msg.is_truncated = !msg.is_truncated;
-                            if msg.is_truncated {
-                                const MAX_PREVIEW_LINES: usize = 5;
-                                let lines: Vec<&str> = full_result.lines().collect();
-                                let preview_content = if lines.len() > MAX_PREVIEW_LINES {
-                                    format!(
-                                        "{}\n... ({} more lines, press 't' to toggle full view)",
-                                        lines
-                                            .iter()
-                                            .take(MAX_PREVIEW_LINES)
-                                            .cloned()
-                                            .collect::<Vec<_>>()
-                                            .join("\n"),
-                                        lines.len() - MAX_PREVIEW_LINES
-                                    )
-                                } else {
-                                    full_result.clone()
-                                };
-                                msg.content = format_tool_preview(
-                                    &preview_content,
-                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                                );
-                            } else {
-                                msg.content = format_tool_preview(
-                                    full_result,
-                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                                );
-                            }
-                            messages_updated = true; // Mark that message content changed
-                        }
-                    }
-                }
-            }
         }
 
         // --- Handle Scrolling After Message Updates ---
@@ -704,7 +665,7 @@ impl Tui {
         input_mode: InputMode,
         is_processing: bool,
         progress_message: Option<String>,
-        spinner_char: String
+        spinner_char: String,
     ) -> Block<'a> {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -756,7 +717,7 @@ impl Tui {
         messages: &[FormattedMessage],
         input_mode: InputMode,
         scroll_offset: usize,
-        max_scroll: usize
+        max_scroll: usize,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -804,7 +765,7 @@ impl Tui {
         area: Rect,
         messages: &[FormattedMessage],
         scroll_offset: usize,
-        max_scroll: usize
+        max_scroll: usize,
     ) {
         if messages.is_empty() {
             let placeholder =
@@ -832,8 +793,8 @@ impl Tui {
             Vec::new()
         };
 
-        let messages_list =
-            List::new(visible_items).block(Block::default().borders(Borders::ALL).title("Conversation"));
+        let messages_list = List::new(visible_items)
+            .block(Block::default().borders(Borders::ALL).title("Conversation"));
 
         f.render_widget(messages_list, area);
 
@@ -867,7 +828,6 @@ impl Tui {
 
         let full_page_height = half_page_height * 2;
         match key.code {
-
             KeyCode::Esc if self.input_mode == InputMode::AwaitingApproval => {
                 if let Some((id, _, _)) = self.approval_request.take() {
                     action = Some(InputAction::DenyTool(id));
@@ -985,8 +945,10 @@ impl Tui {
                     }
                 }
 
-                // Toggle Tool Result Truncation
-                KeyCode::Char('t') | KeyCode::Char('T') => {
+                // Toggle Tool Result Truncation (Ctrl+R)
+                KeyCode::Char('r') | KeyCode::Char('R')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
                     let scroll_offset = self.get_scroll_offset();
                     // Find the message corresponding to the current view port top
                     // This is an approximation - ideally we'd track selected message
@@ -1023,7 +985,6 @@ impl Tui {
                             );
                         }
                     }
-                    // No return Ok(None) here as we might set an action
                 }
                 _ => {} // Other keys ignored in this block
             }
@@ -1113,6 +1074,46 @@ impl Tui {
                         KeyCode::Char('q') | KeyCode::Char('Q') => {
                             action = Some(InputAction::Exit);
                         }
+                        // Toggle Tool Result Truncation (Ctrl+R)
+                        KeyCode::Char('r') | KeyCode::Char('R')
+                            if key.modifiers == KeyModifiers::CONTROL =>
+                        {
+                            let scroll_offset = self.get_scroll_offset();
+                            // Find the message corresponding to the current view port top
+                            // This is an approximation - ideally we'd track selected message
+                            let mut line_count = 0;
+                            let mut target_message_id = None;
+                            for msg in &self.messages {
+                                let msg_lines = msg.content.len();
+                                if line_count + msg_lines > scroll_offset {
+                                    if msg.role == Role::Tool && msg.full_tool_result.is_some() {
+                                        target_message_id = Some(msg.id.clone());
+                                    }
+                                    break; // Found the message at the current scroll offset
+                                }
+                                line_count += msg_lines;
+                            }
+
+                            if let Some(id) = target_message_id {
+                                action = Some(InputAction::ToggleMessageTruncation(id));
+                            } else {
+                                // Maybe check the last message if no specific one found?
+                                if let Some(last_tool_msg) =
+                                    self.messages.iter().rev().find(|m| {
+                                        m.role == Role::Tool && m.full_tool_result.is_some()
+                                    })
+                                {
+                                    action = Some(InputAction::ToggleMessageTruncation(
+                                        last_tool_msg.id.clone(),
+                                    ));
+                                } else {
+                                    debug(
+                                        "tui.handle_input",
+                                        "No tool message found to toggle truncation",
+                                    );
+                                }
+                            }
+                        }
                         _ => {} // Other keys ignored in Normal mode unless handled globally/as scrolling
                     }
                 }
@@ -1188,7 +1189,7 @@ impl Tui {
                             let lines: Vec<&str> = full_result.lines().collect();
                             let preview_content = if lines.len() > MAX_PREVIEW_LINES {
                                 format!(
-                                    "{}\n... ({} more lines, press 't' to toggle full view)",
+                                    "{}\n... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
                                     lines
                                         .iter()
                                         .take(MAX_PREVIEW_LINES)

@@ -75,9 +75,6 @@ async fn app_actor_loop(
                             app.emit_event(app::AppEvent::Error { message: e.to_string() });
                         }
                     }
-                    AppCommand::ToggleMessageTruncation(id) => {
-                         app.toggle_message_truncation(id).await;
-                    }
                     AppCommand::ExecuteCommand(cmd) => {
                          if let Err(e) = app.handle_command(&cmd).await {
                               utils::logging::error("app_actor_loop", &format!("Error executing command: {}", e));
