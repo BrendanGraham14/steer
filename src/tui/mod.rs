@@ -58,6 +58,7 @@ pub struct Tui {
     // Scroll state
     scroll_offset: usize,
     max_scroll: usize,
+    user_scrolled_away: bool, // Track if user manually scrolled away from bottom
     // Store messages with their original block structure for potential later use
     // (e.g., toggling raw tool result view if needed)
     raw_messages: Vec<crate::app::Message>,
@@ -124,12 +125,13 @@ impl Tui {
             is_processing: false,   // Initialize directly
             progress_message: None, // Initialize directly
             last_spinner_update: Instant::now(),
-            spinner_state: 0,         // Initialize spinner state
-            command_tx,               // Store the sender
-            approval_request: None,   // Initialize directly
-            scroll_offset: 0,         // Initialize scroll offset
-            max_scroll: 0,            // Initialize max scroll
-            raw_messages: Vec::new(), // Initialize raw_messages
+            spinner_state: 0,          // Initialize spinner state
+            command_tx,                // Store the sender
+            approval_request: None,    // Initialize directly
+            scroll_offset: 0,          // Initialize scroll offset
+            max_scroll: 0,             // Initialize max scroll
+            user_scrolled_away: false, // Initialize user_scrolled_away flag
+            raw_messages: Vec::new(),  // Initialize raw_messages
         })
     }
 
@@ -222,7 +224,23 @@ impl Tui {
                             match event {
                                 Event::Resize(_, _) => {
                                     debug("tui.run", "Terminal resized");
-                                    // Redraw happens implicitly on next loop iteration
+                                    // Recalculate max_scroll based on new size
+                                    let all_lines: Vec<Line> = self.messages.iter().flat_map(|fm| fm.content.clone()).collect();
+                                    let total_lines_count = all_lines.len();
+                                    let terminal_height = self.terminal.size()?.height;
+                                    let input_height = (self.textarea.lines().len() as u16 + 2).min(MAX_INPUT_HEIGHT).min(terminal_height);
+                                    let messages_area_height = terminal_height.saturating_sub(input_height).saturating_sub(2); // Account for borders
+                                    let new_max_scroll = if total_lines_count > messages_area_height as usize {
+                                        total_lines_count.saturating_sub(messages_area_height as usize)
+                                    } else {
+                                        0
+                                    };
+                                    self.set_max_scroll(new_max_scroll); // This clamps scroll_offset if needed
+
+                                    // Check if user should now be considered "at the bottom" after resize
+                                    if self.scroll_offset == self.max_scroll {
+                                        self.user_scrolled_away = false;
+                                    }
                                 }
                                 Event::Paste(data) => {
                                     if matches!(self.input_mode, InputMode::Editing) {
@@ -269,18 +287,8 @@ impl Tui {
                 maybe_app_event = event_rx.recv() => {
                     match maybe_app_event {
                         Some(event) => {
-                            // Calculate max scroll based on current messages and terminal size *before* handling event
-                            let all_lines: Vec<Line> = self.messages.iter().flat_map(|fm| fm.content.clone()).collect();
-                            let total_lines_count = all_lines.len();
-                            let terminal_height = self.terminal.size()?.height; // Get current terminal height
-                            let input_height = (self.textarea.lines().len() as u16 + 2).min(MAX_INPUT_HEIGHT).min(terminal_height);
-                            let messages_area_height = terminal_height.saturating_sub(input_height).saturating_sub(2); // Account for borders
-                            let new_max_scroll = if total_lines_count > messages_area_height as usize {
-                                total_lines_count.saturating_sub(messages_area_height as usize)
-                            } else {
-                                0
-                            };
-                            self.set_max_scroll(new_max_scroll);
+                            // No longer calculate max scroll here - now done after
+                            // message updates within handle_app_event
 
                             // Process the AppEvent directly using self
                             self.handle_app_event(event).await;
@@ -308,6 +316,9 @@ impl Tui {
 
     // Handle AppEvents directly within Tui
     async fn handle_app_event(&mut self, event: AppEvent) {
+        // Flag to indicate if messages were added and scroll needs adjustment
+        let mut messages_updated = false;
+
         // Update is_processing state based on events
         match event {
             AppEvent::ThinkingStarted => {
@@ -366,6 +377,7 @@ impl Tui {
                         self.messages.push(formatted_message);
                         // self.raw_messages.push(crate::app::Message::new_text(role, content.clone())); // Raw message added above
                         debug("tui.handle_app_event", &format!("Added message ID: {}", id));
+                        messages_updated = true; // Mark that messages changed
                     }
                 } else {
                     // This case might happen if the App adds a message but fails to send the event,
@@ -382,8 +394,6 @@ impl Tui {
                     // let formatted = format_message(&[placeholder_block], role);
                     // ... add formatted message ...
                 }
-
-                self.set_scroll_offset(0); // Scroll to bottom on new message
             }
             AppEvent::ToolBatchProgress { batch_id } => {
                 // The TUI no longer receives current/total/name here.
@@ -458,6 +468,7 @@ impl Tui {
                             }),
                     };
                     self.messages.push(formatted_message);
+                    messages_updated = true; // Mark that messages changed
                     debug(
                         "tui.handle_app_event",
                         &format!(
@@ -467,8 +478,6 @@ impl Tui {
                         ),
                     );
                 }
-
-                self.set_scroll_offset(0); // Scroll to bottom on new message
             }
             AppEvent::MessageUpdated { id, content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
@@ -483,6 +492,7 @@ impl Tui {
                             msg.role,
                             self.terminal.size().map(|r| r.width).unwrap_or(100),
                         );
+                        messages_updated = true; // Mark that message content changed
                         debug(
                             "tui.handle_app_event",
                             &format!("Updated message ID: {} with new blocks", id),
@@ -499,6 +509,7 @@ impl Tui {
                             msg.role,
                             self.terminal.size().map(|r| r.width).unwrap_or(100),
                         );
+                        messages_updated = true; // Mark that message content changed
                     }
                 } else {
                     warn(
@@ -536,7 +547,7 @@ impl Tui {
                     tool_name: None,     // Tool name is part of the formatted block
                 };
                 self.messages.push(formatted_message);
-                self.set_scroll_offset(0); // Scroll to show the result
+                messages_updated = true; // Mark that messages changed
             }
             AppEvent::ToolCallFailed { name, error, id } => {
                 self.progress_message = None; // Clear progress on failure
@@ -567,7 +578,7 @@ impl Tui {
                     tool_name: Some(name),
                 };
                 self.messages.push(formatted_message);
-                self.set_scroll_offset(0);
+                messages_updated = true; // Mark that messages changed
             }
             AppEvent::RequestToolApproval {
                 name,
@@ -606,7 +617,7 @@ impl Tui {
                     is_truncated: false,
                     tool_name: Some(name.clone()),
                 });
-                self.set_scroll_offset(0);
+                messages_updated = true; // Mark that messages changed
             }
             AppEvent::CommandResponse { content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
@@ -626,7 +637,7 @@ impl Tui {
                     is_truncated: false,
                     tool_name: None,
                 });
-                self.set_scroll_offset(0);
+                messages_updated = true; // Mark that messages changed
             }
 
             AppEvent::ToggleMessageTruncation { id } => {
@@ -662,9 +673,59 @@ impl Tui {
                                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                                 );
                             }
+                            messages_updated = true; // Mark that message content changed
                         }
                     }
                 }
+            }
+        }
+
+        // --- Handle Scrolling After Message Updates ---
+        if messages_updated {
+            // Recalculate max scroll based on the *potentially updated* message list
+            if let Ok(term_size) = self.terminal.size() {
+                let all_lines: Vec<Line> = self
+                    .messages
+                    .iter()
+                    .flat_map(|fm| fm.content.clone())
+                    .collect();
+                let total_lines_count = all_lines.len();
+                let terminal_height = term_size.height;
+                let input_height = (self.textarea.lines().len() as u16 + 2)
+                    .min(MAX_INPUT_HEIGHT)
+                    .min(terminal_height);
+                let messages_area_height = terminal_height
+                    .saturating_sub(input_height)
+                    .saturating_sub(2);
+                let new_max_scroll = if total_lines_count > messages_area_height as usize {
+                    total_lines_count.saturating_sub(messages_area_height as usize)
+                } else {
+                    0
+                };
+                self.set_max_scroll(new_max_scroll); // Update max_scroll (clamps current offset if needed)
+
+                // Scroll to bottom ONLY if user wasn't scrolled away
+                if !self.user_scrolled_away {
+                    debug(
+                        "tui.handle_app_event",
+                        "Scrolling to bottom after message update.",
+                    );
+                    self.set_scroll_offset(self.max_scroll); // Use the newly calculated max_scroll
+                } else {
+                    debug(
+                        "tui.handle_app_event",
+                        "User scrolled away, not scrolling to bottom.",
+                    );
+                    // If the update caused the current offset to become the max, reset the flag
+                    if self.scroll_offset == self.max_scroll {
+                        self.user_scrolled_away = false;
+                    }
+                }
+            } else {
+                warn(
+                    "tui.handle_app_event",
+                    "Failed to get terminal size for scroll update.",
+                );
             }
         }
     }
@@ -926,72 +987,106 @@ impl Tui {
         // --- Scrolling (Available in Normal and Editing, but NOT AwaitingApproval) ---
         if self.input_mode != InputMode::AwaitingApproval {
             match key.code {
-                // Full Page Scroll
+                // Full Page Scroll Up
                 KeyCode::PageUp => {
                     let current_offset = self.get_scroll_offset();
                     let new_offset = current_offset.saturating_sub(full_page_height);
-                    self.set_scroll_offset(new_offset);
+                    if new_offset < current_offset {
+                        // Check if scroll actually happened
+                        self.set_scroll_offset(new_offset);
+                        self.user_scrolled_away = true; // User scrolled up
+                    }
                     return Ok(None); // Just scroll
                 }
+                // Full Page Scroll Down
                 KeyCode::PageDown => {
                     let current_offset = self.get_scroll_offset();
                     let max_scroll = self.get_max_scroll();
                     let new_offset = (current_offset + full_page_height).min(max_scroll);
-                    self.set_scroll_offset(new_offset);
+                    if new_offset > current_offset {
+                        // Check if scroll actually happened
+                        self.set_scroll_offset(new_offset);
+                        if new_offset == max_scroll {
+                            self.user_scrolled_away = false; // Reached bottom
+                        }
+                    }
                     return Ok(None); // Just scroll
                 }
 
-                // Line Scroll (Arrows)
+                // Line Scroll Up (Arrows)
                 KeyCode::Up => {
                     let current_offset = self.get_scroll_offset();
                     if current_offset > 0 {
                         self.set_scroll_offset(current_offset - 1);
+                        self.user_scrolled_away = true; // User scrolled up
                     }
                     return Ok(None); // Just scroll
                 }
+                // Line Scroll Down (Arrows)
                 KeyCode::Down => {
                     let current_offset = self.get_scroll_offset();
                     let max_scroll = self.get_max_scroll();
                     if current_offset < max_scroll {
-                        self.set_scroll_offset(current_offset + 1);
+                        let new_offset = current_offset + 1;
+                        self.set_scroll_offset(new_offset);
+                        if new_offset == max_scroll {
+                            self.user_scrolled_away = false; // Reached bottom
+                        }
                     }
                     return Ok(None); // Just scroll
                 }
 
-                // Line Scroll (j/k in Normal Mode only)
+                // Line Scroll Up (k in Normal Mode only)
                 KeyCode::Char('k') if self.input_mode == InputMode::Normal => {
                     let current_offset = self.get_scroll_offset();
                     if current_offset > 0 {
                         self.set_scroll_offset(current_offset - 1);
+                        self.user_scrolled_away = true; // User scrolled up
                     }
                     return Ok(None); // Just scroll
                 }
+                // Line Scroll Down (j in Normal Mode only)
                 KeyCode::Char('j') if self.input_mode == InputMode::Normal => {
                     let current_offset = self.get_scroll_offset();
                     let max_scroll = self.get_max_scroll();
                     if current_offset < max_scroll {
-                        self.set_scroll_offset(current_offset + 1);
+                        let new_offset = current_offset + 1;
+                        self.set_scroll_offset(new_offset);
+                        if new_offset == max_scroll {
+                            self.user_scrolled_away = false; // Reached bottom
+                        }
                     }
                     return Ok(None); // Just scroll
                 }
 
-                // Half Page Scroll (u/d/Ctrl+u/Ctrl+d in Normal Mode only)
+                // Half Page Scroll Up (u/Ctrl+u in Normal Mode only)
                 KeyCode::Char('u') if self.input_mode == InputMode::Normal => {
                     if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
                     {
                         let current_offset = self.get_scroll_offset();
                         let new_offset = current_offset.saturating_sub(half_page_height);
-                        self.set_scroll_offset(new_offset);
+                        if new_offset < current_offset {
+                            // Check if scroll actually happened
+                            self.set_scroll_offset(new_offset);
+                            self.user_scrolled_away = true; // User scrolled up
+                        }
                         return Ok(None); // Just scroll
                     }
                 }
+                // Half Page Scroll Down (d/Ctrl+d in Normal Mode only)
                 KeyCode::Char('d') if self.input_mode == InputMode::Normal => {
                     if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
                     {
                         let current_offset = self.get_scroll_offset();
                         let max_scroll = self.get_max_scroll();
                         let new_offset = (current_offset + half_page_height).min(max_scroll);
-                        self.set_scroll_offset(new_offset);
+                        if new_offset > current_offset {
+                            // Check if scroll actually happened
+                            self.set_scroll_offset(new_offset);
+                            if new_offset == max_scroll {
+                                self.user_scrolled_away = false; // Reached bottom
+                            }
+                        }
                         return Ok(None); // Just scroll
                     }
                 }
