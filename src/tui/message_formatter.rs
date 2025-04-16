@@ -43,9 +43,9 @@ pub fn format_message(
     if let Some(header) = role_header {
         formatted_lines.push(header);
         // Add a blank line after the header for separation, unless no blocks follow
-        if !blocks.is_empty() {
-            formatted_lines.push(Line::raw(""));
-        }
+        // if !blocks.is_empty() {
+        //     formatted_lines.push(Line::raw(""));
+        // }
     }
 
     for block in blocks {
@@ -60,14 +60,8 @@ pub fn format_message(
             } => format_tool_result_block(tool_use_id, result, terminal_width), // Pass width
         };
         formatted_lines.extend(block_lines);
-        // Optionally add a blank line between different blocks for visual separation
-        // formatted_lines.push(Line::raw(""));
+        formatted_lines.push(Line::raw(""));
     }
-
-    // Remove trailing blank line if added
-    // if formatted_lines.last().map_or(false, |l| l.spans.is_empty()) {
-    //     formatted_lines.pop();
-    // }
 
     formatted_lines
 }

@@ -31,7 +31,7 @@ impl ToolExecutor {
 
         // Create a future for each tool call
         let futures = tool_calls.iter().map(|call| {
-            let call_id = call.id.clone().unwrap_or_else(|| call.name.clone());
+            let call_id = call.id.clone();
             let call = call.clone();
 
             async move {

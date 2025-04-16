@@ -34,7 +34,6 @@ use message_formatter::{format_message, format_tool_preview, format_tool_result_
 const MAX_INPUT_HEIGHT: u16 = 10;
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
-// UI States
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum InputMode {
     Normal,
@@ -46,21 +45,16 @@ pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     textarea: TextArea<'static>,
     input_mode: InputMode,
-    messages: Vec<FormattedMessage>, // No Arc<Mutex<>>
-    is_processing: bool,             // No Arc<RwLock<>>
-    // Progress tracking
-    progress_message: Option<String>, // No Arc<Mutex<>>
+    messages: Vec<FormattedMessage>,
+    is_processing: bool,
+    progress_message: Option<String>,
     last_spinner_update: Instant,
-    spinner_state: usize, // Spinner state is now instance state
-    // Tool approval related state
-    command_tx: mpsc::Sender<AppCommand>, // Store directly, required
-    approval_request: Option<(String, String, serde_json::Value)>, // No Arc<Mutex<>>
-    // Scroll state
+    spinner_state: usize,
+    command_tx: mpsc::Sender<AppCommand>,
+    approval_request: Option<(String, String, serde_json::Value)>,
     scroll_offset: usize,
     max_scroll: usize,
-    user_scrolled_away: bool, // Track if user manually scrolled away from bottom
-    // Store messages with their original block structure for potential later use
-    // (e.g., toggling raw tool result view if needed)
+    user_scrolled_away: bool,
     raw_messages: Vec<crate::app::Message>,
 }
 
@@ -74,7 +68,6 @@ pub struct FormattedMessage {
     tool_name: Option<String>,
 }
 
-// Define possible actions that might need async processing (for sending commands)
 #[derive(Debug)]
 enum InputAction {
     SendMessage(String),
@@ -98,15 +91,6 @@ impl Tui {
         )?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-
-        // Reset scroll values - Removed static access
-        // if let Ok(mut offset) = SCROLL_OFFSET.write() {
-        //     *offset = 0;
-        // }
-        // if let Ok(mut max) = MAX_SCROLL.write() {
-        //     *max = 0;
-        // }
-
         // Initialize TextArea
         let mut textarea = TextArea::default();
         textarea.set_block(
@@ -121,21 +105,20 @@ impl Tui {
             terminal,
             textarea,
             input_mode: InputMode::Normal,
-            messages: Vec::new(),   // Initialize directly
-            is_processing: false,   // Initialize directly
-            progress_message: None, // Initialize directly
+            messages: Vec::new(),
+            is_processing: false,
+            progress_message: None,
             last_spinner_update: Instant::now(),
-            spinner_state: 0,          // Initialize spinner state
-            command_tx,                // Store the sender
-            approval_request: None,    // Initialize directly
-            scroll_offset: 0,          // Initialize scroll offset
-            max_scroll: 0,             // Initialize max scroll
-            user_scrolled_away: false, // Initialize user_scrolled_away flag
-            raw_messages: Vec::new(),  // Initialize raw_messages
+            spinner_state: 0,
+            command_tx,
+            approval_request: None,
+            scroll_offset: 0,
+            max_scroll: 0,
+            user_scrolled_away: false,
+            raw_messages: Vec::new(),
         })
     }
 
-    // Cleanup function to restore terminal
     fn cleanup_terminal(&mut self) -> Result<()> {
         execute!(
             self.terminal.backend_mut(),
@@ -148,7 +131,6 @@ impl Tui {
     }
 
     pub async fn run(&mut self, mut event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
-        // Spawn a task to read terminal events because crossterm::event::read is blocking
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let _input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
@@ -170,58 +152,41 @@ impl Tui {
             // Update state needed before drawing (like spinner)
             self.update_spinner_state();
 
-            // --- Prepare State for Drawing ---
-            let input_mode = self.input_mode; // Copy
-            let is_processing = self.is_processing; // Copy
-            // Clone progress message to detach lifetime from self
+            let input_mode = self.input_mode;
+            let is_processing = self.is_processing;
             let progress_message_owned: Option<String> = self.progress_message.clone();
-            // Get owned spinner char to detach lifetime from self
-            let spinner_char_owned: String = self.get_spinner_char(); // Now returns String
+            let spinner_char_owned: String = self.get_spinner_char();
 
-            // Create input block using owned/copied data
             let input_block = Tui::create_input_block_static(
-                // static call
                 input_mode,
                 is_processing,
-                progress_message_owned, // Pass owned Option<String>
-                spinner_char_owned,     // Pass owned String
+                progress_message_owned,
+                spinner_char_owned,
             );
-            // Apply the block to the actual textarea BEFORE the draw call
-            self.textarea.set_block(input_block); // &mut self.textarea
+            self.textarea.set_block(input_block);
 
-            // --- Draw UI ---
-            // Only need immutable references inside the closure, created locally
             self.terminal.draw(|f| {
-                // &mut self.terminal
-                // Get local immutable refs inside closure
-                let textarea_ref = &self.textarea; // &self.textarea
-                let messages_ref = &self.messages; // &self.messages
+                let textarea_ref = &self.textarea;
+                let messages_ref = &self.messages;
 
-                // Render UI using static method with local immutable refs
                 if let Err(e) = Tui::render_ui_static(
                     f,
                     textarea_ref,
                     messages_ref,
-                    input_mode, // Use the copied input_mode
+                    input_mode,
                     self.scroll_offset,
                     self.max_scroll,
                 ) {
                     error("tui.run.draw", &format!("UI rendering failed: {}", e));
-                    // Log error within closure
                 }
             })?;
 
-            // Event Handling with select!
             select! {
-                // Bias select to prioritize terminal input slightly if needed, but usually not necessary
-                // biased;
 
-                // Handle terminal input event
                 maybe_term_event = term_event_rx.recv() => {
                     match maybe_term_event {
                         Some(Ok(event)) => {
-                            // Handle resize/paste directly
-                            match event {
+                                        match event {
                                 Event::Resize(_, _) => {
                                     debug("tui.run", "Terminal resized");
                                     // Recalculate max_scroll based on new size
@@ -235,9 +200,7 @@ impl Tui {
                                     } else {
                                         0
                                     };
-                                    self.set_max_scroll(new_max_scroll); // This clamps scroll_offset if needed
-
-                                    // Check if user should now be considered "at the bottom" after resize
+                                    self.set_max_scroll(new_max_scroll);
                                     if self.scroll_offset == self.max_scroll {
                                         self.user_scrolled_away = false;
                                     }
@@ -250,16 +213,14 @@ impl Tui {
                                     }
                                 }
                                 Event::Key(key) => {
-                                    // Process key event using handle_input
                                     match self.handle_input(key).await {
                                         Ok(Some(action)) => {
                                             debug("tui.run", &format!("Handling input action: {:?}", action));
-                                             // Dispatch action (potentially sending commands)
                                             if self.dispatch_input_action(action).await? {
-                                                 should_exit = true;
+                                                should_exit = true;
                                             }
                                         }
-                                        Ok(None) => {} // No action needed
+                                        Ok(None) => {}
                                         Err(e) => {
                                             error("tui.run", &format!("Error handling input: {}", e));
                                         }
@@ -283,26 +244,18 @@ impl Tui {
                     }
                 }
 
-                // Handle application event
                 maybe_app_event = event_rx.recv() => {
                     match maybe_app_event {
                         Some(event) => {
-                            // No longer calculate max scroll here - now done after
-                            // message updates within handle_app_event
-
-                            // Process the AppEvent directly using self
                             self.handle_app_event(event).await;
                         }
                         None => {
-                            // App closed the channel, maybe exit?
                             info("tui.run", "App event channel closed.");
-                            should_exit = true; // Exit if the App task ends
+                            should_exit = true;
                         }
                     }
                 }
 
-                // Add a small timeout to ensure the loop continues even without events
-                // This allows the spinner to update visually.
                 _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2) => {}
             }
         }
@@ -312,40 +265,29 @@ impl Tui {
         Ok(())
     }
 
-    // Removed spawn_event_handler - logic moved into run loop
-
-    // Handle AppEvents directly within Tui
     async fn handle_app_event(&mut self, event: AppEvent) {
-        // Flag to indicate if messages were added and scroll needs adjustment
         let mut messages_updated = false;
-
-        // Update is_processing state based on events
         match event {
             AppEvent::ThinkingStarted => {
                 debug("tui.handle_app_event", "Setting is_processing = true");
                 self.is_processing = true;
-                self.spinner_state = 0; // Reset spinner
-                self.progress_message = None; // Clear specific progress message initially
+                self.spinner_state = 0;
+                self.progress_message = None;
             }
             AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
                 debug("tui.handle_app_event", "Setting is_processing = false");
                 self.is_processing = false;
-                self.progress_message = None; // Clear progress message
+                self.progress_message = None;
             }
             AppEvent::ToolCallStarted { name, id } => {
-                self.spinner_state = 0; // Reset spinner for tool call visual
-                // Optionally update progress message
+                self.spinner_state = 0;
                 self.progress_message = Some(format!("Executing tool: {}", name));
-                // Add a placeholder message for the tool call if needed for UI sync,
-                // Or rely on the assistant message that contains the ToolCall block.
-                // Current approach: The assistant message containing ToolCall is added via MessageAdded.
                 debug(
                     "tui.handle_app_event",
                     &format!("Tool call started: {} ({:?})", name, id),
                 );
 
-                // --- IDEAL: Use content_blocks from AppEvent --- //
-                // Find the corresponding raw message (should have been added just before this event)
+                // Find the corresponding raw message
                 let raw_msg = self.raw_messages.iter().find(|m| m.id == id).cloned();
 
                 if let Some(raw_msg) = raw_msg {
@@ -377,7 +319,7 @@ impl Tui {
                         self.messages.push(formatted_message);
                         // self.raw_messages.push(crate::app::Message::new_text(role, content.clone())); // Raw message added above
                         debug("tui.handle_app_event", &format!("Added message ID: {}", id));
-                        messages_updated = true; // Mark that messages changed
+                        messages_updated = true;
                     }
                 } else {
                     // This case might happen if the App adds a message but fails to send the event,
@@ -396,14 +338,12 @@ impl Tui {
                 }
             }
             AppEvent::ToolBatchProgress { batch_id } => {
-                // The TUI no longer receives current/total/name here.
-                // We can log the batch ID or set a generic progress message if needed.
                 debug(
                     "tui.handle_app_event",
                     &format!("Processing batch {}", batch_id),
                 );
-                self.progress_message = Some(format!("Processing tool batch {}", batch_id)); // Example message
-                self.is_processing = true; // Ensure processing state is active during batch
+                self.progress_message = Some(format!("Processing tool batch {}", batch_id));
+                self.is_processing = true;
             }
             AppEvent::MessageAdded {
                 role,
@@ -468,7 +408,7 @@ impl Tui {
                             }),
                     };
                     self.messages.push(formatted_message);
-                    messages_updated = true; // Mark that messages changed
+                    messages_updated = true;
                     debug(
                         "tui.handle_app_event",
                         &format!(
@@ -523,15 +463,13 @@ impl Tui {
                 result,
                 id, // Use this ID for the formatted message
             } => {
-                self.progress_message = None; // Clear progress on completion
+                self.progress_message = None;
 
-                // Create a NEW message to display the tool result
                 debug(
                     "tui.handle_app_event",
                     &format!("Adding Tool Result message for ID: {}", id),
                 );
 
-                // Use the tool result formatter directly
                 let formatted_result_lines = format_tool_result_block(
                     &id,
                     &result,
@@ -542,12 +480,12 @@ impl Tui {
                     content: formatted_result_lines,
                     role: Role::Tool,
                     id: format!("result_{}", id), // Ensure unique ID for the result display
-                    full_tool_result: Some(result), // Store the full result for toggling
-                    is_truncated: false, // Start untruncated (or apply truncation logic here)
-                    tool_name: None,     // Tool name is part of the formatted block
+                    full_tool_result: Some(result),
+                    is_truncated: false,
+                    tool_name: None,
                 };
                 self.messages.push(formatted_message);
-                messages_updated = true; // Mark that messages changed
+                messages_updated = true;
             }
             AppEvent::ToolCallFailed { name, error, id } => {
                 self.progress_message = None; // Clear progress on failure
@@ -578,7 +516,7 @@ impl Tui {
                     tool_name: Some(name),
                 };
                 self.messages.push(formatted_message);
-                messages_updated = true; // Mark that messages changed
+                messages_updated = true;
             }
             AppEvent::RequestToolApproval {
                 name,
@@ -617,7 +555,7 @@ impl Tui {
                     is_truncated: false,
                     tool_name: Some(name.clone()),
                 });
-                messages_updated = true; // Mark that messages changed
+                messages_updated = true;
             }
             AppEvent::CommandResponse { content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
@@ -637,7 +575,7 @@ impl Tui {
                     is_truncated: false,
                     tool_name: None,
                 });
-                messages_updated = true; // Mark that messages changed
+                messages_updated = true;
             }
 
             AppEvent::ToggleMessageTruncation { id } => {
@@ -702,7 +640,7 @@ impl Tui {
                 } else {
                     0
                 };
-                self.set_max_scroll(new_max_scroll); // Update max_scroll (clamps current offset if needed)
+                self.set_max_scroll(new_max_scroll);
 
                 // Scroll to bottom ONLY if user wasn't scrolled away
                 if !self.user_scrolled_away {
@@ -710,7 +648,7 @@ impl Tui {
                         "tui.handle_app_event",
                         "Scrolling to bottom after message update.",
                     );
-                    self.set_scroll_offset(self.max_scroll); // Use the newly calculated max_scroll
+                    self.set_scroll_offset(self.max_scroll);
                 } else {
                     debug(
                         "tui.handle_app_event",
@@ -730,13 +668,11 @@ impl Tui {
         }
     }
 
-    // Instance-based scroll methods
     fn get_scroll_offset(&self) -> usize {
         self.scroll_offset
     }
 
     fn set_scroll_offset(&mut self, offset: usize) {
-        // Clamp offset against max_scroll
         let clamped_offset = offset.min(self.max_scroll);
         self.scroll_offset = clamped_offset;
     }
@@ -747,14 +683,11 @@ impl Tui {
 
     fn set_max_scroll(&mut self, max: usize) {
         self.max_scroll = max;
-        // Adjust current scroll offset if it's now out of bounds
         if self.scroll_offset > self.max_scroll {
             self.scroll_offset = self.max_scroll;
         }
     }
 
-    // Spinner methods using instance state
-    // Return owned String to avoid lifetime issues with self
     fn get_spinner_char(&self) -> String {
         const SPINNER: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
         SPINNER[self.spinner_state % SPINNER.len()].to_string()
@@ -767,13 +700,11 @@ impl Tui {
         }
     }
 
-    // Static method to create input block based on state passed in
-    // Takes owned Strings now
     fn create_input_block_static<'a>(
         input_mode: InputMode,
         is_processing: bool,
-        progress_message: Option<String>, // Owned Option<String>
-        spinner_char: String,             // Owned String
+        progress_message: Option<String>,
+        spinner_char: String
     ) -> Block<'a> {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -793,50 +724,44 @@ impl Tui {
             .style(input_border_style);
 
         if is_processing {
-            let progress_msg = progress_message.as_deref().unwrap_or_default(); // Get &str from owned Option<String>
-            // Add type annotation for title (using ratatui::text::Text)
+            let progress_msg = progress_message.as_deref().unwrap_or_default();
             let title: ratatui::text::Text =
-                format!(" {} Processing {} ", &spinner_char, progress_msg).into(); // Use &spinner_char
-            // Use a more specific title if awaiting approval
-            // Add type annotation for final_title
+                format!(" {} Processing {} ", &spinner_char, progress_msg).into();
             let final_title: ratatui::text::Text = if input_mode == InputMode::AwaitingApproval {
                 format!(
                     " {} {} ",
-                    &spinner_char, // Use &spinner_char
-                    progress_message.as_deref().unwrap_or("Awaiting Approval")  // Get &str
+                    &spinner_char,
+                    progress_message.as_deref().unwrap_or("Awaiting Approval")
                 )
                 .into()
             } else {
                 title
             };
-            // Convert Text to Line for Block::title
             input_block = input_block.title(
-                // Get the first line from the Text object
                 final_title
                     .lines
                     .get(0)
                     .cloned()
                     .unwrap_or_default()
-                    .style(final_title.style) // Apply style from Text
+                    .style(final_title.style)
                     .white(),
             );
         }
         input_block
     }
 
-    // Render UI - Static method
     fn render_ui_static(
         f: &mut ratatui::Frame<'_>,
-        textarea: &TextArea<'_>,       // Pass textarea immutably
-        messages: &[FormattedMessage], // Pass messages slice
-        input_mode: InputMode,         // Pass input mode copy
-        scroll_offset: usize,          // Pass scroll state
-        max_scroll: usize,             // Pass scroll state
+        textarea: &TextArea<'_>,
+        messages: &[FormattedMessage],
+        input_mode: InputMode,
+        scroll_offset: usize,
+        max_scroll: usize
     ) -> Result<()> {
         let total_area = f.area();
-        let input_height = (textarea.lines().len() as u16 + 2) // +2 for borders
-            .min(MAX_INPUT_HEIGHT) // Clamp max height
-            .min(total_area.height); // Clamp to available height
+        let input_height = (textarea.lines().len() as u16 + 2)
+            .min(MAX_INPUT_HEIGHT)
+            .min(total_area.height);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -874,13 +799,12 @@ impl Tui {
         Ok(())
     }
 
-    // Render Messages - Static method (mostly unchanged, uses static scroll)
     fn render_messages_static(
         f: &mut ratatui::Frame<'_>,
         area: Rect,
         messages: &[FormattedMessage],
-        scroll_offset: usize, // Receive scroll state
-        max_scroll: usize,    // Receive scroll state
+        scroll_offset: usize,
+        max_scroll: usize
     ) {
         if messages.is_empty() {
             let placeholder =
@@ -893,26 +817,11 @@ impl Tui {
         let all_lines: Vec<Line> = messages.iter().flat_map(|fm| fm.content.clone()).collect();
         let total_lines_count = all_lines.len();
 
-        let area_height = area.height.saturating_sub(2) as usize; // Subtract borders
-
-        // Max scroll is now passed in, no need to calculate/set here
-        // let max_scroll = if total_lines_count > area_height {
-        //     total_lines_count.saturating_sub(area_height)
-        // } else {
-        //     0
-        // };
-        // Self::set_max_scroll(max_scroll); // Setter removed
-
-        // Use passed-in scroll offset, already clamped by the setter
-        // let scroll_offset = Self::get_scroll_offset().min(max_scroll);
-        // Ensure scroll_offset is updated if it was clamped - handled by setter
-        // if scroll_offset != Self::get_scroll_offset() {
-        //     Self::set_scroll_offset(scroll_offset);
-        // }
+        let area_height = area.height.saturating_sub(2) as usize;
 
         // Create list items from the flattened lines, applying scroll offset manually via slicing
-        let start = scroll_offset.min(total_lines_count.saturating_sub(1)); // Ensure start is within bounds
-        let end = (scroll_offset + area_height).min(total_lines_count); // Calculate end index, clamp to total lines
+        let start = scroll_offset.min(total_lines_count.saturating_sub(1));
+        let end = (scroll_offset + area_height).min(total_lines_count);
         let visible_items: Vec<ListItem> = if start < end {
             all_lines[start..end]
                 .iter()
@@ -920,12 +829,11 @@ impl Tui {
                 .map(ListItem::new)
                 .collect()
         } else {
-            Vec::new() // Handle case where scroll offset is beyond content
+            Vec::new()
         };
 
         let messages_list =
-            List::new(visible_items) // Use the sliced items
-                .block(Block::default().borders(Borders::ALL).title("Conversation"));
+            List::new(visible_items).block(Block::default().borders(Borders::ALL).title("Conversation"));
 
         f.render_widget(messages_list, area);
 
@@ -947,44 +855,30 @@ impl Tui {
         }
     }
 
-    // Handle user input keys -> returns action to dispatch or None
     async fn handle_input(&mut self, key: KeyEvent) -> Result<Option<InputAction>> {
-        let mut action = None; // Action to be returned
-
-        // --- Calculate Page Scroll Amount ---
-        // Calculate half page height for Ctrl+U/D scrolling
+        let mut action = None;
         let half_page_height = self
             .terminal
             .size()?
             .height
-            .saturating_sub(self.textarea.lines().len() as u16 + 2) // Input area height approx.
-            .saturating_sub(2) // Message area borders
-            .saturating_div(2) as usize; // Half the message area height
+            .saturating_sub(self.textarea.lines().len() as u16 + 2)
+            .saturating_sub(2)
+            .saturating_div(2) as usize;
 
-        // Calculate full page height for PageUp/PageDown
-        let full_page_height = half_page_height * 2; // More accurate full page
-
-        // --- Global/Mode-Independent Shortcuts ---
+        let full_page_height = half_page_height * 2;
         match key.code {
-            // Quit (only in Normal mode, moved down for clarity)
-            // KeyCode::Char('q') | KeyCode::Char('Q') if self.input_mode == InputMode::Normal => {
-            //     action = Some(InputAction::Exit);
-            // }
 
-            // Deny Tool (only in Approval mode)
             KeyCode::Esc if self.input_mode == InputMode::AwaitingApproval => {
-                // Treat Esc as Deny in Approval mode
                 if let Some((id, _, _)) = self.approval_request.take() {
                     action = Some(InputAction::DenyTool(id));
                 }
-                self.input_mode = InputMode::Normal; // Revert mode
-                self.progress_message = None; // Clear progress
-                return Ok(action); // Return early as mode changed
+                self.input_mode = InputMode::Normal;
+                self.progress_message = None;
+                return Ok(action);
             }
-            _ => {} // Other keys handled per mode or below
+            _ => {}
         }
 
-        // --- Scrolling (Available in Normal and Editing, but NOT AwaitingApproval) ---
         if self.input_mode != InputMode::AwaitingApproval {
             match key.code {
                 // Full Page Scroll Up

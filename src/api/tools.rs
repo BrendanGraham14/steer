@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Schema for tool inputs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputSchema {
     pub properties: serde_json::Map<String, Value>,
@@ -10,7 +9,6 @@ pub struct InputSchema {
     pub schema_type: String,
 }
 
-/// A tool definition that Claude can use
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
@@ -18,16 +16,13 @@ pub struct Tool {
     pub input_schema: InputSchema,
 }
 
-/// A tool call from Claude
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub name: String,
     pub parameters: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+    pub id: String,
 }
 
-/// A result from a tool call
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,
@@ -38,7 +33,6 @@ impl Tool {
     pub fn bash() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // Command property
         let mut command_prop = serde_json::Map::new();
         command_prop.insert(
             "description".to_string(),
@@ -49,7 +43,6 @@ impl Tool {
             serde_json::Value::Object(command_prop),
         );
 
-        // Timeout property
         let mut timeout_prop = serde_json::Map::new();
         timeout_prop.insert(
             "description".to_string(),
@@ -63,7 +56,6 @@ impl Tool {
         Self {
             name: "Bash".to_string(),
             description: "Run a bash command in the terminal".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -75,7 +67,6 @@ impl Tool {
     pub fn glob_tool() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // Pattern property
         let mut pattern_prop = serde_json::Map::new();
         pattern_prop.insert(
             "description".to_string(),
@@ -86,7 +77,6 @@ impl Tool {
             serde_json::Value::Object(pattern_prop),
         );
 
-        // Path property
         let mut path_prop = serde_json::Map::new();
         path_prop.insert(
             "description".to_string(),
@@ -99,7 +89,6 @@ impl Tool {
         Self {
             name: "GlobTool".to_string(),
             description: "Find files by glob pattern".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -111,7 +100,6 @@ impl Tool {
     pub fn grep_tool() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // Pattern property
         let mut pattern_prop = serde_json::Map::new();
         pattern_prop.insert(
             "description".to_string(),
@@ -122,7 +110,6 @@ impl Tool {
             serde_json::Value::Object(pattern_prop),
         );
 
-        // Path property
         let mut path_prop = serde_json::Map::new();
         path_prop.insert(
             "description".to_string(),
@@ -132,7 +119,6 @@ impl Tool {
         );
         properties.insert("path".to_string(), serde_json::Value::Object(path_prop));
 
-        // Include property
         let mut include_prop = serde_json::Map::new();
         include_prop.insert(
             "description".to_string(),
@@ -148,7 +134,6 @@ impl Tool {
         Self {
             name: "GrepTool".to_string(),
             description: "Search file contents by regex pattern".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -160,7 +145,6 @@ impl Tool {
     pub fn ls() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // Path property
         let mut path_prop = serde_json::Map::new();
         path_prop.insert(
             "description".to_string(),
@@ -170,7 +154,6 @@ impl Tool {
         );
         properties.insert("path".to_string(), serde_json::Value::Object(path_prop));
 
-        // Ignore property
         let mut ignore_prop = serde_json::Map::new();
         ignore_prop.insert(
             "description".to_string(),
@@ -181,7 +164,6 @@ impl Tool {
         Self {
             name: "LS".to_string(),
             description: "List files and directories in a given path".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -193,7 +175,6 @@ impl Tool {
     pub fn view() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // File path property
         let mut file_path_prop = serde_json::Map::new();
         file_path_prop.insert(
             "description".to_string(),
@@ -204,7 +185,6 @@ impl Tool {
             serde_json::Value::Object(file_path_prop),
         );
 
-        // Offset property
         let mut offset_prop = serde_json::Map::new();
         offset_prop.insert(
             "description".to_string(),
@@ -212,7 +192,6 @@ impl Tool {
         );
         properties.insert("offset".to_string(), serde_json::Value::Object(offset_prop));
 
-        // Limit property
         let mut limit_prop = serde_json::Map::new();
         limit_prop.insert(
             "description".to_string(),
@@ -223,7 +202,6 @@ impl Tool {
         Self {
             name: "View".to_string(),
             description: "Read a file from the local filesystem".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -235,7 +213,6 @@ impl Tool {
     pub fn edit() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // File path property
         let mut file_path_prop = serde_json::Map::new();
         file_path_prop.insert(
             "description".to_string(),
@@ -246,7 +223,6 @@ impl Tool {
             serde_json::Value::Object(file_path_prop),
         );
 
-        // Old string property
         let mut old_string_prop = serde_json::Map::new();
         old_string_prop.insert(
             "description".to_string(),
@@ -257,7 +233,6 @@ impl Tool {
             serde_json::Value::Object(old_string_prop),
         );
 
-        // New string property
         let mut new_string_prop = serde_json::Map::new();
         new_string_prop.insert(
             "description".to_string(),
@@ -271,7 +246,6 @@ impl Tool {
         Self {
             name: "Edit".to_string(),
             description: "Edit a file in the local filesystem".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -287,7 +261,6 @@ impl Tool {
     pub fn replace() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // File path property
         let mut file_path_prop = serde_json::Map::new();
         file_path_prop.insert(
             "description".to_string(),
@@ -300,7 +273,6 @@ impl Tool {
             serde_json::Value::Object(file_path_prop),
         );
 
-        // Content property
         let mut content_prop = serde_json::Map::new();
         content_prop.insert(
             "description".to_string(),
@@ -314,7 +286,6 @@ impl Tool {
         Self {
             name: "Replace".to_string(),
             description: "Write a file to the local filesystem".to_string(),
-            // tool_type: "custom".to_string(),
             input_schema: InputSchema {
                 properties,
                 schema_type: "object".to_string(),
@@ -323,11 +294,9 @@ impl Tool {
         }
     }
 
-    /// Dispatch Agent tool - for handling search operations
     pub fn dispatch_agent() -> Self {
         let mut properties = serde_json::Map::new();
 
-        // Prompt property
         let mut prompt_prop = serde_json::Map::new();
         prompt_prop.insert(
             "description".to_string(),
@@ -346,7 +315,6 @@ impl Tool {
         }
     }
 
-    /// Get all available tools
     pub fn all() -> Vec<Self> {
         vec![
             Self::bash(),

@@ -243,7 +243,7 @@ impl CompletionResponse {
                     Some(ToolCall {
                         name: name.clone(),
                         parameters: input.clone(),
-                        id: Some(id.clone()),
+                        id: id.clone(),
                     })
                 } else {
                     None
