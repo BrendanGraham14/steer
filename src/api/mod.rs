@@ -41,7 +41,7 @@ pub struct CompletionRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionResponse {
     id: String,
-    content: Vec<ContentBlock>,
+    pub content: Vec<ContentBlock>,
     model: String,
     role: String,
     #[serde(default)]

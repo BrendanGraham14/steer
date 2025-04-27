@@ -13,6 +13,8 @@ pub enum AppCommand {
     },
     /// Execute a slash command.
     ExecuteCommand(String),
+    /// Cancel processing.
+    CancelProcessing,
     /// Signal for graceful shutdown.
     Shutdown,
 }

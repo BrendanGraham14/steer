@@ -327,4 +327,13 @@ impl Tool {
             Self::dispatch_agent(),
         ]
     }
+
+    pub fn read_only() -> Vec<Self> {
+        vec![
+            Self::glob_tool(),
+            Self::grep_tool(),
+            Self::ls(),
+            Self::view(),
+        ]
+    }
 }

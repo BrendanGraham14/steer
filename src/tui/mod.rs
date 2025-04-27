@@ -76,6 +76,7 @@ enum InputAction {
     ApproveToolNormal(String),
     ApproveToolAlways(String),
     DenyTool(String),
+    CancelProcessing,
     Exit,
 }
 
@@ -338,10 +339,13 @@ impl Tui {
                     // ... add formatted message ...
                 }
             }
-            AppEvent::ToolBatchProgress { batch_id } => {
+            AppEvent::ToolBatchProgress {
+                batch_id,
+                tool_call_id,
+            } => {
                 debug(
                     "tui.handle_app_event",
-                    &format!("Processing batch {}", batch_id),
+                    &format!("Processing batch {} with tool {}", batch_id, tool_call_id),
                 );
                 self.progress_message = Some(format!("Processing tool batch {}", batch_id));
                 self.is_processing = true;
@@ -1085,6 +1089,10 @@ impl Tui {
                                 self.textarea = new_textarea;
                             }
                         }
+                        // Cancel processing on Esc in Normal mode
+                        KeyCode::Esc => {
+                            action = Some(InputAction::CancelProcessing);
+                        }
                         // Toggle Tool Result Truncation (Ctrl+R)
                         KeyCode::Char('r') | KeyCode::Char('R')
                             if key.modifiers == KeyModifiers::CONTROL =>
@@ -1281,6 +1289,9 @@ impl Tui {
                         always: false,
                     })
                     .await?;
+            }
+            InputAction::CancelProcessing => {
+                self.command_tx.send(AppCommand::CancelProcessing).await?;
             }
             InputAction::Exit => {
                 // Signal exit cleanly if possible

@@ -80,6 +80,9 @@ async fn app_actor_loop(
                               utils::logging::error("app_actor_loop", &format!("Error executing command: {}", e));
                          }
                     }
+                    AppCommand::CancelProcessing => {
+                        app.cancel_current_processing();
+                    }
                     AppCommand::Shutdown => {
                         utils::logging::info("app_actor_loop", "Shutdown command received.");
                         break;
@@ -89,8 +92,8 @@ async fn app_actor_loop(
             Some(internal_event) = internal_event_rx.recv() => {
                  utils::logging::debug("app_actor_loop", &format!("Received internal event: {:?}", internal_event));
                  match internal_event {
-                     app::AppEvent::ToolBatchProgress { batch_id } => {
-                         if let Err(e) = app.handle_batch_progress(batch_id).await {
+                     app::AppEvent::ToolBatchProgress { batch_id, tool_call_id } => {
+                         if let Err(e) = app.handle_batch_progress(batch_id, tool_call_id).await {
                              utils::logging::error("app_actor_loop", &format!("Error handling batch progress: {}", e));
                          }
                      }

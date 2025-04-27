@@ -380,6 +380,36 @@ pub fn create_system_prompt_with_memory(
     }
 }
 
+/// Converts content blocks from an API response (api::ContentBlock)
+/// to content blocks suitable for constructing a new API message (messages::ContentBlock).
+pub fn convert_api_content_to_message_content(
+    api_content: Vec<crate::api::ContentBlock>,
+) -> Vec<ContentBlock> {
+    api_content
+        .into_iter()
+        .filter_map(|api_block| match api_block {
+            crate::api::ContentBlock::Text { text, .. } => {
+                // Only include non-empty text blocks
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(ContentBlock::Text { text })
+                }
+            }
+            crate::api::ContentBlock::ToolUse {
+                id, name, input, ..
+            } => Some(ContentBlock::ToolUse { id, name, input }),
+            crate::api::ContentBlock::Unknown => {
+                crate::utils::logging::warn(
+                    "messages::convert_api_content_to_message_content",
+                    "Received unknown content block type from API",
+                );
+                None // Skip unknown blocks
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
