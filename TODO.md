@@ -31,6 +31,8 @@
 - Support a bi-directional protocol for a client and a "headless" version of the app to communicate. The client / protocol in this context should support a similar set of functionality to that which is supported by the TUI: namely, sending/receiving messages, approving / denying tool calls, cancelling operations, etc.
 
 ### Tools
+- [ ] Save the set of allowed tools and don't require re-approval for tools which are already approved.
+- [ ] Allow read-only tools by default (i.e. don't require approval)
 - [ ] Support including + executing tools via Model Context Protocol
 
 
