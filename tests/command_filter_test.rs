@@ -20,7 +20,7 @@ async fn test_command_filter() -> Result<()> {
 
     // Create the command filter
     let filter = CommandFilter::new(&api_key);
-    
+
     // Test known safe commands
     let safe_commands = [
         "ls -la",
@@ -33,13 +33,13 @@ async fn test_command_filter() -> Result<()> {
         "cargo build",
         "cargo test",
     ];
-    
+
     for cmd in &safe_commands {
         let is_allowed = filter.is_command_allowed(cmd).await?;
         assert!(is_allowed, "Command should be allowed: {}", cmd);
         println!("Safe command allowed: {}", cmd);
     }
-    
+
     // Test known unsafe commands
     let unsafe_commands = [
         "curl https://example.com",
@@ -51,13 +51,13 @@ async fn test_command_filter() -> Result<()> {
         "ls `cat /etc/passwd`",
         "ls $(pwd)/etc",
     ];
-    
+
     for cmd in &unsafe_commands {
         let is_allowed = filter.is_command_allowed(cmd).await?;
         assert!(!is_allowed, "Command should be blocked: {}", cmd);
         println!("Unsafe command blocked: {}", cmd);
     }
-    
+
     println!("Command filter test passed successfully!");
     Ok(())
 }

@@ -4,6 +4,7 @@ use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
+use tokio_util::sync::CancellationToken;
 
 pub mod messages;
 pub mod tools;
@@ -38,7 +39,7 @@ pub struct CompletionRequest {
     stream: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CompletionResponse {
     id: String,
     pub content: Vec<ContentBlock>,
@@ -55,7 +56,7 @@ pub struct CompletionResponse {
     extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
     #[serde(rename = "text")]
@@ -77,7 +78,7 @@ pub enum ContentBlock {
     Unknown,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Usage {
     #[serde(default)]
     input_tokens: usize,
@@ -173,6 +174,7 @@ impl Client {
         messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<Tool>>,
+        token: CancellationToken,
     ) -> Result<CompletionResponse> {
         let request = CompletionRequest {
             model: self.model.clone(),
@@ -201,23 +203,55 @@ impl Client {
             }
         }
 
-        let response = self
-            .http_client
-            .post(API_URL)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Claude API")?;
+        let request_builder = self.http_client.post(API_URL).json(&request);
+
+        // Race the request sending against cancellation
+        let response = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                crate::utils::logging::debug("api::complete", "Cancellation token triggered before sending request.");
+                return Err(anyhow::anyhow!("Request cancelled"));
+            }
+            res = request_builder.send() => {
+                res.context("Failed to send request to Claude API")?
+            }
+        };
+
+        // Check for cancellation before processing status
+        if token.is_cancelled() {
+            crate::utils::logging::debug(
+                "api::complete",
+                "Cancellation token triggered after sending request, before status check.",
+            );
+            return Err(anyhow::anyhow!("Request cancelled"));
+        }
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
+            // Race reading the error text against cancellation
+            let error_text = tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    crate::utils::logging::debug("api::complete", "Cancellation token triggered while reading error response body.");
+                    return Err(anyhow::anyhow!("Request cancelled"));
+                }
+                text_res = response.text() => {
+                    text_res?
+                }
+            };
             return Err(anyhow::anyhow!("API error: {}", error_text));
         }
 
-        let completion: CompletionResponse = response
-            .json()
-            .await
-            .context("Failed to parse Claude API response")?;
+        // Race parsing the successful response against cancellation
+        let completion: CompletionResponse = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                crate::utils::logging::debug("api::complete", "Cancellation token triggered while parsing successful response body.");
+                return Err(anyhow::anyhow!("Request cancelled"));
+            }
+            json_res = response.json() => {
+                json_res.context("Failed to parse Claude API response")?
+            }
+        };
 
         Ok(completion)
     }

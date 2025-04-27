@@ -48,8 +48,6 @@ You can provide your Claude API key in several ways (in order of precedence):
 Claude Code RS supports a variety of commands and tools to help with pair programming:
 
 - `/help` - Get help with using Claude Code
-- `/compact` - Compact and continue the conversation
-- `/memory` - Add or get information from the CLAUDE.md memory file
 
 ## Installation
 

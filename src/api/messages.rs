@@ -344,42 +344,6 @@ pub fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> Message {
     }
 }
 
-/// Create a system prompt message with memory file content
-pub fn create_system_prompt_with_memory(
-    env_info: &crate::app::EnvironmentInfo,
-    memory_content: &str,
-) -> Message {
-    // Create the base system prompt
-    let base_prompt = create_system_prompt(env_info);
-
-    // Extract the content from the base prompt
-    let base_content = match &base_prompt.content {
-        MessageContent::Text { content } => content.clone(),
-        _ => "".to_string(),
-    };
-
-    // Add the memory file content
-    let mut prompt = base_content;
-    if !memory_content.is_empty() {
-        prompt.push_str("\n\n# Memory file (CLAUDE.md)\n\n");
-        prompt.push_str(
-            "The following content is from the CLAUDE.md memory file in the working directory:\n\n",
-        );
-        prompt.push_str("```markdown\n");
-        prompt.push_str(memory_content);
-        prompt.push_str("\n```\n\n");
-        prompt.push_str(
-            "Use this information to remember settings, commands, and context for this project.\n",
-        );
-    }
-
-    Message {
-        role: "system".to_string(),
-        content: MessageContent::Text { content: prompt },
-        id: None,
-    }
-}
-
 /// Converts content blocks from an API response (api::ContentBlock)
 /// to content blocks suitable for constructing a new API message (messages::ContentBlock).
 pub fn convert_api_content_to_message_content(

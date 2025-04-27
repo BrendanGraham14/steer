@@ -4,7 +4,7 @@ use dotenv::dotenv;
 use std::panic;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::mpsc;
 
 mod api;
 mod app;
@@ -44,72 +44,6 @@ enum Commands {
         #[arg(short, long)]
         force: bool,
     },
-    /// Clear conversation history
-    Clear,
-    /// Compact the conversation to save context space
-    Compact,
-    /// Show detailed help information
-    Info,
-}
-
-async fn app_actor_loop(
-    mut app: app::App,
-    mut command_rx: Receiver<AppCommand>,
-    mut internal_event_rx: Receiver<app::AppEvent>,
-) -> Result<()> {
-    utils::logging::info("app_actor_loop", "App actor loop started.");
-    loop {
-        tokio::select! {
-            Some(command) = command_rx.recv() => {
-                utils::logging::debug("app_actor_loop", &format!("Received command: {:?}", command));
-                match command {
-                    AppCommand::ProcessUserInput(input) => {
-                        if let Err(e) = app.process_user_message(input).await {
-                             utils::logging::error("app_actor_loop", &format!("Error processing user input: {}", e));
-                             app.emit_event(app::AppEvent::Error { message: e.to_string() });
-                        }
-                    }
-                    AppCommand::HandleToolResponse { id, approved, always } => {
-                        if let Err(e) = app.handle_tool_command_response(id, approved, always).await {
-                            utils::logging::error("app_actor_loop", &format!("Error handling tool command response: {}", e));
-                            app.emit_event(app::AppEvent::Error { message: e.to_string() });
-                        }
-                    }
-                    AppCommand::ExecuteCommand(cmd) => {
-                         if let Err(e) = app.handle_command(&cmd).await {
-                              utils::logging::error("app_actor_loop", &format!("Error executing command: {}", e));
-                         }
-                    }
-                    AppCommand::CancelProcessing => {
-                        app.cancel_current_processing();
-                    }
-                    AppCommand::Shutdown => {
-                        utils::logging::info("app_actor_loop", "Shutdown command received.");
-                        break;
-                    }
-                }
-            },
-            Some(internal_event) = internal_event_rx.recv() => {
-                 utils::logging::debug("app_actor_loop", &format!("Received internal event: {:?}", internal_event));
-                 match internal_event {
-                     app::AppEvent::ToolBatchProgress { batch_id, tool_call_id } => {
-                         if let Err(e) = app.handle_batch_progress(batch_id, tool_call_id).await {
-                             utils::logging::error("app_actor_loop", &format!("Error handling batch progress: {}", e));
-                         }
-                     }
-                     _ => {
-                        utils::logging::warn("app_actor_loop", &format!("Unhandled internal event: {:?}", internal_event));
-                     }
-                 }
-            },
-            else => {
-                utils::logging::info("app_actor_loop", "Command channel closed or loop broken.");
-                break;
-            }
-        }
-    }
-    utils::logging::info("app_actor_loop", "App actor loop finished.");
-    Ok(())
 }
 
 #[tokio::main]
@@ -208,23 +142,6 @@ async fn main() -> Result<()> {
                 println!("Configuration initialized successfully.");
                 return Ok(());
             }
-            Commands::Clear => {
-                // TODO: Clear conversation history
-                println!("Conversation history cleared.");
-                return Ok(());
-            }
-            Commands::Compact => {
-                // TODO: Implement conversation compaction
-                println!("Compacting conversation is not yet implemented.");
-                return Ok(());
-            }
-            Commands::Info => {
-                // TODO: Implement detailed help
-                println!(
-                    "Detailed information not yet implemented. Use --help for basic commands."
-                );
-                return Ok(());
-            }
         }
     }
 
@@ -241,17 +158,14 @@ async fn main() -> Result<()> {
 
     utils::logging::info("main", "Initializing application");
 
-    // Create Event Channel first
-    let (event_tx, event_rx) = mpsc::channel(100);
+    // Revert to MPSC channel for events
+    let (event_tx, event_rx) = mpsc::channel::<app::AppEvent>(100);
 
-    // Create Internal Event Channel (App -> Actor Loop for things like batch progress)
-    let (internal_event_tx, internal_event_rx) = mpsc::channel(100);
-
-    // Create Command Channel
+    // Create Command Channel (remains mpsc)
     let (command_tx, command_rx) = mpsc::channel::<AppCommand>(100);
 
-    // Instantiate App - Pass channel senders
-    let mut app = match app::App::new(app_config, event_tx.clone(), internal_event_tx.clone()) {
+    // Instantiate App - Pass the mpsc sender clone
+    let app = match app::App::new(app_config, event_tx.clone()) {
         Ok(app) => app,
         Err(e) => {
             utils::logging::error("main", &format!("Failed to initialize app: {}", e));
@@ -260,9 +174,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Spawn the App Actor Task
+    // Spawn the App Actor Task - Only needs command_rx
     utils::logging::info("main", "Spawning App actor task");
-    let _app_handle = tokio::spawn(app_actor_loop(app, command_rx, internal_event_rx));
+    let _app_handle = tokio::spawn(app::app_actor_loop(app, command_rx));
 
     // Set up panic hook to ensure terminal is reset if the app crashes
     let orig_hook = panic::take_hook();
@@ -303,10 +217,10 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Mark that terminal is now in raw mode
+    // Mark terminal raw mode
     terminal_in_raw_mode.store(true, Ordering::SeqCst);
 
-    // Run the TUI, passing only the event receiver
+    // Run the TUI, passing the mpsc event receiver
     utils::logging::info("main", "Starting TUI task");
     let tui_handle = tokio::task::spawn(async move { tui.run(event_rx).await });
 

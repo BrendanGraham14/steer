@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use regex::Regex;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 /// Bash tool implementation
 pub struct Bash {
@@ -27,11 +28,27 @@ impl Bash {
     /// Execute a bash command
     pub async fn execute(&self, command: &str) -> Result<String> {
         // Default timeout: 1 hour
-        self.execute_with_timeout(command, 3_600_000).await
+        self.execute_with_timeout(command, 3_600_000, None).await
     }
 
-    /// Execute a bash command with a timeout
-    pub async fn execute_with_timeout(&self, command: &str, timeout_ms: u64) -> Result<String> {
+    /// Execute a bash command with cancellation support
+    pub async fn execute_with_cancellation(
+        &self,
+        command: &str,
+        token: CancellationToken,
+    ) -> Result<String> {
+        // Default timeout: 1 hour
+        self.execute_with_timeout(command, 3_600_000, Some(token))
+            .await
+    }
+
+    /// Execute a bash command with a timeout and optional cancellation
+    pub async fn execute_with_timeout(
+        &self,
+        command: &str,
+        timeout_ms: u64,
+        token: Option<CancellationToken>,
+    ) -> Result<String> {
         // First check the basic banned commands
         if is_banned_command(command) {
             return Err(anyhow::anyhow!(
@@ -42,7 +59,14 @@ impl Bash {
         // If we have a command filter, use it for enhanced security
         if let Some(filter) = &self.command_filter {
             // Check if the command is allowed
-            let is_allowed = filter.is_command_allowed(command).await?;
+            let is_allowed = if let Some(token) = &token {
+                filter.is_command_allowed(command, token.clone()).await?
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Command filter is enabled, but no cancellation token was provided to execute_with_timeout"
+                ));
+            };
+
             if !is_allowed {
                 return Err(anyhow::anyhow!(
                     "This command '{}' was blocked by the command filter. It may contain command injection or use disallowed commands.",
@@ -51,39 +75,81 @@ impl Bash {
             }
         }
 
-        // Execute the command with a timeout
+        // Check for cancellation before executing
+        if let Some(token) = &token {
+            if token.is_cancelled() {
+                return Err(anyhow::anyhow!(
+                    "Command execution was cancelled before starting"
+                ));
+            }
+        }
+
+        // Execute the command with a timeout and cancellation support
         let timeout_duration = Duration::from_millis(timeout_ms);
         let command_owned = command.to_string(); // Clone the command to move into the closure
-        let result = timeout(
-            timeout_duration,
-            tokio::task::spawn_blocking(move || {
-                Command::new("bash").arg("-c").arg(command_owned).output()
-            }),
-        )
-        .await
-        .context("Command execution timed out")?
-        .context("Failed to execute command")?
-        .context("Command execution failed")?;
+
+        // Create the future to execute the command
+        let command_future = async {
+            let spawn_result = tokio::task::spawn_blocking(move || {
+                Command::new("bash")
+                    .arg("-c")
+                    .arg(command_owned)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+            })
+            .await;
+
+            spawn_result
+                .context("Failed to execute command")?
+                .context("Command execution failed")
+        };
+
+        // If we have a cancellation token, use select! to race the command against cancellation
+        let result = if let Some(token) = token {
+            tokio::select! {
+                biased; // Check cancellation first
+
+                _ = token.cancelled() => {
+                    return Err(anyhow::anyhow!("Command execution was cancelled"));
+                }
+
+                timeout_result = timeout(timeout_duration, command_future) => {
+                    timeout_result.context("Command execution timed out")?
+                }
+            }
+        } else {
+            // No cancellation token, just execute with timeout
+            timeout(timeout_duration, command_future)
+                .await
+                .context("Command execution timed out")?
+        };
+
+        // Handle the Result from command execution
+        let result = match result {
+            Ok(output) => output,
+            Err(e) => return Err(e.context("Command execution failed internally")),
+        };
 
         // Combine stdout and stderr
-        let mut output = String::from_utf8_lossy(&result.stdout).to_string();
+        let mut output_str = String::from_utf8_lossy(&result.stdout).to_string();
 
         if !result.stderr.is_empty() {
-            if !output.is_empty() {
-                output.push_str("\n\n");
+            if !output_str.is_empty() {
+                output_str.push_str("\n\n");
             }
-            output.push_str("stderr:\n");
-            output.push_str(&String::from_utf8_lossy(&result.stderr));
+            output_str.push_str("stderr:\n");
+            output_str.push_str(&String::from_utf8_lossy(&result.stderr));
         }
 
         if !result.status.success() {
-            output.push_str(&format!(
+            output_str.push_str(&format!(
                 "\n\nCommand exited with status: {}",
                 result.status
             ));
         }
 
-        Ok(output)
+        Ok(output_str)
     }
 }
 
@@ -91,7 +157,19 @@ impl Bash {
 pub async fn execute_bash(command: &str, timeout_ms: u64) -> Result<String> {
     // Create a new Bash tool and execute the command
     let bash = Bash::new();
-    bash.execute_with_timeout(command, timeout_ms).await
+    bash.execute_with_timeout(command, timeout_ms, None).await
+}
+
+/// Execute a bash command with a timeout and cancellation support
+pub async fn execute_bash_with_cancellation(
+    command: &str,
+    timeout_ms: u64,
+    token: CancellationToken,
+) -> Result<String> {
+    // Create a new Bash tool and execute the command with cancellation
+    let bash = Bash::new();
+    bash.execute_with_timeout(command, timeout_ms, Some(token))
+        .await
 }
 
 /// Check if a command is banned

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 // Export the modules for testing and direct use
 pub mod bash;
@@ -12,8 +13,18 @@ pub mod ls;
 pub mod replace;
 pub mod view;
 
-/// Execute a tool based on the name and parameters
-pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
+/// Execute a tool based on the name and parameters, with optional cancellation support
+pub async fn execute_tool(
+    name: &str,
+    parameters: &Value,
+    token: Option<CancellationToken>,
+) -> Result<String> {
+    // Check for cancellation before starting
+    if let Some(token) = &token {
+        if token.is_cancelled() {
+            return Err(anyhow::anyhow!("Tool execution cancelled before starting"));
+        }
+    }
     match name {
         "Bash" => {
             let command = parameters["command"]
@@ -25,7 +36,12 @@ pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3_600_000); // Default to 1 hour
 
-            bash::execute_bash(command, timeout).await
+            match token {
+                Some(cancel_token) => {
+                    bash::execute_bash_with_cancellation(command, timeout, cancel_token).await
+                }
+                None => bash::execute_bash(command, timeout).await,
+            }
         }
         "GlobTool" => {
             let pattern = parameters["pattern"]
@@ -92,7 +108,7 @@ pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize);
 
-            view::view_file(file_path, offset, limit)
+            view::view_file(file_path, offset, limit).await
         }
         "Edit" => {
             let file_path = parameters["file_path"]
@@ -107,7 +123,7 @@ pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
                 .as_str()
                 .context("Missing new_string parameter")?;
 
-            edit::edit_file(file_path, old_string, new_string)
+            edit::edit_file(file_path, old_string, new_string).await
         }
         "Replace" => {
             let file_path = parameters["file_path"]
@@ -118,7 +134,7 @@ pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
                 .as_str()
                 .context("Missing content parameter")?;
 
-            replace::replace_file(file_path, content)
+            replace::replace_file(file_path, content).await
         }
         "dispatch_agent" => {
             let prompt = parameters["prompt"]
@@ -126,7 +142,8 @@ pub async fn execute_tool(name: &str, parameters: &Value) -> Result<String> {
                 .context("Missing prompt parameter")?;
 
             let agent = dispatch_agent::DispatchAgent::new();
-            Box::pin(agent.execute(prompt)).await
+            let token = token.unwrap_or_else(CancellationToken::new); // Use provided token or create new
+            Box::pin(agent.execute(prompt, token)).await
         }
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
     }

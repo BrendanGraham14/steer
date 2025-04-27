@@ -58,6 +58,10 @@ pub struct OpContext {
     pub pending_tool_calls: HashMap<String, ToolCall>,
     // Track expected tool results for the current step
     pub expected_tool_results: usize,
+    // Track active tools by ID -> tool info
+    pub active_tools: HashMap<String, ActiveTool>,
+    // Flag indicating whether an API call is in progress
+    pub api_call_in_progress: bool,
 }
 
 impl OpContext {
@@ -67,7 +71,29 @@ impl OpContext {
             tasks: JoinSet::new(),
             pending_tool_calls: HashMap::new(),
             expected_tool_results: 0,
+            active_tools: HashMap::new(),
+            api_call_in_progress: true, // Start with API call in progress
         }
+    }
+
+    // Set API call status
+    pub fn set_api_call_status(&mut self, in_progress: bool) {
+        self.api_call_in_progress = in_progress;
+    }
+
+    // Adds a tool to the active tools map
+    pub fn add_active_tool(&mut self, id: String, name: String) {
+        self.active_tools.insert(id.clone(), ActiveTool { id, name });
+    }
+
+    // Removes a tool from the active tools map
+    pub fn remove_active_tool(&mut self, id: &str) -> Option<ActiveTool> {
+        self.active_tools.remove(id)
+    }
+
+    // Check if we have any active operations
+    pub fn has_activity(&self) -> bool {
+        self.api_call_in_progress || !self.active_tools.is_empty() || !self.pending_tool_calls.is_empty()
     }
 
     // Convenience method to cancel the operation and shut down tasks
@@ -97,7 +123,7 @@ We will perform the refactoring in stages to maintain a compilable state:
 3.  **Shift Tool Execution:** Modify `execute_tool_and_handle_result` to accept the token and return `TaskResult`. Start spawning tool tasks via `op_context.tasks.spawn(...)` within a new `join_next` loop structure in `process_user_message`. Begin removing `active_tool_tasks`. Adapt internal API users (`DispatchAgent`, etc.) and the `Tool` trait to accept the token. Ensure compilation.
 4.  **Replace Batching:** Fully implement the `join_next` loop to track `expected_tool_results` (stored in `OpContext`). Remove `handle_batch_progress`, `AppEvent::ToolBatchProgress`, and `tool_batches`/`next_batch_id` once **all tool execution paths are confirmed to use the `OpContext`/`JoinSet` mechanism and no longer rely on the batching system (verify via code review and testing)**. Ensure compilation.
 5.  **Refactor Approval:** Update `handle_tool_command_response` to interact with `op_context.pending_tool_calls` and spawn approved tasks into `op_context.tasks`. Remove the old `pending_tool_calls` map from `App`. Ensure compilation.
-6.  **Introduce UI Events & Update TUI:** Add new `AppEvent` variants (`ToolExecutionStarted`, `ToolExecutionCompleted`). Update spawning/joining logic to emit them. Modify the TUI to consume these events. Ensure compilation and correct UI feedback.
+6.  **Introduce UI Events & Update TUI:** Add new `AppEvent` variant `OperationCancelled` with clear information about what was cancelled. Update spawning/joining logic to emit the appropriate event. Modify the TUI to consume these events. Ensure compilation and correct UI feedback.
 7.  **Audit Other Operations:** Analyze and refactor `/compact`, `/dispatch`, etc., if needed for cancellation consistency. Ensure compilation.
 8.  **Cleanup:** Remove any remaining legacy cancellation fields (`cancellation_notifier`, old `current_op_token`) and logic.
 
@@ -137,7 +163,7 @@ We will perform the refactoring in stages to maintain a compilable state:
     *   Modify `ToolExecutor::execute_tool` **and the underlying `Tool` trait's execution method (if applicable)** to accept `token: CancellationToken`. Ensure individual tool implementations can cooperatively cancel if necessary.
     *   Modify internal API users (`CommandFilter::evaluate_command_safety`, `DispatchAgent::execute`, `Conversation::compact`) to accept `token: CancellationToken` and pass it to `api_client.complete`. Update call sites.
     *   In `App`, spawn tasks using `op_context.tasks.spawn(...)`, wrapping the call to `execute_tool_and_handle_result` to capture the ID and result: `op_context.tasks.spawn(async move { let res = execute_tool(..., token.clone()).await; TaskResult { task_id: tool_call_id.clone(), result: res } })`. **Emit `AppEvent::ToolExecutionStarted` here.**
-    *   **Note on Blocking Work:** Identify any significant blocking I/O or CPU-bound work. **Areas to audit include:** file system operations (e.g., within `file_search`, `read_file`, `edit_file` tools if they handle large files synchronously), external processes (`run_terminal_cmd`), potentially `grep_search` implementation, and `MemoryManager` save/load operations. These should either be run via `tokio::task::spawn_blocking` (checking the token periodically inside the blocking closure if possible) or refactored to be async with periodic `token.is_cancelled()` checks.
+    *   **Note on Blocking Work:** Identify any significant blocking I/O or CPU-bound work. **Areas to audit include:** file system operations (e.g., within `file_search`, `read_file`, `edit_file` tools if they handle large files synchronously), external processes (`run_terminal_cmd`), potentially `grep_search` implementation. These should either be run via `tokio::task::spawn_blocking` (checking the token periodically inside the blocking closure if possible) or refactored to be async with periodic `token.is_cancelled()` checks.
 
 6.  **Implement `join_next` Loop & Replace Batching:** (Covered in Migration Strategy)
     *   Remove `App::handle_batch_progress`, `AppEvent::ToolBatchProgress`.
@@ -155,7 +181,7 @@ We will perform the refactoring in stages to maintain a compilable state:
             *   Handle `Err(join_err)` (panic): Log error, consider cancelling (`op_context.cancel_token.cancel()`).
         *   If `join_next()` yields `None` (JoinSet empty or shutdown): Break the loop.
         *   If `cancel_token.cancelled()` fires: Break the loop.
-    *   After the loop, ensure `self.current_op_context` is set to `None` and `AppEvent::ThinkingCompleted` is emitted (unless already cancelled).
+    *   After the loop, ensure `self.current_op_context` is set to `None`. For normal completion, emit `AppEvent::ThinkingCompleted`; for cancellation, emit the appropriate `AppEvent::OperationCancelled` event.
 
 7.  **Tool Approval Flow:** (Covered in Migration Strategy)
     *   When initiating calls (`initiate_tool_calls` replacement): Populate `op_context.pending_tool_calls` for tools needing approval. Don't spawn them yet. Set `op_context.expected_tool_results` only for *approved* tools being spawned immediately.
@@ -164,10 +190,7 @@ We will perform the refactoring in stages to maintain a compilable state:
         *   If approved, remove from `op_context.pending_tool_calls`, spawn into `op_context.tasks` (remembering to emit `ToolExecutionStarted`), and increment `op_context.expected_tool_results`.
         *   If denied, remove from `op_context.pending_tool_calls`, add a "Denied" result to the conversation. Check if `op_context.expected_tool_results == 0` and `op_context.pending_tool_calls.is_empty()` to potentially call `continue_operation_after_tools`.
 
-8.  **Audit Other Operations:** (New Step)
-    *   Analyze commands `/compact`, `/dispatch`, `/save`, `/load`. If they warrant cancellability, refactor them to create/use an `OpContext` similarly to `process_user_message`.
-
-9.  **Testing:**
+8.  **Testing:**
     *   **Test Scenarios:** Verify cancellation and correct behavior in situations including:
         *   Cancellation during initial API request (before tools).
         *   Cancellation while multiple tool tasks are running concurrently (some finished, some not).

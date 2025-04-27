@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashSet;
+use tokio_util::sync::CancellationToken;
 
 /// Command filter for enhanced security
 pub struct CommandFilter {
@@ -66,9 +67,13 @@ impl CommandFilter {
     }
 
     /// Check if a command is allowed to run
-    pub async fn is_command_allowed(&self, command: &str) -> Result<bool> {
+    pub async fn is_command_allowed(
+        &self,
+        command: &str,
+        token: CancellationToken,
+    ) -> Result<bool> {
         // Get the command prefix
-        let prefix = self.get_command_prefix(command).await?;
+        let prefix = self.get_command_prefix(command, token).await?;
 
         // Check if the prefix is "none" (no prefix)
         if prefix == "none" {
@@ -87,7 +92,7 @@ impl CommandFilter {
     }
 
     /// Get the prefix of a command
-    async fn get_command_prefix(&self, command: &str) -> Result<String> {
+    async fn get_command_prefix(&self, command: &str, token: CancellationToken) -> Result<String> {
         // Read the command filter prompt
         let prompt_template = include_str!("../../prompts/command_filter.md");
 
@@ -115,16 +120,25 @@ impl CommandFilter {
             },
         ];
 
-        // Call the API
-        let response = client
-            .complete(messages, None, None)
+        // Don't create a new token here, use the passed one
+        // let token = CancellationToken::new();
+
+        // Call the API using the stored api_client
+        match client
+            .complete(messages, None, None, token) // Pass the token
             .await
-            .context("Failed to call command filter API")?;
+        {
+            Ok(response) => {
+                // Extract the response text
+                let prefix = response.extract_text();
 
-        // Extract the response text
-        let prefix = response.extract_text();
-
-        // Trim whitespace and return
-        Ok(prefix.trim().to_string())
+                // Trim whitespace and return
+                Ok(prefix.trim().to_string())
+            }
+            Err(e) => {
+                // Handle the error
+                Err(e.into())
+            }
+        }
     }
 }

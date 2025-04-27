@@ -14,6 +14,8 @@ use crate::api::messages::{
 use crate::api::tools::{Tool, ToolResult};
 use crate::app::Role; // Use Role from app module as it's likely the one used elsewhere
 use crate::tools;
+// Add CancellationToken import
+use tokio_util::sync::CancellationToken;
 
 /// Dispatch Agent implementation
 pub struct DispatchAgent {
@@ -23,23 +25,19 @@ pub struct DispatchAgent {
 
 impl DispatchAgent {
     pub fn new() -> Self {
-        // Default implementation gets the API key from environment
         let api_key = env::var("CLAUDE_API_KEY").unwrap_or_else(|_| String::from(""));
-
-        // Create the API client
         let api_client = ApiClient::new(&api_key).with_model("claude-3-haiku-20240307");
 
         Self { api_client }
     }
 
     pub fn with_api_key(api_key: String) -> Self {
-        // Create the API client with the provided key
         let api_client = ApiClient::new(&api_key).with_model("claude-3-haiku-20240307");
         Self { api_client }
     }
 
     /// Execute the dispatch agent with a prompt
-    pub async fn execute(&self, prompt: &str) -> Result<String> {
+    pub async fn execute(&self, prompt: &str, token: CancellationToken) -> Result<String> {
         let available_tools = Tool::read_only();
         let system_prompt = self.create_system_prompt()?;
 
@@ -52,10 +50,13 @@ impl DispatchAgent {
             },
         }];
 
-        // Max loop iterations to prevent infinite loops
         const MAX_ITERATIONS: usize = 5;
 
         for _ in 0..MAX_ITERATIONS {
+            if token.is_cancelled() {
+                return Err(anyhow::anyhow!("DispatchAgent execution cancelled"));
+            }
+
             // Call the API using the stored api_client
             let completion: CompletionResponse = self
                 .api_client
@@ -63,6 +64,7 @@ impl DispatchAgent {
                     messages.clone(), // Clone messages for each API call
                     Some(system_prompt.clone()),
                     Some(available_tools.clone()),
+                    token.clone(), // Pass the token
                 )
                 .await?;
 
@@ -101,7 +103,13 @@ impl DispatchAgent {
                         &format!("Dispatch agent executing tool: {}", tool_call.name),
                     );
 
-                    let result = tools::execute_tool(&tool_call.name, &tool_call.parameters).await;
+                    // Pass token and agent's API key to execute_tool
+                    let result = tools::execute_tool(
+                        &tool_call.name,
+                        &tool_call.parameters,
+                        Some(token.clone()),
+                    )
+                    .await;
 
                     let output = match result {
                         Ok(output) => output,

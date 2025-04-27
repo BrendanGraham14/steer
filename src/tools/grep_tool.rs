@@ -1,37 +1,36 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 use glob::glob;
-use std::path::Path;
+use regex::Regex;
 use std::fs;
 use std::io::{self, BufRead, BufReader};
+use std::path::Path;
 
 /// Search for files containing a regex pattern
 pub fn grep_search(pattern: &str, include: Option<&str>, path: &str) -> Result<String> {
     let base_path = Path::new(path);
-    
+
     // Ensure the path exists
     if !base_path.exists() {
         return Err(anyhow::anyhow!("Path does not exist: {}", path));
     }
-    
+
     // Compile the regex
-    let regex = Regex::new(pattern)
-        .context(format!("Invalid regex pattern: {}", pattern))?;
-    
+    let regex = Regex::new(pattern).context(format!("Invalid regex pattern: {}", pattern))?;
+
     // Determine files to search
     let files = find_files(base_path, include)?;
-    
+
     // Search files
     let mut results = Vec::new();
-    
+
     for file_path in files {
         let file = fs::File::open(&file_path)
             .context(format!("Failed to open file: {}", file_path.display()))?;
-        
+
         let reader = BufReader::new(file);
         let mut matched = false;
         let mut matches = Vec::new();
-        
+
         for (i, line) in reader.lines().enumerate() {
             if let Ok(line) = line {
                 if regex.is_match(&line) {
@@ -40,12 +39,12 @@ pub fn grep_search(pattern: &str, include: Option<&str>, path: &str) -> Result<S
                 }
             }
         }
-        
+
         if matched {
             results.push(format!("{}", matches.join("\n")));
         }
     }
-    
+
     // Format output
     if results.is_empty() {
         Ok("No matches found.".to_string())
@@ -57,7 +56,7 @@ pub fn grep_search(pattern: &str, include: Option<&str>, path: &str) -> Result<S
 /// Find files to search based on include pattern
 fn find_files(base_path: &Path, include: Option<&str>) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
-    
+
     if let Some(include_pattern) = include {
         // Use glob to find files based on include pattern
         let glob_pattern = if base_path.to_string_lossy() == "." {
@@ -65,9 +64,9 @@ fn find_files(base_path: &Path, include: Option<&str>) -> Result<Vec<std::path::
         } else {
             format!("{}/{}", base_path.display(), include_pattern)
         };
-        
-        for entry in glob(&glob_pattern)
-            .context(format!("Invalid include pattern: {}", include_pattern))?
+
+        for entry in
+            glob(&glob_pattern).context(format!("Invalid include pattern: {}", include_pattern))?
         {
             if let Ok(path) = entry {
                 if path.is_file() {
@@ -79,7 +78,7 @@ fn find_files(base_path: &Path, include: Option<&str>) -> Result<Vec<std::path::
         // Recursively find all regular files
         find_files_recursive(base_path, &mut files)?;
     }
-    
+
     // Sort files by modification time (newest first)
     let mut files_with_time = Vec::new();
     for path in files {
@@ -91,9 +90,9 @@ fn find_files(base_path: &Path, include: Option<&str>) -> Result<Vec<std::path::
             }
         }
     }
-    
+
     files_with_time.sort_by(|a, b| b.1.cmp(&a.1));
-    
+
     Ok(files_with_time.into_iter().map(|(path, _)| path).collect())
 }
 
@@ -103,7 +102,7 @@ fn find_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> io::
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_dir() {
                 find_files_recursive(&path, files)?;
             } else if path.is_file() {
@@ -114,7 +113,7 @@ fn find_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> io::
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -124,28 +123,27 @@ fn is_likely_text_file(path: &Path) -> io::Result<bool> {
     if let Some(ext) = path.extension() {
         let ext_str = ext.to_string_lossy().to_lowercase();
         let binary_extensions = [
-            "exe", "dll", "so", "dylib", "bin", "jpg", "jpeg", "png", 
-            "gif", "bmp", "ico", "pdf", "zip", "tar", "gz", "7z",
-            "rar", "mp3", "mp4", "avi", "mov", "flv", "wav", "wma",
-            "ogg", "class", "pyc", "o", "a", "lib", "obj", "pdb"
+            "exe", "dll", "so", "dylib", "bin", "jpg", "jpeg", "png", "gif", "bmp", "ico", "pdf",
+            "zip", "tar", "gz", "7z", "rar", "mp3", "mp4", "avi", "mov", "flv", "wav", "wma",
+            "ogg", "class", "pyc", "o", "a", "lib", "obj", "pdb",
         ];
-        
+
         if binary_extensions.contains(&ext_str.as_str()) {
             return Ok(false);
         }
     }
-    
+
     // Read first 1KB to check for binary content
     let metadata = fs::metadata(path)?;
     if metadata.len() == 0 {
         return Ok(true); // Empty file
     }
-    
+
     let mut buffer = vec![0; std::cmp::min(1024, metadata.len() as usize)];
     let mut file = fs::File::open(path)?;
     use std::io::Read;
     file.read_exact(&mut buffer)?;
-    
+
     // Check for null bytes and other binary indicators
     Ok(!buffer.iter().any(|&b| b == 0) && buffer.iter().filter(|&&b| b < 9).count() == 0)
 }

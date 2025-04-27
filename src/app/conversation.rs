@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::messages;
+use tokio_util::sync::CancellationToken;
 
 /// Role in the conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy)]
@@ -148,10 +149,6 @@ impl Conversation {
         self.messages.clear();
     }
 
-    pub fn add_system_message(&mut self, content: String) {
-        self.add_message(Message::new_text(Role::System, content));
-    }
-
     pub fn add_tool_result(&mut self, tool_use_id: String, result: String) {
         self.add_message(Message::new_with_blocks(
             Role::Tool,
@@ -162,30 +159,12 @@ impl Conversation {
         ));
     }
 
-    /// Get the system prompt if present
-    pub fn system_prompt(&self) -> Option<String> {
-        for message in &self.messages {
-            if message.role == Role::System {
-                // Assuming system prompts are always single text blocks
-                if let Some(MessageContentBlock::Text(content)) = message.content_blocks.first() {
-                    return Some(content.clone());
-                }
-            }
-        }
-        None
-    }
-
-    /// Convert conversation to a string
-    pub fn to_string(&self) -> String {
-        self.messages
-            .iter()
-            .map(|msg| format!("{}: {}", msg.role, msg.content_string()))
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
-    /// Compact the conversation by summarizing older messages (deprecated)
-    pub async fn compact(&mut self, api_client: &crate::api::Client) -> anyhow::Result<()> {
+    /// Compact the conversation by summarizing older messages
+    pub async fn compact(
+        &mut self,
+        api_client: &crate::api::Client,
+        token: CancellationToken,
+    ) -> anyhow::Result<()> {
         // Skip if we don't have enough messages to compact
         if self.messages.len() < 10 {
             return Ok(());
@@ -216,157 +195,23 @@ impl Conversation {
             id: None,
         }];
 
-        // Call the API to get a summary
-        let summary = api_client.complete(prompt_messages, None, None).await?;
+        // Don't create a new token, use the passed one
+        // let token = CancellationToken::new();
+
+        let summary = api_client
+            .complete(prompt_messages, None, None, token.clone()) // Pass the token
+            .await?;
+        let summary_text = summary.extract_text();
 
         // Replace the compacted messages with a single system message containing the summary
         let new_messages = self.messages.split_off(messages_to_compact.len());
         self.messages.clear();
         self.add_message(Message::new_text(
             Role::System,
-            format!("Previous conversation summary:\n{}", summary.extract_text()),
+            format!("Previous conversation summary:\n{}", summary_text),
         ));
         self.messages.extend(new_messages);
 
         Ok(())
-    }
-
-    /// Convert internal messages to the format required by the API client
-    pub fn get_messages_for_api(&self) -> Vec<crate::api::Message> {
-        self.messages
-            .iter()
-            .filter(|msg| msg.role != Role::System) // Filter out system messages here
-            .map(|msg| {
-                // Convert internal Role to API Role (String)
-                let api_role = match msg.role {
-                    // Role::System => "system".to_string(), // System messages are handled separately
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(), // Tool results are sent as user messages in the API
-                    Role::System => panic!("System message should have been filtered out"), // Should not happen
-                };
-
-                // Convert content blocks
-                let api_content = if msg.role == Role::Tool {
-                    // Tool role messages become user role with tool_result content
-                    let tool_results: Vec<messages::ContentBlock> = msg
-                        .content_blocks
-                        .iter()
-                        .filter_map(|block| match block {
-                            MessageContentBlock::ToolResult { tool_use_id, result } => {
-                                let is_error = result.starts_with("Error:");
-                                let result_content = if result.trim().is_empty() {
-                                    "(No output)".to_string()
-                                } else {
-                                    result.clone()
-                                };
-                                Some(messages::ContentBlock::ToolResult {
-                                    tool_use_id: tool_use_id.clone(),
-                                    content: vec![messages::ContentBlock::Text {
-                                        text: result_content,
-                                    }],
-                                    is_error: if is_error { Some(true) } else { None },
-                                })
-                            }
-                            _ => {
-                                crate::utils::logging::warn(
-                                    "conversation.get_messages_for_api",
-                                    &format!(
-                                        "Unexpected content block type {:?} found in Tool message {}",
-                                        block,
-                                        msg.id
-                                    ),
-                                );
-                                None
-                            }
-                        })
-                        .collect();
-                    messages::MessageContent::StructuredContent {
-                        content: messages::StructuredContent(tool_results),
-                    }
-                } else {
-                    // User or Assistant messages
-                    let api_blocks: Vec<messages::ContentBlock> = msg.content_blocks.iter().map(|block| match block {
-                        MessageContentBlock::Text(text) => messages::ContentBlock::Text { text: text.clone() },
-                        MessageContentBlock::ToolCall(tc) => messages::ContentBlock::ToolUse {
-                            id: tc.id.clone(),
-                            name: tc.name.clone(),
-                            input: tc.parameters.clone(),
-                        },
-                        MessageContentBlock::ToolResult { .. } => {
-                             crate::utils::logging::error(
-                                "conversation.get_messages_for_api",
-                                &format!(
-                                    "Unexpected ToolResult block found in {:?} message {}",
-                                    msg.role,
-                                    msg.id
-                                ),
-                            );
-                            // Return a placeholder or skip? Let's return a text placeholder for now.
-                            messages::ContentBlock::Text { text: "[Internal Error: Unexpected ToolResult]".to_string() }
-                        }
-                    }).collect();
-
-                    // Determine if we need StructuredContent or simple Text
-                    if api_blocks.len() == 1 {
-                        if let Some(messages::ContentBlock::Text { text }) = api_blocks.first() {
-                            // Single text block -> Simple Text content
-                             messages::MessageContent::Text { content: text.clone() }
-                        } else {
-                            // Single non-text block -> Structured Content
-                            messages::MessageContent::StructuredContent {
-                                content: messages::StructuredContent(api_blocks),
-                            }
-                        }
-                    } else {
-                         // Multiple blocks -> Structured Content
-                         messages::MessageContent::StructuredContent {
-                            content: messages::StructuredContent(api_blocks),
-                        }
-                    }
-                };
-
-                crate::api::Message {
-                    role: api_role,
-                    content: api_content,
-                    id: Some(msg.id.clone()),
-                }
-            })
-            .collect()
-    }
-
-    /// Create the prompt for summarizing the conversation
-    pub fn create_summary_prompt(&self) -> String {
-        // Use all messages except the last few (e.g., keep last 5)
-        let messages_to_summarize = self
-            .messages
-            .iter()
-            .take(self.messages.len().saturating_sub(5));
-        let conversation_text = messages_to_summarize
-            .map(|msg| format!("{}: {}", msg.role, msg.content_string()))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        if conversation_text.is_empty() {
-            return String::new();
-        }
-
-        format!(
-            "Summarize the following conversation concisely, preserving key information that would be needed to continue the conversation. Focus on code-related details, decisions, and context:\n\n{}",
-            conversation_text
-        )
-    }
-
-    /// Clear all messages except the system prompt (if one exists)
-    pub fn clear_except_system(&mut self) {
-        let system_message = self
-            .messages
-            .iter()
-            .find(|m| m.role == Role::System)
-            .cloned();
-        self.messages.clear();
-        if let Some(msg) = system_message {
-            self.messages.push(msg);
-        }
     }
 }

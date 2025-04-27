@@ -22,10 +22,7 @@ use tokio::select;
 use crate::app::command::AppCommand;
 use crate::app::{AppEvent, Role};
 use crate::utils::logging::{debug, error, info, warn};
-use tokio::{
-    sync::mpsc::{self},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
 
 mod message_formatter;
 
@@ -66,7 +63,6 @@ pub struct FormattedMessage {
     id: String,
     full_tool_result: Option<String>,
     is_truncated: bool,
-    tool_name: Option<String>,
 }
 
 #[derive(Debug)]
@@ -184,11 +180,10 @@ impl Tui {
             })?;
 
             select! {
-
                 maybe_term_event = term_event_rx.recv() => {
                     match maybe_term_event {
                         Some(Ok(event)) => {
-                                        match event {
+                            match event {
                                 Event::Resize(_, _) => {
                                     debug("tui.run", "Terminal resized");
                                     // Recalculate max_scroll based on new size
@@ -316,7 +311,6 @@ impl Tui {
                             id: id.clone(),
                             full_tool_result: None,
                             is_truncated: false,
-                            tool_name: None,
                         };
                         self.messages.push(formatted_message);
                         // self.raw_messages.push(crate::app::Message::new_text(role, content.clone())); // Raw message added above
@@ -338,17 +332,6 @@ impl Tui {
                     // let formatted = format_message(&[placeholder_block], role);
                     // ... add formatted message ...
                 }
-            }
-            AppEvent::ToolBatchProgress {
-                batch_id,
-                tool_call_id,
-            } => {
-                debug(
-                    "tui.handle_app_event",
-                    &format!("Processing batch {} with tool {}", batch_id, tool_call_id),
-                );
-                self.progress_message = Some(format!("Processing tool batch {}", batch_id));
-                self.is_processing = true;
             }
             AppEvent::MessageAdded {
                 role,
@@ -389,28 +372,9 @@ impl Tui {
                     let formatted_message = FormattedMessage {
                         content: formatted,
                         role,
-                        id: id.clone(),         // Use the ID from the event
-                        full_tool_result: None, // Initialize appropriately
-                        is_truncated: false,    // Initialize appropriately
-                        // Determine tool_name if it's a ToolCall block
-                        tool_name: content_blocks
-                            .iter()
-                            .find_map(|block| {
-                                if let crate::app::conversation::MessageContentBlock::ToolCall(tc) = block {
-                                    Some(tc.name.clone())
-                                } else if let crate::app::conversation::MessageContentBlock::ToolResult { .. } = block {
-                                    Some("Tool Result".to_string()) // Or extract from ID?
-                                } else {
-                                    None
-                                }
-                            })
-                            .or_else(|| {
-                                if role == Role::Tool {
-                                    Some("Tool Result".to_string())
-                                } else {
-                                    None
-                                }
-                            }),
+                        id: id.clone(),
+                        full_tool_result: None,
+                        is_truncated: false,
                     };
                     self.messages.push(formatted_message);
                     messages_updated = true;
@@ -487,7 +451,6 @@ impl Tui {
                     id: format!("result_{}", id), // Ensure unique ID for the result display
                     full_tool_result: Some(result),
                     is_truncated: false,
-                    tool_name: None,
                 };
                 self.messages.push(formatted_message);
                 messages_updated = true;
@@ -518,7 +481,6 @@ impl Tui {
                     id: format!("failed_{}", id), // Ensure unique ID
                     full_tool_result: Some(format!("Error: {}", error)), // Store error for potential toggle?
                     is_truncated: false,
-                    tool_name: Some(name),
                 };
                 self.messages.push(formatted_message);
                 messages_updated = true;
@@ -558,7 +520,6 @@ impl Tui {
                     id: format!("approval_{}", id), // Unique ID for this prompt
                     full_tool_result: None,
                     is_truncated: false,
-                    tool_name: Some(name.clone()),
                 });
                 messages_updated = true;
             }
@@ -578,7 +539,30 @@ impl Tui {
                     id: response_id,
                     full_tool_result: None,
                     is_truncated: false,
-                    tool_name: None,
+                });
+                messages_updated = true;
+            }
+            AppEvent::OperationCancelled { info } => {
+                self.is_processing = false;
+                self.progress_message = None;
+                self.approval_request = None;
+                self.input_mode = InputMode::Normal;
+                self.spinner_state = 0;
+                // Use the Display impl of CancellationInfo directly
+                let cancellation_text = format!("Operation cancelled: {}", info);
+                self.raw_messages.push(crate::app::Message::new_text(
+                    Role::User, // Consider Role::System?
+                    cancellation_text.clone(),
+                ));
+                self.messages.push(FormattedMessage {
+                    content: vec![Line::from(Span::styled(
+                        cancellation_text,
+                        Style::default().fg(Color::Red),
+                    ))],
+                    role: Role::User,
+                    id: format!("cancellation_{}", chrono::Utc::now().timestamp_millis()),
+                    full_tool_result: None,
+                    is_truncated: false,
                 });
                 messages_updated = true;
             }
