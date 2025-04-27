@@ -43,3 +43,4 @@ uuid = { version = "1.8.0", features = ["v4"] }
 
 textwrap = "0.16"
 tokio-util = { version = "0.7.14", features = ["full"] }
+tui-markdown = "0.3.3"

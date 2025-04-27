@@ -12,7 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
 use tui_textarea::{Input, Key, TextArea};
@@ -761,8 +761,9 @@ impl Tui {
         max_scroll: usize,
     ) {
         if messages.is_empty() {
-            let placeholder =
-                Paragraph::new("No messages yet...").style(Style::default().fg(Color::DarkGray));
+            let placeholder = Paragraph::new("No messages yet...")
+                .style(Style::default().fg(Color::DarkGray))
+                .wrap(Wrap { trim: false });
             f.render_widget(placeholder, area);
             return;
         }

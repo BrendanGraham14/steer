@@ -1,9 +1,6 @@
 use crate::app::conversation::MessageContentBlock;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
-use syntect::parsing::SyntaxSet;
 use textwrap;
 
 /// Format a message (potentially with multiple content blocks) for display
@@ -66,90 +63,61 @@ pub fn format_message(
     formatted_lines
 }
 
-/// Formats a text block, handling markdown code highlighting.
+/// Formats a text block with markdown rendering.
 fn format_text_block(
     content: &str,
-    role: crate::app::Role,
+    _role: crate::app::Role, // Role no longer needed here
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let mut in_code_block = false;
-    let mut code_block_content = String::new();
-    let mut language = String::new();
-
-    // Initialize syntax highlighting
-    let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-ocean.dark"];
-
-    // Calculate wrap width from terminal width (accounting for margins and borders)
-    let wrap_width = (terminal_width as usize).saturating_sub(10);
+    // Calculate wrap width from terminal width (accounting for List borders + padding)
+    let wrap_width = (terminal_width as usize).saturating_sub(4);
     // Use a minimum width if terminal is very narrow
-    let wrap_width = wrap_width.max(40);
+    let effective_wrap_width = wrap_width.max(20);
 
-    // Process the message line by line
-    for line in content.lines() {
-        // Check for code block delimiters
-        if line.starts_with("```") {
-            if in_code_block {
-                // End of code block
-                in_code_block = false;
+    // Check if content is empty
+    if content.trim().is_empty() {
+        return Vec::new();
+    }
 
-                // Syntax highlight the code block
-                if !code_block_content.is_empty() {
-                    let syntax = if language.is_empty() {
-                        ps.find_syntax_plain_text()
-                    } else {
-                        ps.find_syntax_by_token(&language)
-                            .unwrap_or_else(|| ps.find_syntax_plain_text())
-                    };
+    // Use tui-markdown to render the markdown content
+    let text = tui_markdown::from_str(content);
 
-                    let mut highlighter = HighlightLines::new(syntax, theme);
+    // Convert to owned data with 'static lifetime and perform wrapping
+    let mut final_lines: Vec<Line<'static>> = Vec::new();
+    for line in text.lines {
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // Heuristic: Don't wrap lines that likely contain code or pre-formatted text
+        // (starts with significant whitespace, or is short enough already)
+        let heuristic_skip_wrap = line_text.len() <= effective_wrap_width
+            || line_text.starts_with("    ") // Common code indentation
+            || line_text.starts_with("	"); // Tabs
 
-                    for code_line in code_block_content.lines() {
-                        let highlighted = highlighter
-                            .highlight_line(code_line, &ps)
-                            .unwrap_or_default();
-                        let mut spans: Vec<Span> = Vec::new();
-
-                        for (style, text) in highlighted {
-                            let color = convert_syntect_style_to_color(&style);
-                            spans.push(Span::styled(text.to_string(), Style::default().fg(color)));
-                        }
-
-                        lines.push(Line::from(spans));
-                    }
-                }
-
-                code_block_content.clear();
-                language.clear();
-            } else {
-                // Start of code block
-                in_code_block = true;
-                language = line.trim_start_matches("```").to_string();
-            }
-        } else if in_code_block {
-            // Inside code block
-            code_block_content.push_str(line);
-            code_block_content.push('\n');
+        if heuristic_skip_wrap {
+            // Convert spans to 'static and add the line as is
+            let owned_spans: Vec<Span<'static>> = line
+                .spans
+                .into_iter()
+                .map(|span| Span::styled(span.content.to_string(), span.style))
+                .collect();
+            final_lines.push(Line::from(owned_spans));
         } else {
-            // Regular text - wrap and apply indentation if needed
-            let wrapped_lines = textwrap::wrap(line, wrap_width);
-            for wrapped_line in wrapped_lines {
-                // Apply indentation if it's part of a User/Assistant message
-                let text_span = Span::raw(wrapped_line.to_string());
-                let line_content =
-                    if matches!(role, crate::app::Role::User | crate::app::Role::Assistant) {
-                        Line::from(vec![Span::raw("  "), text_span]) // Add indentation
-                    } else {
-                        Line::from(text_span)
-                    };
-                lines.push(line_content);
+            // Wrap the line, applying the style of the first span to the whole wrapped segment
+            let style_to_apply = line.spans.first().map_or(Style::default(), |s| s.style);
+            let wrapped_text_lines = textwrap::wrap(&line_text, effective_wrap_width);
+
+            for wrapped_segment in &wrapped_text_lines {
+                // Iterate by reference
+                final_lines.push(Line::styled(wrapped_segment.to_string(), style_to_apply));
+            }
+            // Preserve empty lines if textwrap resulted in nothing for an empty input line
+            if line_text.is_empty() && wrapped_text_lines.is_empty() {
+                final_lines.push(Line::raw(""));
             }
         }
     }
 
-    lines
+    // Return the processed lines. Wrapping is now done.
+    final_lines
 }
 
 /// Formats a ToolCall block for display.
@@ -236,13 +204,4 @@ pub fn format_tool_preview(content: &str, terminal_width: u16) -> Vec<Line<'stat
         }
     }
     lines
-}
-
-/// Convert a syntect style to a ratatui color
-fn convert_syntect_style_to_color(style: &SyntectStyle) -> Color {
-    if style.foreground.a == 0 {
-        return Color::Reset;
-    }
-
-    Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b)
 }
