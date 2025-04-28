@@ -10,13 +10,13 @@
 - [ ] Tool output formatting
   - [x] Diff format for `edit` and `replace_file`
 - [ ] Support properly vertically expanding terminal input for multiple lines
-- [ ] Instead of constraining the output to the vertical section and having to navigate with +-, it would be nice if it simply lived in the terminal and was scrollable 
+- [x] Add mouse wheel scrolling support to the TUI
 
 ### User Experience
 - [ ] Support navigating through previous messages and editing them
 - [ ] (Maybe): automatically create a new git worktree when a new instance is started
 - [ ] Support executing bash comments (like ! in claude code)
-- [ ] @files with fzf-like fuzzy search 
+- [ ] @files with fzf-like fuzzy search
 
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts

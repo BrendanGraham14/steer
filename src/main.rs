@@ -77,7 +77,8 @@ async fn main() -> Result<()> {
                 let _ = crossterm::terminal::disable_raw_mode();
                 let _ = crossterm::execute!(
                     std::io::stdout(),
-                    crossterm::terminal::LeaveAlternateScreen
+                    crossterm::terminal::LeaveAlternateScreen,
+                    crossterm::event::DisableMouseCapture
                 );
                 utils::logging::info("signal_handler", "Received SIGTERM, terminal cleaned up");
             }
@@ -96,7 +97,8 @@ async fn main() -> Result<()> {
                 let _ = crossterm::terminal::disable_raw_mode();
                 let _ = crossterm::execute!(
                     std::io::stdout(),
-                    crossterm::terminal::LeaveAlternateScreen
+                    crossterm::terminal::LeaveAlternateScreen,
+                    crossterm::event::DisableMouseCapture
                 );
                 utils::logging::info("signal_handler", "Received SIGINT, terminal cleaned up");
             }
