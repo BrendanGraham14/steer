@@ -253,10 +253,3 @@ fn is_likely_text_file(path: &Path) -> io::Result<bool> {
         Ok(!buffer.iter().any(|&b| b == 0) && buffer.iter().filter(|&&b| b < 9).count() == 0)
     }
 }
-
-/* Remove old public function if desired
-/// Search for files containing a regex pattern
-pub fn grep_search(pattern: &str, include: Option<&str>, path: &str) -> Result<String> {
-    grep_search_internal(pattern, include, path)
-}
-*/
