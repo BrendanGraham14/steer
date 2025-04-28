@@ -21,7 +21,11 @@
 - [ ] Project-specific settings
 
 ### API Client
-- [ ] Support different models (Claude, OpenAI, Gemini, Grok)
+- [ ] Support different models:
+  - [x] Anthropic (Claude)
+  - [x] OpenAI
+  - [ ] Google (Gemini)
+  - [ ] xAI (Grok)
 - [ ] Propagate errors from API to UI
 - [ ] Add retries, and propagate this to the UI as well
 
@@ -34,8 +38,8 @@
 - Support a bi-directional protocol for a client and a "headless" version of the app to communicate. The client / protocol in this context should support a similar set of functionality to that which is supported by the TUI: namely, sending/receiving messages, approving / denying tool calls, cancelling operations, etc.
 
 ### Tools
-- [ ] Save the set of allowed tools and don't require re-approval for tools which are already approved.
-- [ ] Allow read-only tools by default (i.e. don't require approval)
+- [x] Save the set of allowed tools and don't require re-approval for tools which are already approved.
+- [x] Allow read-only tools by default (i.e. don't require approval)
 - [ ] Support including + executing tools via Model Context Protocol
 - [x] Support a `fetch` tool which can fetch the contents of a webpage.
 

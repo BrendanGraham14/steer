@@ -51,7 +51,8 @@ Usage notes:
 3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
 4. The agent's outputs should generally be trusted
 5. IMPORTANT: The agent can not modify files. If you want to modify files, do it directly instead of going through the agent."#,
-        name: "dispatch_agent"
+        name: "dispatch_agent",
+        require_approval: false
     }
 
     async fn run(

@@ -36,6 +36,14 @@ impl ToolExecutor {
         self.registry.values().map(|t| t.as_ref()).collect()
     }
 
+    /// Check if a tool requires approval
+    pub fn requires_approval(&self, tool_name: &str) -> Result<bool> {
+        match self.registry.get(tool_name) {
+            Some(tool) => Ok(tool.requires_approval()),
+            None => Err(anyhow::anyhow!("Unknown tool: {}", tool_name)),
+        }
+    }
+
     /// Convert registry tools to API tool descriptions
     pub fn to_api_tools(&self) -> Vec<ApiTool> {
         let api_tools = self

@@ -72,6 +72,12 @@ cargo run
 cargo test
 ```
 
-## License
+## Tool Approval System
 
-MIT
+Claude Code RS includes a tool approval system to ensure safety when executing tools:
+
+- Read-only tools (view, grep, ls, glob, fetch) do not require approval and execute automatically
+- Write tools (edit_file, replace_file, bash, etc.) require explicit approval
+- When approving a tool, you can use the "always" option to save that tool to your approved list for the current session
+- Tools approved with "always" will not prompt for approval again during the same session
+

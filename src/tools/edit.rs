@@ -69,7 +69,8 @@ If you want to create a new file, use:
  - The new file's contents as new_string
 
 Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each."#,
-        name: "edit_file"
+        name: "edit_file",
+        require_approval: true
     }
 
     async fn run(

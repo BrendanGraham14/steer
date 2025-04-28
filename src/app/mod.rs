@@ -274,24 +274,18 @@ impl App {
         let mut denied = false;
         let mut denial_result_content: Option<String> = None;
         let mut denial_should_continue = false;
+        let mut tool_name_for_approval: Option<String> = None;
 
         if let Some(ctx) = self.current_op_context.as_mut() {
             if let Some(tool_call) = ctx.pending_tool_calls.remove(&tool_call_id_clone) {
                 let tool_name = tool_call.name.clone();
+                tool_name_for_approval = Some(tool_name.clone());
 
                 if approved {
                     crate::utils::logging::info(
                         "App.handle_tool_command_response",
                         &format!("Tool call '{}' approved.", tool_name),
                     );
-                    if always {
-                        crate::utils::logging::debug(
-                            "App.handle_tool_command_response",
-                            &format!("Adding tool '{}' to always-approved list.", tool_name),
-                        );
-                        // Need immutable borrow of self here, can't do while ctx is mut borrow
-                        // TODO: Add tool_name to self.approved_tools after releasing borrow
-                    }
 
                     tool_call_to_execute = Some(tool_call.clone());
                     ctx.expected_tool_results += 1;
@@ -303,26 +297,6 @@ impl App {
                     );
                     let result_content = format!("Tool '{}' denied by user.", tool_name);
 
-                    // Add result to conversation - needs self, release ctx borrow first
-                    // self.conversation.lock().await.add_tool_result(tool_call_id.clone(), result_content.clone());
-                    // TODO: Fix adding result to conversation
-
-                    // Emit event - needs self, release ctx borrow first
-                    // self.emit_event(AppEvent::ToolCallFailed { ... });
-                    // TODO: Fix emitting event
-
-                    // Check if all tools are now handled
-                    let should_continue =
-                        ctx.pending_tool_calls.is_empty() && ctx.expected_tool_results == 0;
-                    if should_continue {
-                        crate::utils::logging::info(
-                            "App.handle_tool_command_response",
-                            "All tools handled. Continuing operation.",
-                        );
-                        // Needs self, release ctx borrow first
-                        // self.continue_operation_after_tools().await?;
-                        // TODO: Fix calling continue_operation_after_tools
-                    }
                     // Mark as denied and store info needed after borrow
                     denied = true;
                     denial_result_content = Some(result_content);
@@ -349,6 +323,17 @@ impl App {
         }
 
         // --- Post-Borrow Handling ---
+
+        // If approved and 'always' is true, add to approved_tools set
+        if approved && always {
+            if let Some(tool_name) = &tool_name_for_approval {
+                crate::utils::logging::debug(
+                    "App.handle_tool_command_response",
+                    &format!("Adding tool '{}' to always-approved list.", tool_name),
+                );
+                self.approved_tools.insert(tool_name.clone());
+            }
+        }
 
         if denied {
             // Handle denial actions after borrow is released
@@ -468,15 +453,23 @@ impl App {
                 ..tool_call
             };
 
+            // Check if tool requires approval by default
+            let requires_approval = self.tool_executor.requires_approval(&tool_name)?;
+
             // Check approved tools (immutable borrow of self needed, but that's fine here)
-            let is_approved = self.approved_tools.contains(&tool_name);
+            let is_approved = !requires_approval || self.approved_tools.contains(&tool_name);
 
             if is_approved {
                 crate::utils::logging::debug(
                     "App.initiate_tool_calls",
                     &format!(
-                        "Tool '{}' already approved, adding to execution list.",
-                        tool_name
+                        "Tool '{}' is {}approved, adding to execution list.",
+                        tool_name,
+                        if requires_approval {
+                            "requires approval and "
+                        } else {
+                            "already "
+                        }
                     ),
                 );
                 tools_to_execute.push(tool_call_with_id);

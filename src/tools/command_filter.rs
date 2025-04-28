@@ -1,4 +1,5 @@
-use crate::api::{Client, Model};
+// use crate::api::{Client, Model};
+use crate::api::Model;
 use crate::config::LlmConfig;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;

@@ -163,7 +163,8 @@ tool! {
     BashTool {
         params: BashParams,
         description: "Run a bash command in the terminal",
-        name: "bash"
+        name: "bash",
+        require_approval: true
     }
 
     async fn run(

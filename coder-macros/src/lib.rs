@@ -3,9 +3,9 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
+    Ident, ItemFn, LitBool, LitStr, Path, Token,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Ident, ItemFn, LitStr, Path, Token,
 };
 
 // Define a struct to represent a single key-value pair within the braces
@@ -30,7 +30,8 @@ impl Parse for FieldValue {
 //    ToolName {
 //        params: ParamsStruct,
 //        description: "Description string",
-//        name: "name_string"
+//        name: "name_string",
+//        require_approval: true
 //    }
 //    async fn run(&self, p: ParamsStruct, cancel: Option<CancellationToken>) -> Result<String, ToolError> { ... }
 // }
@@ -38,6 +39,7 @@ struct ToolDefinition {
     tool_name: Ident,
     params_struct: Path,
     description: LitStr,
+    require_approval: LitBool,
     name: LitStr,
     run_function: ItemFn,
 }
@@ -55,6 +57,7 @@ impl Parse for ToolDefinition {
         let mut params_struct: Option<Path> = None;
         let mut description: Option<LitStr> = None;
         let mut name: Option<LitStr> = None;
+        let mut require_approval: Option<LitBool> = None;
 
         for field in fields {
             let key_str = field.key.to_string();
@@ -121,10 +124,28 @@ impl Parse for ToolDefinition {
                         ));
                     }
                 }
+                "require_approval" => {
+                    if require_approval.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            field.key,
+                            "Duplicate \'require_approval\' field",
+                        ));
+                    }
+                    if let syn::Expr::Lit(ref expr_lit) = field.value {
+                        if let syn::Lit::Bool(lit_bool) = &expr_lit.lit {
+                            require_approval = Some(lit_bool.clone());
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                field.value,
+                                "Expected a boolean literal for \'require_approval\' (e.g., true or false)",
+                            ));
+                        }
+                    }
+                }
                 _ => {
                     return Err(syn::Error::new(
                         field.key.span(),
-                        "Expected \'params\', \'description\', or \'name\'",
+                        "Expected one of: 'params', 'description', 'name', 'require_approval'",
                     ));
                 }
             }
@@ -136,6 +157,7 @@ impl Parse for ToolDefinition {
         let description = description
             .ok_or_else(|| syn::Error::new(input.span(), "Missing \'description\' field"))?;
         let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing \'name\' field"))?;
+        let require_approval = require_approval.unwrap_or(LitBool::new(true, input.span()));
 
         let run_function: syn::ItemFn = input.parse()?;
 
@@ -151,6 +173,7 @@ impl Parse for ToolDefinition {
             params_struct,
             description,
             name,
+            require_approval,
             run_function,
         })
     }
@@ -166,6 +189,7 @@ pub fn tool(input: TokenStream) -> TokenStream {
     let tool_struct_name = parsed_input.tool_name;
     let params_struct_name = parsed_input.params_struct;
     let description_str = parsed_input.description;
+    let require_approval = parsed_input.require_approval;
     let run_function = parsed_input.run_function;
     let tool_name_literal = parsed_input.name;
     let tool_name_for_errors = tool_name_literal.value();
@@ -207,7 +231,7 @@ pub fn tool(input: TokenStream) -> TokenStream {
 
             fn input_schema(&self) -> &'static crate::api::InputSchema {
                 static SCHEMA: ::once_cell::sync::Lazy<crate::api::InputSchema> = ::once_cell::sync::Lazy::new(|| {
-                    let schema_gen = schemars::gen::SchemaGenerator::default();
+                    let schema_gen = ::schemars::r#gen::SchemaGenerator::default();
                     // Use root_schema_for to get the full schema including definitions
                     let root_schema = schema_gen.into_root_schema_for::<#params_struct_name>();
 
@@ -251,6 +275,10 @@ pub fn tool(input: TokenStream) -> TokenStream {
                 }
 
                 run(self, params, token).await
+            }
+
+            fn requires_approval(&self) -> bool {
+                #require_approval
             }
         }
     };

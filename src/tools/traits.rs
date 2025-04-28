@@ -30,4 +30,13 @@ pub trait Tool: Send + Sync + 'static {
         parameters: Value, // Will be deserialized within the impl
         token: Option<CancellationToken>,
     ) -> Result<String, ToolError>;
+
+    /// Indicates if this tool requires user approval before execution.
+    ///
+    /// Tools that modify the filesystem or external state should return true.
+    /// Default implementation returns true (requiring approval).
+    /// Tools should override this to return false if they only read data.
+    fn requires_approval(&self) -> bool {
+        true
+    }
 }

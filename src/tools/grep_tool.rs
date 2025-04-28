@@ -26,6 +26,7 @@ tool! {
     GrepTool {
         params: GrepParams,
         name: "grep",
+        require_approval: false,
         description: r#"- Fast content search tool that works with any codebase size
 - Searches file contents using regular expressions
 - Supports full regex syntax (eg. \"log._Error\", \"function\\s+\\w+\", etc.)
@@ -35,7 +36,6 @@ tool! {
 - When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead"#,
     }
 
-    // Move the run function definition inside the macro invocation
     async fn run(
         _tool: &GrepTool,
         params: GrepParams,

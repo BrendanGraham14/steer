@@ -33,7 +33,8 @@ Usage notes:
   - This tool is read-only and does not modify any files
   - Results may be summarized if the content is very large
   - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL"#,
-        name: "web_fetch"
+        name: "web_fetch",
+        require_approval: true
     }
 
     async fn run(
@@ -95,6 +96,13 @@ Usage notes:
                 anyhow::anyhow!("Request to URL {} failed: {}", params.url, e)
             )),
         }
+    }
+}
+
+// Add is_read_only implementation outside the macro
+impl FetchTool {
+    pub fn is_read_only(&self) -> bool {
+        true
     }
 }
 

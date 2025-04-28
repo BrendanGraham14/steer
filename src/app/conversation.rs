@@ -5,8 +5,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::Client as ApiClient;
 use crate::api::Model;
-use crate::api::ProviderKind;
-use crate::api::messages;
 use tokio_util::sync::CancellationToken;
 
 /// Role in the conversation

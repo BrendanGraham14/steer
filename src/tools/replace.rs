@@ -27,7 +27,8 @@ Before using this tool:
 
 2. Directory Verification (only applicable when creating new files):
  - Use the LS tool to verify the parent directory exists and is the correct location"#,
-        name: "write_file"
+        name: "write_file",
+        require_approval: true
     }
 
     async fn run(
