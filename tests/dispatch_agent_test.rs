@@ -10,17 +10,8 @@ async fn test_dispatch_agent() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
 
-    // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return Ok(());
-        }
-    };
-
     // Create the dispatch agent with the API key
-    let agent = DispatchAgent::with_api_key(api_key);
+    let agent = DispatchAgent::new();
 
     // Test prompt that should search for specific code
     let prompt = "Find all files that contain definitions of functions or methods related to search or find operations";

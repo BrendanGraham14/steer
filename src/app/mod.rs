@@ -424,12 +424,10 @@ impl App {
                 ),
             );
         }
-        // If denial path was taken, we returned earlier
 
         Ok(())
     }
 
-    // Added back the initiate_tool_calls function
     async fn initiate_tool_calls(&mut self, tool_calls: Vec<crate::api::ToolCall>) -> Result<()> {
         if tool_calls.is_empty() {
             crate::utils::logging::debug("App.initiate_tool_calls", "No tool calls to initiate.");
@@ -608,8 +606,7 @@ impl App {
     }
 
     pub async fn dispatch_agent(&self, prompt: &str, token: CancellationToken) -> Result<String> {
-        let agent =
-            crate::tools::dispatch_agent::DispatchAgent::with_api_key(self.config.api_key.clone());
+        let agent = crate::tools::dispatch_agent::DispatchAgent::new();
         // Create a dummy token for now as the call site doesn't have one
         // let token = CancellationToken::new();
         agent.execute(prompt, token).await

@@ -1,21 +1,37 @@
+use crate::tools::ToolError;
+use coder_macros::tool;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-
-use crate::tools::ToolError;
-use coder_macros::tool;
 
 #[derive(Deserialize, Debug, JsonSchema)]
 struct FetchParams {
     /// The URL to fetch content from
     url: String,
+    /// The prompt to process the content with
+    prompt: String,
 }
 
 tool! {
     FetchTool {
         params: FetchParams,
-        description: "Fetch the contents of a URL",
-        name: "fetch"
+        description: r#"- Fetches content from a specified URL and processes it using an AI model
+- Takes a URL and a prompt as input
+- Fetches the URL content, converts HTML to markdown
+- Processes the content with the prompt using a small, fast model
+- Returns the model's response about the content
+- Use this tool when you need to retrieve and analyze web content
+
+Usage notes:
+  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions. All MCP-provided tools start with "mcp__".
+  - The URL must be a fully-formed valid URL
+  - HTTP URLs will be automatically upgraded to HTTPS
+  - For security reasons, the URL's domain must have been provided directly by the user, unless it's on a small pre-approved set of the top few dozen hosts for popular coding resources, like react.dev.
+  - The prompt should describe what information you want to extract from the page
+  - This tool is read-only and does not modify any files
+  - Results may be summarized if the content is very large
+  - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL"#,
+        name: "web_fetch"
     }
 
     async fn run(
@@ -25,10 +41,10 @@ tool! {
     ) -> Result<String, ToolError> {
         // Create a reqwest client
         let client = reqwest::Client::new();
-        
+
         // Create the request
         let request = client.get(&params.url);
-        
+
         // Send the request and check for cancellation
         let response = if let Some(ref token) = token {
             tokio::select! {
@@ -44,7 +60,7 @@ tool! {
             Ok(response) => {
                 let status = response.status();
                 let url = response.url().to_string();
-                
+
                 if !status.is_success() {
                     return Err(ToolError::execution(
                         "Fetch",
@@ -63,7 +79,9 @@ tool! {
                 };
 
                 match text {
-                    Ok(content) => Ok(content),
+                    Ok(content) => {
+                        process_web_page_content(content, params.prompt, token).await
+                    }
                     Err(e) => Err(ToolError::execution(
                         "Fetch",
                         anyhow::anyhow!("Failed to read response body from {}: {}", url, e)
@@ -75,5 +93,54 @@ tool! {
                 anyhow::anyhow!("Request to URL {} failed: {}", params.url, e)
             )),
         }
+    }
+}
+
+async fn process_web_page_content(
+    content: String,
+    prompt: String,
+    token: Option<CancellationToken>,
+) -> Result<String, ToolError> {
+    let client = crate::api::Client::new(&std::env::var("CLAUDE_API_KEY").unwrap());
+    let user_message = format!(
+        r#"Web page content:
+---
+{}
+---
+
+{}
+
+Provide a concise response based only on the content above.
+"#,
+        content, prompt
+    );
+
+    let messages = vec![crate::api::Message {
+        role: "user".to_string(),
+        content: crate::api::messages::MessageContent::Text {
+            content: user_message,
+        },
+        id: None,
+    }];
+
+    let token = if let Some(ref token) = token {
+        token.clone()
+    } else {
+        CancellationToken::new()
+    };
+
+    match client
+        .with_model("claude-3-5-haiku-20241022")
+        .complete(messages, None, None, token)
+        .await
+    {
+        Ok(response) => {
+            let prefix = response.extract_text();
+            Ok(prefix.trim().to_string())
+        }
+        Err(e) => Err(ToolError::execution(
+            "Fetch",
+            anyhow::anyhow!("Failed to process web page content: {}", e),
+        )),
     }
 }

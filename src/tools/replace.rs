@@ -10,7 +10,7 @@ use coder_macros::tool;
 
 #[derive(Deserialize, Debug, JsonSchema)]
 pub struct ReplaceParams {
-    /// The absolute path to the file to write
+    /// The absolute path to the file to write (must be absolute, not relative)
     pub file_path: String,
     /// The content to write to the file
     pub content: String,
@@ -19,8 +19,15 @@ pub struct ReplaceParams {
 tool! {
     ReplaceTool {
         params: ReplaceParams,
-        description: "Write a file to the local filesystem, replacing it if it exists.",
-        name: "replace_file"
+        description: r#"Write a file to the local filesystem. Overwrites the existing file if there is one.
+
+Before using this tool:
+
+1. Use the ReadFile tool to understand the file's contents and context
+
+2. Directory Verification (only applicable when creating new files):
+ - Use the LS tool to verify the parent directory exists and is the correct location"#,
+        name: "write_file"
     }
 
     async fn run(

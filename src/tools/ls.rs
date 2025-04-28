@@ -11,7 +11,7 @@ use coder_macros::tool;
 
 #[derive(Deserialize, Debug, JsonSchema)]
 struct LsParams {
-    /// The absolute path to the directory to list
+    /// The absolute path to the directory to list (must be absolute, not relative)
     path: String,
     /// Optional list of glob patterns to ignore
     ignore: Option<Vec<String>>,
@@ -20,7 +20,7 @@ struct LsParams {
 tool! {
     LsTool {
         params: LsParams,
-        description: "List files and directories in the workspace",
+        description: r#"Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You should generally prefer the Glob and Grep tools, if you know which directories to search."#,
         name: "ls"
     }
 

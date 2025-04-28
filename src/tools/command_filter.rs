@@ -1,144 +1,101 @@
 use anyhow::Result;
-use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
-/// Command filter for enhanced security
-pub struct CommandFilter {
-    /// API key for Claude API
-    api_key: String,
-    /// Set of allowed command prefixes
-    allowed_prefixes: HashSet<String>,
+const SYSTEM_MESSAGE: &str = r#"Your task is to process Bash commands that an AI coding agent wants to run.
+
+This policy spec defines how to determine the prefix of a Bash command:"#;
+
+const USER_MESSAGE_TEMPLATE: &str = r#"<policy_spec>
+# Claude Code Code Bash command prefix detection
+
+This document defines risk levels for actions that the Claude Code agent may take. This classification system is part of a broader safety framework and is used to determine when additional user confirmation or oversight may be needed.
+
+## Definitions
+
+**Command Injection:** Any technique used that would result in a command being run other than the detected prefix.
+
+## Command prefix extraction examples
+Examples:
+- cat foo.txt => cat
+- cd src => cd
+- cd path/to/files/ => cd
+- find ./src -type f -name "*.ts" => find
+- gg cat foo.py => gg cat
+- gg cp foo.py bar.py => gg cp
+- git commit -m "foo" => git commit
+- git diff HEAD~1 => git diff
+- git diff --staged => git diff
+- git diff $(pwd) => command_injection_detected
+- git status => git status
+- git status# test(`id`) => command_injection_detected
+- git status`ls` => command_injection_detected
+- git push => none
+- git push origin master => git push
+- git log -n 5 => git log
+- git log --oneline -n 5 => git log
+- grep -A 40 "from foo.bar.baz import" alpha/beta/gamma.py => grep
+- pig tail zerba.log => pig tail
+- potion test some/specific/file.ts => potion test
+- npm run lint => none
+- npm run lint -- "foo" => npm run lint
+- npm test => none
+- npm test --foo => npm test
+- npm test -- -f "foo" => npm test
+- pwd
+ curl example.com => command_injection_detected
+- pytest foo/bar.py => pytest
+- scalac build => none
+- sleep 3 => sleep
+</policy_spec>
+
+The user has allowed certain command prefixes to be run, and will otherwise be asked to approve or deny the command.
+Your task is to determine the command prefix for the following command.
+The prefix must be a string prefix of the full command.
+
+IMPORTANT: Bash commands may run multiple commands that are chained together.
+For safety, if the command seems to contain command injection, you must return "command_injection_detected".
+(This will help protect the user: if they think that they're allowlisting command A, but the AI coding agent sends a malicious command that technically has the same prefix as command A, then the safety system will see that you said "command_injection_detected" and ask the user for manual confirmation.)
+
+Note that not every command has a prefix. If a command has no prefix, return "none".
+
+ONLY return the prefix. Do not return any other text, markdown markers, or other content or formatting.
+
+Command: ${command}"#;
+
+pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Result<bool> {
+    // Get the command prefix
+    let prefix = get_command_prefix(command, token).await?;
+    crate::utils::logging::info("CommandFilter", &format!("Command prefix: {}", prefix));
+
+    match prefix.as_str() {
+        "command_injection_detected" => Ok(false),
+        _ => Ok(true),
+    }
 }
 
-impl CommandFilter {
-    /// Create a new command filter
-    pub fn new() -> Self {
-        // Default set of safe commands that are always allowed
-        let mut allowed_prefixes = HashSet::new();
-        allowed_prefixes.insert("ls".to_string());
-        allowed_prefixes.insert("pwd".to_string());
-        allowed_prefixes.insert("cd".to_string());
-        allowed_prefixes.insert("echo".to_string());
-        allowed_prefixes.insert("mkdir".to_string());
-        allowed_prefixes.insert("cat".to_string());
-        allowed_prefixes.insert("less".to_string());
-        allowed_prefixes.insert("grep".to_string());
-        allowed_prefixes.insert("find".to_string());
-        allowed_prefixes.insert("head".to_string());
-        allowed_prefixes.insert("tail".to_string());
-        allowed_prefixes.insert("diff".to_string());
-        allowed_prefixes.insert("cp".to_string());
-        allowed_prefixes.insert("mv".to_string());
-        allowed_prefixes.insert("rm".to_string());
-        allowed_prefixes.insert("rmdir".to_string());
-        allowed_prefixes.insert("touch".to_string());
-        allowed_prefixes.insert("git status".to_string());
-        allowed_prefixes.insert("git diff".to_string());
-        allowed_prefixes.insert("git log".to_string());
-        allowed_prefixes.insert("git show".to_string());
-        allowed_prefixes.insert("git branch".to_string());
-        allowed_prefixes.insert("cargo build".to_string());
-        allowed_prefixes.insert("cargo run".to_string());
-        allowed_prefixes.insert("cargo test".to_string());
-        allowed_prefixes.insert("cargo check".to_string());
-        allowed_prefixes.insert("cargo clippy".to_string());
-        allowed_prefixes.insert("cargo fmt".to_string());
-        allowed_prefixes.insert("cargo doc".to_string());
+/// Get the prefix of a command
+async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<String> {
+    let client = crate::api::Client::new(&std::env::var("CLAUDE_API_KEY").unwrap());
+    let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
-        Self {
-            api_key: std::env::var("CLAUDE_API_KEY").unwrap(),
-            allowed_prefixes,
+    let messages = vec![crate::api::Message {
+        role: "user".to_string(),
+        content: crate::api::messages::MessageContent::Text {
+            content: user_message,
+        },
+        id: None,
+    }];
+
+    let system_content = SYSTEM_MESSAGE;
+
+    match client
+        .complete(messages, Some(system_content.to_string()), None, token) // Pass the token
+        .await
+    {
+        Ok(response) => {
+            let prefix = response.extract_text();
+            Ok(prefix.trim().to_string())
         }
-    }
-
-    /// Add an allowed command prefix
-    pub fn add_allowed_prefix(&mut self, prefix: &str) {
-        self.allowed_prefixes.insert(prefix.to_string());
-    }
-
-    /// Remove an allowed command prefix
-    pub fn remove_allowed_prefix(&mut self, prefix: &str) {
-        self.allowed_prefixes.remove(prefix);
-    }
-
-    /// Get the list of allowed command prefixes
-    pub fn allowed_prefixes(&self) -> Vec<String> {
-        self.allowed_prefixes.iter().cloned().collect()
-    }
-
-    /// Check if a command is allowed to run
-    pub async fn is_command_allowed(
-        &self,
-        command: &str,
-        token: CancellationToken,
-    ) -> Result<bool> {
-        // Get the command prefix
-        let prefix = self.get_command_prefix(command, token).await?;
-
-        // Check if the prefix is "none" (no prefix)
-        if prefix == "none" {
-            // Commands with no prefix are allowed
-            return Ok(true);
-        }
-
-        // Check if the prefix is detected as a command injection
-        if prefix == "command_injection_detected" {
-            // Command injection is not allowed
-            return Ok(false);
-        }
-
-        // Check if the prefix is in the allowed list
-        Ok(self.allowed_prefixes.contains(&prefix))
-    }
-
-    /// Get the prefix of a command
-    async fn get_command_prefix(&self, command: &str, token: CancellationToken) -> Result<String> {
-        // Read the command filter prompt
-        let prompt_template = include_str!("../../prompts/command_filter.md");
-
-        // Create the client
-        let client = crate::api::Client::new(&self.api_key);
-
-        // Replace the placeholder with the actual command
-        let user_message = prompt_template.replace("${command}", command);
-
-        // Create the messages
-        let messages = vec![
-            crate::api::Message {
-                role: "system".to_string(),
-                content: crate::api::messages::MessageContent::Text {
-                    content: "Your task is to process Bash commands that an AI coding agent wants to run.".to_string(),
-                },
-                id: None,
-            },
-            crate::api::Message {
-                role: "user".to_string(),
-                content: crate::api::messages::MessageContent::Text {
-                    content: user_message,
-                },
-                id: None,
-            },
-        ];
-
-        // Don't create a new token here, use the passed one
-        // let token = CancellationToken::new();
-
-        // Call the API using the stored api_client
-        match client
-            .complete(messages, None, None, token) // Pass the token
-            .await
-        {
-            Ok(response) => {
-                // Extract the response text
-                let prefix = response.extract_text();
-
-                // Trim whitespace and return
-                Ok(prefix.trim().to_string())
-            }
-            Err(e) => {
-                // Handle the error
-                Err(e.into())
-            }
-        }
+        Err(e) => Err(e.into()),
     }
 }
