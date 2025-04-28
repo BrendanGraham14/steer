@@ -4,6 +4,7 @@
 - [x] Platform detection
 - [x] Directory structure scanning
 - [x] Embed these in the system prompt
+- [x] Omit .gitignore files from view
 
 ### User Experience
 - [ ] Tool output formatting
@@ -12,6 +13,7 @@
 - [ ] Support properly vertically expanding terminal input for multiple lines
 - [ ] (Maybe): automatically create a new git worktree when a new instance is started
 - [ ] Support executing bash comments (like ! in claude code)
+- [ ] @files with fzf-like fuzzy search 
 
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts
