@@ -11,6 +11,7 @@
 - [ ] Support navigating through previous messages and editing them
 - [ ] Support properly vertically expanding terminal input for multiple lines
 - [ ] (Maybe): automatically create a new git worktree when a new instance is started
+- [ ] Support executing bash comments (like ! in claude code)
 
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts
