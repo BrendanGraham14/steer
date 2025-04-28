@@ -1,9 +1,9 @@
 ### Environment Management
-- [ ] Working directory detection
-- [ ] Git repo status detection
-- [ ] Platform detection
-- [ ] Directory structure scanning
-- [ ] Embed these in the system prompt
+- [x] Working directory detection
+- [x] Git repo status detection
+- [x] Platform detection
+- [x] Directory structure scanning
+- [x] Embed these in the system prompt
 
 ### User Experience
 - [ ] Tool output formatting
