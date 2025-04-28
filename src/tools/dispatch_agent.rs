@@ -105,7 +105,7 @@ impl DispatchAgent {
             },
         }];
 
-        const MAX_ITERATIONS: usize = 5;
+        const MAX_ITERATIONS: usize = 200;
 
         for _ in 0..MAX_ITERATIONS {
             if token.is_cancelled() {
