@@ -9,6 +9,12 @@ pub struct ToolExecutorBuilder {
     registry: HashMap<String, Arc<dyn ToolTrait>>,
 }
 
+impl Default for ToolExecutorBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolExecutorBuilder {
     /// Create a new empty builder
     pub fn new() -> Self {

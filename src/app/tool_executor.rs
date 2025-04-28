@@ -15,6 +15,12 @@ pub struct ToolExecutor {
     pub(crate) registry: Arc<HashMap<String, Arc<dyn ToolTrait>>>,
 }
 
+impl Default for ToolExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolExecutor {
     /// Create a new tool executor with the default set of tools
     pub fn new() -> Self {
@@ -60,7 +66,7 @@ impl ToolExecutor {
             "app.tool_executor.to_api_tools",
             &format!("Converting registry tools to API tools: {:?}", api_tools),
         );
-        return api_tools;
+        api_tools
     }
 
     /// Execute a tool call with cancellation support using the registry and trait.

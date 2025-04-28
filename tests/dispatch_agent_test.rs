@@ -1,7 +1,6 @@
 use anyhow::Result;
 use coder::tools::dispatch_agent::DispatchAgent;
 use dotenv::dotenv;
-use std::env;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]

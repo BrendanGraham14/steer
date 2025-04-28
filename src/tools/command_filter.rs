@@ -106,6 +106,6 @@ async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<S
             let prefix = response.extract_text();
             Ok(prefix.trim().to_string())
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e),
     }
 }

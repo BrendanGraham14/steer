@@ -60,7 +60,7 @@ Usage notes:
         params: DispatchAgentParams,
         token: Option<CancellationToken>,
     ) -> Result<String, ToolError> {
-        let token = token.unwrap_or_else(CancellationToken::new);
+        let token = token.unwrap_or_default();
         let agent = DispatchAgent::new()
             .map_err(|e| ToolError::execution("DispatchAgent", e))?;
         agent

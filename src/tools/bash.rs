@@ -17,6 +17,12 @@ use super::command_filter::is_command_allowed;
 /// Bash tool implementation
 pub struct Bash {}
 
+impl Default for Bash {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bash {
     /// Create a new Bash tool
     pub fn new() -> Self {
@@ -55,7 +61,7 @@ impl Bash {
             ));
         }
 
-        let token = token.unwrap_or_else(CancellationToken::new);
+        let token = token.unwrap_or_default();
 
         let is_allowed = is_command_allowed(command, token.clone()).await?;
 
@@ -191,7 +197,7 @@ tool! {
         }
 
         // Advanced filter check (slower, more thorough)
-        let filter_token = token.clone().unwrap_or_else(CancellationToken::new); // Ensure token exists for filter
+        let filter_token = token.clone().unwrap_or_default(); // Ensure token exists for filter
         let is_allowed = is_command_allowed(command, filter_token)
             .await
             .map_err(|e| ToolError::Execution {

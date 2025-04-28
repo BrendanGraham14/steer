@@ -1,20 +1,17 @@
 use anyhow::Result;
-use coder::api::ToolCall;
-use coder::app::{App, AppConfig, AppEvent};
+use coder::app::{App, AppConfig};
 use coder::config::LlmConfig;
 use coder::tools::edit::EditTool;
 use coder::tools::traits::Tool;
 use coder::tools::view::ViewTool;
 use dotenv::dotenv;
-use serde_json::json;
-use std::env;
 use tokio::sync::mpsc;
 
 #[tokio::test]
 async fn test_requires_approval_tool_detection() -> Result<()> {
     // Create read-only and write tools
-    let view_tool = ViewTool::default();
-    let edit_tool = EditTool::default();
+    let view_tool = ViewTool;
+    let edit_tool = EditTool;
 
     // Test is_read_only implementation
     assert!(

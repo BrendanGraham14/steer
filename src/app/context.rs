@@ -37,6 +37,12 @@ pub struct OpContext {
     pub api_call_in_progress: bool,
 }
 
+impl Default for OpContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpContext {
     pub fn new() -> Self {
         Self {

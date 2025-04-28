@@ -91,7 +91,7 @@ async fn view_file_internal(
                     if current_line_num >= start_line {
                         lines.push(line.trim_end().to_string()); // Store line
                         lines_read += 1;
-                        if line_limit.map_or(false, |l| lines_read >= l) {
+                        if line_limit.is_some_and(|l| lines_read >= l) {
                             break; // Reached limit
                         }
                     }

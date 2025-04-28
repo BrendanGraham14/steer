@@ -203,6 +203,12 @@ pub struct Conversation {
     pub working_directory: PathBuf,
 }
 
+impl Default for Conversation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Conversation {
     pub fn new() -> Self {
         Self {

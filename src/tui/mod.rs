@@ -1357,7 +1357,7 @@ pub async fn run_tui(
         Err(e) => {
             utils::logging::error("tui::run_tui", &format!("TUI task error: {}", e));
             eprintln!("Error in TUI: {}", e);
-            Err(e.into())
+            Err(e)
         }
     }
 }

@@ -687,7 +687,7 @@ impl App {
                             format!("Dispatch Agent Result:\\\\n{}", response),
                         ))
                         .await;
-                        result = Ok(format!("Dispatch agent executed. Response added."));
+                        result = Ok("Dispatch agent executed. Response added.".to_string());
                     }
                     Err(e) => {
                         if e.to_string() == "Request cancelled" {

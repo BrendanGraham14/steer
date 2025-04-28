@@ -246,7 +246,7 @@ pub fn format_tool_call_block(
             }
             Err(_) => {
                 lines.push(Line::from(Span::styled(
-                    format!("   Parameters: (Failed to format JSON)"),
+                    "   Parameters: (Failed to format JSON)".to_string(),
                     Style::default().fg(Color::Red),
                 )));
             }
