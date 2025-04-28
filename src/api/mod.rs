@@ -188,7 +188,7 @@ impl Client {
             stream: None,
         };
 
-        crate::utils::logging::debug("API Request messages", &format!("{:?}", request.messages));
+        crate::utils::logging::debug("API Request", &format!("{:?}", request));
 
         // Log the full request payload as JSON for detailed debugging
         match serde_json::to_string_pretty(&request) {

@@ -186,9 +186,6 @@ impl Conversation {
             id: None,
         }];
 
-        // Don't create a new token, use the passed one
-        // let token = CancellationToken::new();
-
         let summary = api_client
             .complete(prompt_messages, None, None, token.clone()) // Pass the token
             .await?;

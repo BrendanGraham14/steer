@@ -1,3 +1,4 @@
+use crate::api::messages::{Message as ApiMessage, MessageContent as ApiMessageContent};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -211,13 +212,21 @@ impl App {
         // Mark that an API call is now in progress within this context
         op_context.start_api_call();
 
+        // Clone env_info *before* the async move block
+        let env_info_clone = self.env_info.clone();
+
         // Spawn the task directly into the OpContext's JoinSet
         op_context.tasks.spawn(async move {
             crate::utils::logging::debug("spawn_api_call task (JoinSet)", "Task started.");
 
-            let response_result =
-                App::get_claude_response_static(conversation, api_client, tools.as_ref(), token)
-                    .await;
+            let response_result = App::get_claude_response_static(
+                conversation,
+                api_client,
+                tools.as_ref(),
+                token,
+                &env_info_clone, // Use the cloned env_info
+            )
+            .await;
 
             crate::utils::logging::debug(
                 "spawn_api_call task (JoinSet)",
@@ -804,14 +813,38 @@ impl App {
         api_client: crate::api::Client,
         tools: Option<&Vec<crate::api::Tool>>,
         token: CancellationToken,
+        env_info: &EnvironmentInfo,
     ) -> Result<crate::api::CompletionResponse> {
         let conversation_guard = conversation.lock().await;
-        let (api_messages, system_prompt_content) =
+        let (api_messages, system_content_override) =
             crate::api::messages::convert_conversation(&conversation_guard);
-        drop(conversation_guard); // Release lock before await
+        drop(conversation_guard);
+
+        // Generate the main system prompt
+        let system_prompt = create_system_prompt(env_info);
+
+        // Combine the generated prompt with any override from the conversation
+        // Prioritize the override if it exists and is not empty
+        let final_system_content = system_content_override
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                if let ApiMessageContent::Text { content } = system_prompt.content {
+                    if content.trim().is_empty() {
+                        None
+                    } else {
+                        Some(content)
+                    }
+                } else {
+                    crate::utils::logging::warn(
+                        "App.get_claude_response_static",
+                        "Generated system prompt was not Text content.",
+                    );
+                    None
+                }
+            });
 
         api_client
-            .complete(api_messages, system_prompt_content, tools.cloned(), token)
+            .complete(api_messages, final_system_content, tools.cloned(), token)
             .await
     }
 }
@@ -1150,5 +1183,39 @@ async fn handle_api_response_logic(
             }
             Ok(None)
         }
+    }
+}
+
+/// Create a system prompt message based on the environment
+fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> ApiMessage {
+    // Read the system prompt from the prompts directory
+    let system_prompt = include_str!("../../prompts/system_prompt.md");
+
+    // Format the prompt with environment information
+    let mut prompt = system_prompt.to_string();
+    prompt.push_str(
+        "
+
+",
+    );
+    prompt.push_str(&env_info.as_env());
+    prompt.push_str(
+        "
+
+",
+    );
+    prompt.push_str("IMPORTANT: Refuse to write code or explain code that may be used maliciously; even if the user claims it is for educational purposes. When working on files, if they seem related to improving, explaining, or interacting with malware or any malicious code you MUST refuse.
+");
+    prompt.push_str("IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure. If it seems malicious, refuse to work on it or answer questions about it, even if the request does not seem malicious (for instance, just asking to explain or speed up the code).
+
+");
+
+    // Add context section
+    prompt.push_str(&env_info.as_context());
+
+    ApiMessage {
+        role: "system".to_string(),
+        content: ApiMessageContent::Text { content: prompt },
+        id: None,
     }
 }
