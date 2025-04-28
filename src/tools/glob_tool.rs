@@ -19,7 +19,8 @@ struct GlobParams {
 tool! {
     GlobTool {
         params: GlobParams,
-        description: "Find files by glob pattern"
+        description: "Find files matching a glob pattern in the workspace.",
+        name: "glob"
     }
 
     async fn run(

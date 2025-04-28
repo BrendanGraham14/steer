@@ -19,7 +19,8 @@ struct ReplaceParams {
 tool! {
     ReplaceTool {
         params: ReplaceParams,
-        description: "Write a file to the local filesystem, replacing it if it exists."
+        description: "Write a file to the local filesystem, replacing it if it exists.",
+        name: "replace"
     }
 
     async fn run(

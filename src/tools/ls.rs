@@ -20,7 +20,8 @@ struct LsParams {
 tool! {
     LsTool {
         params: LsParams,
-        description: "List files and directories in a given path"
+        description: "List files and directories in the workspace",
+        name: "ls"
     }
 
     async fn run(
@@ -68,7 +69,7 @@ fn list_directory_internal(path_str: &str, ignore_patterns: &[String]) -> Result
             Ok(entry) => {
                 let file_path = entry.path();
                 let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
-                
+
                 // Add to appropriate list based on file type
                 if file_path.is_dir() {
                     dirs.push(format!("{}/", file_name));

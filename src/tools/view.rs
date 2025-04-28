@@ -23,7 +23,8 @@ const MAX_READ_BYTES: usize = 50 * 1024; // Limit read size to 50KB
 tool! {
     ViewTool {
         params: ViewParams,
-        description: "Read a file from the local filesystem"
+        description: "Read a file from the local filesystem",
+        name: "view"
     }
 
     async fn run(

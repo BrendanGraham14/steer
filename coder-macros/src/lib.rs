@@ -19,6 +19,7 @@ struct ToolDefinition {
     tool_name: Ident,
     params_struct: Path,
     description: LitStr,
+    name: LitStr,
     run_function: ItemFn,
 }
 
@@ -30,6 +31,7 @@ impl Parse for ToolDefinition {
 
         let mut params_struct: Option<Path> = None;
         let mut description: Option<LitStr> = None;
+        let mut name: Option<LitStr> = None;
 
         while !content.is_empty() {
             let key: Ident = content.parse()?;
@@ -38,10 +40,12 @@ impl Parse for ToolDefinition {
                 params_struct = Some(content.parse()?);
             } else if key == "description" {
                 description = Some(content.parse()?);
+            } else if key == "name" {
+                name = Some(content.parse()?);
             } else {
                 return Err(syn::Error::new(
                     key.span(),
-                    "Expected 'params' or 'description'",
+                    "Expected 'params', 'description', or 'name'",
                 ));
             }
             // Optional comma separator
@@ -54,6 +58,7 @@ impl Parse for ToolDefinition {
             params_struct.ok_or_else(|| syn::Error::new(input.span(), "Missing 'params' field"))?;
         let description = description
             .ok_or_else(|| syn::Error::new(input.span(), "Missing 'description' field"))?;
+        let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing 'name' field"))?;
 
         let run_function: syn::ItemFn = input.parse()?;
 
@@ -68,6 +73,7 @@ impl Parse for ToolDefinition {
             tool_name,
             params_struct,
             description,
+            name,
             run_function,
         })
     }
@@ -83,8 +89,10 @@ pub fn tool(input: TokenStream) -> TokenStream {
     let tool_struct_name = parsed_input.tool_name;
     let params_struct_name = parsed_input.params_struct;
     let description_str = parsed_input.description;
-    let tool_name_str = tool_struct_name.to_string();
     let run_function = parsed_input.run_function;
+    let tool_name_literal = parsed_input.name;
+    let tool_name_for_errors = tool_name_literal.value();
+    let tool_name_str = quote! { #tool_name_literal };
 
     let expanded = quote! {
         #[derive(Debug, Clone, Default)]
@@ -139,11 +147,11 @@ pub fn tool(input: TokenStream) -> TokenStream {
                 token: Option<tokio_util::sync::CancellationToken>,
             ) -> std::result::Result<String, crate::tools::ToolError> {
                 let params: #params_struct_name = ::serde_json::from_value(parameters.clone())
-                    .map_err(|e| crate::tools::ToolError::InvalidParams(#tool_name_str.to_string(), e.to_string()))?;
+                    .map_err(|e| crate::tools::ToolError::InvalidParams(#tool_name_for_errors.to_string(), e.to_string()))?;
 
                 if let Some(t) = &token {
                     if t.is_cancelled() {
-                        return Err(crate::tools::ToolError::Cancelled(#tool_name_str.to_string()));
+                        return Err(crate::tools::ToolError::Cancelled(#tool_name_for_errors.to_string()));
                     }
                 }
 

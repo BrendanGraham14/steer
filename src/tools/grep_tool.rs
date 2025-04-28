@@ -25,7 +25,8 @@ struct GrepParams {
 tool! {
     GrepTool {
         params: GrepParams,
-        description: "Search file contents by regex pattern"
+        description: "Search for lines matching a regex pattern in files within the workspace.",
+        name: "grep"
     }
 
     // Move the run function definition inside the macro invocation

@@ -21,7 +21,8 @@ struct EditParams {
 tool! {
     EditTool {
         params: EditParams,
-        description: "Edit a file by replacing an old string with a new string. Only works if the old string appears exactly once. If old_string is empty, creates the file."
+        description: "Edit a file by replacing an old string with a new string. Only works if the old string appears exactly once. If old_string is empty, creates the file.",
+        name: "edit"
     }
 
     async fn run(

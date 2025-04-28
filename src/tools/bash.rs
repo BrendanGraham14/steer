@@ -239,7 +239,8 @@ struct BashParams {
 tool! {
     BashTool {
         params: BashParams,
-        description: "Run a bash command in the terminal"
+        description: "Run a bash command in the terminal",
+        name: "bash"
     }
 
     async fn run(

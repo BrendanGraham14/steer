@@ -39,7 +39,8 @@ struct DispatchAgentParams {
 tool! {
     DispatchAgentTool {
         params: DispatchAgentParams,
-        description: "Launch a new agent that has access to the following tools: GlobTool, GrepTool, LS, View."
+        description: "Launch a new agent that has access to the following tools: GlobTool, GrepTool, LS, View.",
+        name: "dispatch_agent"
     }
 
     async fn run(
