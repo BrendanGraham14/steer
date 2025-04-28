@@ -353,39 +353,11 @@ static BANNED_COMMAND_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {
         .collect()
 });
 
-static UNSAFE_PATTERN_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {
-    [
-        r"`",    // Backticks (command substitution)
-        r"\$\(", // $( command substitution) - Needs escaping
-        r";",    // Semicolon (command separation) - Allow simple cases later?
-        r"&&",   // && (command chaining) - Allow simple cases later?
-        r"\|",   // Pipe (|) - Needs escaping
-        r"<",    // Input redirection
-        r">",    // Output redirection (includes >>)
-    ]
-    .iter()
-    .map(|p| Regex::new(p).expect("Failed to compile unsafe pattern regex"))
-    .collect()
-});
-
-static SAFE_CHAIN_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[\w\s/._-]+(?:;&&?)[\w\s/._-]+$").expect("Failed to compile safe chain regex")
-});
-
 /// Check if a command is banned (basic, fast check)
 fn is_banned_command(command: &str) -> bool {
     // Check against the list of banned command names
     if BANNED_COMMAND_REGEXES.iter().any(|re| re.is_match(command)) {
         return true;
-    }
-
-    // Check for unsafe patterns
-    if UNSAFE_PATTERN_REGEXES.iter().any(|re| re.is_match(command)) {
-        // Allow simple chaining like 'cd foo; ls' or 'cmd1 && cmd2'
-        if (command.contains(';') || command.contains("&&")) && SAFE_CHAIN_REGEX.is_match(command) {
-            return false; // Allow simple chains, rely on CommandFilter for complex cases
-        }
-        return true; // Otherwise, ban based on unsafe pattern
     }
 
     false
