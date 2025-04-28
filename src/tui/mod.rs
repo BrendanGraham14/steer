@@ -517,12 +517,38 @@ impl Tui {
                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                 );
 
+                // Check if result should be truncated
+                const MAX_PREVIEW_LINES: usize = 5;
+                let lines: Vec<&str> = result.lines().collect();
+                let should_truncate = lines.len() > MAX_PREVIEW_LINES;
+                
+                let content = if should_truncate {
+                    // Create truncated preview content
+                    let preview_content = format!(
+                        "{}\n... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
+                        lines
+                            .iter()
+                            .take(MAX_PREVIEW_LINES)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        lines.len() - MAX_PREVIEW_LINES
+                    );
+                    format_tool_preview(
+                        &preview_content,
+                        self.terminal.size().map(|r| r.width).unwrap_or(100),
+                    )
+                } else {
+                    // Use original formatting if not truncated
+                    formatted_result_lines
+                };
+
                 let formatted_message = FormattedMessage {
-                    content: formatted_result_lines,
+                    content: content,
                     role: Role::Tool,
                     id: format!("result_{}", id), // Ensure unique ID for the result display
                     full_tool_result: Some(result),
-                    is_truncated: false,
+                    is_truncated: should_truncate,
                 };
                 self.messages.push(formatted_message);
                 messages_updated = true;
