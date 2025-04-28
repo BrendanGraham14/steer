@@ -6,11 +6,14 @@
 - [x] Embed these in the system prompt
 - [x] Omit .gitignore files from view
 
-### User Experience
+### TUI
 - [ ] Tool output formatting
   - [x] Diff format for `edit` and `replace_file`
-- [ ] Support navigating through previous messages and editing them
 - [ ] Support properly vertically expanding terminal input for multiple lines
+- [ ] Instead of constraining the output to the vertical section and having to navigate with +-, it would be nice if it simply lived in the terminal and was scrollable 
+
+### User Experience
+- [ ] Support navigating through previous messages and editing them
 - [ ] (Maybe): automatically create a new git worktree when a new instance is started
 - [ ] Support executing bash comments (like ! in claude code)
 - [ ] @files with fzf-like fuzzy search 
