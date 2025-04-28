@@ -1,7 +1,8 @@
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent,
+    MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -87,7 +88,8 @@ impl Tui {
             stdout,
             EnterAlternateScreen,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
-            EnableBracketedPaste
+            EnableBracketedPaste,
+            EnableMouseCapture
         )?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
@@ -124,7 +126,8 @@ impl Tui {
             self.terminal.backend_mut(),
             LeaveAlternateScreen,
             DisableBracketedPaste,
-            PopKeyboardEnhancementFlags
+            PopKeyboardEnhancementFlags,
+            DisableMouseCapture
         )?;
         disable_raw_mode()?;
         Ok(())
@@ -142,8 +145,6 @@ impl Tui {
                         break;
                     }
                 }
-                // Add a small sleep to prevent tight looping when no events occur
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
 
@@ -182,6 +183,9 @@ impl Tui {
             })?;
 
             select! {
+                // Prioritize terminal events (especially mouse events) for responsiveness
+                biased;
+
                 maybe_term_event = term_event_rx.recv() => {
                     match maybe_term_event {
                         Some(Ok(event)) => {
@@ -227,7 +231,73 @@ impl Tui {
                                 }
                                 Event::FocusGained => debug("tui.run", "Focus gained"),
                                 Event::FocusLost => debug("tui.run", "Focus lost"),
-                                Event::Mouse(_) => {} // Ignore mouse
+                                Event::Mouse(event) => {
+                                    // Fast path for mouse events to minimize latency
+                                    match event {
+                                        MouseEvent {
+                                            kind: MouseEventKind::ScrollDown,
+                                            ..
+                                        } => {
+                                            let current_offset = self.get_scroll_offset();
+                                            let max_scroll = self.get_max_scroll();
+                                            if current_offset < max_scroll {
+                                                let new_offset = (current_offset + 20).min(max_scroll);
+                                                self.set_scroll_offset(new_offset);
+                                                if new_offset == max_scroll {
+                                                    self.user_scrolled_away = false; // Reached bottom
+                                                }
+
+                                                // Immediate redraw for better responsiveness
+                                                if let Err(e) = self.terminal.draw(|f| {
+                                                    let textarea_ref = &self.textarea;
+                                                    let messages_ref = &self.messages;
+                                                    if let Err(e) = Tui::render_ui_static(
+                                                        f,
+                                                        textarea_ref,
+                                                        messages_ref,
+                                                        input_mode,
+                                                        self.scroll_offset,
+                                                        self.max_scroll,
+                                                    ) {
+                                                        error("tui.run.draw", &format!("UI rendering failed: {}", e));
+                                                    }
+                                                }) {
+                                                    error("tui.mouse_scroll", &format!("Failed to redraw: {}", e));
+                                                }
+                                            }
+                                        }
+                                        MouseEvent {
+                                            kind: MouseEventKind::ScrollUp,
+                                            ..
+                                        } => {
+                                            let current_offset = self.get_scroll_offset();
+                                            if current_offset > 0 {
+                                                let new_offset = current_offset.saturating_sub(20);
+                                                self.set_scroll_offset(new_offset);
+                                                self.user_scrolled_away = true; // User scrolled up
+
+                                                // Immediate redraw for better responsiveness
+                                                if let Err(e) = self.terminal.draw(|f| {
+                                                    let textarea_ref = &self.textarea;
+                                                    let messages_ref = &self.messages;
+                                                    if let Err(e) = Tui::render_ui_static(
+                                                        f,
+                                                        textarea_ref,
+                                                        messages_ref,
+                                                        input_mode,
+                                                        self.scroll_offset,
+                                                        self.max_scroll,
+                                                    ) {
+                                                        error("tui.run.draw", &format!("UI rendering failed: {}", e));
+                                                    }
+                                                }) {
+                                                    error("tui.mouse_scroll", &format!("Failed to redraw: {}", e));
+                                                }
+                                            }
+                                        }
+                                        _ => {} // Ignore other mouse events
+                                    }
+                                }
                             }
                         }
                         Some(Err(e)) => {
@@ -1318,7 +1388,11 @@ pub async fn run_tui(
     panic::set_hook(Box::new(move |panic_info| {
         // Attempt to clean up the terminal
         let _ = crossterm::terminal::disable_raw_mode();
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            DisableMouseCapture
+        );
 
         utils::logging::error(
             "panic_hook",
