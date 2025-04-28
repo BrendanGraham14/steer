@@ -63,3 +63,5 @@ coder-macros = { path = "coder-macros" }
 
 # Add ignore dependency
 ignore = "0.4"
+globset = "0.4.16"
+tempfile = "3.19.1"
