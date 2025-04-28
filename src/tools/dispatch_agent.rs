@@ -2,9 +2,9 @@ use anyhow::Result;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::api::Client as ApiClient;
 use crate::api::messages::MessageContent;
 use crate::api::messages::StructuredContent;
-use crate::api::Client as ApiClient;
 // Import necessary types for tool use
 use crate::api::CompletionResponse;
 // Use qualified paths to distinguish between the ContentBlock types
@@ -12,7 +12,6 @@ use crate::api::messages::{
     ContentBlock as MessageContentBlock, Message, convert_api_content_to_message_content,
 };
 use crate::api::tools::ToolResult;
-use crate::app::Role; // Use Role from app module as it's likely the one used elsewhere
 use crate::tools::ToolError;
 // Add CancellationToken import
 use tokio_util::sync::CancellationToken;
@@ -100,7 +99,7 @@ impl DispatchAgent {
         // Initial message list using the correct Message type
         let mut messages: Vec<Message> = vec![Message {
             id: None,
-            role: Role::User.to_string(),
+            role: "user".to_string(),
             content: MessageContent::Text {
                 content: prompt.to_string(),
             },
@@ -139,7 +138,7 @@ impl DispatchAgent {
             if !message_content_blocks.is_empty() {
                 messages.push(Message {
                     id: None, // Assuming API response doesn't give us a message ID directly here
-                    role: Role::Assistant.to_string(),
+                    role: "assistant".to_string(),
                     content: MessageContent::StructuredContent {
                         content: StructuredContent(message_content_blocks),
                     },
@@ -193,9 +192,8 @@ impl DispatchAgent {
                     })
                     .collect();
 
-                // Add tool results as a User message with structured content
                 messages.push(Message {
-                    role: Role::User.to_string(),
+                    role: "user".to_string(),
                     content: MessageContent::StructuredContent {
                         content: StructuredContent(result_blocks),
                     },
