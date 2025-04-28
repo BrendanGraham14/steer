@@ -7,7 +7,7 @@
 
 ### User Experience
 - [ ] Tool output formatting
-  - [ ] Diff format for `edit` and `replace_file`
+  - [x] Diff format for `edit` and `replace_file`
 - [ ] Support navigating through previous messages and editing them
 - [ ] Support properly vertically expanding terminal input for multiple lines
 
@@ -36,5 +36,4 @@
 - [ ] Save the set of allowed tools and don't require re-approval for tools which are already approved.
 - [ ] Allow read-only tools by default (i.e. don't require approval)
 - [ ] Support including + executing tools via Model Context Protocol
-
 

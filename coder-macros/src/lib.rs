@@ -4,14 +4,33 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
+    punctuated::Punctuated,
     Ident, ItemFn, LitStr, Path, Token,
 };
+
+// Define a struct to represent a single key-value pair within the braces
+struct FieldValue {
+    key: Ident,
+    _colon: Token![:],
+    value: syn::Expr, // Use syn::Expr for flexibility, handle specific types later
+}
+
+impl Parse for FieldValue {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(FieldValue {
+            key: input.parse()?,
+            _colon: input.parse()?,
+            value: input.parse()?, // Parse as a general expression
+        })
+    }
+}
 
 // Structure to parse the macro input like:
 // tool! {
 //    ToolName {
 //        params: ParamsStruct,
-//        description: "Description string"
+//        description: "Description string",
+//        name: "name_string"
 //    }
 //    async fn run(&self, p: ParamsStruct, cancel: Option<CancellationToken>) -> Result<String, ToolError> { ... }
 // }
@@ -29,43 +48,101 @@ impl Parse for ToolDefinition {
         let content;
         syn::braced!(content in input);
 
+        // Parse the fields using Punctuated, providing the separator
+        let fields: Punctuated<FieldValue, Token![,]> =
+            content.parse_terminated(FieldValue::parse, Token![,])?;
+
         let mut params_struct: Option<Path> = None;
         let mut description: Option<LitStr> = None;
         let mut name: Option<LitStr> = None;
 
-        while !content.is_empty() {
-            let key: Ident = content.parse()?;
-            content.parse::<Token![:]>()?;
-            if key == "params" {
-                params_struct = Some(content.parse()?);
-            } else if key == "description" {
-                description = Some(content.parse()?);
-            } else if key == "name" {
-                name = Some(content.parse()?);
-            } else {
-                return Err(syn::Error::new(
-                    key.span(),
-                    "Expected 'params', 'description', or 'name'",
-                ));
-            }
-            // Optional comma separator
-            if content.peek(Token![,]) {
-                content.parse::<Token![,]>()?;
+        for field in fields {
+            let key_str = field.key.to_string();
+            match key_str.as_str() {
+                "params" => {
+                    if params_struct.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            field.key,
+                            "Duplicate \'params\' field",
+                        ));
+                    }
+                    if let syn::Expr::Path(expr_path) = field.value {
+                        params_struct = Some(expr_path.path);
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            field.value,
+                            "Expected a path for \'params\' (e.g., crate::some::Params)",
+                        ));
+                    }
+                }
+                "description" => {
+                    if description.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            field.key,
+                            "Duplicate \'description\' field",
+                        ));
+                    }
+                    if let syn::Expr::Lit(ref expr_lit) = field.value {
+                        if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                            description = Some(lit_str.clone());
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                field.value,
+                                "Expected a string literal for \'description\' (e.g., \"...\")",
+                            ));
+                        }
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            field.value,
+                            "Expected a string literal for \'description\' (e.g., \"...\")",
+                        ));
+                    }
+                }
+                "name" => {
+                    if name.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            field.key,
+                            "Duplicate \'name\' field",
+                        ));
+                    }
+                    if let syn::Expr::Lit(ref expr_lit) = field.value {
+                        if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                            name = Some(lit_str.clone());
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                field.value,
+                                "Expected a string literal for \'name\' (e.g., \"tool_name\")",
+                            ));
+                        }
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            field.value,
+                            "Expected a string literal for \'name\' (e.g., \"tool_name\")",
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        field.key.span(),
+                        "Expected \'params\', \'description\', or \'name\'",
+                    ));
+                }
             }
         }
 
-        let params_struct =
-            params_struct.ok_or_else(|| syn::Error::new(input.span(), "Missing 'params' field"))?;
+        // Check for missing fields
+        let params_struct = params_struct
+            .ok_or_else(|| syn::Error::new(input.span(), "Missing \'params\' field"))?;
         let description = description
-            .ok_or_else(|| syn::Error::new(input.span(), "Missing 'description' field"))?;
-        let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing 'name' field"))?;
+            .ok_or_else(|| syn::Error::new(input.span(), "Missing \'description\' field"))?;
+        let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing \'name\' field"))?;
 
         let run_function: syn::ItemFn = input.parse()?;
 
         if run_function.sig.ident != "run" {
             return Err(syn::Error::new_spanned(
                 run_function.sig.ident,
-                "Function must be named 'run'",
+                "Function must be named \'run\'",
             ));
         }
 
@@ -94,7 +171,25 @@ pub fn tool(input: TokenStream) -> TokenStream {
     let tool_name_for_errors = tool_name_literal.value();
     let tool_name_str = quote! { #tool_name_literal };
 
+    // Generate a constant name from the tool struct name
+    let tool_struct_name_string = tool_struct_name.to_string();
+    let const_name_string = {
+        let mut result = String::new();
+        for (i, c) in tool_struct_name_string.chars().enumerate() {
+            if c.is_uppercase() && i != 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_uppercase());
+        }
+        result + "_NAME"
+    };
+
+    let const_name = syn::Ident::new(&const_name_string, tool_struct_name.span());
+
     let expanded = quote! {
+        // Generate a constant for the tool name
+        pub const #const_name: &str = #tool_name_literal;
+
         #[derive(Debug, Clone, Default)]
         pub struct #tool_struct_name;
 

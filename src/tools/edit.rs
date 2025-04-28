@@ -9,20 +9,20 @@ use crate::tools::ToolError;
 use coder_macros::tool;
 
 #[derive(Deserialize, Debug, JsonSchema)]
-struct EditParams {
+pub struct EditParams {
     /// The absolute path to the file to edit
-    file_path: String,
+    pub file_path: String,
     /// The exact string to find and replace. If empty, the file will be created.
-    old_string: String,
+    pub old_string: String,
     /// The string to replace `old_string` with.
-    new_string: String,
+    pub new_string: String,
 }
 
 tool! {
     EditTool {
         params: EditParams,
         description: "Edit a file by replacing an old string with a new string. Only works if the old string appears exactly once. If old_string is empty, creates the file.",
-        name: "edit"
+        name: "edit_file"
     }
 
     async fn run(

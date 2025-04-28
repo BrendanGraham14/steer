@@ -9,18 +9,18 @@ use crate::tools::ToolError;
 use coder_macros::tool;
 
 #[derive(Deserialize, Debug, JsonSchema)]
-struct ReplaceParams {
+pub struct ReplaceParams {
     /// The absolute path to the file to write
-    file_path: String,
+    pub file_path: String,
     /// The content to write to the file
-    content: String,
+    pub content: String,
 }
 
 tool! {
     ReplaceTool {
         params: ReplaceParams,
         description: "Write a file to the local filesystem, replacing it if it exists.",
-        name: "replace"
+        name: "replace_file"
     }
 
     async fn run(

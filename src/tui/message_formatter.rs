@@ -1,4 +1,8 @@
 use crate::app::conversation::MessageContentBlock;
+use crate::tools::edit::EDIT_TOOL_NAME;
+use crate::tools::edit::EditParams;
+use crate::tools::replace::REPLACE_TOOL_NAME;
+use crate::tools::replace::ReplaceParams;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use textwrap;
@@ -132,37 +136,129 @@ pub fn format_tool_call_block(
     // Use a minimum width if terminal is very narrow
     let wrap_width = wrap_width.max(40);
 
-    lines.push(Line::from(Span::styled(
-        format!("-> Calling Tool: {}", tool_call.name),
-        Style::default().fg(Color::Cyan), // Style for tool call indication
-    )));
-    // Pretty print JSON parameters
-    match serde_json::to_string_pretty(&tool_call.parameters) {
-        Ok(params_str) => {
-            for line in params_str.lines() {
-                // Create the indented line as an owned String
-                let indented_line = format!("   {}", line);
-                // Wrap long parameter lines
-                let wrapped_lines = textwrap::wrap(&indented_line, wrap_width);
-                for wrapped_line in wrapped_lines {
+    let tool_name = tool_call.name.as_str();
+
+    // Try to format specific tools as diffs
+    let formatted_as_diff = match tool_name {
+        EDIT_TOOL_NAME => {
+            if let Ok(params) = serde_json::from_value::<EditParams>(tool_call.parameters.clone()) {
+                if params.old_string.is_empty() {
+                    // Format as file creation
                     lines.push(Line::from(Span::styled(
-                        wrapped_line.to_string(), // Create an owned String
+                        format!("-> Calling Tool: edit (Creating {})", params.file_path),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        format!("+++ {}", params.file_path),
+                        Style::default().fg(Color::Green),
+                    )));
+                    for line in params.new_string.lines() {
+                        for wrapped_line in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::styled(
+                                format!("+ {}", wrapped_line),
+                                Style::default().fg(Color::Green),
+                            )));
+                        }
+                    }
+                } else {
+                    // Format as replacement
+                    lines.push(Line::from(Span::styled(
+                        format!("-> Calling Tool: edit (Modifying {})", params.file_path),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                    lines.push(Line::from(Span::styled(
+                        "Replace:",
                         Style::default().fg(Color::DarkGray),
                     )));
+                    for line in params.old_string.lines() {
+                        for wrapped_line in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::styled(
+                                format!("- {}", wrapped_line),
+                                Style::default().fg(Color::Red),
+                            )));
+                        }
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "With:",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                    for line in params.new_string.lines() {
+                        for wrapped_line in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::styled(
+                                format!("+ {}", wrapped_line),
+                                Style::default().fg(Color::Green),
+                            )));
+                        }
+                    }
                 }
+                Some(()) // Indicate successful diff formatting
+            } else {
+                None // Deserialization failed, fallback to JSON
             }
         }
-        Err(_) => {
-            lines.push(Line::from(Span::styled(
-                format!("   Parameters: (Failed to format JSON)"),
-                Style::default().fg(Color::Red),
-            )));
+        REPLACE_TOOL_NAME => {
+            if let Ok(params) =
+                serde_json::from_value::<ReplaceParams>(tool_call.parameters.clone())
+            {
+                // Format as file replacement (showing new content)
+                lines.push(Line::from(Span::styled(
+                    format!("-> Calling Tool: replace ({})", params.file_path),
+                    Style::default().fg(Color::Cyan),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("+++ {} (New Content)", params.file_path),
+                    Style::default().fg(Color::Green),
+                )));
+                for line in params.content.lines() {
+                    for wrapped_line in textwrap::wrap(line, wrap_width) {
+                        lines.push(Line::from(Span::styled(
+                            format!("+ {}", wrapped_line),
+                            Style::default().fg(Color::Green),
+                        )));
+                    }
+                }
+                Some(()) // Indicate successful diff formatting
+            } else {
+                None // Deserialization failed, fallback to JSON
+            }
+        }
+        _ => None, // Not a tool we format as a diff
+    };
+
+    // Fallback to generic JSON formatting if diff formatting didn't happen
+    if formatted_as_diff.is_none() {
+        lines.push(Line::from(Span::styled(
+            format!("-> Calling Tool: {}", tool_call.name),
+            Style::default().fg(Color::Cyan),
+        )));
+        match serde_json::to_string_pretty(&tool_call.parameters) {
+            Ok(params_str) => {
+                for line in params_str.lines() {
+                    let indented_line = format!("   {}", line);
+                    let wrapped_lines = textwrap::wrap(&indented_line, wrap_width);
+                    for wrapped_line in wrapped_lines {
+                        lines.push(Line::from(Span::styled(
+                            wrapped_line.to_string(),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                }
+            }
+            Err(_) => {
+                lines.push(Line::from(Span::styled(
+                    format!("   Parameters: (Failed to format JSON)"),
+                    Style::default().fg(Color::Red),
+                )));
+            }
         }
     }
+
+    // Always add the Tool ID at the end
     lines.push(Line::from(Span::styled(
         format!("   (ID: {})", tool_call.id),
         Style::default().fg(Color::DarkGray),
     )));
+
     lines
 }
 
