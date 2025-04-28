@@ -11,6 +11,7 @@
   - [x] Diff format for `edit` and `replace_file`
 - [ ] Support properly vertically expanding terminal input for multiple lines
 - [x] Add mouse wheel scrolling support to the TUI
+- [ ] fix issue where we have to press enter at program exit
 
 ### User Experience
 - [ ] Support navigating through previous messages and editing them
