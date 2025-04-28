@@ -10,6 +10,7 @@
   - [x] Diff format for `edit` and `replace_file`
 - [ ] Support navigating through previous messages and editing them
 - [ ] Support properly vertically expanding terminal input for multiple lines
+- [ ] (Maybe): automatically create a new git worktree when a new instance is started
 
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts
