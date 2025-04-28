@@ -48,6 +48,7 @@ impl ToolExecutorBuilder {
             .add_tool::<crate::tools::view::ViewTool>()
             .add_tool::<crate::tools::edit::EditTool>()
             .add_tool::<crate::tools::replace::ReplaceTool>()
+            .add_tool::<crate::tools::fetch::FetchTool>()
     }
 
     /// Create a builder pre-configured with read-only tools

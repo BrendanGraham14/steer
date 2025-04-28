@@ -36,4 +36,5 @@
 - [ ] Save the set of allowed tools and don't require re-approval for tools which are already approved.
 - [ ] Allow read-only tools by default (i.e. don't require approval)
 - [ ] Support including + executing tools via Model Context Protocol
+- [x] Support a `fetch` tool which can fetch the contents of a webpage.
 

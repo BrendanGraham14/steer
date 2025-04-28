@@ -11,6 +11,7 @@ pub mod bash;
 pub mod command_filter;
 pub mod dispatch_agent;
 pub mod edit;
+pub mod fetch;
 pub mod glob_tool;
 pub mod grep_tool;
 pub mod ls;
