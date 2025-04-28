@@ -1,80 +1,106 @@
-use anyhow::{Context, Result};
-use glob::Pattern;
-use std::fs;
+use anyhow::Result;
+use chrono::Local;
+use ignore::WalkBuilder;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::path::Path;
+use tokio_util::sync::CancellationToken;
 
-/// List files and directories in a given path
-pub fn list_directory(dir_path: &str, ignore_patterns: &[String]) -> Result<String> {
-    let path = Path::new(dir_path);
+use crate::tools::ToolError;
+use coder_macros::tool;
 
-    // Check if path exists and is a directory
-    if !path.exists() {
-        return Err(anyhow::anyhow!("Path does not exist: {}", dir_path));
+#[derive(Deserialize, Debug, JsonSchema)]
+struct LsParams {
+    /// The absolute path to the directory to list
+    path: String,
+    /// Optional list of glob patterns to ignore
+    ignore: Option<Vec<String>>,
+}
+
+tool! {
+    LsTool {
+        params: LsParams,
+        description: "List files and directories in a given path"
     }
 
+    async fn run(
+        _tool: &LsTool,
+        params: LsParams,
+        token: Option<CancellationToken>,
+    ) -> Result<String, ToolError> {
+        // Cancellation check
+        if let Some(t) = &token {
+            if t.is_cancelled() {
+                return Err(ToolError::Cancelled("LS".to_string()));
+            }
+        }
+
+        // Call internal synchronous logic
+        list_directory_internal(&params.path, &params.ignore.unwrap_or_default())
+            .map_err(|e| ToolError::execution("LS", e))
+    }
+}
+
+fn list_directory_internal(path_str: &str, ignore_patterns: &[String]) -> Result<String> {
+    let path = Path::new(path_str);
     if !path.is_dir() {
-        return Err(anyhow::anyhow!("Not a directory: {}", dir_path));
+        return Err(anyhow::anyhow!("Path is not a directory: {}", path_str));
     }
 
-    // Compile ignore patterns
-    let compiled_patterns: Vec<Pattern> = ignore_patterns
-        .iter()
-        .filter_map(|pattern| Pattern::new(pattern).ok())
-        .collect();
+    let mut walk_builder = WalkBuilder::new(path);
+    walk_builder.max_depth(Some(1)); // Only list immediate children
+    walk_builder.git_ignore(true);
+    walk_builder.ignore(true);
+    walk_builder.hidden(false); // Show hidden files unless explicitly ignored
 
-    // Read directory
-    let entries = fs::read_dir(path).context(format!("Failed to read directory: {}", dir_path))?;
+    // Add custom ignore patterns
+    for pattern in ignore_patterns {
+        walk_builder.add_ignore(pattern);
+    }
 
-    // Process entries
+    let walker = walk_builder.build();
     let mut dirs = Vec::new();
     let mut files = Vec::new();
 
-    for entry_result in entries {
-        let entry = entry_result.context("Failed to read directory entry")?;
-        let entry_path = entry.path();
-        let file_name = entry_path.file_name().unwrap_or_default().to_string_lossy();
-
-        // Skip entries matching ignore patterns
-        let should_ignore = compiled_patterns
-            .iter()
-            .any(|pattern| pattern.matches(&file_name));
-        if should_ignore {
-            continue;
-        }
-
-        // Add to appropriate list
-        if entry_path.is_dir() {
-            dirs.push(format!("{}/", file_name));
-        } else {
-            files.push(file_name.to_string());
+    for result in walker.skip(1) {
+        // Skip the root directory itself
+        match result {
+            Ok(entry) => {
+                let file_path = entry.path();
+                let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
+                
+                // Add to appropriate list based on file type
+                if file_path.is_dir() {
+                    dirs.push(format!("{}/", file_name));
+                } else {
+                    files.push(file_name.to_string());
+                }
+            }
+            Err(e) => {
+                // Log errors but don't include in the output
+                eprintln!("Error accessing entry: {}", e);
+            }
         }
     }
 
-    // Sort entries
-    dirs.sort();
-    files.sort();
+    // Combine and sort all entries
+    let mut all_entries = Vec::new();
+    all_entries.extend(dirs);
+    all_entries.extend(files);
+    all_entries.sort();
 
     // Format output
     let mut output = String::new();
 
-    output.push_str(&format!("Directory contents of {}:\n\n", dir_path));
-
-    if dirs.is_empty() && files.is_empty() {
-        output.push_str("Directory is empty.\n");
+    if all_entries.is_empty() {
+        output.push_str("Directory is empty or contains only ignored files.");
     } else {
-        if !dirs.is_empty() {
-            output.push_str("Directories:\n");
-            for dir in dirs {
-                output.push_str(&format!("- {}\n", dir));
-            }
-            output.push('\n');
+        for entry in all_entries {
+            output.push_str(&format!("{}\n", entry));
         }
-
-        if !files.is_empty() {
-            output.push_str("Files:\n");
-            for file in files {
-                output.push_str(&format!("- {}\n", file));
-            }
+        // Remove the last newline
+        if output.ends_with('\n') {
+            output.pop();
         }
     }
 

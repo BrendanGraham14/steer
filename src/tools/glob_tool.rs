@@ -1,54 +1,70 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use glob::glob;
-use std::fs;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::path::Path;
+use tokio_util::sync::CancellationToken;
 
-/// Search for files matching a glob pattern
-pub fn glob_search(pattern: &str, path: &str) -> Result<String> {
-    let base_path = Path::new(path);
+use crate::tools::ToolError;
+use coder_macros::tool;
 
-    // Ensure the path exists
-    if !base_path.exists() {
-        return Err(anyhow::anyhow!("Path does not exist: {}", path));
+#[derive(Deserialize, Debug, JsonSchema)]
+struct GlobParams {
+    /// The glob pattern to match files against
+    pattern: String,
+    /// Optional directory to search in. Defaults to the current working directory.
+    path: Option<String>,
+}
+
+tool! {
+    GlobTool {
+        params: GlobParams,
+        description: "Find files by glob pattern"
     }
 
-    // Calculate the full pattern
-    let full_pattern = if base_path.to_string_lossy() == "." {
+    async fn run(
+        _tool: &GlobTool,
+        params: GlobParams,
+        token: Option<CancellationToken>,
+    ) -> Result<String, ToolError> {
+        if let Some(t) = &token {
+            if t.is_cancelled() {
+                return Err(ToolError::Cancelled("GlobTool".to_string()));
+            }
+        }
+
+        glob_search_internal(&params.pattern, params.path.as_deref().unwrap_or("."))
+            .map_err(|e| ToolError::execution("GlobTool", e))
+    }
+}
+
+fn glob_search_internal(pattern: &str, path: &str) -> Result<String> {
+    let base_path = Path::new(path);
+    let glob_pattern = if base_path.to_string_lossy() == "." {
         pattern.to_string()
     } else {
         format!("{}/{}", base_path.display(), pattern)
     };
 
-    // Search for matching files
-    let paths = glob(&full_pattern)
-        .context(format!("Invalid glob pattern: {}", full_pattern))?
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-
-    // Sort paths by modification time (newest first)
-    let mut paths_with_time = Vec::new();
-    for path in paths {
-        if let Ok(metadata) = fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                paths_with_time.push((path, modified));
-            } else {
-                paths_with_time.push((path, std::time::SystemTime::UNIX_EPOCH));
+    let mut results = Vec::new();
+    for entry in glob(&glob_pattern)? {
+        match entry {
+            Ok(path) => {
+                results.push(path.display().to_string());
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Error matching glob pattern '{}': {}",
+                    glob_pattern,
+                    e
+                ));
             }
         }
     }
 
-    paths_with_time.sort_by(|a, b| b.1.cmp(&a.1));
-
-    // Format output
-    if paths_with_time.is_empty() {
-        Ok("No files found matching pattern.".to_string())
+    if results.is_empty() {
+        Ok("No files found matching the pattern.".to_string())
     } else {
-        let results = paths_with_time
-            .iter()
-            .map(|(path, _)| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        Ok(results)
+        Ok(results.join("\n"))
     }
 }

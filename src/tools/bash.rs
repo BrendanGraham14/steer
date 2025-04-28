@@ -1,27 +1,26 @@
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 use regex::Regex;
-use std::process::{Command, Stdio};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::time::Duration;
+use tokio::process::Command;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use crate::tools::ToolError;
+use coder_macros::tool;
+
 /// Bash tool implementation
 pub struct Bash {
-    command_filter: Option<crate::tools::command_filter::CommandFilter>,
+    command_filter: crate::tools::command_filter::CommandFilter,
 }
 
 impl Bash {
     /// Create a new Bash tool
     pub fn new() -> Self {
         Self {
-            command_filter: None,
-        }
-    }
-
-    /// Create a new Bash tool with a command filter
-    pub fn with_command_filter(api_key: &str) -> Self {
-        Self {
-            command_filter: Some(crate::tools::command_filter::CommandFilter::new(api_key)),
+            command_filter: crate::tools::command_filter::CommandFilter::new(),
         }
     }
 
@@ -56,32 +55,26 @@ impl Bash {
                 command
             ));
         }
-        // If we have a command filter, use it for enhanced security
-        if let Some(filter) = &self.command_filter {
-            // Check if the command is allowed
-            let is_allowed = if let Some(token) = &token {
-                filter.is_command_allowed(command, token.clone()).await?
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Command filter is enabled, but no cancellation token was provided to execute_with_timeout"
-                ));
-            };
 
-            if !is_allowed {
-                return Err(anyhow::anyhow!(
-                    "This command '{}' was blocked by the command filter. It may contain command injection or use disallowed commands.",
-                    command
-                ));
-            }
+        let token = token.unwrap_or_else(CancellationToken::new);
+
+        let is_allowed = self
+            .command_filter
+            .is_command_allowed(command, token.clone())
+            .await?;
+
+        if !is_allowed {
+            return Err(anyhow::anyhow!(
+                "This command '{}' was blocked by the command filter. It may contain command injection or use disallowed commands.",
+                command
+            ));
         }
 
         // Check for cancellation before executing
-        if let Some(token) = &token {
-            if token.is_cancelled() {
-                return Err(anyhow::anyhow!(
-                    "Command execution was cancelled before starting"
-                ));
-            }
+        if token.is_cancelled() {
+            return Err(anyhow::anyhow!(
+                "Command execution was cancelled before starting"
+            ));
         }
 
         // Execute the command with a timeout and cancellation support
@@ -90,23 +83,17 @@ impl Bash {
 
         // Create the future to execute the command
         let command_future = async {
-            let spawn_result = tokio::task::spawn_blocking(move || {
-                Command::new("bash")
-                    .arg("-c")
-                    .arg(command_owned)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .output()
-            })
-            .await;
-
-            spawn_result
-                .context("Failed to execute command")?
-                .context("Command execution failed")
+            // Use tokio::process::Command directly and await its output
+            Command::new("bash")
+                .arg("-c")
+                .arg(command_owned) // command_owned is moved here
+                .output() // This returns impl Future<Output = std::io::Result<std::process::Output>>
+                .await // Await the future directly
+                .context("Command execution failed") // Convert io::Result to anyhow::Result
         };
 
         // If we have a cancellation token, use select! to race the command against cancellation
-        let result = if let Some(token) = token {
+        let result = {
             tokio::select! {
                 biased; // Check cancellation first
 
@@ -118,11 +105,6 @@ impl Bash {
                     timeout_result.context("Command execution timed out")?
                 }
             }
-        } else {
-            // No cancellation token, just execute with timeout
-            timeout(timeout_duration, command_future)
-                .await
-                .context("Command execution timed out")?
         };
 
         // Handle the Result from command execution
@@ -243,4 +225,110 @@ fn is_banned_command(command: &str) -> bool {
     }
 
     false
+}
+
+// Derive JsonSchema for parameters
+#[derive(Deserialize, Debug, JsonSchema)]
+struct BashParams {
+    /// The command to execute
+    command: String,
+    /// Optional timeout in milliseconds (default 3600000, max 3600000)
+    timeout: Option<u64>,
+}
+
+tool! {
+    BashTool {
+        params: BashParams,
+        description: "Run a bash command in the terminal"
+    }
+
+    async fn run(
+        _tool: &BashTool,
+        params: BashParams,
+        token: Option<CancellationToken>,
+    ) -> Result<String, ToolError> {
+        // TODO: How to integrate command filtering?
+        let timeout_ms = params.timeout.unwrap_or(3_600_000).min(3_600_000);
+
+        if let Some(t) = &token {
+            execute_bash_with_cancellation_internal(&params.command, timeout_ms, t.clone()).await
+        } else {
+            execute_bash_internal(&params.command, timeout_ms).await
+        }
+    }
+}
+
+// --- Internal execution logic (adapted from original mod.rs and bash.rs) ---
+
+async fn execute_bash_internal(command: &str, timeout_ms: u64) -> Result<String, ToolError> {
+    let cmd_timeout = Duration::from_millis(timeout_ms);
+
+    match timeout(cmd_timeout, run_command(command)).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(tool_err)) => Err(tool_err),
+        Err(_) => Err(ToolError::Timeout("Bash".to_string())),
+    }
+}
+
+async fn execute_bash_with_cancellation_internal(
+    command: &str,
+    timeout_ms: u64,
+    token: CancellationToken,
+) -> Result<String, ToolError> {
+    let cmd_timeout = Duration::from_millis(timeout_ms);
+
+    tokio::select! {
+        _ = token.cancelled() => {
+            Err(ToolError::Cancelled("Bash".to_string()))
+        }
+        res = timeout(cmd_timeout, run_command(command)) => {
+             match res {
+                Ok(Ok(output)) => Ok(output),
+                Ok(Err(tool_err)) => Err(tool_err),
+                Err(_) => Err(ToolError::Timeout("Bash".to_string())),
+            }
+        }
+    }
+}
+
+async fn run_command(command: &str) -> Result<String, ToolError> {
+    let output_result = Command::new("/bin/bash")
+        .arg("-c")
+        .arg(command)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| ToolError::Io {
+            tool_name: "Bash".to_string(),
+            source: e.into(),
+        })?
+        .wait_with_output()
+        .await
+        .map_err(|e| ToolError::Io {
+            tool_name: "Bash".to_string(),
+            source: e.into(),
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output_result.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output_result.stderr).to_string();
+
+    if output_result.status.success() {
+        Ok(stdout)
+    } else {
+        let exit_code = output_result
+            .status
+            .code()
+            .map_or_else(|| "N/A".to_string(), |c| c.to_string());
+
+        let error_message = format!(
+            "Command failed with exit code {}\n--- STDOUT ---\n{}\n--- STDERR ---\n{}",
+            exit_code,
+            stdout.trim(),
+            stderr.trim()
+        );
+        Err(ToolError::Execution {
+            tool_name: "Bash".to_string(),
+            message: error_message,
+        })
+    }
 }

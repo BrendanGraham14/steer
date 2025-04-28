@@ -1,7 +1,6 @@
 use anyhow::Result;
 use coder::tools::command_filter::CommandFilter;
 use dotenv::dotenv;
-use std::env;
 
 #[tokio::test]
 #[ignore]
@@ -9,17 +8,7 @@ async fn test_command_filter() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
 
-    // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return Ok(());
-        }
-    };
-
-    // Create the command filter
-    let filter = CommandFilter::new(&api_key);
+    let filter = CommandFilter::new();
 
     // Test known safe commands
     let safe_commands = [
@@ -35,7 +24,9 @@ async fn test_command_filter() -> Result<()> {
     ];
 
     for cmd in &safe_commands {
-        let is_allowed = filter.is_command_allowed(cmd).await?;
+        let is_allowed = filter
+            .is_command_allowed(cmd, tokio_util::sync::CancellationToken::new())
+            .await?;
         assert!(is_allowed, "Command should be allowed: {}", cmd);
         println!("Safe command allowed: {}", cmd);
     }
@@ -53,7 +44,9 @@ async fn test_command_filter() -> Result<()> {
     ];
 
     for cmd in &unsafe_commands {
-        let is_allowed = filter.is_command_allowed(cmd).await?;
+        let is_allowed = filter
+            .is_command_allowed(cmd, tokio_util::sync::CancellationToken::new())
+            .await?;
         assert!(!is_allowed, "Command should be blocked: {}", cmd);
         println!("Unsafe command blocked: {}", cmd);
     }

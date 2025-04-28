@@ -1,4 +1,6 @@
 use anyhow::Result;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::env;
 
 use crate::api::messages::MessageContent;
@@ -11,34 +13,80 @@ use crate::api::CompletionResponse;
 use crate::api::messages::{
     ContentBlock as MessageContentBlock, Message, convert_api_content_to_message_content,
 };
-use crate::api::tools::{Tool, ToolResult};
+use crate::api::tools::ToolResult;
 use crate::app::Role; // Use Role from app module as it's likely the one used elsewhere
-use crate::tools;
+use crate::tools::ToolError;
 // Add CancellationToken import
 use tokio_util::sync::CancellationToken;
+// Add schemars import
+use coder_macros::tool; // Import tool modules
 
 /// Dispatch Agent implementation
 pub struct DispatchAgent {
     // Store the API client instead of just the key
     api_client: ApiClient,
+    // Tool executor for read-only tools
+    tool_executor: crate::app::ToolExecutor,
 }
+
+// Derive JsonSchema for parameters
+#[derive(Deserialize, Debug, JsonSchema)]
+struct DispatchAgentParams {
+    /// The task for the agent to perform
+    prompt: String,
+}
+
+tool! {
+    DispatchAgentTool {
+        params: DispatchAgentParams,
+        description: "Launch a new agent that has access to the following tools: GlobTool, GrepTool, LS, View."
+    }
+
+    async fn run(
+        _tool: &DispatchAgentTool,
+        params: DispatchAgentParams,
+        token: Option<CancellationToken>,
+    ) -> Result<String, ToolError> {
+        let token = token.unwrap_or_else(CancellationToken::new);
+        let agent = DispatchAgent::new();
+        agent
+            .execute(&params.prompt, token)
+            .await
+            .map_err(|e| ToolError::execution("dispatch_agent", e))
+    }
+}
+// The static tool list is now replaced by the ToolExecutor with read-only tools
 
 impl DispatchAgent {
     pub fn new() -> Self {
         let api_key = env::var("CLAUDE_API_KEY").unwrap_or_else(|_| String::from(""));
         let api_client = ApiClient::new(&api_key).with_model("claude-3-haiku-20240307");
 
-        Self { api_client }
+        // Create a tool executor with read-only tools
+        let tool_executor = crate::app::ToolExecutor::read_only();
+
+        Self {
+            api_client,
+            tool_executor,
+        }
     }
 
     pub fn with_api_key(api_key: String) -> Self {
         let api_client = ApiClient::new(&api_key).with_model("claude-3-haiku-20240307");
-        Self { api_client }
+
+        // Create a tool executor with read-only tools
+        let tool_executor = crate::app::ToolExecutor::read_only();
+
+        Self {
+            api_client,
+            tool_executor,
+        }
     }
 
     /// Execute the dispatch agent with a prompt
     pub async fn execute(&self, prompt: &str, token: CancellationToken) -> Result<String> {
-        let available_tools = Tool::read_only();
+        // Use the tool executor to get API tools
+        let available_tools = self.tool_executor.to_api_tools();
         let system_prompt = self.create_system_prompt()?;
 
         // Initial message list using the correct Message type
@@ -103,13 +151,11 @@ impl DispatchAgent {
                         &format!("Dispatch agent executing tool: {}", tool_call.name),
                     );
 
-                    // Pass token and agent's API key to execute_tool
-                    let result = tools::execute_tool(
-                        &tool_call.name,
-                        &tool_call.parameters,
-                        Some(token.clone()),
-                    )
-                    .await;
+                    // Execute the tool using our tool executor
+                    let result = self
+                        .tool_executor
+                        .execute_tool_with_cancellation(&tool_call, token.clone())
+                        .await;
 
                     let output = match result {
                         Ok(output) => output,

@@ -2,7 +2,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use uuid;
 
@@ -14,6 +13,7 @@ pub mod conversation;
 mod environment;
 
 mod tool_executor;
+mod tool_registry;
 
 use crate::app::context::TaskOutcome;
 
@@ -80,7 +80,6 @@ pub struct App {
     pub env_info: EnvironmentInfo,
     pub tool_executor: Arc<ToolExecutor>,
     pub api_client: crate::api::Client,
-    pub command_filter: Option<crate::tools::command_filter::CommandFilter>,
     event_sender: mpsc::Sender<AppEvent>,
     approved_tools: HashSet<String>,
     current_op_context: Option<OpContext>,
@@ -92,9 +91,6 @@ impl App {
         let conversation = Arc::new(Mutex::new(Conversation::new()));
         let tool_executor = Arc::new(ToolExecutor::new());
         let api_client = crate::api::Client::new(&config.api_key);
-        let command_filter = Some(crate::tools::command_filter::CommandFilter::new(
-            &config.api_key,
-        ));
 
         Ok(Self {
             config,
@@ -102,7 +98,6 @@ impl App {
             env_info,
             tool_executor,
             api_client,
-            command_filter,
             event_sender: event_tx,
             approved_tools: HashSet::new(),
             current_op_context: None,
@@ -192,8 +187,13 @@ impl App {
 
         let api_client = self.api_client.clone();
         let conversation = self.conversation.clone();
-        // event_sender no longer needed here
-        let tools = Some(crate::api::tools::Tool::all());
+        // Get tools from the executor and convert them to api::Tool structs
+        let api_tools = self.tool_executor.to_api_tools();
+        let tools = if api_tools.is_empty() {
+            None
+        } else {
+            Some(api_tools)
+        };
 
         // Get mutable access to OpContext and its token
         let op_context = match &mut self.current_op_context {
@@ -387,14 +387,17 @@ impl App {
             let captured_tool_name = tool_name_for_log.clone();
             op_context.tasks.spawn(async move {
                 let task_id = tool_call.id.clone();
-                let result: Result<String> =
+                // Map ToolError to anyhow::Error
+                let result: Result<String, anyhow::Error> =
                     context_util::execute_tool_task_logic(tool_call.clone(), tool_executor, token)
-                        .await;
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e)); // Convert ToolError -> anyhow::Error
+
                 // Construct TaskOutcome::ToolResult
                 TaskOutcome::ToolResult {
                     tool_call_id: task_id,
                     tool_name: captured_tool_name,
-                    result,
+                    result, // Now Result<String, anyhow::Error>
                 }
             });
 
@@ -543,18 +546,20 @@ impl App {
                     let task_id = tool_call_owned.id.clone(); // Clone ID from owned data
                     let tool_name_captured = tool_call_owned.name.clone(); // Clone name from owned data
 
-                    let result: Result<String> = context_util::execute_tool_task_logic(
-                        tool_call_owned, // Pass the owned ToolCall
-                        tool_executor,
-                        token,
-                    )
-                    .await;
+                    let result: Result<String, anyhow::Error> =
+                        context_util::execute_tool_task_logic(
+                            tool_call_owned, // Pass the owned ToolCall
+                            tool_executor,
+                            token,
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e)); // Convert ToolError -> anyhow::Error
 
                     // Return TaskOutcome::ToolResult
                     TaskOutcome::ToolResult {
                         tool_call_id: task_id,
                         tool_name: tool_name_captured,
-                        result,
+                        result, // Now Result<String, anyhow::Error>
                     }
                 });
 
@@ -1097,7 +1102,10 @@ async fn handle_api_response_logic(
                 let added_message_id;
                 {
                     let mut conv_guard = app.conversation.lock().await;
-                    conv_guard.add_message_with_blocks(Role::Assistant, content_blocks.clone());
+                    conv_guard.add_message(Message::new_with_blocks(
+                        Role::Assistant,
+                        content_blocks.clone(),
+                    ));
                     added_message_id = conv_guard
                         .messages
                         .last()

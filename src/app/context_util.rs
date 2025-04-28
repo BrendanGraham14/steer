@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::ToolCall;
 use crate::app::ToolExecutor;
+use crate::tools::ToolError;
 
 // Removed the old execute_tool_with_context function.
 
@@ -17,8 +18,8 @@ pub async fn execute_tool_task_logic(
     // conversation: Arc<Mutex<Conversation>>,
     // event_sender: Option<Sender<AppEvent>>,
     token: CancellationToken,
-) -> Result<String> {
-    // Return Result<String> instead of TaskResult
+) -> Result<String, ToolError> {
+    // Return Result<String, ToolError> instead of TaskResult
     let tool_id = tool_call.id.clone();
     let tool_name = tool_call.name.clone();
 
@@ -29,11 +30,8 @@ pub async fn execute_tool_task_logic(
 
     // Check for cancellation before starting
     if token.is_cancelled() {
-        return Err(anyhow::anyhow!(
-            "Tool execution for {} ({}) cancelled before starting",
-            tool_name,
-            tool_id
-        ));
+        // Return ToolError::Cancelled
+        return Err(ToolError::Cancelled(format!("{} ({})", tool_name, tool_id)));
     }
 
     // Use the cancellation-aware tool execution method
@@ -58,6 +56,6 @@ pub async fn execute_tool_task_logic(
         ),
     }
 
-    // Return the raw Result<String>
+    // Return the raw Result<String, ToolError>
     result
 }

@@ -1,8 +1,12 @@
-use anyhow::{Context, Result};
-use serde_json::Value;
-use tokio_util::sync::CancellationToken;
+// Publicly export the error and trait types
+pub mod error;
+pub mod traits;
 
-// Export the modules for testing and direct use
+pub use error::ToolError;
+pub use traits::Tool;
+
+// Export the individual tool modules
+// These modules will now contain the Tool implementations
 pub mod bash;
 pub mod command_filter;
 pub mod dispatch_agent;
@@ -12,139 +16,3 @@ pub mod grep_tool;
 pub mod ls;
 pub mod replace;
 pub mod view;
-
-/// Execute a tool based on the name and parameters, with optional cancellation support
-pub async fn execute_tool(
-    name: &str,
-    parameters: &Value,
-    token: Option<CancellationToken>,
-) -> Result<String> {
-    // Check for cancellation before starting
-    if let Some(token) = &token {
-        if token.is_cancelled() {
-            return Err(anyhow::anyhow!("Tool execution cancelled before starting"));
-        }
-    }
-    match name {
-        "Bash" => {
-            let command = parameters["command"]
-                .as_str()
-                .context("Missing command parameter")?;
-
-            let timeout = parameters
-                .get("timeout")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(3_600_000); // Default to 1 hour
-
-            match token {
-                Some(cancel_token) => {
-                    bash::execute_bash_with_cancellation(command, timeout, cancel_token).await
-                }
-                None => bash::execute_bash(command, timeout).await,
-            }
-        }
-        "GlobTool" => {
-            let pattern = parameters["pattern"]
-                .as_str()
-                .context("Missing pattern parameter")?;
-
-            let path = parameters
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
-
-            glob_tool::glob_search(pattern, path)
-        }
-        "GrepTool" => {
-            let pattern = parameters["pattern"]
-                .as_str()
-                .context("Missing pattern parameter")?;
-
-            let include = parameters.get("include").and_then(|v| v.as_str());
-
-            let path = parameters
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
-
-            grep_tool::grep_search(pattern, include, path)
-        }
-        "LS" => {
-            let path = parameters["path"]
-                .as_str()
-                .context("Missing path parameter")?;
-
-            let ignore: Vec<String> = parameters
-                .get("ignore")
-                .and_then(|v| {
-                    if v.is_array() {
-                        Some(
-                            v.as_array()
-                                .unwrap()
-                                .iter()
-                                .filter_map(|p| p.as_str().map(String::from))
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
-
-            ls::list_directory(path, &ignore)
-        }
-        "View" => {
-            let file_path = parameters["file_path"]
-                .as_str()
-                .context("Missing file_path parameter")?;
-
-            let offset = parameters
-                .get("offset")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize);
-
-            let limit = parameters
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize);
-
-            view::view_file(file_path, offset, limit).await
-        }
-        "Edit" => {
-            let file_path = parameters["file_path"]
-                .as_str()
-                .context("Missing file_path parameter")?;
-
-            let old_string = parameters["old_string"]
-                .as_str()
-                .context("Missing old_string parameter")?;
-
-            let new_string = parameters["new_string"]
-                .as_str()
-                .context("Missing new_string parameter")?;
-
-            edit::edit_file(file_path, old_string, new_string).await
-        }
-        "Replace" => {
-            let file_path = parameters["file_path"]
-                .as_str()
-                .context("Missing file_path parameter")?;
-
-            let content = parameters["content"]
-                .as_str()
-                .context("Missing content parameter")?;
-
-            replace::replace_file(file_path, content).await
-        }
-        "dispatch_agent" => {
-            let prompt = parameters["prompt"]
-                .as_str()
-                .context("Missing prompt parameter")?;
-
-            let agent = dispatch_agent::DispatchAgent::new();
-            let token = token.unwrap_or_else(CancellationToken::new); // Use provided token or create new
-            Box::pin(agent.execute(prompt, token)).await
-        }
-        _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
-    }
-}

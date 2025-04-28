@@ -10,7 +10,7 @@ pub mod messages;
 pub mod tools;
 
 pub use messages::Message;
-pub use tools::{Tool, ToolCall};
+pub use tools::{InputSchema, Tool, ToolCall};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 

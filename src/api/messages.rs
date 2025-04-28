@@ -60,16 +60,6 @@ pub enum ContentBlock {
     },
 }
 
-impl Message {
-    pub fn new_user(content: String) -> Self {
-        Message {
-            role: "user".to_string(),
-            content: MessageContent::Text { content },
-            id: None,
-        }
-    }
-}
-
 pub fn convert_conversation(
     conversation: &crate::app::Conversation,
 ) -> (Vec<Message>, Option<String>) {
@@ -385,8 +375,11 @@ mod tests {
     #[test]
     fn test_convert_conversation_basic() {
         let mut conv = Conversation::new();
-        conv.add_message(Role::User, "Hello".to_string());
-        conv.add_message(Role::Assistant, "Hi there!".to_string());
+        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
+        conv.add_message(AppMessage::new_text(
+            Role::Assistant,
+            "Hi there!".to_string(),
+        ));
 
         let (messages, system) = convert_conversation(&conv);
 
@@ -413,9 +406,15 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_system() {
         let mut conv = Conversation::new();
-        conv.add_message(Role::System, "System prompt".to_string());
-        conv.add_message(Role::User, "Hello".to_string());
-        conv.add_message(Role::Assistant, "Hi there!".to_string());
+        conv.add_message(AppMessage::new_text(
+            Role::System,
+            "System prompt".to_string(),
+        ));
+        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
+        conv.add_message(AppMessage::new_text(
+            Role::Assistant,
+            "Hi there!".to_string(),
+        ));
 
         let (messages, system) = convert_conversation(&conv);
 
@@ -426,17 +425,20 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_tool_results() {
         let mut conv = Conversation::new();
-        conv.add_message(Role::User, "Hello".to_string());
-        conv.add_message(Role::Assistant, "Let me check something".to_string());
+        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
+        conv.add_message(AppMessage::new_text(
+            Role::Assistant,
+            "Let me check something".to_string(),
+        ));
 
         // Add tool result using typed enum
-        conv.add_message_with_content(
+        conv.add_message(AppMessage::new_with_blocks(
             Role::Tool,
-            AppMessageContentBlock::ToolResult {
+            vec![AppMessageContentBlock::ToolResult {
                 tool_use_id: "tool_1".to_string(),
                 result: "Result 1".to_string(),
-            },
-        );
+            }],
+        ));
 
         let (messages, system) = convert_conversation(&conv);
         println!("Test messages: {:?}", messages);
@@ -492,23 +494,27 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_multiple_tool_results() {
         let mut conv = Conversation::new();
-        conv.add_message(Role::User, "Hello".to_string());
+        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
         // Use new_text constructor
-        conv.messages.push(AppMessage::new_text(
+        conv.add_message(AppMessage::new_text(
             Role::Assistant,
             "Let me check something".to_string(),
         ));
 
         // Add two tool results using new constructor
-        conv.messages.push(AppMessage::new_tool_result(
+        conv.add_message(AppMessage::new_with_blocks(
             Role::Tool,
-            "tool_1".to_string(),
-            "Result 1".to_string(),
+            vec![AppMessageContentBlock::ToolResult {
+                tool_use_id: "tool_1".to_string(),
+                result: "Result 1".to_string(),
+            }],
         ));
-        conv.messages.push(AppMessage::new_tool_result(
+        conv.add_message(AppMessage::new_with_blocks(
             Role::Tool,
-            "tool_2".to_string(),
-            "Result 2".to_string(),
+            vec![AppMessageContentBlock::ToolResult {
+                tool_use_id: "tool_2".to_string(),
+                result: "Result 2".to_string(),
+            }],
         ));
 
         let (messages, system) = convert_conversation(&conv);
@@ -582,17 +588,19 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_empty_tool_results() {
         let mut conv = Conversation::new();
-        conv.add_message(Role::User, "Hello".to_string());
+        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
         // Use new_text constructor
-        conv.messages.push(AppMessage::new_text(
+        conv.add_message(AppMessage::new_text(
             Role::Assistant,
             "Let me check something".to_string(),
         ));
         // Add empty tool result
-        conv.messages.push(AppMessage::new_tool_result(
+        conv.add_message(AppMessage::new_with_blocks(
             Role::Tool,
-            "empty_tool".to_string(),
-            "".to_string(),
+            vec![AppMessageContentBlock::ToolResult {
+                tool_use_id: "empty_tool".to_string(),
+                result: "".to_string(),
+            }],
         ));
 
         let (messages, system) = convert_conversation(&conv);
@@ -637,9 +645,9 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_non_tool_messages_after_tool() {
         let mut conv = Conversation::new();
-        conv.add_message(Role::User, "Hello".to_string());
+        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
         // Construct assistant message with ToolCall block
-        conv.messages.push(AppMessage::new_with_blocks(
+        conv.add_message(AppMessage::new_with_blocks(
             Role::Assistant,
             vec![AppMessageContentBlock::ToolCall(AppToolCall {
                 id: "tool_call_1".to_string(),
@@ -649,12 +657,17 @@ mod tests {
         ));
 
         // Add ToolResult message
-        conv.messages.push(AppMessage::new_tool_result(
+        conv.add_message(AppMessage::new_with_blocks(
             Role::Tool,
-            "tool_1".to_string(),
-            "Result 1".to_string(),
+            vec![AppMessageContentBlock::ToolResult {
+                tool_use_id: "tool_1".to_string(),
+                result: "Result 1".to_string(),
+            }],
         ));
-        conv.add_message(Role::User, "What about this?".to_string());
+        conv.add_message(AppMessage::new_text(
+            Role::User,
+            "What about this?".to_string(),
+        ));
 
         let (messages, system) = convert_conversation(&conv);
         println!("Non-tool messages: {:?}", messages);

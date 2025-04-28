@@ -136,15 +136,6 @@ impl Conversation {
         self.messages.push(message);
     }
 
-    pub fn add_message_with_blocks(
-        &mut self,
-        role: Role,
-        content_blocks: Vec<MessageContentBlock>,
-    ) {
-        let message = Message::new_with_blocks(role, content_blocks);
-        self.messages.push(message);
-    }
-
     pub fn clear(&mut self) {
         self.messages.clear();
     }

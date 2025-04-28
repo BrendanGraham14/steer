@@ -12,7 +12,7 @@ pub struct CommandFilter {
 
 impl CommandFilter {
     /// Create a new command filter
-    pub fn new(api_key: &str) -> Self {
+    pub fn new() -> Self {
         // Default set of safe commands that are always allowed
         let mut allowed_prefixes = HashSet::new();
         allowed_prefixes.insert("ls".to_string());
@@ -46,7 +46,7 @@ impl CommandFilter {
         allowed_prefixes.insert("cargo doc".to_string());
 
         Self {
-            api_key: api_key.to_string(),
+            api_key: std::env::var("CLAUDE_API_KEY").unwrap(),
             allowed_prefixes,
         }
     }

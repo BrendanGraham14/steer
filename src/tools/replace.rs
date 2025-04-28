@@ -1,32 +1,80 @@
 use anyhow::{Context, Result};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::path::Path;
 use tokio::fs;
+use tokio_util::sync::CancellationToken;
 
-// TODO: Refactor replace_file to use async file I/O (tokio::fs)
-// and potentially check cancellation token, especially for large files.
-// Currently, fs::write can block.
+use crate::tools::ToolError;
+use coder_macros::tool;
 
-/// Write a file to the filesystem asynchronously
-pub async fn replace_file(file_path: &str, content: &str) -> Result<String> {
-    let path = Path::new(file_path);
+#[derive(Deserialize, Debug, JsonSchema)]
+struct ReplaceParams {
+    /// The absolute path to the file to write
+    file_path: String,
+    /// The content to write to the file
+    content: String,
+}
 
-    // Ensure parent directory exists asynchronously
-    if let Some(parent) = path.parent() {
-        if !fs::metadata(parent)
-            .await
-            .map(|m| m.is_dir())
-            .unwrap_or(false)
-        {
-            fs::create_dir_all(parent)
-                .await
-                .context(format!("Failed to create directory: {}", parent.display()))?;
-        }
+tool! {
+    ReplaceTool {
+        params: ReplaceParams,
+        description: "Write a file to the local filesystem, replacing it if it exists."
     }
 
-    // Write the file asynchronously
-    fs::write(path, content)
-        .await
-        .context(format!("Failed to write file: {}", file_path))?;
+    async fn run(
+        _tool: &ReplaceTool,
+        params: ReplaceParams,
+        token: Option<CancellationToken>,
+    ) -> Result<String, ToolError> {
+        // Cancellation check before starting
+        if let Some(t) = &token {
+            if t.is_cancelled() {
+                return Err(ToolError::Cancelled("Replace".to_string()));
+            }
+        }
 
-    Ok(format!("File written: {}", file_path))
+        let path = Path::new(&params.file_path);
+
+        // Ensure parent directory exists asynchronously
+        if let Some(parent) = path.parent() {
+            // Check cancellation before directory metadata check
+            if let Some(t) = &token {
+                if t.is_cancelled() {
+                    return Err(ToolError::Cancelled("Replace".to_string()));
+                }
+            }
+            if !fs::metadata(parent)
+                .await
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+            {
+                 // Check cancellation before creating directory
+                if let Some(t) = &token {
+                    if t.is_cancelled() {
+                        return Err(ToolError::Cancelled("Replace".to_string()));
+                    }
+                }
+                fs::create_dir_all(parent)
+                    .await
+                    .context(format!("Failed to create directory: {}", parent.display()))
+                    .map_err(|e| ToolError::io("Replace", e))?;
+            }
+        }
+
+        // Check cancellation before writing file
+        if let Some(t) = &token {
+            if t.is_cancelled() {
+                return Err(ToolError::Cancelled("Replace".to_string()));
+            }
+        }
+
+        // Write the file asynchronously
+        fs::write(path, &params.content)
+            .await
+            .context(format!("Failed to write file: {}", params.file_path))
+            .map_err(|e| ToolError::io("Replace", e))?;
+
+        Ok(format!("File written: {}", params.file_path))
+    }
 }

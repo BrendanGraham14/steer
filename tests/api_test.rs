@@ -1,8 +1,9 @@
 // use anyhow::Result;
 use coder::api::messages::{ContentBlock, MessageContent, StructuredContent};
-use coder::api::{Client, Message, Tool};
+use coder::api::{Client, Message};
 use dotenv::dotenv;
 use std::env;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 #[ignore]
@@ -23,7 +24,9 @@ async fn test_claude_api_basic() {
     }];
 
     // Call Claude API
-    let response = client.complete(messages, None, None).await;
+    let response = client
+        .complete(messages, None, None, CancellationToken::new())
+        .await;
 
     // Check if the response is successful
     assert!(response.is_ok(), "API call failed: {:?}", response.err());
@@ -55,7 +58,9 @@ async fn test_claude_api_with_tools() {
     let client = Client::new(&api_key);
 
     // Get all tools to send to Claude
-    let tools = Tool::all();
+    // Create tools using the ToolExecutor's to_api_tools method
+    let tool_executor = coder::app::ToolExecutor::new();
+    let tools = tool_executor.to_api_tools();
 
     // Create a message that will use a tool
     let messages = vec![Message {
@@ -67,7 +72,9 @@ async fn test_claude_api_with_tools() {
     }];
 
     // Call Claude API with tools
-    let response = client.complete(messages, None, Some(tools)).await;
+    let response = client
+        .complete(messages, None, Some(tools), CancellationToken::new())
+        .await;
 
     // Debug output
     if response.is_err() {
@@ -100,8 +107,9 @@ async fn test_claude_api_with_tools() {
         serde_json::to_string_pretty(&first_tool_call.parameters).unwrap()
     );
 
-    let result =
-        coder::tools::execute_tool(&first_tool_call.name, &first_tool_call.parameters).await;
+    // Execute the tool using ToolExecutor with cancellation
+    let tool_executor = coder::app::ToolExecutor::new();
+    let result = tool_executor.execute_tool_with_cancellation(first_tool_call, tokio_util::sync::CancellationToken::new()).await;
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
 
     println!("Tool result: {}", result.unwrap());
@@ -155,7 +163,9 @@ async fn test_claude_api_with_tool_response() {
         },
     ];
 
-    let response = client.complete(messages, None, None).await;
+    let response = client
+        .complete(messages, None, None, CancellationToken::new())
+        .await;
 
     assert!(response.is_ok(), "API call failed: {:?}", response.err());
 }
