@@ -1,3 +1,4 @@
+use crate::api::ProviderKind;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -8,6 +9,7 @@ pub struct Config {
     pub api_key: Option<String>,
     pub model: Option<String>,
     pub history_size: Option<usize>,
+    pub openai_api_key: Option<String>,
 }
 
 impl Config {
@@ -16,6 +18,15 @@ impl Config {
             api_key: None,
             model: Some("claude-3-7-sonnet-20250219".to_string()),
             history_size: Some(10),
+            openai_api_key: None,
+        }
+    }
+
+    /// Get the API key for the specified provider
+    pub fn get_api_key_for_provider(&self, provider: &str) -> Option<String> {
+        match provider {
+            "openai" => self.openai_api_key.clone().or_else(|| self.api_key.clone()),
+            "claude" | _ => self.api_key.clone(),
         }
     }
 }
@@ -75,4 +86,41 @@ pub fn save_config(config: &Config) -> Result<()> {
     fs::write(&config_path, config_json).context("Failed to write config file")?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmConfig {
+    pub anthropic_key: Option<String>,
+    pub openai_key: Option<String>,
+}
+
+impl LlmConfig {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let cfg = Self {
+            anthropic_key: std::env::var("CLAUDE_API_KEY")
+                .ok()
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()),
+            openai_key: std::env::var("OPENAI_API_KEY").ok(),
+        };
+        Ok(cfg)
+    }
+
+    pub fn key_for(&self, provider: ProviderKind) -> Option<&str> {
+        match provider {
+            ProviderKind::Anthropic => self.anthropic_key.as_deref(),
+            ProviderKind::OpenAI => self.openai_key.as_deref(),
+        }
+    }
+
+    /// Return list of providers that have an API key configured
+    pub fn available_providers(&self) -> Vec<ProviderKind> {
+        let mut providers = Vec::new();
+        if self.anthropic_key.is_some() {
+            providers.push(ProviderKind::Anthropic);
+        }
+        if self.openai_key.is_some() {
+            providers.push(ProviderKind::OpenAI);
+        }
+        providers
+    }
 }

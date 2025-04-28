@@ -1,3 +1,5 @@
+use crate::api::{Client, Model};
+use crate::config::LlmConfig;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -75,7 +77,8 @@ pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Resu
 
 /// Get the prefix of a command
 async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<String> {
-    let client = crate::api::Client::new(&std::env::var("CLAUDE_API_KEY").unwrap());
+    let config = LlmConfig::from_env()?;
+    let client = crate::api::Client::new(&config);
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
     let messages = vec![crate::api::Message {
@@ -89,7 +92,13 @@ async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<S
     let system_content = SYSTEM_MESSAGE;
 
     match client
-        .complete(messages, Some(system_content.to_string()), None, token) // Pass the token
+        .complete(
+            Model::Claude3_5Haiku20241022,
+            messages,
+            Some(system_content.to_string()),
+            None,
+            token,
+        ) // Pass the token
         .await
     {
         Ok(response) => {

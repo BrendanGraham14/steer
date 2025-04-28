@@ -1,3 +1,5 @@
+use crate::api::Model;
+use crate::config::LlmConfig;
 use crate::tools::ToolError;
 use coder_macros::tool;
 use schemars::JsonSchema;
@@ -101,7 +103,8 @@ async fn process_web_page_content(
     prompt: String,
     token: Option<CancellationToken>,
 ) -> Result<String, ToolError> {
-    let client = crate::api::Client::new(&std::env::var("CLAUDE_API_KEY").unwrap());
+    let config = LlmConfig::from_env().map_err(|e| ToolError::execution("Fetch", e))?;
+    let client = crate::api::Client::new(&config);
     let user_message = format!(
         r#"Web page content:
 ---
@@ -130,8 +133,7 @@ Provide a concise response based only on the content above.
     };
 
     match client
-        .with_model("claude-3-5-haiku-20241022")
-        .complete(messages, None, None, token)
+        .complete(Model::Claude3_5Haiku20241022, messages, None, None, token)
         .await
     {
         Ok(response) => {

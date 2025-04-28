@@ -1,8 +1,8 @@
 use anyhow::Result;
 use coder::api::ToolCall;
 use coder::app::{App, AppConfig};
+use coder::config::LlmConfig;
 use dotenv::dotenv;
-use std::env;
 use tokio::sync::mpsc;
 
 #[tokio::test]
@@ -11,17 +11,9 @@ async fn test_app_initialization() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
 
-    // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return Ok(());
-        }
-    };
-
     // Create app config
-    let app_config = AppConfig { api_key };
+    let config = LlmConfig::from_env().unwrap();
+    let app_config = AppConfig { llm_config: config };
 
     // Initialize the app
     // Create a channel for app events
@@ -44,17 +36,9 @@ async fn test_tool_executor() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
 
-    // Get API key from environment
-    let api_key = match env::var("CLAUDE_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            println!("CLAUDE_API_KEY not found in environment. Skipping test.");
-            return Ok(());
-        }
-    };
-
     // Create app config
-    let app_config = AppConfig { api_key };
+    let config = LlmConfig::from_env().unwrap();
+    let app_config = AppConfig { llm_config: config };
 
     // Initialize the app
     // Create a channel for app events
@@ -73,7 +57,10 @@ async fn test_tool_executor() -> Result<()> {
     };
 
     // Execute the tool with cancellation token
-    let result = app.tool_executor.execute_tool_with_cancellation(&tool_call, tokio_util::sync::CancellationToken::new()).await;
+    let result = app
+        .tool_executor
+        .execute_tool_with_cancellation(&tool_call, tokio_util::sync::CancellationToken::new())
+        .await;
 
     // Verify the tool executed correctly
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());

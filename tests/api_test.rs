@@ -1,6 +1,7 @@
 // use anyhow::Result;
 use coder::api::messages::{ContentBlock, MessageContent, StructuredContent};
-use coder::api::{Client, Message};
+use coder::api::{Client, Message, Model};
+use coder::config::LlmConfig;
 use dotenv::dotenv;
 use std::env;
 use tokio_util::sync::CancellationToken;
@@ -9,10 +10,10 @@ use tokio_util::sync::CancellationToken;
 #[ignore]
 async fn test_claude_api_basic() {
     dotenv().ok();
-    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
 
     // Create client
-    let client = Client::new(&api_key);
+    let config = LlmConfig::from_env().unwrap();
+    let client = Client::new(&config);
 
     // Create a simple message
     let messages = vec![Message {
@@ -23,9 +24,15 @@ async fn test_claude_api_basic() {
         id: None,
     }];
 
-    // Call Claude API
+    // Call Claude API with specified model
     let response = client
-        .complete(messages, None, None, CancellationToken::new())
+        .complete(
+            Model::Claude3_5Haiku20241022,
+            messages,
+            None,
+            None,
+            CancellationToken::new(),
+        )
         .await;
 
     // Check if the response is successful
@@ -51,11 +58,8 @@ async fn test_claude_api_with_tools() {
     // Load environment variables from .env file
     dotenv().ok();
 
-    // Get API key from environment
-    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
-
-    // Create client
-    let client = Client::new(&api_key);
+    let config = LlmConfig::from_env().unwrap();
+    let client = Client::new(&config);
 
     // Get all tools to send to Claude
     // Create tools using the ToolExecutor's to_api_tools method
@@ -71,9 +75,14 @@ async fn test_claude_api_with_tools() {
         id: None,
     }];
 
-    // Call Claude API with tools
     let response = client
-        .complete(messages, None, Some(tools), CancellationToken::new())
+        .complete(
+            Model::Claude3_5Haiku20241022,
+            messages,
+            None,
+            Some(tools),
+            CancellationToken::new(),
+        )
         .await;
 
     // Debug output
@@ -109,7 +118,9 @@ async fn test_claude_api_with_tools() {
 
     // Execute the tool using ToolExecutor with cancellation
     let tool_executor = coder::app::ToolExecutor::new();
-    let result = tool_executor.execute_tool_with_cancellation(first_tool_call, tokio_util::sync::CancellationToken::new()).await;
+    let result = tool_executor
+        .execute_tool_with_cancellation(first_tool_call, tokio_util::sync::CancellationToken::new())
+        .await;
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
 
     println!("Tool result: {}", result.unwrap());
@@ -120,8 +131,8 @@ async fn test_claude_api_with_tools() {
 #[ignore]
 async fn test_claude_api_with_tool_response() {
     dotenv().ok();
-    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not found in environment");
-    let client = Client::new(&api_key);
+    let config = LlmConfig::from_env().unwrap();
+    let client = Client::new(&config);
 
     let messages = vec![
         Message {
@@ -164,7 +175,13 @@ async fn test_claude_api_with_tool_response() {
     ];
 
     let response = client
-        .complete(messages, None, None, CancellationToken::new())
+        .complete(
+            Model::Claude3_5Haiku20241022,
+            messages,
+            None,
+            None,
+            CancellationToken::new(),
+        )
         .await;
 
     assert!(response.is_ok(), "API call failed: {:?}", response.err());

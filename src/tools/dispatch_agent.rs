@@ -1,7 +1,6 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::env;
 
 use crate::api::messages::MessageContent;
 use crate::api::messages::StructuredContent;
@@ -19,6 +18,8 @@ use crate::tools::ToolError;
 // Add CancellationToken import
 use tokio_util::sync::CancellationToken;
 // Add schemars import
+use crate::api::Model;
+use crate::config::LlmConfig;
 use coder_macros::tool; // Import tool modules
 
 /// Dispatch Agent implementation
@@ -59,7 +60,8 @@ Usage notes:
         token: Option<CancellationToken>,
     ) -> Result<String, ToolError> {
         let token = token.unwrap_or_else(CancellationToken::new);
-        let agent = DispatchAgent::new();
+        let agent = DispatchAgent::new()
+            .map_err(|e| ToolError::execution("DispatchAgent", e))?;
         agent
             .execute(&params.prompt, token)
             .await
@@ -68,25 +70,21 @@ Usage notes:
 }
 
 impl DispatchAgent {
-    pub fn new() -> Self {
-        let api_key = env::var("CLAUDE_API_KEY").unwrap_or_else(|_| String::from(""));
-        let api_client = ApiClient::new(&api_key).with_model("claude-3-5-haiku-20241022");
-
-        // Create a tool executor with read-only tools
+    pub fn new() -> Result<Self> {
+        // Use Client::new and LlmConfig::from_env
+        let llm_config = LlmConfig::from_env()?;
+        let api_client = ApiClient::new(&llm_config);
         let tool_executor = crate::app::ToolExecutor::read_only();
 
-        Self {
+        Ok(Self {
             api_client,
             tool_executor,
-        }
+        })
     }
 
-    pub fn with_api_key(api_key: String) -> Self {
-        let api_client = ApiClient::new(&api_key).with_model("claude-3-5-haiku-20241022");
-
-        // Create a tool executor with read-only tools
+    pub fn with_api_client(api_client: ApiClient) -> Self {
+        // Allow injecting an existing client (e.g., from App)
         let tool_executor = crate::app::ToolExecutor::read_only();
-
         Self {
             api_client,
             tool_executor,
@@ -119,6 +117,7 @@ impl DispatchAgent {
             let completion: CompletionResponse = self
                 .api_client
                 .complete(
+                    Model::Claude3_7Sonnet20250219,
                     messages.clone(), // Clone messages for each API call
                     Some(system_prompt.clone()),
                     Some(available_tools.clone()),
