@@ -21,6 +21,8 @@
 
 ### API Client
 - [ ] Support different models (Claude, OpenAI, Gemini, Grok)
+- [ ] Propagate errors from API to UI
+- [ ] Add retries, and propagate this to the UI as well
 
 ### Additional Features
 - [ ] Add conversation saving and loading
