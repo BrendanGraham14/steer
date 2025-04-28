@@ -14,6 +14,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use std::io::{self, Stdout};
+use std::panic;
 use std::time::{Duration, Instant};
 use tui_textarea::{Input, Key, TextArea};
 
@@ -21,6 +22,7 @@ use tokio::select;
 
 use crate::app::command::AppCommand;
 use crate::app::{AppEvent, Role};
+use crate::utils;
 use crate::utils::logging::{debug, error, info, warn};
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -1292,12 +1294,6 @@ impl Tui {
         }
         Ok(false) // Don't exit by default
     }
-
-    // Close method (optional, Drop handles cleanup)
-    // pub async fn close(&mut self) -> Result<()> {
-    //     self.cleanup_terminal()?;
-    //     Ok(())
-    // }
 }
 
 // Implement Drop to ensure terminal cleanup happens
@@ -1307,6 +1303,61 @@ impl Drop for Tui {
             // Log error if cleanup fails, but don't panic in drop
             eprintln!("Failed to cleanup terminal: {}", e);
             error("Tui::drop", &format!("Failed to cleanup terminal: {}", e));
+        }
+    }
+}
+
+pub async fn run_tui(
+    command_tx: mpsc::Sender<AppCommand>,
+    event_rx: mpsc::Receiver<AppEvent>,
+) -> Result<()> {
+    // Set up panic hook to ensure terminal is reset if the app crashes
+    // Clone command_tx for potential use in panic hook if needed later
+    let _command_tx_panic = command_tx.clone();
+    let orig_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        // Attempt to clean up the terminal
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+
+        utils::logging::error(
+            "panic_hook",
+            &format!("Application panicked: {}", panic_info),
+        );
+
+        eprintln!("\nERROR: Application crashed: {}", panic_info);
+
+        // Call the original panic hook
+        orig_hook(panic_info);
+    }));
+
+    // --- TUI Initialization ---
+    utils::logging::info("tui::run_tui", "Initializing TUI");
+    let mut tui = match Tui::new(command_tx.clone()) {
+        Ok(tui) => tui,
+        Err(e) => {
+            utils::logging::error("tui::run_tui", &format!("Failed to initialize TUI: {}", e));
+            // We might be mid-panic hook here, but try to print
+            eprintln!("Error: Failed to initialize terminal UI: {}", e);
+            return Err(e);
+        }
+    };
+
+    // --- Run the TUI Loop ---
+    utils::logging::info("tui::run_tui", "Starting TUI run loop");
+    let tui_result = tui.run(event_rx).await;
+    utils::logging::info("tui::run_tui", "TUI run loop finished");
+
+    // Handle TUI result
+    match tui_result {
+        Ok(_) => {
+            utils::logging::info("tui::run_tui", "TUI terminated normally");
+            Ok(())
+        }
+        Err(e) => {
+            utils::logging::error("tui::run_tui", &format!("TUI task error: {}", e));
+            eprintln!("Error in TUI: {}", e);
+            Err(e.into())
         }
     }
 }

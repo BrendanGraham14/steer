@@ -11,7 +11,7 @@ async fn test_dispatch_agent() -> Result<()> {
     dotenv().ok();
 
     // Create the dispatch agent with the API key
-    let agent = DispatchAgent::new();
+    let agent = DispatchAgent::new()?;
 
     // Test prompt that should search for specific code
     let prompt = "Find all files that contain definitions of functions or methods related to search or find operations";

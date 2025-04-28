@@ -1,4 +1,5 @@
 use crate::api::messages::{Message as ApiMessage, MessageContent as ApiMessageContent};
+use crate::api::{Client as ApiClient, Model};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,6 +25,8 @@ pub use context::OpContext;
 pub use conversation::{Conversation, Message, MessageContentBlock, Role, ToolCall};
 pub use environment::EnvironmentInfo;
 pub use tool_executor::ToolExecutor;
+
+use crate::config::LlmConfig;
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -70,7 +73,7 @@ pub enum AppEvent {
 }
 
 pub struct AppConfig {
-    pub api_key: String,
+    pub llm_config: LlmConfig,
 }
 
 use std::collections::{HashSet /* , HashMap */};
@@ -80,7 +83,7 @@ pub struct App {
     pub conversation: Arc<Mutex<Conversation>>,
     pub env_info: EnvironmentInfo,
     pub tool_executor: Arc<ToolExecutor>,
-    pub api_client: crate::api::Client,
+    pub api_client: ApiClient,
     event_sender: mpsc::Sender<AppEvent>,
     approved_tools: HashSet<String>,
     current_op_context: Option<OpContext>,
@@ -91,7 +94,7 @@ impl App {
         let env_info = EnvironmentInfo::collect()?;
         let conversation = Arc::new(Mutex::new(Conversation::new()));
         let tool_executor = Arc::new(ToolExecutor::new());
-        let api_client = crate::api::Client::new(&config.api_key);
+        let api_client = ApiClient::new(&config.llm_config);
 
         Ok(Self {
             config,
@@ -224,7 +227,7 @@ impl App {
                 api_client,
                 tools.as_ref(),
                 token,
-                &env_info_clone, // Use the cloned env_info
+                &env_info_clone,
             )
             .await;
 
@@ -606,9 +609,8 @@ impl App {
     }
 
     pub async fn dispatch_agent(&self, prompt: &str, token: CancellationToken) -> Result<String> {
-        let agent = crate::tools::dispatch_agent::DispatchAgent::new();
-        // Create a dummy token for now as the call site doesn't have one
-        // let token = CancellationToken::new();
+        let agent =
+            crate::tools::dispatch_agent::DispatchAgent::with_api_client(self.api_client.clone());
         agent.execute(prompt, token).await
     }
 
@@ -727,7 +729,7 @@ impl App {
             let _current_summary =
                 format!("Conversation up to now:\n{:?}", conversation_guard.messages);
 
-            // Call compact on the conversation guard
+            // Call compact on the conversation guard, passing the ApiClient
             conversation_guard.compact(&client, token).await?;
         }
 
@@ -807,7 +809,7 @@ impl App {
     // Needs to be static or refactored
     async fn get_claude_response_static(
         conversation: Arc<Mutex<Conversation>>,
-        api_client: crate::api::Client,
+        api_client: ApiClient,
         tools: Option<&Vec<crate::api::Tool>>,
         token: CancellationToken,
         env_info: &EnvironmentInfo,
@@ -841,7 +843,13 @@ impl App {
             });
 
         api_client
-            .complete(api_messages, final_system_content, tools.cloned(), token)
+            .complete(
+                Model::Claude3_7Sonnet20250219,
+                api_messages,
+                final_system_content,
+                tools.cloned(),
+                token,
+            )
             .await
     }
 }

@@ -1,19 +1,14 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use dotenv::dotenv;
-use std::panic;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 
-mod api;
-mod app;
-mod config;
-mod tools;
-mod tui;
-mod utils;
-
-use app::AppCommand;
+use coder::app::{App, AppCommand, AppConfig, app_actor_loop};
+use coder::config::LlmConfig;
+use coder::tui;
+use coder::utils;
 
 /// A command line tool to pair program with Claude
 #[derive(Parser)]
@@ -53,7 +48,6 @@ async fn main() -> Result<()> {
     // Load .env file if it exists
     dotenv().ok();
 
-    // Initialize logging
     utils::logging::init_logging()?;
 
     // Set log level based on debug flag
@@ -116,135 +110,36 @@ async fn main() -> Result<()> {
         utils::logging::info("main", "Debug logging enabled");
     }
 
-    // Load or initialize config
-    let config = config::load_config()?;
-
-    // Check for API key in order: CLI arg > env var (including .env) > config file
-    let api_key = match cli
-        .api_key
-        .or_else(|| std::env::var("CLAUDE_API_KEY").ok())
-        .or(config.api_key)
-    {
-        Some(key) => key,
-        None => {
-            eprintln!(
-                "Error: No API key provided. Please use --api-key, set CLAUDE_API_KEY environment variable, add it to .env file, or configure it in config file"
-            );
-            std::process::exit(1);
-        }
-    };
+    // Load or initialize config using the library path
+    let config = coder::config::load_config()?;
 
     // Handle subcommands if present
     if let Some(cmd) = cli.command {
         match cmd {
             Commands::Init { force } => {
-                config::init_config(force)?;
+                // Use library path for config functions
+                coder::config::init_config(force)?;
                 println!("Configuration initialized successfully.");
                 return Ok(());
             }
         }
     }
 
-    // Set working directory if specified
     if let Some(dir) = cli.directory {
         std::env::set_current_dir(dir)?;
     }
 
-    // --- App Initialization ---
-    let app_config = app::AppConfig {
-        api_key,
-        // Add more configuration options if needed in the future
-    };
+    let llm_config = LlmConfig::from_env()
+        .expect("Failed to load LLM configuration from environment variables.");
 
-    utils::logging::info("main", "Initializing application");
+    let (app_command_tx, app_command_rx) = mpsc::channel::<AppCommand>(32);
+    let (app_event_tx, app_event_rx) = mpsc::channel(32);
 
-    // Revert to MPSC channel for events
-    let (event_tx, event_rx) = mpsc::channel::<app::AppEvent>(100);
+    let app_config = AppConfig { llm_config };
+    let app = App::new(app_config, app_event_tx)?;
 
-    // Create Command Channel (remains mpsc)
-    let (command_tx, command_rx) = mpsc::channel::<AppCommand>(100);
+    tokio::spawn(app_actor_loop(app, app_command_rx));
+    tui::run_tui(app_command_tx, app_event_rx).await?;
 
-    // Instantiate App - Pass the mpsc sender clone
-    let app = match app::App::new(app_config, event_tx.clone()) {
-        Ok(app) => app,
-        Err(e) => {
-            utils::logging::error("main", &format!("Failed to initialize app: {}", e));
-            eprintln!("Error: Failed to initialize application: {}", e);
-            return Err(e);
-        }
-    };
-
-    // Spawn the App Actor Task - Only needs command_rx
-    utils::logging::info("main", "Spawning App actor task");
-    let _app_handle = tokio::spawn(app::app_actor_loop(app, command_rx));
-
-    // Set up panic hook to ensure terminal is reset if the app crashes
-    let orig_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        let terminal_result = crossterm::terminal::disable_raw_mode();
-        let screen_result =
-            crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
-
-        utils::logging::error(
-            "panic_hook",
-            &format!("Application panicked: {}", panic_info),
-        );
-
-        if let Err(e) = terminal_result {
-            utils::logging::error("panic_hook", &format!("Failed to disable raw mode: {}", e));
-        }
-
-        if let Err(e) = screen_result {
-            utils::logging::error(
-                "panic_hook",
-                &format!("Failed to leave alternate screen: {}", e),
-            );
-        }
-
-        eprintln!("\nERROR: Application crashed: {}", panic_info);
-
-        orig_hook(panic_info);
-    }));
-
-    // --- TUI Initialization ---
-    utils::logging::info("main", "Initializing TUI");
-    let mut tui = match tui::Tui::new(command_tx.clone()) {
-        Ok(tui) => tui,
-        Err(e) => {
-            utils::logging::error("main", &format!("Failed to initialize TUI: {}", e));
-            eprintln!("Error: Failed to initialize terminal UI: {}", e);
-            return Err(e);
-        }
-    };
-
-    // Mark terminal raw mode
-    terminal_in_raw_mode.store(true, Ordering::SeqCst);
-
-    // Run the TUI, passing the mpsc event receiver
-    utils::logging::info("main", "Starting TUI task");
-    let tui_handle = tokio::task::spawn(async move { tui.run(event_rx).await });
-
-    // --- Wait for Tasks ---
-    utils::logging::info("main", "Waiting for TUI and App tasks to complete");
-
-    // Wait for the TUI task to complete first
-    let tui_result = tui_handle.await?;
-
-    // Mark terminal as no longer in raw mode (important after TUI finishes)
-    terminal_in_raw_mode.store(false, Ordering::SeqCst);
-
-    // Handle TUI result
-    match tui_result {
-        Ok(_) => {
-            utils::logging::info("main", "TUI terminated normally");
-        }
-        Err(e) => {
-            utils::logging::error("main", &format!("TUI task error: {}", e));
-            eprintln!("Error in TUI: {}", e);
-            return Err(e.into());
-        }
-    }
-
-    utils::logging::info("main", "Application shutting down");
     Ok(())
 }

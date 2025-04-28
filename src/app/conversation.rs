@@ -3,6 +3,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::api::Client as ApiClient;
+use crate::api::Model;
+use crate::api::ProviderKind;
 use crate::api::messages;
 use tokio_util::sync::CancellationToken;
 
@@ -231,7 +234,7 @@ impl Conversation {
     /// Compact the conversation by summarizing older messages
     pub async fn compact(
         &mut self,
-        api_client: &crate::api::Client,
+        api_client: &ApiClient,
         token: CancellationToken,
     ) -> anyhow::Result<()> {
         // Skip if we don't have enough messages to compact
@@ -248,7 +251,13 @@ impl Conversation {
         });
 
         let summary = api_client
-            .complete(prompt_messages, None, None, token.clone()) // Pass the token
+            .complete(
+                Model::Claude3_7Sonnet20250219,
+                prompt_messages,
+                None,
+                None,
+                token.clone(),
+            )
             .await?;
         let summary_text = summary.extract_text();
 

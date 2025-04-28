@@ -1,12 +1,11 @@
+use crate::tools::ToolError;
 use anyhow::Result;
-use chrono::Local;
 use ignore::WalkBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::ToolError;
 use coder_macros::tool;
 
 #[derive(Deserialize, Debug, JsonSchema)]
