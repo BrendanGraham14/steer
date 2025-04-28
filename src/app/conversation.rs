@@ -71,7 +71,6 @@ impl Message {
             .as_secs();
 
         // Use role-specific prefixes for message IDs
-        // This helps avoid confusion between different message types
         let prefix = match role {
             Role::User => "user",
             Role::Assistant => "assistant",
@@ -91,8 +90,6 @@ impl Message {
         }
     }
 
-    /// Returns a simple string representation of the message content.
-    /// Joins text blocks and provides placeholders for non-text blocks.
     pub fn content_string(&self) -> String {
         self.content_blocks
             .iter()

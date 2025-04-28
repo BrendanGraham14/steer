@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::api::messages::MessageContent;
 use crate::api::messages::StructuredContent;
-// Import the API client
 use crate::api::Client as ApiClient;
 // Import necessary types for tool use
 use crate::api::CompletionResponse;

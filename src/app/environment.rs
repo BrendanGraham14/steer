@@ -321,7 +321,6 @@ impl EnvironmentInfo {
                 // Convert to string for matching
                 let path_str = rel_path.to_string_lossy().to_string();
 
-                // Check if path matches any pattern in the globset
                 return globset.is_match(path_str);
             }
         }

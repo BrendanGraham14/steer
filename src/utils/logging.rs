@@ -116,28 +116,24 @@ impl Logger {
     }
 }
 
-/// Log a debug message
 pub fn debug(module: &str, message: &str) {
     if let Ok(logger) = Logger::get().lock() {
         let _ = logger.log(LogLevel::Debug, module, message);
     }
 }
 
-/// Log an info message
 pub fn info(module: &str, message: &str) {
     if let Ok(logger) = Logger::get().lock() {
         let _ = logger.log(LogLevel::Info, module, message);
     }
 }
 
-/// Log a warning message
 pub fn warn(module: &str, message: &str) {
     if let Ok(logger) = Logger::get().lock() {
         let _ = logger.log(LogLevel::Warning, module, message);
     }
 }
 
-/// Log an error message
 pub fn error(module: &str, message: &str) {
     if let Ok(logger) = Logger::get().lock() {
         let _ = logger.log(LogLevel::Error, module, message);

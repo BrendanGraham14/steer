@@ -39,7 +39,6 @@ enum OpenAIContent {
 enum OpenAIContentPart {
     #[serde(rename = "text")]
     Text { text: String },
-    // We could add image and other types here if needed
 }
 
 // OpenAI function calling format
@@ -143,7 +142,6 @@ impl OpenAIClient {
         }
     }
 
-    // Convert our message format to OpenAI's format
     fn convert_messages(
         &self,
         messages: Vec<Message>,
@@ -193,7 +191,6 @@ impl OpenAIClient {
         openai_messages
     }
 
-    // Convert our tools to OpenAI's format
     fn convert_tools(&self, tools: Vec<Tool>) -> Vec<OpenAITool> {
         tools
             .into_iter()
