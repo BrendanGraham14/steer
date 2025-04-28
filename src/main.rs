@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
     }
 
     // Load or initialize config using the library path
-    let config = coder::config::load_config()?;
+    let _config = coder::config::load_config()?;
 
     // Handle subcommands if present
     if let Some(cmd) = cli.command {

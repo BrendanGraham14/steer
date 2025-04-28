@@ -276,36 +276,22 @@ impl App {
         let mut denial_should_continue = false;
         let mut tool_name_for_approval: Option<String> = None;
 
-        if let Some(ctx) = self.current_op_context.as_mut() {
-            if let Some(tool_call) = ctx.pending_tool_calls.remove(&tool_call_id_clone) {
-                let tool_name = tool_call.name.clone();
-                tool_name_for_approval = Some(tool_name.clone());
+        let ctx = match self.current_op_context.as_mut() {
+            Some(ctx) => ctx,
+            None => {
+                crate::utils::logging::error(
+                    "App.handle_tool_command_response",
+                    "No operation context available for tool approval/denial",
+                );
+                return Err(anyhow::anyhow!(
+                    "No operation context available for tool approval/denial"
+                ));
+            }
+        };
 
-                if approved {
-                    crate::utils::logging::info(
-                        "App.handle_tool_command_response",
-                        &format!("Tool call '{}' approved.", tool_name),
-                    );
-
-                    tool_call_to_execute = Some(tool_call.clone());
-                    ctx.expected_tool_results += 1;
-                    token_for_spawn = Some(ctx.cancel_token.clone());
-                } else {
-                    crate::utils::logging::info(
-                        "App.handle_tool_command_response",
-                        &format!("Tool call '{}' was denied by the user.", tool_name),
-                    );
-                    let result_content = format!("Tool '{}' denied by user.", tool_name);
-
-                    // Mark as denied and store info needed after borrow
-                    denied = true;
-                    denial_result_content = Some(result_content);
-                    // Check if we should continue after denial
-                    denial_should_continue =
-                        ctx.pending_tool_calls.is_empty() && ctx.expected_tool_results == 0;
-                }
-            } else {
-                // Tool not found in pending calls
+        let tool_call = match ctx.pending_tool_calls.remove(&tool_call_id_clone) {
+            Some(tool_call) => tool_call,
+            None => {
                 crate::utils::logging::warn(
                     "App.handle_tool_command_response",
                     &format!(
@@ -315,11 +301,33 @@ impl App {
                 );
                 return Ok(()); // Early return if tool not found
             }
+        };
+
+        let tool_name = tool_call.name.clone();
+        tool_name_for_approval = Some(tool_name.clone());
+
+        if approved {
+            crate::utils::logging::info(
+                "App.handle_tool_command_response",
+                &format!("Tool call '{}' approved.", tool_name),
+            );
+
+            tool_call_to_execute = Some(tool_call.clone());
+            ctx.expected_tool_results += 1;
+            token_for_spawn = Some(ctx.cancel_token.clone());
         } else {
-            // No OpContext found
-            let err = anyhow::anyhow!("No operation context available for tool approval/denial");
-            crate::utils::logging::error("App.handle_tool_command_response", &err.to_string());
-            return Err(err);
+            crate::utils::logging::info(
+                "App.handle_tool_command_response",
+                &format!("Tool call '{}' was denied by the user.", tool_name),
+            );
+            let result_content = format!("Tool '{}' denied by user.", tool_name);
+
+            // Mark as denied and store info needed after borrow
+            denied = true;
+            denial_result_content = Some(result_content);
+            // Check if we should continue after denial
+            denial_should_continue =
+                ctx.pending_tool_calls.is_empty() && ctx.expected_tool_results == 0;
         }
 
         // --- Post-Borrow Handling ---
