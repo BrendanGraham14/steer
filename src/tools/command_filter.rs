@@ -83,7 +83,7 @@ async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<S
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
     let messages = vec![crate::api::Message {
-        role: "user".to_string(),
+        role: crate::api::messages::MessageRole::User,
         content: crate::api::messages::MessageContent::Text {
             content: user_message,
         },

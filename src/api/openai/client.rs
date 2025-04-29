@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Model;
-use crate::api::messages::{Message, MessageContent};
+use crate::api::messages::{Message, MessageContent, MessageRole};
 use crate::api::provider::{CompletionResponse, ContentBlock, Provider};
 use crate::api::tools::Tool;
 
@@ -160,8 +160,8 @@ impl OpenAIClient {
 
         // Convert our messages to OpenAI format
         for message in messages {
-            match message.role.as_str() {
-                "user" | "assistant" => {
+            match message.role {
+                MessageRole::User | MessageRole::Assistant => {
                     // Convert message content
                     let content = match &message.content {
                         MessageContent::Text { content } => OpenAIContent::String(content.clone()),
@@ -173,7 +173,7 @@ impl OpenAIClient {
                     };
 
                     openai_messages.push(OpenAIMessage {
-                        role: message.role.clone(),
+                        role: message.role.to_string(),
                         content,
                         name: None,
                     });

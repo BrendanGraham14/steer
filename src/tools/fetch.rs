@@ -127,7 +127,7 @@ Provide a concise response based only on the content above.
     );
 
     let messages = vec![crate::api::Message {
-        role: "user".to_string(),
+        role: crate::api::messages::MessageRole::User,
         content: crate::api::messages::MessageContent::Text {
             content: user_message,
         },

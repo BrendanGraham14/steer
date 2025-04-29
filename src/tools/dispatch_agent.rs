@@ -4,6 +4,7 @@ use serde::Deserialize;
 
 use crate::api::Client as ApiClient;
 use crate::api::messages::MessageContent;
+use crate::api::messages::MessageRole;
 use crate::api::messages::StructuredContent;
 // Import necessary types for tool use
 use crate::api::CompletionResponse;
@@ -99,7 +100,7 @@ impl DispatchAgent {
         // Initial message list using the correct Message type
         let mut messages: Vec<Message> = vec![Message {
             id: None,
-            role: "user".to_string(),
+            role: MessageRole::User,
             content: MessageContent::Text {
                 content: prompt.to_string(),
             },
@@ -138,7 +139,7 @@ impl DispatchAgent {
             if !message_content_blocks.is_empty() {
                 messages.push(Message {
                     id: None, // Assuming API response doesn't give us a message ID directly here
-                    role: "assistant".to_string(),
+                    role: MessageRole::Assistant,
                     content: MessageContent::StructuredContent {
                         content: StructuredContent(message_content_blocks),
                     },
@@ -193,7 +194,7 @@ impl DispatchAgent {
                     .collect();
 
                 messages.push(Message {
-                    role: "user".to_string(),
+                    role: MessageRole::User,
                     content: MessageContent::StructuredContent {
                         content: StructuredContent(result_blocks),
                     },

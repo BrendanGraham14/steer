@@ -1,4 +1,6 @@
-use crate::api::messages::{Message as ApiMessage, MessageContent as ApiMessageContent};
+use crate::api::messages::{
+    Message as ApiMessage, MessageContent as ApiMessageContent, MessageRole as ApiMessageRole,
+};
 use crate::api::{Client as ApiClient, Model};
 use anyhow::Result;
 use std::sync::Arc;
@@ -1198,7 +1200,7 @@ fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> ApiMessage {
     prompt.push_str(&env_info.as_context());
 
     ApiMessage {
-        role: "system".to_string(),
+        role: ApiMessageRole::System,
         content: ApiMessageContent::Text { content: prompt },
         id: None,
     }

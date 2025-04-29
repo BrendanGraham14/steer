@@ -1,10 +1,12 @@
 pub mod claude;
+pub mod gemini;
 pub mod messages;
 pub mod openai;
 pub mod provider;
 pub mod tools;
 
 pub use claude::AnthropicClient;
+pub use gemini::GeminiClient;
 pub use messages::Message;
 pub use openai::OpenAIClient;
 pub use provider::{CompletionResponse, ContentBlock, Provider};
@@ -23,6 +25,7 @@ use crate::config::LlmConfig;
 pub enum ProviderKind {
     Anthropic,
     OpenAI,
+    Google,
 }
 
 // Enum for specific LLM models
@@ -34,6 +37,13 @@ pub enum Model {
     Gpt4_1Mini20250414,
     Gpt4_1Nano20250414,
     O3_20250416,
+    Gemini2_5FlashPreview0417,
+    Gemini2_5ProPreview0325,
+    Gemini2_0Flash,
+    Gemini2_0FlashLite,
+    Gemini1_5Flash,
+    Gemini1_5Flash8b,
+    Gemini1_5Pro,
 }
 
 impl Model {
@@ -45,6 +55,13 @@ impl Model {
             Model::Gpt4_1Mini20250414 => ProviderKind::OpenAI,
             Model::Gpt4_1Nano20250414 => ProviderKind::OpenAI,
             Model::O3_20250416 => ProviderKind::OpenAI,
+            Model::Gemini2_5FlashPreview0417 => ProviderKind::Google,
+            Model::Gemini2_5ProPreview0325 => ProviderKind::Google,
+            Model::Gemini2_0Flash => ProviderKind::Google,
+            Model::Gemini2_0FlashLite => ProviderKind::Google,
+            Model::Gemini1_5Flash => ProviderKind::Google,
+            Model::Gemini1_5Flash8b => ProviderKind::Google,
+            Model::Gemini1_5Pro => ProviderKind::Google,
         }
     }
 
@@ -56,6 +73,13 @@ impl Model {
             Model::Gpt4_1Mini20250414 => "gpt-4.1-mini-2025-04-14",
             Model::Gpt4_1Nano20250414 => "gpt-4.1-nano-2025-04-14",
             Model::O3_20250416 => "o3-2025-04-16",
+            Model::Gemini2_5FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
+            Model::Gemini2_5ProPreview0325 => "gemini-2.5-pro-preview-03-25",
+            Model::Gemini2_0Flash => "gemini-2.0-flash",
+            Model::Gemini2_0FlashLite => "gemini-2.0-flash-lite",
+            Model::Gemini1_5Flash => "gemini-1.5-flash",
+            Model::Gemini1_5Flash8b => "gemini-1.5-flash-8b",
+            Model::Gemini1_5Pro => "gemini-1.5-pro",
         }
     }
 }
@@ -100,6 +124,7 @@ impl Client {
         let provider_instance: Arc<dyn Provider> = match provider_kind {
             ProviderKind::Anthropic => Arc::new(AnthropicClient::new(key)),
             ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key)),
+            ProviderKind::Google => Arc::new(GeminiClient::new(key)),
         };
         map.insert(model, provider_instance.clone());
         Ok(provider_instance)

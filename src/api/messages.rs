@@ -1,9 +1,26 @@
 use serde::{Deserialize, Serialize};
+use strum_macros::Display;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Display)]
+pub enum MessageRole {
+    #[serde(rename = "user")]
+    #[strum(serialize = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    #[strum(serialize = "assistant")]
+    Assistant,
+    #[serde(rename = "tool")]
+    #[strum(serialize = "tool")]
+    Tool,
+    #[serde(rename = "system")]
+    #[strum(serialize = "system")]
+    System,
+}
 
 /// Represents a message to be sent to the Claude API
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
-    pub role: String,
+    pub role: MessageRole,
     #[serde(flatten)]
     pub content: MessageContent,
     #[serde(skip_serializing)]
@@ -107,7 +124,7 @@ pub fn convert_conversation(
 
                 if !combined_text.trim().is_empty() {
                     api_messages.push(Message {
-                        role: "user".to_string(),
+                        role: MessageRole::User,
                         content: MessageContent::Text {
                             content: combined_text,
                         },
@@ -172,7 +189,7 @@ pub fn convert_conversation(
                     };
 
                     api_messages.push(Message {
-                        role: "assistant".to_string(),
+                        role: MessageRole::Assistant,
                         content: api_content,
                         id: Some(app_msg.id.clone()),
                     });
@@ -268,7 +285,7 @@ pub fn convert_conversation(
                 // Add the grouped tool results as a single API user message
                 if !tool_results.is_empty() {
                     api_messages.push(Message {
-                        role: "user".to_string(),
+                        role: MessageRole::User,
                         content: MessageContent::StructuredContent {
                             content: StructuredContent(tool_results),
                         },
@@ -283,7 +300,7 @@ pub fn convert_conversation(
     // API allows empty assistant messages and expects tool results.
     if let Some(last) = api_messages.last() {
         let mut remove_last = false;
-        if last.role == "user" {
+        if last.role == MessageRole::User {
             if let MessageContent::Text { content } = &last.content {
                 if content.trim().is_empty() {
                     remove_last = true;
@@ -363,7 +380,7 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert!(system.is_none());
 
-        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
             messages[0].content,
             MessageContent::Text {
@@ -371,7 +388,7 @@ mod tests {
             }
         );
 
-        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].role, MessageRole::Assistant);
         assert_eq!(
             messages[1].content,
             MessageContent::Text {
@@ -423,7 +440,7 @@ mod tests {
         assert_eq!(messages.len(), 3); // Now we expect all messages to be preserved
         assert!(system.is_none());
 
-        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
             messages[0].content,
             MessageContent::Text {
@@ -432,7 +449,7 @@ mod tests {
         );
 
         // The assistant message is converted to a user message with structured content
-        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].role, MessageRole::Assistant);
         assert_eq!(
             messages[1].content,
             MessageContent::Text {
@@ -441,7 +458,7 @@ mod tests {
         );
 
         // The tool message is converted to a user message with text content
-        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].role, MessageRole::User);
         match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
@@ -500,7 +517,7 @@ mod tests {
         assert_eq!(messages.len(), 3); // Now expecting 3 messages (user, assistant, and 1 tool result)
         assert!(system.is_none());
 
-        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
             messages[0].content,
             MessageContent::Text {
@@ -509,7 +526,7 @@ mod tests {
         );
 
         // The assistant message is converted to a user message with structured content for the first tool
-        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].role, MessageRole::Assistant);
         assert_eq!(
             messages[1].content,
             MessageContent::Text {
@@ -518,7 +535,7 @@ mod tests {
         );
 
         // The tool result is grouped into a single user message with StructuredContent
-        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].role, MessageRole::User);
         match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
@@ -586,7 +603,7 @@ mod tests {
         assert_eq!(messages.len(), 3);
         assert!(system.is_none());
 
-        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
             messages[0].content,
             MessageContent::Text {
@@ -595,7 +612,7 @@ mod tests {
         );
 
         // Second message is a structured user message with tool result
-        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].role, MessageRole::Assistant);
         assert_eq!(
             messages[1].content,
             MessageContent::Text {
@@ -604,7 +621,7 @@ mod tests {
         );
 
         // Third message is the tool message converted to text
-        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].role, MessageRole::User);
         assert_eq!(
             messages[2].content,
             MessageContent::StructuredContent {
@@ -652,7 +669,7 @@ mod tests {
         assert_eq!(messages.len(), 4);
         assert!(system.is_none());
 
-        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
             messages[0].content,
             MessageContent::Text {
@@ -661,7 +678,7 @@ mod tests {
         );
 
         // The assistant message with tool calls
-        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].role, MessageRole::Assistant);
         match &messages[1].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
@@ -677,7 +694,7 @@ mod tests {
         }
 
         // Tool message is preserved as a user message with readable format
-        assert_eq!(messages[2].role, "user");
+        assert_eq!(messages[2].role, MessageRole::User);
         match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
@@ -704,7 +721,7 @@ mod tests {
         }
 
         // The subsequent user message should be included as is
-        assert_eq!(messages[3].role, "user");
+        assert_eq!(messages[3].role, MessageRole::User);
         assert_eq!(
             messages[3].content,
             MessageContent::Text {

@@ -5,26 +5,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::api::Client as ApiClient;
 use crate::api::Model;
+use crate::api::messages::MessageRole as ApiMessageRole;
+use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 
 /// Role in the conversation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy, Display)]
 pub enum Role {
     System,
     User,
     Assistant,
-    Tool, // For tool outputs
-}
-
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::System => write!(f, "System"),
-            Self::User => write!(f, "User"),
-            Self::Assistant => write!(f, "Claude"),
-            Self::Tool => write!(f, "Tool"),
-        }
-    }
+    Tool,
 }
 
 /// Tool call that can be attached to assistant messages
@@ -244,7 +235,7 @@ impl Conversation {
         }
         let (mut prompt_messages, _) = crate::api::messages::convert_conversation(self);
         prompt_messages.push(crate::api::messages::Message {
-            role: "user".to_string(),
+            role: ApiMessageRole::User,
             content: crate::api::messages::MessageContent::Text {
                 content: SUMMARY_PROMPT.to_string(),
             },
