@@ -114,24 +114,23 @@ impl Bash {
             Ok(output) => output,
             Err(e) => return Err(e.context("Command execution failed internally")),
         };
+        let mut parts = vec![format!("Status: {}", result.status)];
 
-        // Combine stdout and stderr
-        let mut output_str = String::from_utf8_lossy(&result.stdout).to_string();
-
-        if !result.stderr.is_empty() {
-            if !output_str.is_empty() {
-                output_str.push_str("\n\n");
-            }
-            output_str.push_str("stderr:\n");
-            output_str.push_str(&String::from_utf8_lossy(&result.stderr));
-        }
-
-        if !result.status.success() {
-            output_str.push_str(&format!(
-                "\n\nCommand exited with status: {}",
-                result.status
+        if !result.stdout.is_empty() {
+            parts.push(format!(
+                "<stdout>{}</stdout>",
+                String::from_utf8_lossy(&result.stdout)
             ));
         }
+
+        if !result.stderr.is_empty() {
+            parts.push(format!(
+                "<stderr>{}</stderr>",
+                String::from_utf8_lossy(&result.stderr)
+            ));
+        }
+
+        let output_str = parts.join("\n\n");
 
         Ok(output_str)
     }
