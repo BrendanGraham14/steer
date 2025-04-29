@@ -18,6 +18,7 @@
 - [ ] (Maybe): automatically create a new git worktree when a new instance is started
 - [ ] Support executing bash comments (like ! in claude code)
 - [ ] @files with fzf-like fuzzy search
+- [ ] Show which model we're using and support switching models
 
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts
