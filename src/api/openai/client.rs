@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Model;
+use crate::api::error::ApiError;
 use crate::api::messages::{Message, MessageContent, MessageRole};
 use crate::api::provider::{CompletionResponse, ContentBlock, Provider};
 use crate::api::tools::Tool;
@@ -62,7 +63,7 @@ struct OpenAITool {
 struct OpenAIToolCall {
     id: String,
     #[serde(rename = "type")]
-    tool_type: String, // "function"
+    tool_type: String,
     function: OpenAIFunctionCall,
 }
 
@@ -228,7 +229,7 @@ impl Provider for OpenAIClient {
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse> {
+    ) -> Result<CompletionResponse, ApiError> { // <-- Use ApiError
         let openai_messages = self.convert_messages(messages, system);
         let openai_tools = tools.map(|t| self.convert_tools(t));
 
@@ -267,10 +268,10 @@ impl Provider for OpenAIClient {
             biased;
             _ = token.cancelled() => {
                 crate::utils::logging::debug("openai::complete", "Cancellation token triggered before sending request.");
-                return Err(anyhow::anyhow!("Request cancelled"));
+                return Err(ApiError::Cancelled{ provider: self.name().to_string() });
             }
             res = request_builder.send() => {
-                res.context("Failed to send request to OpenAI API")?
+                res.map_err(|e| ApiError::Network(e))?
             }
         };
 
@@ -280,38 +281,53 @@ impl Provider for OpenAIClient {
                 "openai::complete",
                 "Cancellation token triggered after sending request, before status check.",
             );
-            return Err(anyhow::anyhow!("Request cancelled"));
+            return Err(ApiError::Cancelled{ provider: self.name().to_string() });
         }
 
-        if !response.status().is_success() {
+        let status = response.status(); // Store status before consuming response
+        if !status.is_success() {
             // Race reading the error text against cancellation
             let error_text = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
                     crate::utils::logging::debug("openai::complete", "Cancellation token triggered while reading error response body.");
-                    return Err(anyhow::anyhow!("Request cancelled"));
+                    return Err(ApiError::Cancelled{ provider: self.name().to_string() });
                 }
                 text_res = response.text() => {
-                    text_res?
+                    text_res.map_err(|e| ApiError::Network(e))?
                 }
             };
-            return Err(anyhow::anyhow!("OpenAI API error: {}", error_text));
+            // Map status codes to ApiError variants
+            return Err(match status.as_u16() {
+                401 => ApiError::AuthenticationFailed { provider: self.name().to_string(), details: error_text },
+                429 => ApiError::RateLimited { provider: self.name().to_string(), details: error_text },
+                400..=499 => ApiError::InvalidRequest { provider: self.name().to_string(), details: error_text },
+                500..=599 => ApiError::ServerError { provider: self.name().to_string(), status_code: status.as_u16(), details: error_text },
+                _ => ApiError::Unknown { provider: self.name().to_string(), details: error_text },
+            });
         }
 
-        // Race parsing the successful response against cancellation
-        let openai_completion: OpenAICompletionResponse = tokio::select! {
+        // Race reading the successful response text against cancellation
+        let response_text = tokio::select! {
             biased;
             _ = token.cancelled() => {
-                crate::utils::logging::debug("openai::complete", "Cancellation token triggered while parsing successful response body.");
-                return Err(anyhow::anyhow!("Request cancelled"));
+                crate::utils::logging::debug("openai::complete", "Cancellation token triggered while reading successful response body.");
+                return Err(ApiError::Cancelled{ provider: self.name().to_string() });
             }
-            json_res = response.json() => {
-                json_res.context("Failed to parse OpenAI API response")?
+            text_res = response.text() => {
+                 text_res.map_err(|e| ApiError::Network(e))?
             }
         };
 
+        // Parse the text into the OpenAICompletionResponse
+        let openai_completion: OpenAICompletionResponse = serde_json::from_str(&response_text)
+            .map_err(|e| ApiError::ResponseParsingError {
+                provider: self.name().to_string(),
+                details: format!("Error: {}, Body: {}", e, response_text),
+            })?;
+
         if openai_completion.choices.is_empty() {
-            return Err(anyhow::anyhow!("OpenAI API returned no choices"));
+            return Err(ApiError::NoChoices { provider: self.name().to_string() });
         }
 
         let choice = &openai_completion.choices[0];
