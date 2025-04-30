@@ -3,6 +3,7 @@ use crate::api::messages::{
 };
 use crate::api::{Client as ApiClient, Model, ProviderKind};
 use anyhow::Result;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -81,8 +82,6 @@ pub enum AppEvent {
 pub struct AppConfig {
     pub llm_config: LlmConfig,
 }
-
-use std::collections::{HashSet /* , HashMap */};
 
 pub struct App {
     pub config: AppConfig,
@@ -439,17 +438,16 @@ impl App {
             let captured_tool_name = tool_name_for_log.clone();
             op_context.tasks.spawn(async move {
                 let task_id = tool_call.id.clone();
-                // Map ToolError to anyhow::Error
+
                 let result: Result<String, anyhow::Error> =
                     context_util::execute_tool_task_logic(tool_call.clone(), tool_executor, token)
                         .await
-                        .map_err(|e| anyhow::anyhow!(e)); // Convert ToolError -> anyhow::Error
+                        .map_err(|e| anyhow::anyhow!(e));
 
-                // Construct TaskOutcome::ToolResult
                 TaskOutcome::ToolResult {
                     tool_call_id: task_id,
                     tool_name: captured_tool_name,
-                    result, // Now Result<String, anyhow::Error>
+                    result,
                 }
             });
 
@@ -901,6 +899,7 @@ impl App {
                 token,
             )
             .await
+            .map_err(anyhow::Error::from) // Convert ApiError to anyhow::Error
     }
 }
 

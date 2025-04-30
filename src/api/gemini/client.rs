@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Model;
+use crate::api::error::ApiError;
 use crate::api::messages::{
     ContentBlock as MessageContentBlock, Message, MessageContent, MessageRole,
 };
@@ -31,7 +32,6 @@ impl GeminiClient {
     }
 }
 
-// Gemini API request types
 #[derive(Debug, Serialize)]
 struct GeminiRequest {
     contents: Vec<GeminiContent>,
@@ -95,7 +95,6 @@ struct GeminiFunctionDeclaration {
     parameters: GeminiParameterSchema,
 }
 
-// Define a struct mirroring Gemini's expected parameter schema
 #[derive(Debug, Serialize)]
 struct GeminiParameterSchema {
     #[serde(rename = "type")]
@@ -104,7 +103,6 @@ struct GeminiParameterSchema {
     required: Vec<String>,
 }
 
-// Gemini API response types
 #[derive(Debug, Deserialize)]
 struct GeminiResponse {
     candidates: Vec<GeminiCandidate>,
@@ -115,7 +113,6 @@ struct GeminiCandidate {
     content: GeminiContent,
 }
 
-// Helper to map our MessageRole to Gemini's role string
 fn map_role(msg: &Message) -> &str {
     match msg.role {
         MessageRole::Assistant => "model",
@@ -123,7 +120,11 @@ fn map_role(msg: &Message) -> &str {
             // If a user message contains ANY ToolResult blocks, treat it as a function/tool response
             if let MessageContent::StructuredContent { ref content } = msg.content {
                 // Check if any block is a ToolResult
-                if content.0.iter().any(|block| matches!(block, MessageContentBlock::ToolResult { .. })) {
+                if content
+                    .0
+                    .iter()
+                    .any(|block| matches!(block, MessageContentBlock::ToolResult { .. }))
+                {
                     return "function"; // Use "function" role for tool results
                 }
             }
@@ -135,8 +136,6 @@ fn map_role(msg: &Message) -> &str {
     }
 }
 
-// Helper to convert a single internal ContentBlock to a Vec<GeminiPart>
-// Needed because one block might map to zero or one GeminiPart based on context (role)
 fn convert_content_block_to_parts(
     block: MessageContentBlock,
     gemini_role: &str,
@@ -244,7 +243,6 @@ fn convert_messages(messages: Vec<Message>) -> Vec<GeminiContent> {
         .collect()
 }
 
-// Helper to simplify a single property schema for Gemini
 fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) -> Value {
     if let Some(prop_map_orig) = property_value.as_object() {
         let mut simplified_prop = prop_map_orig.clone();
@@ -303,7 +301,6 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
     }
 }
 
-// Convert tools to Gemini's format
 fn convert_tools(tools: Vec<Tool>) -> Vec<GeminiTool> {
     let function_declarations = tools
         .into_iter()
@@ -341,7 +338,6 @@ fn convert_tools(tools: Vec<Tool>) -> Vec<GeminiTool> {
     }]
 }
 
-// Convert Gemini's response to our generic format
 fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
     if response.candidates.is_empty() {
         return Err(anyhow!("No candidates in Gemini response"));
@@ -396,6 +392,7 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
                         executable_code.language, executable_code.code
                     ),
                 );
+                eprintln!("Received ExecutableCode part. See logs for more details.");
                 ContentBlock::Text {
                     text: format!(
                         "```{}
@@ -428,8 +425,9 @@ impl Provider for GeminiClient {
         messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<Tool>>,
-        _token: CancellationToken,
-    ) -> Result<CompletionResponse> {
+        token: CancellationToken, // Keep token for potential future use
+    ) -> Result<CompletionResponse, ApiError> {
+        // <-- Use ApiError
         let model_name = model.as_ref();
         let url = format!(
             "{}/models/{}:generateContent?key={}",
@@ -466,27 +464,58 @@ impl Provider for GeminiClient {
             }
         }
 
-        let response = self.client.post(&url).json(&request).send().await?;
+        // TODO: Add cancellation support for Gemini if possible
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e))?;
         let status = response.status(); // Store status before potentially consuming response
 
         if status != StatusCode::OK {
-            let error_text = response.text().await?;
+            let error_text = response.text().await.map_err(|e| ApiError::Network(e))?; // Handle potential error during text read
             crate::utils::logging::error(
                 "Gemini API Error Response",
                 &format!("Status: {}, Body: {}", status, error_text), // Use stored status
             );
-            return Err(anyhow!(
-                "Gemini API error ({}): {}", // Use stored status
-                status,
-                error_text
-            ));
+            // Map status codes to ApiError variants
+            return Err(match status.as_u16() {
+                401 | 403 => ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                429 => ApiError::RateLimited {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                400 | 404 => ApiError::InvalidRequest {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                }, // 404 might mean invalid model
+                500..=599 => ApiError::ServerError {
+                    provider: self.name().to_string(),
+                    status_code: status.as_u16(),
+                    details: error_text,
+                },
+                _ => ApiError::Unknown {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+            });
         }
 
         // Read the response body as text first to allow logging in case of JSON error
-        let response_text = response.text().await?;
+        let response_text = response.text().await.map_err(|e| ApiError::Network(e))?;
 
         match serde_json::from_str::<GeminiResponse>(&response_text) {
-            Ok(gemini_response) => convert_response(gemini_response),
+            Ok(gemini_response) => {
+                convert_response(gemini_response).map_err(|e| ApiError::ResponseParsingError {
+                    provider: self.name().to_string(),
+                    details: e.to_string(),
+                })
+            }
             Err(e) => {
                 crate::utils::logging::error(
                     "Gemini API JSON Parsing Error",
@@ -495,11 +524,10 @@ impl Provider for GeminiClient {
                         e, response_text
                     ),
                 );
-                Err(anyhow!(
-                    "Error decoding Gemini response body: {}. Body: {}",
-                    e,
-                    response_text
-                ))
+                Err(ApiError::ResponseParsingError {
+                    provider: self.name().to_string(),
+                    details: format!("Error: {}, Body: {}", e, response_text),
+                })
             }
         }
     }

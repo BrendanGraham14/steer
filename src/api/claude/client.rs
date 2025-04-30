@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Model;
+use crate::api::error::ApiError;
 use crate::api::messages::Message;
 use crate::api::provider::{CompletionResponse, ContentBlock, Provider};
 use crate::api::tools::Tool;
@@ -140,7 +141,7 @@ impl Provider for AnthropicClient {
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse> {
+    ) -> Result<CompletionResponse, ApiError> { // <-- Use ApiError
         let request = CompletionRequest {
             model: model.as_ref().to_string(),
             messages,
@@ -175,10 +176,10 @@ impl Provider for AnthropicClient {
             biased;
             _ = token.cancelled() => {
                 crate::utils::logging::debug("claude::complete", "Cancellation token triggered before sending request.");
-                return Err(anyhow::anyhow!("Request cancelled"));
+                return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             res = request_builder.send() => {
-                res.context("Failed to send request to Claude API")?
+                res.map_err(|e| ApiError::Network(e))?
             }
         };
 
@@ -188,37 +189,51 @@ impl Provider for AnthropicClient {
                 "claude::complete",
                 "Cancellation token triggered after sending request, before status check.",
             );
-            return Err(anyhow::anyhow!("Request cancelled"));
+            return Err(ApiError::Cancelled{ provider: self.name().to_string()});
         }
 
-        if !response.status().is_success() {
+        let status = response.status(); // Store status before consuming response
+        if !status.is_success() {
             // Race reading the error text against cancellation
             let error_text = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
                     crate::utils::logging::debug("claude::complete", "Cancellation token triggered while reading error response body.");
-                    return Err(anyhow::anyhow!("Request cancelled"));
+                    return Err(ApiError::Cancelled{ provider: self.name().to_string()});
                 }
                 text_res = response.text() => {
-                    text_res?
+                    text_res.map_err(|e| ApiError::Network(e))?
                 }
             };
-            return Err(anyhow::anyhow!("API error: {}", error_text));
+            // Map status codes to ApiError variants
+            return Err(match status.as_u16() {
+                401 => ApiError::AuthenticationFailed { provider: self.name().to_string(), details: error_text },
+                403 => ApiError::AuthenticationFailed { provider: self.name().to_string(), details: error_text }, // Potentially permission issue, treat as auth for now
+                429 => ApiError::RateLimited { provider: self.name().to_string(), details: error_text },
+                400..=499 => ApiError::InvalidRequest { provider: self.name().to_string(), details: error_text },
+                500..=599 => ApiError::ServerError { provider: self.name().to_string(), status_code: status.as_u16(), details: error_text },
+                _ => ApiError::Unknown { provider: self.name().to_string(), details: error_text },
+            });
         }
 
-        // Race parsing the successful response against cancellation
-        let claude_completion: ClaudeCompletionResponse = tokio::select! {
+        // Race reading the successful response text against cancellation
+        let response_text = tokio::select! {
             biased;
             _ = token.cancelled() => {
-                crate::utils::logging::debug("claude::complete", "Cancellation token triggered while parsing successful response body.");
-                return Err(anyhow::anyhow!("Request cancelled"));
+                crate::utils::logging::debug("claude::complete", "Cancellation token triggered while reading successful response body.");
+                return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
-            json_res = response.json() => {
-                json_res.context("Failed to parse Claude API response")?
+            text_res = response.text() => {
+                text_res.map_err(|e| ApiError::Network(e))?
             }
         };
 
-        // Convert Claude's response to our provider-agnostic format
+        // Parse the text into the ClaudeCompletionResponse
+        let claude_completion: ClaudeCompletionResponse = serde_json::from_str(&response_text)
+            .map_err(|e| ApiError::ResponseParsingError {
+                provider: self.name().to_string(),
+                details: format!("Error: {}, Body: {}", e, response_text),
+            })?;
         let completion = CompletionResponse {
             content: convert_claude_content(claude_completion.content),
             extra: claude_completion.extra,

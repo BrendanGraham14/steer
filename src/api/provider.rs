@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::fmt::Debug;
 use tokio_util::sync::CancellationToken;
 
+use crate::api::error::ApiError;
 use crate::api::messages::Message;
 use crate::api::tools::Tool;
 
@@ -13,7 +14,6 @@ use super::Model;
 /// Represents a content block in a message from any provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ContentBlock {
-    /// Text content
     Text {
         text: String,
         #[serde(flatten)]
@@ -62,7 +62,6 @@ impl CompletionResponse {
             .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
     }
 
-    /// Extract all tool calls from the response
     pub fn extract_tool_calls(&self) -> Vec<crate::api::tools::ToolCall> {
         self.content
             .iter()
@@ -98,5 +97,5 @@ pub trait Provider: Send + Sync + 'static {
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse>;
+    ) -> Result<CompletionResponse, ApiError>; // <-- Use ApiError here
 }

@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod gemini;
+pub mod error;
 pub mod messages;
 pub mod openai;
 pub mod provider;
@@ -14,7 +15,8 @@ use strum::Display;
 use strum::IntoStaticStr;
 pub use tools::{InputSchema, Tool, ToolCall};
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+pub use error::ApiError;
 use clap::builder::PossibleValue;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -146,8 +148,8 @@ impl Client {
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse> {
-        let provider = self.get_or_create_provider(model)?;
+    ) -> Result<CompletionResponse, ApiError> { // Updated return type
+        let provider = self.get_or_create_provider(model).map_err(|e| ApiError::Configuration(e.to_string()))?; // Keep map_err for config errors
         provider
             .complete(model, messages, system, tools, token)
             .await
