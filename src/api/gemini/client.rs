@@ -390,6 +390,13 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
                     ),
                 );
                 // Represent executable code as simple text for now
+                crate::utils::logging::info(
+                    "gemini::convert_response",
+                    &format!(
+                        "Received ExecutableCode part ({}): {}. Converting to text.",
+                        executable_code.language, executable_code.code
+                    ),
+                );
                 ContentBlock::Text {
                     text: format!(
                         "```{}
@@ -424,7 +431,7 @@ impl Provider for GeminiClient {
         tools: Option<Vec<Tool>>,
         _token: CancellationToken,
     ) -> Result<CompletionResponse> {
-        let model_name = model.name();
+        let model_name = model.as_ref();
         let url = format!(
             "{}/models/{}:generateContent?key={}",
             GEMINI_API_BASE, model_name, self.api_key
@@ -465,7 +472,6 @@ impl Provider for GeminiClient {
 
         if status != StatusCode::OK {
             let error_text = response.text().await?;
-            eprintln!("Request: {:?}", request); // Keep existing eprintln for context
             crate::utils::logging::error(
                 "Gemini API Error Response",
                 &format!("Status: {}, Body: {}", status, error_text), // Use stored status

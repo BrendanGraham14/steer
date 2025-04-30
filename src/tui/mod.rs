@@ -21,6 +21,7 @@ use tui_textarea::{Input, Key, TextArea};
 
 use tokio::select;
 
+use crate::api::Model;
 use crate::app::command::AppCommand;
 use crate::app::{AppEvent, Role};
 use crate::utils;
@@ -57,6 +58,7 @@ pub struct Tui {
     max_scroll: usize,
     user_scrolled_away: bool,
     raw_messages: Vec<crate::app::Message>,
+    current_model: Model,
 }
 
 #[derive(Clone)]
@@ -80,7 +82,7 @@ enum InputAction {
 }
 
 impl Tui {
-    pub fn new(command_tx: mpsc::Sender<AppCommand>) -> Result<Self> {
+    pub fn new(command_tx: mpsc::Sender<AppCommand>, initial_model: Model) -> Result<Self> {
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -118,6 +120,7 @@ impl Tui {
             max_scroll: 0,
             user_scrolled_away: false,
             raw_messages: Vec::new(),
+            current_model: initial_model,
         })
     }
 
@@ -157,12 +160,14 @@ impl Tui {
             let is_processing = self.is_processing;
             let progress_message_owned: Option<String> = self.progress_message.clone();
             let spinner_char_owned: String = self.get_spinner_char();
+            let current_model_owned: String = self.current_model.to_string();
 
             let input_block = Tui::create_input_block_static(
                 input_mode,
                 is_processing,
                 progress_message_owned,
                 spinner_char_owned,
+                &current_model_owned,
             );
             self.textarea.set_block(input_block);
 
@@ -348,6 +353,13 @@ impl Tui {
                 self.is_processing = false;
                 self.progress_message = None;
             }
+            AppEvent::ModelChanged { model } => {
+                debug(
+                    "tui.handle_app_event",
+                    &format!("Model changed to: {}", model),
+                );
+                self.current_model = model;
+            }
             AppEvent::ToolCallStarted { name, id } => {
                 self.spinner_state = 0;
                 self.progress_message = Some(format!("Executing tool: {}", name));
@@ -521,7 +533,7 @@ impl Tui {
                 const MAX_PREVIEW_LINES: usize = 5;
                 let lines: Vec<&str> = result.lines().collect();
                 let should_truncate = lines.len() > MAX_PREVIEW_LINES;
-                
+
                 let content = if should_truncate {
                     // Create truncated preview content
                     let preview_content = format!(
@@ -753,6 +765,7 @@ impl Tui {
         is_processing: bool,
         progress_message: Option<String>,
         spinner_char: String,
+        current_model: &str,
     ) -> Block<'a> {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -770,6 +783,10 @@ impl Tui {
             InputMode::AwaitingApproval => "Approval Required (y/n, Shift+Tab=always, Esc=deny)",
             InputMode::ConfirmExit => "Really quit? (y/N)",
         };
+        let model_span = Span::styled(
+            format!("[{}] ", current_model),
+            Style::default().fg(Color::LightMagenta),
+        );
 
         let title_line = if is_processing {
             let progress_msg = progress_message.as_deref().unwrap_or_default();
@@ -790,10 +807,10 @@ impl Tui {
                     Style::default().white(),
                 )
             };
-
-            Line::from(vec![processing_span, input_title_span])
+            Line::from(vec![model_span, processing_span, input_title_span])
         } else {
-            Line::from(input_title)
+            let title_span = Span::raw(input_title);
+            Line::from(vec![model_span, title_span])
         };
 
         Block::<'a>::default()
@@ -1406,6 +1423,7 @@ impl Drop for Tui {
 pub async fn run_tui(
     command_tx: mpsc::Sender<AppCommand>,
     event_rx: mpsc::Receiver<AppEvent>,
+    initial_model: Model,
 ) -> Result<()> {
     // Set up panic hook to ensure terminal is reset if the app crashes
     // Clone command_tx for potential use in panic hook if needed later
@@ -1433,7 +1451,7 @@ pub async fn run_tui(
 
     // --- TUI Initialization ---
     utils::logging::info("tui::run_tui", "Initializing TUI");
-    let mut tui = match Tui::new(command_tx.clone()) {
+    let mut tui = match Tui::new(command_tx.clone(), initial_model) {
         Ok(tui) => tui,
         Err(e) => {
             utils::logging::error("tui::run_tui", &format!("Failed to initialize TUI: {}", e));

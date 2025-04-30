@@ -1,4 +1,5 @@
 use anyhow::Result;
+use coder::api::Model;
 use coder::app::{App, AppConfig};
 use coder::config::LlmConfig;
 use coder::tools::edit::EditTool;
@@ -33,7 +34,7 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     let llm_config = LlmConfig::from_env()?;
     let app_config = AppConfig { llm_config };
     let (event_tx, _event_rx) = mpsc::channel(100);
-    let app = App::new(app_config, event_tx)?;
+    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219)?;
 
     // Check read-only status through the tool executor
     assert!(
