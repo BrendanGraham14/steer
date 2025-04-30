@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use coder::api::Model;
 use dotenv::dotenv;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +22,10 @@ struct Cli {
     /// API Key for Claude (can also be set via CLAUDE_API_KEY env var)
     #[arg(short, long, env = "CLAUDE_API_KEY")]
     api_key: Option<String>,
+
+    /// Model to use
+    #[arg(short, long, value_enum, default_value_t = Model::Claude3_7Sonnet20250219)]
+    model: Model,
 
     /// Enable debug logging to file
     #[arg(long)]
@@ -138,10 +143,10 @@ async fn main() -> Result<()> {
     let (app_event_tx, app_event_rx) = mpsc::channel(32);
 
     let app_config = AppConfig { llm_config };
-    let app = App::new(app_config, app_event_tx)?;
+    let app = App::new(app_config, app_event_tx, cli.model)?;
 
     tokio::spawn(app_actor_loop(app, app_command_rx));
-    tui::run_tui(app_command_tx, app_event_rx).await?;
+    tui::run_tui(app_command_tx, app_event_rx, cli.model).await?;
 
     Ok(())
 }

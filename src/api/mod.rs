@@ -10,81 +10,86 @@ pub use gemini::GeminiClient;
 pub use messages::Message;
 pub use openai::OpenAIClient;
 pub use provider::{CompletionResponse, ContentBlock, Provider};
+use strum::Display;
+use strum::IntoStaticStr;
 pub use tools::{InputSchema, Tool, ToolCall};
 
 use anyhow::{Result, anyhow};
+use clap::builder::PossibleValue;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use strum::{EnumIter, IntoEnumIterator};
+use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::LlmConfig;
 
-// Enum to represent the different LLM providers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderKind {
     Anthropic,
     OpenAI,
     Google,
 }
-
-// Enum for specific LLM models
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, EnumString, AsRefStr, Display, IntoStaticStr,
+)]
 pub enum Model {
+    #[strum(serialize = "claude-3-5-sonnet-20240620")]
+    Claude3_5Sonnet20240620,
+    #[strum(serialize = "claude-3-5-sonnet-20241022")]
+    Claude3_5Sonnet20241022,
+    #[strum(serialize = "claude-3-7-sonnet-20250219")]
     Claude3_7Sonnet20250219,
+    #[strum(serialize = "claude-3-5-haiku-20241022")]
     Claude3_5Haiku20241022,
+    #[strum(serialize = "gpt-4.1-2025-04-14")]
     Gpt4_1_20250414,
+    #[strum(serialize = "gpt-4.1-mini-2025-04-14")]
     Gpt4_1Mini20250414,
+    #[strum(serialize = "gpt-4.1-nano-2025-04-14")]
     Gpt4_1Nano20250414,
+    #[strum(serialize = "o3-2025-04-16")]
     O3_20250416,
+    #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
     Gemini2_5FlashPreview0417,
-    Gemini2_5ProPreview0325,
-    Gemini2_0Flash,
-    Gemini2_0FlashLite,
-    Gemini1_5Flash,
-    Gemini1_5Flash8b,
-    Gemini1_5Pro,
+    #[strum(serialize = "gemini-2.5-pro-exp-03-25")]
+    Gemini2_5ProExp0325,
 }
 
 impl Model {
     pub fn provider(&self) -> ProviderKind {
         match self {
-            Model::Claude3_7Sonnet20250219 => ProviderKind::Anthropic,
-            Model::Claude3_5Haiku20241022 => ProviderKind::Anthropic,
-            Model::Gpt4_1_20250414 => ProviderKind::OpenAI,
-            Model::Gpt4_1Mini20250414 => ProviderKind::OpenAI,
-            Model::Gpt4_1Nano20250414 => ProviderKind::OpenAI,
-            Model::O3_20250416 => ProviderKind::OpenAI,
-            Model::Gemini2_5FlashPreview0417 => ProviderKind::Google,
-            Model::Gemini2_5ProPreview0325 => ProviderKind::Google,
-            Model::Gemini2_0Flash => ProviderKind::Google,
-            Model::Gemini2_0FlashLite => ProviderKind::Google,
-            Model::Gemini1_5Flash => ProviderKind::Google,
-            Model::Gemini1_5Flash8b => ProviderKind::Google,
-            Model::Gemini1_5Pro => ProviderKind::Google,
-        }
-    }
+            Model::Claude3_7Sonnet20250219
+            | Model::Claude3_5Sonnet20240620
+            | Model::Claude3_5Sonnet20241022
+            | Model::Claude3_5Haiku20241022 => ProviderKind::Anthropic,
 
-    pub fn name(&self) -> &'static str {
-        match self {
-            Model::Claude3_7Sonnet20250219 => "claude-3-7-sonnet-20250219",
-            Model::Claude3_5Haiku20241022 => "claude-3-5-haiku-20241022",
-            Model::Gpt4_1_20250414 => "gpt-4.1-2025-04-14",
-            Model::Gpt4_1Mini20250414 => "gpt-4.1-mini-2025-04-14",
-            Model::Gpt4_1Nano20250414 => "gpt-4.1-nano-2025-04-14",
-            Model::O3_20250416 => "o3-2025-04-16",
-            Model::Gemini2_5FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
-            Model::Gemini2_5ProPreview0325 => "gemini-2.5-pro-preview-03-25",
-            Model::Gemini2_0Flash => "gemini-2.0-flash",
-            Model::Gemini2_0FlashLite => "gemini-2.0-flash-lite",
-            Model::Gemini1_5Flash => "gemini-1.5-flash",
-            Model::Gemini1_5Flash8b => "gemini-1.5-flash-8b",
-            Model::Gemini1_5Pro => "gemini-1.5-pro",
+            Model::Gpt4_1_20250414
+            | Model::Gpt4_1Mini20250414
+            | Model::Gpt4_1Nano20250414
+            | Model::O3_20250416 => ProviderKind::OpenAI,
+
+            Model::Gemini2_5FlashPreview0417 | Model::Gemini2_5ProExp0325 => ProviderKind::Google,
         }
     }
 }
 
-// Client struct to act as a facade for multiple providers/models
+static MODEL_VARIANTS: Lazy<Vec<Model>> = Lazy::new(|| Model::iter().collect());
+
+impl clap::ValueEnum for Model {
+    fn value_variants<'a>() -> &'a [Self] {
+        MODEL_VARIANTS.as_slice()
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        let s: &'static str = (*self).into();
+        Some(PossibleValue::new(s))
+    }
+}
+
 #[derive(Clone)]
 pub struct Client {
     provider_map: Arc<RwLock<HashMap<Model, Arc<dyn Provider>>>>,
@@ -142,5 +147,16 @@ impl Client {
         provider
             .complete(model, messages, system, tools, token)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_from_str() {
+        let model = Model::from_str("claude-3-7-sonnet-20250219").unwrap();
+        assert_eq!(model, Model::Claude3_7Sonnet20250219);
     }
 }
