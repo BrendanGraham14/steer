@@ -12,7 +12,8 @@
 - [ ] Support properly vertically expanding terminal input for multiple lines
 - [x] Add mouse wheel scrolling support to the TUI
 - [ ] fix issue where we have to press enter at program exit
-- [ ] dont swallow all mouse events
+- [ ] dont swallow all mouse events - seems like this is actually a bit hard. it's not possible to selectively handle some mouse events but not others, so it seems like we'd need to directly handle mouse events. instead, it seems like (if we want to support scrolling with the scroll wheel) we'll need to manually build support for
+- [ ] show a listing of the files the agent has read so far (maybe in sidebar)
 
 ### User Experience
 - [ ] Support navigating through previous messages and editing them
@@ -35,10 +36,13 @@
 - [ ] Support different models:
   - [x] Anthropic (Claude)
   - [x] OpenAI
-  - [ ] Google (Gemini)
+  - [x] Google (Gemini)
   - [ ] xAI (Grok)
 - [ ] Propagate errors from API to UI
 - [ ] Add retries, and propagate this to the UI as well
+
+### Architecture
+- [ ] Decouple the agent loop implementation from the core app logic. The app layer should pass the agent layer context, the model to use, and the necessary cancellation token.
 
 ### Additional Features
 - [ ] Add conversation saving and loading
