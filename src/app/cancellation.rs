@@ -31,7 +31,7 @@ impl fmt::Display for CancellationInfo {
         let mut activities = Vec::new();
 
         if self.api_call_in_progress {
-            activities.push("API call to Claude".to_string());
+            activities.push("API call".to_string());
         }
 
         if !self.active_tools.is_empty() {
