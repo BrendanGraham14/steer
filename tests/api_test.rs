@@ -803,3 +803,104 @@ async fn test_gemini_api_tool_result_json() {
     );
     println!("Gemini Tool Result JSON Content test passed successfully!");
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_gemini_api_with_multiple_tool_responses() {
+    dotenv().ok();
+    let config = LlmConfig::from_env().unwrap();
+    let client = Client::new(&config);
+
+    let messages = vec![
+        Message {
+            role: MessageRole::User,
+            content: MessageContent::Text {
+                content: "Please list files in '.' and check the weather in 'SF'".to_string(),
+            },
+            id: None,
+        },
+        // Assistant makes two tool calls
+        Message {
+            role: MessageRole::Assistant,
+            content: MessageContent::StructuredContent {
+                content: StructuredContent(vec![
+                    ContentBlock::ToolUse {
+                        id: "tool-use-id-1".to_string(),
+                        name: "ls".to_string(),
+                        input: serde_json::json!({ "path": "." }),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "tool-use-id-2".to_string(),
+                        name: "get_weather".to_string(),
+                        input: serde_json::json!({ "location": "SF" }),
+                    },
+                ]),
+            },
+            id: None,
+        },
+        // User provides results for both tool calls in one message
+        Message {
+            role: MessageRole::User,
+            content: MessageContent::StructuredContent {
+                content: StructuredContent(vec![
+                    ContentBlock::ToolResult {
+                        tool_use_id: "tool-use-id-1".to_string(),
+                        content: vec![ContentBlock::Text {
+                            text: "file1.rs, file2.toml".to_string(),
+                        }],
+                        is_error: None,
+                    },
+                    ContentBlock::ToolResult {
+                        tool_use_id: "tool-use-id-2".to_string(),
+                        content: vec![ContentBlock::Text {
+                            text: "Sunny, 20C".to_string(),
+                        }],
+                        is_error: None,
+                    },
+                    // Optional: Add text after results
+                    ContentBlock::Text {
+                        text: "Got it, thanks!".to_string(),
+                    },
+                ]),
+            },
+            id: None,
+        },
+    ];
+
+    // Define the 'get_weather' tool for the API call, 'ls' is usually predefined
+    let weather_tool = Tool {
+        name: "get_weather".to_string(),
+        description: "Gets the weather for a location".to_string(),
+        input_schema: InputSchema {
+            schema_type: "object".to_string(),
+            properties: serde_json::map::Map::from_iter(vec![(
+                "location".to_string(),
+                json!({"type": "string", "description": "The location to get weather for"}),
+            )]),
+            required: vec!["location".to_string()],
+        },
+    };
+    // Assuming ToolExecutor provides 'ls' or similar standard tools
+    let tool_executor = coder::app::ToolExecutor::new();
+    let mut tools = tool_executor.to_api_tools();
+    tools.push(weather_tool);
+
+
+    let response = client
+        .complete(
+            Model::Gemini2_5FlashPreview0417, // Use Gemini model
+            messages,
+            None,
+            Some(tools), // Provide tools including the dummy weather tool
+            CancellationToken::new(),
+        )
+        .await;
+
+    assert!(
+        response.is_ok(),
+        "API call failed when sending multiple tool results: {:?}",
+        response.err()
+    );
+    println!("Gemini Multiple Tool Responses test passed successfully!");
+}
+

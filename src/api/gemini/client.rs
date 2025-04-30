@@ -120,12 +120,11 @@ fn map_role(msg: &Message) -> &str {
     match msg.role {
         MessageRole::Assistant => "model",
         MessageRole::User => {
-            // If a user message contains ONLY a ToolResult, treat it as a function/tool response
+            // If a user message contains ANY ToolResult blocks, treat it as a function/tool response
             if let MessageContent::StructuredContent { ref content } = msg.content {
-                if content.0.len() == 1 {
-                    if let Some(MessageContentBlock::ToolResult { .. }) = content.0.get(0) {
-                        return "function"; // Use "function" role for tool results
-                    }
+                // Check if any block is a ToolResult
+                if content.0.iter().any(|block| matches!(block, MessageContentBlock::ToolResult { .. })) {
+                    return "function"; // Use "function" role for tool results
                 }
             }
             "user"
