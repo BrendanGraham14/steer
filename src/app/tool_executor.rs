@@ -22,27 +22,22 @@ impl Default for ToolExecutor {
 }
 
 impl ToolExecutor {
-    /// Create a new tool executor with the default set of tools
     pub fn new() -> Self {
         super::tool_registry::ToolExecutorBuilder::standard().build()
     }
 
-    /// Create a tool executor with read-only tools
     pub fn read_only() -> Self {
         super::tool_registry::ToolExecutorBuilder::read_only().build()
     }
 
-    /// Create a tool executor with a custom registry builder
     pub fn with_builder(builder: super::tool_registry::ToolExecutorBuilder) -> Self {
         builder.build()
     }
 
-    /// Get a list of all available tools (metadata).
     pub fn available_tools(&self) -> Vec<&dyn ToolTrait> {
         self.registry.values().map(|t| t.as_ref()).collect()
     }
 
-    /// Check if a tool requires approval
     pub fn requires_approval(&self, tool_name: &str) -> Result<bool> {
         match self.registry.get(tool_name) {
             Some(tool) => Ok(tool.requires_approval()),
@@ -50,7 +45,6 @@ impl ToolExecutor {
         }
     }
 
-    /// Convert registry tools to API tool descriptions
     pub fn to_api_tools(&self) -> Vec<ApiTool> {
         let api_tools = self
             .registry
@@ -69,7 +63,6 @@ impl ToolExecutor {
         api_tools
     }
 
-    /// Execute a tool call with cancellation support using the registry and trait.
     #[instrument(skip(self, tool_call, token), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
     pub async fn execute_tool_with_cancellation(
         &self,

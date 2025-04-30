@@ -16,34 +16,29 @@ impl Default for ToolExecutorBuilder {
 }
 
 impl ToolExecutorBuilder {
-    /// Create a new empty builder
     pub fn new() -> Self {
         Self {
             registry: HashMap::new(),
         }
     }
 
-    /// Add a specific tool implementation to the registry
     pub fn add_tool<T: ToolTrait + Default + 'static>(mut self) -> Self {
         let tool: Arc<dyn ToolTrait> = Arc::new(T::default());
         self.registry.insert(tool.name().to_string(), tool);
         self
     }
 
-    /// Add an already constructed tool to the registry
     pub fn with_tool(mut self, tool: Arc<dyn ToolTrait>) -> Self {
         self.registry.insert(tool.name().to_string(), tool);
         self
     }
 
-    /// Build the ToolExecutor with the configured registry
     pub fn build(self) -> super::tool_executor::ToolExecutor {
         super::tool_executor::ToolExecutor {
             registry: Arc::new(self.registry),
         }
     }
 
-    /// Create a builder pre-configured with all standard tools
     pub fn standard() -> Self {
         Self::new()
             .add_tool::<crate::tools::bash::BashTool>()
