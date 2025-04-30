@@ -5,6 +5,7 @@ use crate::tools::replace::REPLACE_TOOL_NAME;
 use crate::tools::replace::ReplaceParams;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use similar::{ChangeTag, TextDiff};
 use textwrap;
 
 /// Format a message (potentially with multiple content blocks) for display
@@ -43,10 +44,6 @@ pub fn format_message(
 
     if let Some(header) = role_header {
         formatted_lines.push(header);
-        // Add a blank line after the header for separation, unless no blocks follow
-        // if !blocks.is_empty() {
-        //     formatted_lines.push(Line::raw(""));
-        // }
     }
 
     for block in blocks {
@@ -161,33 +158,48 @@ pub fn format_tool_call_block(
                         }
                     }
                 } else {
-                    // Format as replacement
+                    // Format as replacement using diff
                     lines.push(Line::from(Span::styled(
-                        format!("-> Calling Tool: edit (Modifying {})", params.file_path),
+                        format!(
+                            "-> Calling Tool: edit (Applying diff to {})",
+                            params.file_path
+                        ),
                         Style::default().fg(Color::Cyan),
                     )));
-                    lines.push(Line::from(Span::styled(
-                        "Replace:",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    for line in params.old_string.lines() {
-                        for wrapped_line in textwrap::wrap(line, wrap_width) {
-                            lines.push(Line::from(Span::styled(
-                                format!("- {}", wrapped_line),
-                                Style::default().fg(Color::Red),
-                            )));
+
+                    let diff = TextDiff::from_lines(&params.old_string, &params.new_string);
+
+                    for change in diff.iter_all_changes() {
+                        let (sign, style) = match change.tag() {
+                            ChangeTag::Delete => ("-", Style::default().fg(Color::Red)),
+                            ChangeTag::Insert => ("+", Style::default().fg(Color::Green)),
+                            ChangeTag::Equal => (" ", Style::default().fg(Color::DarkGray)),
+                        };
+
+                        let content = change.value_ref().trim_end_matches('\n'); // Trim trailing newline if present
+                        for line_part in content.lines() {
+                            // Potentially wrap long diff lines
+                            for wrapped_line in
+                                textwrap::wrap(line_part, wrap_width.saturating_sub(2))
+                            // Subtract 2 for "+ " / "- "
+                            {
+                                lines.push(Line::from(Span::styled(
+                                    format!("{} {}", sign, wrapped_line),
+                                    style,
+                                )));
+                            }
+                            // Handle empty lines within the change
+                            if line_part.is_empty() {
+                                lines.push(Line::from(Span::styled(
+                                    sign.to_string(), // Show just the sign for empty lines
+                                    style,
+                                )));
+                            }
                         }
-                    }
-                    lines.push(Line::from(Span::styled(
-                        "With:",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                    for line in params.new_string.lines() {
-                        for wrapped_line in textwrap::wrap(line, wrap_width) {
-                            lines.push(Line::from(Span::styled(
-                                format!("+ {}", wrapped_line),
-                                Style::default().fg(Color::Green),
-                            )));
+                        // Ensure we handle the case where the original line was empty but wrapped_line might skip it
+                        if content.is_empty() && change.tag() != ChangeTag::Equal {
+                            // Only show sign for empty add/delete
+                            lines.push(Line::from(Span::styled(sign.to_string(), style)));
                         }
                     }
                 }
@@ -206,7 +218,7 @@ pub fn format_tool_call_block(
                     Style::default().fg(Color::Cyan),
                 )));
                 lines.push(Line::from(Span::styled(
-                    format!("+++ {} (New Content)", params.file_path),
+                    format!("+++ {} (Full New Content)", params.file_path), // Clarify it's the full content
                     Style::default().fg(Color::Green),
                 )));
                 for line in params.content.lines() {
