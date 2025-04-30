@@ -12,6 +12,7 @@
 - [ ] Support properly vertically expanding terminal input for multiple lines
 - [x] Add mouse wheel scrolling support to the TUI
 - [ ] fix issue where we have to press enter at program exit
+- [ ] dont swallow all mouse events
 
 ### User Experience
 - [ ] Support navigating through previous messages and editing them
@@ -19,6 +20,8 @@
 - [ ] Support executing bash comments (like ! in claude code)
 - [ ] @files with fzf-like fuzzy search
 - [ ] Show which model we're using and support switching models
+- [ ] Esc to clear input
+- [x] Handle slash commands
 
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts

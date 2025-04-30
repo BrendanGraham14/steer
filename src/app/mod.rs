@@ -185,10 +185,13 @@ impl App {
     pub async fn process_user_message(&mut self, message: String) -> Result<()> {
         if message.starts_with('/') {
             let response = self.handle_command(&message).await?;
-            self.emit_event(AppEvent::CommandResponse {
-                content: response.clone(),
-                id: uuid::Uuid::new_v4().to_string(),
-            });
+            // Emit CommandResponse only if the command returned Some(string)
+            if let Some(content) = response {
+                self.emit_event(AppEvent::CommandResponse {
+                    content, // No clone needed as we are consuming the Option
+                    id: uuid::Uuid::new_v4().to_string(),
+                });
+            }
             return Ok(());
         }
 
@@ -659,7 +662,7 @@ impl App {
         agent.execute(prompt, token).await
     }
 
-    pub async fn handle_command(&mut self, command: &str) -> Result<String> {
+    pub async fn handle_command(&mut self, command: &str) -> Result<Option<String>> {
         let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
         let command_name = parts[0];
         let args = parts.get(1).unwrap_or(&"").trim();
@@ -667,13 +670,13 @@ impl App {
         // Cancel any previous operation before starting a command
         self.cancel_current_processing().await;
 
-        let result: Result<String>; // Store result to allow context clearing
+        let result: Result<Option<String>>; // Store result to allow context clearing
 
         match command_name {
             "clear" => {
                 // clear does not need an op context
                 self.conversation.lock().await.clear();
-                result = Ok("Conversation cleared.".to_string());
+                result = Ok(Some("Conversation cleared.".to_string()));
             }
             "compact" => {
                 // Create OpContext for cancellable command
@@ -689,15 +692,16 @@ impl App {
                 // Emit thinking started? Maybe not for commands...
                 match self.compact_conversation(token).await {
                     Ok(()) => {
-                        result = Ok("Conversation compacted.".to_string());
+                        result = Ok(Some("Conversation compacted.".to_string()));
                     }
                     Err(e) => {
+                        // todo: error type for this
                         if e.to_string() == "Request cancelled" {
                             crate::utils::logging::info(
                                 "App.handle_command",
                                 "Compact command cancelled.",
                             );
-                            result = Ok("Compact command cancelled.".to_string());
+                            result = Ok(Some("Compact command cancelled.".to_string()));
                         } else {
                             crate::utils::logging::error(
                                 "App.handle_command",
@@ -711,7 +715,7 @@ impl App {
             }
             "dispatch" => {
                 if args.is_empty() {
-                    return Ok("Usage: /dispatch <prompt for agent>".to_string());
+                    return Ok(Some("Usage: /dispatch <prompt for agent>".to_string()));
                 }
                 // Create OpContext for cancellable command
                 let op_context = OpContext::new();
@@ -731,7 +735,7 @@ impl App {
                             format!("Dispatch Agent Result:\\\\n{}", response),
                         ))
                         .await;
-                        result = Ok("Dispatch agent executed. Response added.".to_string());
+                        result = Ok(Some("Dispatch agent executed. Response added.".to_string()));
                     }
                     Err(e) => {
                         if e.to_string() == "Request cancelled" {
@@ -739,7 +743,7 @@ impl App {
                                 "App.handle_command",
                                 "Dispatch command cancelled.",
                             );
-                            result = Ok("Dispatch command cancelled.".to_string());
+                            result = Ok(Some("Dispatch command cancelled.".to_string()));
                         } else {
                             crate::utils::logging::error(
                                 "App.handle_command",
@@ -751,7 +755,7 @@ impl App {
                 }
                 self.current_op_context = None; // Clear context after command
             }
-            _ => result = Ok(format!("Unknown command: {}", command_name)),
+            _ => result = Ok(Some(format!("Unknown command: {}", command_name))),
         }
 
         result // Return the stored result
@@ -930,12 +934,13 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                     }
                     AppCommand::ExecuteCommand(cmd) => {
                         match app.handle_command(&cmd).await {
-                            Ok(response) => {
-                                // Commands might not always generate immediate user-visible output
-                                // For now, maybe log or send a CommandResponse event if needed?
-                                crate::utils::logging::info("app_actor_loop", &format!("Command '{}' executed, result: {}", cmd, response));
-                                // Example: Send response back (adjust as needed)
-                                // app.emit_event(AppEvent::CommandResponse { content: response, id: format!("cmd_resp_{}", uuid::Uuid::new_v4()) });
+                            Ok(response_option) => {
+                                // Log the result using Debug format
+                                crate::utils::logging::info("app_actor_loop", &format!("Command '{}' executed, result: {:?}", cmd, response_option));
+                                // Emit event only if there is content
+                                if let Some(content) = response_option {
+                                     app.emit_event(AppEvent::CommandResponse { content, id: format!("cmd_resp_{}", uuid::Uuid::new_v4()) });
+                                }
                             }
                             Err(e) => {
                                 crate::utils::logging::error("app_actor_loop", &format!("Error running command '{}': {}", cmd, e));
