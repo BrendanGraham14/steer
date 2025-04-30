@@ -233,7 +233,7 @@ impl Provider for OpenAIClient {
         let openai_tools = tools.map(|t| self.convert_tools(t));
 
         let request = CompletionRequest {
-            model: model.name().to_string(),
+            model: model.as_ref().to_string(),
             messages: openai_messages,
             tools: openai_tools,
             temperature: Some(0.7),

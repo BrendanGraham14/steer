@@ -142,7 +142,7 @@ impl Provider for AnthropicClient {
         token: CancellationToken,
     ) -> Result<CompletionResponse> {
         let request = CompletionRequest {
-            model: model.name().to_string(),
+            model: model.as_ref().to_string(),
             messages,
             max_tokens: 4000,
             system,

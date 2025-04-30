@@ -1,8 +1,9 @@
 use crate::api::messages::{
     Message as ApiMessage, MessageContent as ApiMessageContent, MessageRole as ApiMessageRole,
 };
-use crate::api::{Client as ApiClient, Model};
+use crate::api::{Client as ApiClient, Model, ProviderKind};
 use anyhow::Result;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
@@ -69,6 +70,9 @@ pub enum AppEvent {
     OperationCancelled {
         info: CancellationInfo,
     },
+    ModelChanged {
+        model: Model,
+    },
     Error {
         message: String,
     },
@@ -89,10 +93,15 @@ pub struct App {
     event_sender: mpsc::Sender<AppEvent>,
     approved_tools: HashSet<String>,
     current_op_context: Option<OpContext>,
+    current_model: Model,
 }
 
 impl App {
-    pub fn new(config: AppConfig, event_tx: mpsc::Sender<AppEvent>) -> Result<Self> {
+    pub fn new(
+        config: AppConfig,
+        event_tx: mpsc::Sender<AppEvent>,
+        initial_model: Model,
+    ) -> Result<Self> {
         let env_info = EnvironmentInfo::collect()?;
         let conversation = Arc::new(Mutex::new(Conversation::new()));
         let tool_executor = Arc::new(ToolExecutor::new());
@@ -107,6 +116,7 @@ impl App {
             event_sender: event_tx,
             approved_tools: HashSet::new(),
             current_op_context: None,
+            current_model: initial_model,
         })
     }
 
@@ -128,6 +138,34 @@ impl App {
                 );
             }
         }
+    }
+
+    pub fn get_current_model(&self) -> Model {
+        self.current_model
+    }
+
+    pub fn set_model(&mut self, model: Model) -> Result<()> {
+        // Check if the provider is available (has API key)
+        let provider = model.provider();
+        if self.config.llm_config.key_for(provider).is_none() {
+            return Err(anyhow::anyhow!(
+                "Cannot set model to {}: missing API key for {} provider",
+                model.as_ref(),
+                match provider {
+                    ProviderKind::Anthropic => "Anthropic",
+                    ProviderKind::OpenAI => "OpenAI",
+                    ProviderKind::Google => "Google",
+                }
+            ));
+        }
+
+        // Set the model
+        self.current_model = model;
+
+        // Emit an event to notify UI of the change
+        self.emit_event(AppEvent::ModelChanged { model });
+
+        Ok(())
     }
 
     pub async fn add_message(&self, message: Message) {
@@ -220,6 +258,9 @@ impl App {
         // Clone env_info *before* the async move block
         let env_info_clone = self.env_info.clone();
 
+        // Use the current model
+        let current_model = self.current_model;
+
         // Spawn the task directly into the OpContext's JoinSet
         op_context.tasks.spawn(async move {
             crate::utils::logging::debug("spawn_api_call task (JoinSet)", "Task started.");
@@ -230,6 +271,7 @@ impl App {
                 tools.as_ref(),
                 token,
                 &env_info_clone,
+                current_model,
             )
             .await;
 
@@ -816,6 +858,7 @@ impl App {
         tools: Option<&Vec<crate::api::Tool>>,
         token: CancellationToken,
         env_info: &EnvironmentInfo,
+        model: Model,
     ) -> Result<crate::api::CompletionResponse> {
         let conversation_guard = conversation.lock().await;
         let (api_messages, system_content_override) =
@@ -847,7 +890,7 @@ impl App {
 
         api_client
             .complete(
-                Model::Claude3_7Sonnet20250219,
+                model,
                 api_messages,
                 final_system_content,
                 tools.cloned(),

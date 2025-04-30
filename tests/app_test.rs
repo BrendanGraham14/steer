@@ -1,5 +1,5 @@
 use anyhow::Result;
-use coder::api::ToolCall;
+use coder::api::{Model, ToolCall};
 use coder::app::{App, AppConfig};
 use coder::config::LlmConfig;
 use dotenv::dotenv;
@@ -18,7 +18,7 @@ async fn test_app_initialization() -> Result<()> {
     // Initialize the app
     // Create a channel for app events
     let (event_tx, _event_rx) = mpsc::channel(100);
-    let app = App::new(app_config, event_tx)?;
+    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219)?;
 
     // Verify the app was initialized correctly
     assert!(
@@ -43,7 +43,7 @@ async fn test_tool_executor() -> Result<()> {
     // Initialize the app
     // Create a channel for app events
     let (event_tx, _event_rx) = mpsc::channel(100);
-    let app = App::new(app_config, event_tx)?;
+    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219)?;
 
     // Create a tool call for listing the current directory
     let parameters = serde_json::json!({
