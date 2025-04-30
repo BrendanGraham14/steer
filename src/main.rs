@@ -24,7 +24,7 @@ struct Cli {
     api_key: Option<String>,
 
     /// Model to use
-    #[arg(short, long, value_enum, default_value_t = Model::Claude3_7Sonnet20250219)]
+    #[arg(short, long, value_enum, default_value_t = Model::Gemini2_5ProPreview0325)]
     model: Model,
 
     /// Enable debug logging to file
