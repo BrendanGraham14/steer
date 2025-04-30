@@ -167,7 +167,6 @@ impl Tui {
                 is_processing,
                 progress_message_owned,
                 spinner_char_owned,
-                &current_model_owned,
             );
             self.textarea.set_block(input_block);
 
@@ -182,6 +181,7 @@ impl Tui {
                     input_mode,
                     self.scroll_offset,
                     self.max_scroll,
+                    &current_model_owned,
                 ) {
                     error("tui.run.draw", &format!("UI rendering failed: {}", e));
                 }
@@ -263,6 +263,7 @@ impl Tui {
                                                         input_mode,
                                                         self.scroll_offset,
                                                         self.max_scroll,
+                                                        &current_model_owned,
                                                     ) {
                                                         error("tui.run.draw", &format!("UI rendering failed: {}", e));
                                                     }
@@ -292,6 +293,7 @@ impl Tui {
                                                         input_mode,
                                                         self.scroll_offset,
                                                         self.max_scroll,
+                                                        &current_model_owned,
                                                     ) {
                                                         error("tui.run.draw", &format!("UI rendering failed: {}", e));
                                                     }
@@ -642,7 +644,7 @@ impl Tui {
                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                 );
                 self.raw_messages
-                    .push(crate::app::Message::new_text(Role::System, content)); // Use actual content for raw
+                    .push(crate::app::Message::new_text(Role::System, content));
                 self.messages.push(FormattedMessage {
                     content: formatted,
                     role: Role::System,
@@ -765,7 +767,6 @@ impl Tui {
         is_processing: bool,
         progress_message: Option<String>,
         spinner_char: String,
-        current_model: &str,
     ) -> Block<'a> {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -783,10 +784,6 @@ impl Tui {
             InputMode::AwaitingApproval => "Approval Required (y/n, Shift+Tab=always, Esc=deny)",
             InputMode::ConfirmExit => "Really quit? (y/N)",
         };
-        let model_span = Span::styled(
-            format!("[{}] ", current_model),
-            Style::default().fg(Color::LightMagenta),
-        );
 
         let title_line = if is_processing {
             let progress_msg = progress_message.as_deref().unwrap_or_default();
@@ -807,10 +804,10 @@ impl Tui {
                     Style::default().white(),
                 )
             };
-            Line::from(vec![model_span, processing_span, input_title_span])
+            Line::from(vec![processing_span, input_title_span])
         } else {
             let title_span = Span::raw(input_title);
-            Line::from(vec![model_span, title_span])
+            Line::from(vec![title_span])
         };
 
         Block::<'a>::default()
@@ -826,6 +823,7 @@ impl Tui {
         input_mode: InputMode,
         scroll_offset: usize,
         max_scroll: usize,
+        current_model: &str,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -834,17 +832,30 @@ impl Tui {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(input_height)])
+            .constraints([
+                Constraint::Min(0),               // Messages area
+                Constraint::Length(input_height), // Input area
+                Constraint::Length(1),            // Model info area
+            ])
             .split(f.area());
 
         let messages_area = chunks[0];
         let input_area = chunks[1];
+        let model_info_area = chunks[2];
 
         // Render Messages
         Self::render_messages_static(f, messages_area, messages, scroll_offset, max_scroll);
 
         // Render Text Area
         f.render_widget(textarea, input_area);
+
+        // Render model info at the bottom
+        let model_info: Paragraph<'_> = Paragraph::new(Line::from(Span::styled(
+            current_model,
+            Style::default().fg(Color::LightMagenta),
+        )))
+        .alignment(ratatui::layout::Alignment::Right);
+        f.render_widget(model_info, model_info_area);
 
         // Set cursor visibility and position
         if input_mode == InputMode::Editing {
