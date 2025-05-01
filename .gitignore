@@ -1,6 +1,6 @@
 # Rust build artifacts
-/target/
-Cargo.lock
+**/target/
+**/Cargo.lock
 
 # Editor files
 .vscode/
@@ -19,3 +19,4 @@ Thumbs.db
 **/CLAUDE.local.md
 
 **/.claude/settings.local.json
+
