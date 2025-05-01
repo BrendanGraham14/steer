@@ -29,7 +29,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 mod message_formatter;
 
-use message_formatter::{format_message, format_tool_preview, format_tool_result_block};
+use message_formatter::{format_command_response, format_message, format_tool_preview};
 
 const MAX_INPUT_HEIGHT: u16 = 10;
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -54,7 +54,7 @@ pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     textarea: TextArea<'static>,
     input_mode: InputMode,
-    messages: Vec<FormattedMessage>,
+    display_items: Vec<DisplayItem>,
     is_processing: bool,
     progress_message: Option<String>,
     last_spinner_update: Instant,
@@ -67,6 +67,31 @@ pub struct Tui {
     user_scrolled_away: bool,
     raw_messages: Vec<crate::app::Message>,
     current_model: Model,
+}
+
+// Represents different types of items displayed in the TUI conversation list.
+#[derive(Clone, Debug)]
+enum DisplayItem {
+    Message {
+        id: String,
+        role: Role, // Keep Role for User/Assistant/Tool messages
+        content: Vec<Line<'static>>,
+    },
+    ToolResult {
+        id: String,                  // Unique ID for this display item (e.g., "result_tool_abc")
+        tool_use_id: String,         // ID of the original tool call
+        content: Vec<Line<'static>>, // Formatted lines (potentially truncated)
+        full_result: String,         // Unformatted, full result
+        is_truncated: bool,
+    },
+    CommandResponse {
+        id: String,
+        content: Vec<Line<'static>>,
+    },
+    SystemInfo {
+        id: String,
+        content: Vec<Line<'static>>, // For errors, cancellations, info messages
+    },
 }
 
 #[derive(Clone)]
@@ -117,7 +142,7 @@ impl Tui {
             terminal,
             textarea,
             input_mode: InputMode::Normal,
-            messages: Vec::new(),
+            display_items: Vec::new(),
             is_processing: false,
             progress_message: None,
             last_spinner_update: Instant::now(),
@@ -185,13 +210,13 @@ impl Tui {
 
             self.terminal.draw(|f| {
                 let textarea_ref = &self.textarea;
-                let messages_ref = &self.messages;
+                let display_items_ref = &self.display_items;
                 let current_approval_ref = self.current_tool_approval.as_ref(); // Pass reference
 
                 if let Err(e) = Tui::render_ui_static(
                     f,
                     textarea_ref,
-                    messages_ref,
+                    display_items_ref,
                     input_mode,
                     self.scroll_offset,
                     self.max_scroll,
@@ -213,7 +238,12 @@ impl Tui {
                                 Event::Resize(_, _) => {
                                     debug!(target:"tui.run", "Terminal resized");
                                     // Recalculate max_scroll based on new size
-                                    let all_lines: Vec<Line> = self.messages.iter().flat_map(|fm| fm.content.clone()).collect();
+                                    let all_lines: Vec<Line> = self.display_items.iter().flat_map(|di| match di {
+                                        DisplayItem::Message { content, .. } => content.clone(),
+                                        DisplayItem::ToolResult { content, .. } => content.clone(),
+                                        DisplayItem::CommandResponse { content, .. } => content.clone(),
+                                        DisplayItem::SystemInfo { content, .. } => content.clone(),
+                                    }).collect();
                                     let total_lines_count = all_lines.len();
                                     let terminal_height = self.terminal.size()?.height;
                                     let input_height = (self.textarea.lines().len() as u16 + 2).min(MAX_INPUT_HEIGHT).min(terminal_height);
@@ -270,11 +300,11 @@ impl Tui {
                                                 // Immediate redraw for better responsiveness
                                                 if let Err(e) = self.terminal.draw(|f| {
                                                     let textarea_ref = &self.textarea;
-                                                    let messages_ref = &self.messages;
+                                                    let display_items_ref = &self.display_items;
                                                     if let Err(e) = Tui::render_ui_static(
                                                         f,
                                                         textarea_ref,
-                                                        messages_ref,
+                                                        display_items_ref,
                                                         input_mode,
                                                         self.scroll_offset,
                                                         self.max_scroll,
@@ -301,11 +331,11 @@ impl Tui {
                                                 // Immediate redraw for better responsiveness
                                                 if let Err(e) = self.terminal.draw(|f| {
                                                     let textarea_ref = &self.textarea;
-                                                    let messages_ref = &self.messages;
+                                                    let display_items_ref = &self.display_items;
                                                     if let Err(e) = Tui::render_ui_static(
                                                         f,
                                                         textarea_ref,
-                                                        messages_ref,
+                                                        display_items_ref,
                                                         input_mode,
                                                         self.scroll_offset,
                                                         self.max_scroll,
@@ -359,7 +389,7 @@ impl Tui {
     }
 
     async fn handle_app_event(&mut self, event: AppEvent) {
-        let mut messages_updated = false;
+        let mut display_items_updated = false;
         match event {
             AppEvent::ThinkingStarted => {
                 debug!(target:"tui.handle_app_event", "Setting is_processing = true");
@@ -374,12 +404,21 @@ impl Tui {
             }
             AppEvent::MessagePart { id, delta } => {
                 debug!(target:"tui.handle_app_event", "MessagePart: {}", id);
-                // Find and update the message with the given ID, or create a new one if needed
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
-                    // Convert the delta to a Line and add it to the content vector
-                    let new_line = Line::from(delta.clone());
-                    msg.content.push(new_line);
-                    messages_updated = true;
+                // Find and update the message with the given ID
+                if let Some(item) = self.display_items.iter_mut().find(|di| match di {
+                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                    _ => false,
+                }) {
+                    // Ensure it's the Message variant before accessing content
+                    if let DisplayItem::Message { content, .. } = item {
+                        let new_line = Line::from(delta.clone());
+                        content.push(new_line);
+                        display_items_updated = true;
+                    } else {
+                        warn!(target:"tui.handle_app_event", "Found DisplayItem for ID {}, but it's not a Message variant.", id);
+                    }
+                } else {
+                    warn!(target:"tui.handle_app_event", "MessagePart received for unknown ID: {}", id);
                 }
             }
             AppEvent::ModelChanged { model } => {
@@ -406,23 +445,22 @@ impl Tui {
                     );
 
                     // Check if ID already exists in the TUI's formatted list
-                    if self.messages.iter().any(|m| m.id == id) {
+                    if self.display_items.iter().any(|di| match di {
+                        DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                        _ => false,
+                    }) {
                         warn!(target:
                             "tui.handle_app_event",
                             "MessageAdded: ID {} already exists. Skipping.", id,
                         );
                     } else {
-                        let formatted_message = FormattedMessage {
-                            content: formatted,
-                            role: Role::Tool,
+                        self.display_items.push(DisplayItem::Message {
                             id: id.clone(),
-                            full_tool_result: None,
-                            is_truncated: false,
-                        };
-                        self.messages.push(formatted_message);
-                        // self.raw_messages.push(crate::app::Message::new_text(role, content.clone())); // Raw message added above
+                            role: Role::Tool,
+                            content: formatted,
+                        });
                         debug!(target: "tui.handle_app_event", "Added message ID: {}", id);
-                        messages_updated = true;
+                        display_items_updated = true;
                     }
                 } else {
                     // This case might happen if the App adds a message but fails to send the event,
@@ -439,13 +477,6 @@ impl Tui {
                 content_blocks,
                 id,
             } => {
-                if role == Role::System {
-                    debug!(target: "tui.handle_app_event", "Skipping system message display");
-                    // Still add to raw messages if needed for context/history?
-                    // self.raw_messages.push(crate::app::Message::new_with_blocks(role, content_blocks));
-                    return;
-                }
-
                 // MessageAdded now carries the blocks directly
                 // Add the raw message first
                 let raw_msg = crate::app::Message::new_with_blocks(role, content_blocks.clone());
@@ -460,7 +491,10 @@ impl Tui {
 
                 // Check if ID already exists in the TUI's formatted list
                 // (Should ideally not happen with unique IDs, but good safety check)
-                if self.messages.iter().any(|m| m.id == id) {
+                if self.display_items.iter().any(|di| match di {
+                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                    _ => false,
+                }) {
                     info!(
                         target: "tui.handle_app_event",
                         "MessageAdded: ID {} already exists. Content blocks: {}. Skipping.",
@@ -468,15 +502,13 @@ impl Tui {
                         content_blocks.len()
                     );
                 } else {
-                    let formatted_message = FormattedMessage {
-                        content: formatted,
-                        role,
+                    let display_item = DisplayItem::Message {
                         id: id.clone(),
-                        full_tool_result: None,
-                        is_truncated: false,
+                        role,
+                        content: formatted,
                     };
-                    self.messages.push(formatted_message);
-                    messages_updated = true;
+                    self.display_items.push(display_item);
+                    display_items_updated = true;
                     debug!(
                         target: "tui.handle_app_event",
                         "Added message ID: {} with {} content blocks",
@@ -486,42 +518,80 @@ impl Tui {
                 }
             }
             AppEvent::MessageUpdated { id, content } => {
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
+                if self.display_items.iter().any(|di| match di {
+                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                    _ => false,
+                }) {
                     debug!(
                         target: "tui.handle_app_event",
                         "Updating message ID: {}", id,
                     );
                     // Now use the blocks from the raw message
                     if let Some(raw_msg) = self.raw_messages.iter().find(|m| m.id == id) {
-                        msg.content = format_message(
-                            &raw_msg.content_blocks,
-                            msg.role,
-                            self.terminal.size().map(|r| r.width).unwrap_or(100),
-                        );
-                        messages_updated = true; // Mark that message content changed
-                        debug!(
-                            target: "tui.handle_app_event",
-                            "Updated message ID: {} with new blocks", id,
-                        );
+                        // Find the existing DisplayItem::Message and update its content
+                        if let Some(item) = self.display_items.iter_mut().find(|di| match di {
+                            DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                            _ => false,
+                        }) {
+                            if let DisplayItem::Message {
+                                role: item_role,
+                                content: item_content,
+                                ..
+                            } = item
+                            {
+                                *item_content = format_message(
+                                    &raw_msg.content_blocks,
+                                    *item_role, // Use the existing role from the item
+                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                                );
+                                display_items_updated = true; // Mark that message content changed
+                                debug!(
+                                    target: "tui.handle_app_event",
+                                    "Updated message ID: {} with new blocks", id,
+                                );
+                            } else {
+                                warn!(target: "tui.handle_app_event", "Found DisplayItem for ID {}, but it's not a Message variant.", id);
+                            }
+                        } else {
+                            warn!(target: "tui.handle_app_event", "MessageUpdated: DisplayItem ID {} not found for raw message.", id);
+                            // Optionally create a new DisplayItem if not found
+                        }
                     } else {
                         warn!(target: "tui.handle_app_event", "MessageUpdated: Raw message ID {} not found.", id);
-                        // Fallback: format the string content as a text block
-                        let block = crate::app::conversation::MessageContentBlock::Text(content);
-                        msg.content = format_message(
-                            &[block],
-                            msg.role,
-                            self.terminal.size().map(|r| r.width).unwrap_or(100),
-                        );
-                        messages_updated = true; // Mark that message content changed
+                        // Fallback: Update based on string content if raw message is missing
+                        if let Some(item) = self.display_items.iter_mut().find(|di| match di {
+                            DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                            _ => false,
+                        }) {
+                            if let DisplayItem::Message {
+                                role: item_role,
+                                content: item_content,
+                                ..
+                            } = item
+                            {
+                                let block =
+                                    crate::app::conversation::MessageContentBlock::Text(content);
+                                *item_content = format_message(
+                                    &[block],
+                                    *item_role,
+                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                                );
+                                display_items_updated = true; // Mark that message content changed
+                            } else {
+                                warn!(target: "tui.handle_app_event", "Found DisplayItem for ID {} (fallback), but it's not a Message variant.", id);
+                            }
+                        } else {
+                            warn!(target: "tui.handle_app_event", "MessageUpdated: DisplayItem ID {} not found (fallback).", id);
+                        }
                     }
                 } else {
                     warn!(target: "tui.handle_app_event", "MessageUpdated: ID {} not found.", id);
                 }
             }
             AppEvent::ToolCallCompleted {
-                name: _, // Name is implicitly shown in the formatted result block
+                name: _,
                 result,
-                id, // Use this ID for the formatted message
+                id,
             } => {
                 // If the completed tool matches the *currently* displayed approval,
                 // clear the current approval state and activate the next one.
@@ -529,9 +599,10 @@ impl Tui {
                 // while another was pending user input.
                 if let Some(current_approval) = &self.current_tool_approval {
                     if current_approval.id == id {
+                        // Compare with original tool call ID
                         debug!(target: "tui.handle_app_event", "Tool {} (which was pending approval) completed. Activating next.", id);
                         self.current_tool_approval = None; // Clear current explicitly
-                    // self.activate_next_approval();
+                    // self.activate_next_approval(); // Called by dispatch_input_action
                     } else {
                         // A different tool completed, progress message was likely set by ToolCallStarted
                         self.progress_message = None;
@@ -541,23 +612,18 @@ impl Tui {
                     self.progress_message = None;
                 }
 
-                debug!(target: "tui.handle_app_event", "Adding Tool Result message for ID: {}", id);
-
-                let formatted_result_lines = format_tool_result_block(
-                    &id,
-                    &result,
-                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                );
+                debug!(target: "tui.handle_app_event", "Adding Tool Result display item for original call ID: {}", id);
 
                 // Check if result should be truncated
                 const MAX_PREVIEW_LINES: usize = 5;
                 let lines: Vec<&str> = result.lines().collect();
                 let should_truncate = lines.len() > MAX_PREVIEW_LINES;
 
-                let content = if should_truncate {
+                let formatted_content = if should_truncate {
                     // Create truncated preview content
                     let preview_content = format!(
-                        "{}\n... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
+                        "{}
+... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
                         lines
                             .iter()
                             .take(MAX_PREVIEW_LINES)
@@ -572,42 +638,47 @@ impl Tui {
                     )
                 } else {
                     // Use original formatting if not truncated
-                    formatted_result_lines
+                    format_tool_preview(
+                        // Use preview formatter for consistency
+                        &result,
+                        self.terminal.size().map(|r| r.width).unwrap_or(100),
+                    )
                 };
 
-                let formatted_message = FormattedMessage {
-                    content,
-                    role: Role::Tool,
-                    id: format!("result_{}", id), // Ensure unique ID for the result display
-                    full_tool_result: Some(result),
+                // Generate a unique ID for this display item
+                let display_id = format!("result_{}", id);
+
+                let display_item = DisplayItem::ToolResult {
+                    id: display_id,
+                    tool_use_id: id.clone(), // Store the original tool call ID
+                    content: formatted_content,
+                    full_result: result.clone(), // Store the full, unformatted result
                     is_truncated: should_truncate,
                 };
-                self.messages.push(formatted_message);
-                messages_updated = true;
+                self.display_items.push(display_item);
+                display_items_updated = true;
             }
             AppEvent::ToolCallFailed { name, error, id } => {
                 self.progress_message = None; // Clear progress on failure
 
-                // Similar logic to ToolCallCompleted: Assuming this relates to a Role::Tool message
-                // added via MessageAdded.
-                debug!(target: "tui.handle_app_event", "Adding Tool Failure message for ID: {}, Error: {}", id, error);
+                debug!(target: "tui.handle_app_event", "Adding Tool Failure System Info for ID: {}, Error: {}", id, error);
 
-                // Create a NEW message to display the tool failure
-                let failure_content = format!("Tool '{}' failed: {}.", name, error);
+                // Create a NEW SystemInfo item to display the tool failure
+                let failure_content = format!("Tool '{}' failed: {}. (ID: {})", name, error, id);
                 let formatted_failure_lines = vec![Line::from(Span::styled(
                     failure_content,
                     Style::default().fg(Color::Red),
                 ))];
 
-                let formatted_message = FormattedMessage {
+                // Generate a unique ID for this display item
+                let display_id = format!("failed_{}", id);
+
+                let display_item = DisplayItem::SystemInfo {
+                    id: display_id,
                     content: formatted_failure_lines,
-                    role: Role::Tool,
-                    id: format!("failed_{}", id), // Ensure unique ID
-                    full_tool_result: Some(format!("Error: {}", error)), // Store error for potential toggle?
-                    is_truncated: false,
                 };
-                self.messages.push(formatted_message);
-                messages_updated = true;
+                self.display_items.push(display_item);
+                display_items_updated = true;
             }
             AppEvent::RequestToolApproval {
                 name,
@@ -630,22 +701,20 @@ impl Tui {
             }
             AppEvent::CommandResponse { content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                let block = crate::app::conversation::MessageContentBlock::Text(content.clone()); // Clone content
-                let formatted = format_message(
-                    &[block],
-                    Role::System,
+                // Use the new formatter
+                let formatted = format_command_response(
+                    &content,
                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                 );
-                self.raw_messages
-                    .push(crate::app::Message::new_text(Role::System, content));
-                self.messages.push(FormattedMessage {
-                    content: formatted,
-                    role: Role::System,
+                // Add the raw message (optional, maybe remove raw_messages later?)
+                // self.raw_messages
+                //     .push(crate::app::Message::new_text(Role::System, content.clone())); // Keep for raw log
+                // Create CommandResponse display item
+                self.display_items.push(DisplayItem::CommandResponse {
                     id: response_id,
-                    full_tool_result: None,
-                    is_truncated: false,
+                    content: formatted,
                 });
-                messages_updated = true;
+                display_items_updated = true;
             }
             AppEvent::OperationCancelled { info } => {
                 self.is_processing = false;
@@ -657,62 +726,28 @@ impl Tui {
                 self.spinner_state = 0;
                 // Use the Display impl of CancellationInfo directly
                 let cancellation_text = format!("Operation cancelled: {}", info);
-                self.raw_messages.push(crate::app::Message::new_text(
-                    Role::User, // Consider Role::System?
-                    cancellation_text.clone(),
-                ));
-                self.messages.push(FormattedMessage {
-                    content: vec![Line::from(Span::styled(
-                        cancellation_text,
-                        Style::default().fg(Color::Red),
-                    ))],
-                    role: Role::User,
-                    id: format!("cancellation_{}", chrono::Utc::now().timestamp_millis()),
-                    full_tool_result: None,
-                    is_truncated: false,
+                // Add raw message (optional)
+                // self.raw_messages.push(crate::app::Message::new_text(
+                //     Role::System, // Keep for raw log
+                //     cancellation_text.clone(),
+                // ));
+                // Create SystemInfo display item
+                let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
+                self.display_items.push(DisplayItem::SystemInfo {
+                    id: display_id,
+                    content: format_command_response(
+                        &cancellation_text,
+                        self.terminal.size().map(|r| r.width).unwrap_or(100),
+                    ),
                 });
-                messages_updated = true;
+                display_items_updated = true;
             }
         }
 
-        // --- Handle Scrolling After Message Updates ---
-        if messages_updated {
-            // Recalculate max scroll based on the *potentially updated* message list
-            if let Ok(term_size) = self.terminal.size() {
-                let all_lines: Vec<Line> = self
-                    .messages
-                    .iter()
-                    .flat_map(|fm| fm.content.clone())
-                    .collect();
-                let total_lines_count = all_lines.len();
-                let terminal_height = term_size.height;
-                let input_height = (self.textarea.lines().len() as u16 + 2)
-                    .min(MAX_INPUT_HEIGHT)
-                    .min(terminal_height);
-                let messages_area_height = terminal_height
-                    .saturating_sub(input_height)
-                    .saturating_sub(2);
-                let new_max_scroll = if total_lines_count > messages_area_height as usize {
-                    total_lines_count.saturating_sub(messages_area_height as usize)
-                } else {
-                    0
-                };
-                self.set_max_scroll(new_max_scroll);
-
-                // Scroll to bottom ONLY if user wasn't scrolled away
-                if !self.user_scrolled_away {
-                    debug!(target: "tui.handle_app_event", "Scrolling to bottom after message update.");
-                    self.set_scroll_offset(self.max_scroll);
-                } else {
-                    debug!(target: "tui.handle_app_event", "User scrolled away, not scrolling to bottom.");
-                    // If the update caused the current offset to become the max, reset the flag
-                    if self.scroll_offset == self.max_scroll {
-                        self.user_scrolled_away = false;
-                    }
-                }
-            } else {
-                warn!(target: "tui.handle_app_event", "Failed to get terminal size for scroll update.");
-            }
+        // --- Handle Scrolling After Display Items Updates ---
+        if display_items_updated {
+            // Recalculate max scroll based on the *potentially updated* display items list
+            self.recalculate_max_scroll();
         }
     }
 
@@ -820,7 +855,7 @@ impl Tui {
     fn render_ui_static(
         f: &mut ratatui::Frame<'_>,
         textarea: &TextArea<'_>,
-        messages: &[FormattedMessage],
+        display_items: &[DisplayItem],
         input_mode: InputMode,
         scroll_offset: usize,
         max_scroll: usize,
@@ -856,7 +891,13 @@ impl Tui {
         let model_info_area = chunks[3];
 
         // Render Messages
-        Self::render_messages_static(f, messages_area, messages, scroll_offset, max_scroll);
+        Self::render_display_items_static(
+            f,
+            messages_area,
+            display_items,
+            scroll_offset,
+            max_scroll,
+        );
 
         // Render Tool Preview (conditionally)
         if let Some(info) = current_approval_info {
@@ -896,14 +937,14 @@ impl Tui {
         Ok(())
     }
 
-    fn render_messages_static(
+    fn render_display_items_static(
         f: &mut ratatui::Frame<'_>,
         area: Rect,
-        messages: &[FormattedMessage],
+        display_items: &[DisplayItem],
         scroll_offset: usize,
         max_scroll: usize,
     ) {
-        if messages.is_empty() {
+        if display_items.is_empty() {
             let placeholder = Paragraph::new("No messages yet...")
                 .style(Style::default().fg(Color::DarkGray))
                 .wrap(Wrap { trim: false });
@@ -911,8 +952,17 @@ impl Tui {
             return;
         }
 
-        // Flatten message content lines for calculating total height and rendering
-        let all_lines: Vec<Line> = messages.iter().flat_map(|fm| fm.content.clone()).collect();
+        // Flatten display item content lines for calculating total height and rendering
+        let all_lines: Vec<Line> = display_items
+            .iter()
+            .flat_map(|di| match di {
+                // Extract content based on the variant using named fields
+                DisplayItem::Message { content, .. }
+                | DisplayItem::ToolResult { content, .. }
+                | DisplayItem::CommandResponse { content, .. }
+                | DisplayItem::SystemInfo { content, .. } => content.clone(),
+            })
+            .collect();
         let total_lines_count = all_lines.len();
 
         let area_height = area.height.saturating_sub(2) as usize;
@@ -1114,32 +1164,37 @@ impl Tui {
                     // This is an approximation - ideally we'd track selected message
                     let mut line_count = 0;
                     let mut target_message_id = None;
-                    for msg in &self.messages {
-                        let msg_lines = msg.content.len();
-                        if line_count + msg_lines > scroll_offset {
-                            if msg.role == Role::Tool && msg.full_tool_result.is_some() {
-                                target_message_id = Some(msg.id.clone());
+                    for di in &self.display_items {
+                        let di_lines = match di {
+                            // Calculate lines based on variant content field
+                            DisplayItem::Message { content, .. } => content.len(),
+                            DisplayItem::ToolResult { content, .. } => content.len(),
+                            DisplayItem::CommandResponse { content, .. } => content.len(),
+                            DisplayItem::SystemInfo { content, .. } => content.len(),
+                        };
+                        if line_count + di_lines > scroll_offset {
+                            // Check if it's a ToolResult variant
+                            if let DisplayItem::ToolResult { id, .. } = di {
+                                target_message_id = Some(id.clone());
                             }
-                            break; // Found the message at the current scroll offset
+                            break; // Found the item at the current scroll offset
                         }
-                        line_count += msg_lines;
+                        line_count += di_lines;
                     }
 
                     if let Some(id) = target_message_id {
                         action = Some(InputAction::ToggleMessageTruncation(id));
                     } else {
-                        // Maybe check the last message if no specific one found?
-                        if let Some(last_tool_msg) = self
-                            .messages
-                            .iter()
-                            .rev()
-                            .find(|m| m.role == Role::Tool && m.full_tool_result.is_some())
+                        // Maybe check the last ToolResult item if no specific one found?
+                        if let Some(last_tool_result) =
+                            self.display_items.iter().rev().find_map(|di| match di {
+                                DisplayItem::ToolResult { id, .. } => Some(id.clone()),
+                                _ => None,
+                            })
                         {
-                            action = Some(InputAction::ToggleMessageTruncation(
-                                last_tool_msg.id.clone(),
-                            ));
+                            action = Some(InputAction::ToggleMessageTruncation(last_tool_result));
                         } else {
-                            debug!(target: "tui.handle_input", "No tool message found to toggle truncation");
+                            debug!(target: "tui.handle_input", "No tool result found to toggle truncation");
                         }
                     }
                 }
@@ -1275,31 +1330,39 @@ impl Tui {
                             // This is an approximation - ideally we'd track selected message
                             let mut line_count = 0;
                             let mut target_message_id = None;
-                            for msg in &self.messages {
-                                let msg_lines = msg.content.len();
-                                if line_count + msg_lines > scroll_offset {
-                                    if msg.role == Role::Tool && msg.full_tool_result.is_some() {
-                                        target_message_id = Some(msg.id.clone());
+                            for di in &self.display_items {
+                                let di_lines = match di {
+                                    // Calculate lines based on variant content field
+                                    DisplayItem::Message { content, .. } => content.len(),
+                                    DisplayItem::ToolResult { content, .. } => content.len(),
+                                    DisplayItem::CommandResponse { content, .. } => content.len(),
+                                    DisplayItem::SystemInfo { content, .. } => content.len(),
+                                };
+                                if line_count + di_lines > scroll_offset {
+                                    // Check if it's a ToolResult variant
+                                    if let DisplayItem::ToolResult { id, .. } = di {
+                                        target_message_id = Some(id.clone());
                                     }
-                                    break; // Found the message at the current scroll offset
+                                    break; // Found the item at the current scroll offset
                                 }
-                                line_count += msg_lines;
+                                line_count += di_lines;
                             }
 
                             if let Some(id) = target_message_id {
                                 action = Some(InputAction::ToggleMessageTruncation(id));
                             } else {
-                                // Maybe check the last message if no specific one found?
-                                if let Some(last_tool_msg) =
-                                    self.messages.iter().rev().find(|m| {
-                                        m.role == Role::Tool && m.full_tool_result.is_some()
+                                // Maybe check the last ToolResult item if no specific one found?
+                                if let Some(last_tool_result) =
+                                    self.display_items.iter().rev().find_map(|di| match di {
+                                        DisplayItem::ToolResult { id, .. } => Some(id.clone()),
+                                        _ => None,
                                     })
                                 {
                                     action = Some(InputAction::ToggleMessageTruncation(
-                                        last_tool_msg.id.clone(),
+                                        last_tool_result,
                                     ));
                                 } else {
-                                    debug!(target: "tui.handle_input", "No tool message found to toggle truncation");
+                                    debug!(target: "tui.handle_input", "No tool result found to toggle truncation");
                                 }
                             }
                         }
@@ -1352,18 +1415,28 @@ impl Tui {
                 }
             }
             InputAction::ToggleMessageTruncation(id) => {
-                // Directly modify the message state here
+                // Find the ToolResult display item and modify it
                 let mut found_and_toggled = false;
-                if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
-                    if let Some(full_result) = &msg.full_tool_result {
-                        msg.is_truncated = !msg.is_truncated;
+                if let Some(item) = self.display_items.iter_mut().find(|di| match di {
+                    DisplayItem::ToolResult { id: item_id, .. } => *item_id == id,
+                    _ => false,
+                }) {
+                    if let DisplayItem::ToolResult {
+                        is_truncated,
+                        full_result,
+                        content,
+                        .. // id and tool_use_id are not needed here
+                    } = item
+                    {
+                        *is_truncated = !*is_truncated;
 
-                        if msg.is_truncated {
+                        if *is_truncated {
                             const MAX_PREVIEW_LINES: usize = 5;
                             let lines: Vec<&str> = full_result.lines().collect();
                             let preview_content = if lines.len() > MAX_PREVIEW_LINES {
                                 format!(
-                                    "{}\n... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
+                                    "{}
+... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
                                     lines
                                         .iter()
                                         .take(MAX_PREVIEW_LINES)
@@ -1375,21 +1448,24 @@ impl Tui {
                             } else {
                                 full_result.clone()
                             };
-                            msg.content = format_tool_preview(
+                            *content = format_tool_preview(
                                 &preview_content,
                                 self.terminal.size().map(|r| r.width).unwrap_or(100),
                             );
                         } else {
-                            msg.content = format_tool_preview(
+                            // Show full result using the same preview formatter
+                            *content = format_tool_preview(
                                 full_result,
                                 self.terminal.size().map(|r| r.width).unwrap_or(100),
                             );
                         }
                         found_and_toggled = true;
+                        // Recalculate max scroll after changing content length
+                        self.recalculate_max_scroll();
                     } else {
-                        warn!(target:
+                         warn!(target:
                             "tui.dispatch",
-                                "Message {} found, but has no full_tool_result to toggle.",
+                                "Found DisplayItem {}, but it's not a ToolResult variant.",
                                 id
                         );
                     }
@@ -1397,7 +1473,7 @@ impl Tui {
                 if !found_and_toggled {
                     warn!(target:
                         "tui.dispatch",
-                        "ToggleMessageTruncation: No message found with ID {}", id,
+                        "ToggleMessageTruncation: No ToolResult found with ID {}", id,
                     );
                 }
                 // No command needs to be sent to App for this purely visual toggle
@@ -1474,6 +1550,39 @@ impl Tui {
                 self.progress_message = None;
             }
             // Don't set is_processing = false here, other background tasks might still be running
+        }
+    }
+
+    // Helper function to recalculate max_scroll based on current display_items
+    fn recalculate_max_scroll(&mut self) {
+        if let Ok(term_size) = self.terminal.size() {
+            let all_lines: Vec<Line> = self
+                .display_items
+                .iter()
+                .flat_map(|di| match di {
+                    // Access named content field
+                    DisplayItem::Message { content, .. } => content.clone(),
+                    DisplayItem::ToolResult { content, .. } => content.clone(),
+                    DisplayItem::CommandResponse { content, .. } => content.clone(),
+                    DisplayItem::SystemInfo { content, .. } => content.clone(),
+                })
+                .collect();
+            let total_lines_count = all_lines.len();
+            let terminal_height = term_size.height;
+            let input_height = (self.textarea.lines().len() as u16 + 2)
+                .min(MAX_INPUT_HEIGHT)
+                .min(terminal_height);
+            let messages_area_height = terminal_height
+                .saturating_sub(input_height)
+                .saturating_sub(2);
+            let new_max_scroll = if total_lines_count > messages_area_height as usize {
+                total_lines_count.saturating_sub(messages_area_height as usize)
+            } else {
+                0
+            };
+            self.set_max_scroll(new_max_scroll);
+        } else {
+            warn!(target: "tui.recalculate_max_scroll", "Failed to get terminal size for scroll update.");
         }
     }
 }

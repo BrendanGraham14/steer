@@ -161,7 +161,6 @@ impl Message {
             Role::User => "user",
             Role::Assistant => "assistant",
             Role::Tool => "tool",
-            Role::System => "system",
         };
 
         // Add a short random suffix to avoid collisions
@@ -341,7 +340,7 @@ impl Conversation {
         if self.messages.len() < 10 {
             return Ok(());
         }
-        let (mut prompt_messages, _) = crate::api::messages::convert_conversation(self);
+        let mut prompt_messages = crate::api::messages::convert_conversation(self);
         prompt_messages.push(crate::api::messages::Message {
             role: ApiMessageRole::User,
             content: crate::api::messages::MessageContent::Text {

@@ -312,3 +312,38 @@ pub fn format_tool_preview(content: &str, terminal_width: u16) -> Vec<Line<'stat
     }
     lines
 }
+
+/// Formats a command response for display.
+pub fn format_command_response(content: &str, terminal_width: u16) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    // Calculate wrap width from terminal width (accounting for margins)
+    // Use a slightly different wrap width or style if desired for command responses
+    let wrap_width = (terminal_width as usize).saturating_sub(6);
+    let wrap_width = wrap_width.max(30);
+
+    // Add a header or identifier
+    lines.push(Line::from(Span::styled(
+        "System/Command:",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD), // Distinct style
+    )));
+
+    for line in content.lines() {
+        let wrapped_lines = textwrap::wrap(line, wrap_width);
+        if wrapped_lines.is_empty() {
+            // Preserve empty lines from the input
+            lines.push(Line::raw("  ".to_string())); // Add indentation
+        } else {
+            for wrapped_line in wrapped_lines {
+                // Indent the content and apply style
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", wrapped_line),      // Add indentation
+                    Style::default().fg(Color::Yellow), // Consistent style for content
+                )));
+            }
+        }
+    }
+    lines
+}

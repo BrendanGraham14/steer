@@ -1,7 +1,7 @@
 use crate::api::{
     ApiError, Client as ApiClient, Model,
+    messages::ContentBlock,
     messages::{Message, MessageContent, MessageRole, StructuredContent},
-    provider::ContentBlock,
     tools::{Tool, ToolCall, ToolResult},
 };
 use crate::tools::ToolError;
@@ -158,8 +158,16 @@ impl AgentExecutor {
                         tool_calls.push(tool_call);
                         // We need to reconstruct the ToolCalls content block later if tools were used
                     }
-                    ContentBlock::Unknown => {
-                        warn!("Received unknown content block from API");
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } => {
+                        content_blocks.push(crate::api::messages::ContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content,
+                            is_error,
+                        });
                     }
                 }
             }
