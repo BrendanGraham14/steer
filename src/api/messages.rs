@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Display)]
 pub enum MessageRole {
@@ -13,9 +13,6 @@ pub enum MessageRole {
     #[serde(rename = "tool")]
     #[strum(serialize = "tool")]
     Tool,
-    #[serde(rename = "system")]
-    #[strum(serialize = "system")]
-    System,
 }
 
 /// Represents a message to be sent to the Claude API
@@ -315,10 +312,16 @@ pub fn convert_api_content_to_message_content(
             crate::api::ContentBlock::ToolUse {
                 id, name, input, ..
             } => Some(ContentBlock::ToolUse { id, name, input }),
-            crate::api::ContentBlock::Unknown => {
-                warn!(target: "messages::convert_api_content_to_message_content", "Received unknown content block type from API");
-                None // Skip unknown blocks
-            }
+            crate::api::ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => Some(ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            }),
         })
         .collect()
 }

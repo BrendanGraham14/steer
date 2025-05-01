@@ -1,9 +1,7 @@
 use chrono::Local;
 use dirs;
 use std::io;
-use std::path::Path;
-use std::time::SystemTime;
-use tracing_appender::rolling::{self, RollingFileAppender};
+use tracing_appender::rolling::{self};
 use tracing_subscriber::{
     EnvFilter,
     fmt::{self, format::FmtSpan},

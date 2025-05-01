@@ -1,16 +1,58 @@
-use anyhow::{Context as AnyhowContext, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
+use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
-use crate::api::messages::Message;
-use crate::api::provider::{CompletionResponse, ContentBlock, Provider};
+use crate::api::messages::{
+    ContentBlock, Message as ApiMessage, MessageContent as ApiMessageContent,
+    MessageRole as ApiMessageRole, StructuredContent as ApiStructuredContent,
+};
+use crate::api::provider::{CompletionResponse, Provider};
 use crate::api::tools::Tool;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Display)]
+pub enum ClaudeMessageRole {
+    #[serde(rename = "user")]
+    #[strum(serialize = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    #[strum(serialize = "assistant")]
+    Assistant,
+    #[serde(rename = "tool")]
+    #[strum(serialize = "tool")]
+    Tool,
+}
+
+/// Represents a message to be sent to the Claude API
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClaudeMessage {
+    pub role: ClaudeMessageRole,
+    #[serde(flatten)]
+    pub content: ClaudeMessageContent,
+    #[serde(skip_serializing)]
+    pub id: Option<String>,
+}
+
+/// Content types for Claude API messages
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ClaudeMessageContent {
+    /// Simple text content
+    Text { content: String },
+    /// Structured content for tool results or other special content
+    StructuredContent { content: ClaudeStructuredContent },
+}
+
+/// Represents structured content blocks for messages
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct ClaudeStructuredContent(pub Vec<ClaudeContentBlock>);
 
 #[derive(Clone)]
 pub struct AnthropicClient {
@@ -20,7 +62,7 @@ pub struct AnthropicClient {
 #[derive(Debug, Serialize, Deserialize)]
 struct CompletionRequest {
     model: String,
-    messages: Vec<Message>,
+    messages: Vec<ClaudeMessage>,
     max_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
@@ -53,7 +95,7 @@ struct ClaudeCompletionResponse {
     extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]
 enum ClaudeContentBlock {
     #[serde(rename = "text")]
@@ -70,7 +112,15 @@ enum ClaudeContentBlock {
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
-    // Add a catch-all variant for future API additions
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: Vec<ClaudeContentBlock>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -107,24 +157,112 @@ impl AnthropicClient {
     }
 }
 
+// Conversion functions start
+fn convert_messages(messages: Vec<ApiMessage>) -> Result<Vec<ClaudeMessage>, ApiError> {
+    messages.into_iter().map(convert_single_message).collect()
+}
+
+fn convert_single_message(msg: ApiMessage) -> Result<ClaudeMessage, ApiError> {
+    let claude_role = convert_role(msg.role).map_err(|e| ApiError::InvalidRequest {
+        provider: "anthropic".to_string(),
+        details: format!(
+            "Failed to convert role for message with id {:?}: {}",
+            msg.id, e
+        ),
+    })?;
+    let claude_content = convert_content(msg.content).map_err(|e| ApiError::InvalidRequest {
+        provider: "anthropic".to_string(),
+        details: format!(
+            "Failed to convert content for message with id {:?}: {}",
+            msg.id, e
+        ),
+    })?;
+
+    Ok(ClaudeMessage {
+        role: claude_role,
+        content: claude_content,
+        id: msg.id,
+    })
+}
+
+fn convert_role(role: ApiMessageRole) -> Result<ClaudeMessageRole, ApiError> {
+    match role {
+        ApiMessageRole::User => Ok(ClaudeMessageRole::User),
+        ApiMessageRole::Assistant => Ok(ClaudeMessageRole::Assistant),
+        ApiMessageRole::Tool => Ok(ClaudeMessageRole::User),
+    }
+}
+
+fn convert_content(content: ApiMessageContent) -> Result<ClaudeMessageContent, ApiError> {
+    match content {
+        ApiMessageContent::Text { content } => Ok(ClaudeMessageContent::Text { content }),
+        ApiMessageContent::StructuredContent {
+            content: structured,
+        } => convert_structured_content(structured).map(|claude_structured| {
+            ClaudeMessageContent::StructuredContent {
+                content: claude_structured,
+            }
+        }),
+    }
+}
+
+fn convert_structured_content(
+    structured: ApiStructuredContent,
+) -> Result<ClaudeStructuredContent, ApiError> {
+    let converted_blocks: Result<Vec<ClaudeContentBlock>, ApiError> =
+        structured.0.into_iter().map(convert_block).collect();
+
+    converted_blocks.map(ClaudeStructuredContent)
+}
+
+fn convert_block(block: ContentBlock) -> Result<ClaudeContentBlock, ApiError> {
+    match block {
+        ContentBlock::Text { text } => Ok(ClaudeContentBlock::Text {
+            text,
+            extra: Default::default(),
+        }),
+        ContentBlock::ToolUse { id, name, input } => Ok(ClaudeContentBlock::ToolUse {
+            id,
+            name,
+            input,
+            extra: Default::default(),
+        }),
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => {
+            let claude_inner_content: Result<Vec<ClaudeContentBlock>, ApiError> =
+                content.into_iter().map(convert_block).collect();
+
+            claude_inner_content.map(|inner_blocks| ClaudeContentBlock::ToolResult {
+                tool_use_id,
+                content: inner_blocks,
+                is_error,
+                extra: Default::default(),
+            })
+        }
+    }
+}
+// Conversion functions end
+
 // Convert Claude's content blocks to our provider-agnostic format
 fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<ContentBlock> {
     claude_blocks
         .into_iter()
-        .map(|block| match block {
-            ClaudeContentBlock::Text { text, extra } => ContentBlock::Text { text, extra },
+        .filter_map(|block| match block {
+            ClaudeContentBlock::Text { text, .. } => Some(ContentBlock::Text { text }),
             ClaudeContentBlock::ToolUse {
-                id,
-                name,
-                input,
-                extra,
-            } => ContentBlock::ToolUse {
-                id,
-                name,
-                input,
-                extra,
-            },
-            ClaudeContentBlock::Unknown => ContentBlock::Unknown,
+                id, name, input, ..
+            } => Some(ContentBlock::ToolUse { id, name, input }),
+            ClaudeContentBlock::ToolResult { .. } => {
+                warn!("Unexpected ToolResult block received in Claude response content");
+                None
+            }
+            ClaudeContentBlock::Unknown => {
+                warn!("Unknown content block received in Claude response content");
+                None
+            }
         })
         .collect()
 }
@@ -138,14 +276,16 @@ impl Provider for AnthropicClient {
     async fn complete(
         &self,
         model: Model,
-        messages: Vec<Message>,
+        messages: Vec<ApiMessage>,
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse, ApiError> { // <-- Use ApiError
+    ) -> Result<CompletionResponse, ApiError> {
+        let claude_messages = convert_messages(messages)?;
+
         let request = CompletionRequest {
             model: model.as_ref().to_string(),
-            messages,
+            messages: claude_messages,
             max_tokens: 4000,
             system,
             tools,
@@ -157,7 +297,6 @@ impl Provider for AnthropicClient {
 
         debug!(target: "API Request", "{:?}", request);
 
-        // Log the full request payload as JSON for detailed debugging
         match serde_json::to_string_pretty(&request) {
             Ok(json_payload) => {
                 debug!(target: "Full API Request Payload (JSON)", "{}", json_payload);
@@ -169,7 +308,6 @@ impl Provider for AnthropicClient {
 
         let request_builder = self.http_client.post(API_URL).json(&request);
 
-        // Race the request sending against cancellation
         let response = tokio::select! {
             biased;
             _ = token.cancelled() => {
@@ -177,19 +315,19 @@ impl Provider for AnthropicClient {
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             res = request_builder.send() => {
-                res.map_err(|e| ApiError::Network(e))?
+                res.map_err(ApiError::Network)?
             }
         };
 
-        // Check for cancellation before processing status
         if token.is_cancelled() {
             debug!(target: "claude::complete", "Cancellation token triggered after sending request, before status check.");
-            return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+            return Err(ApiError::Cancelled {
+                provider: self.name().to_string(),
+            });
         }
 
-        let status = response.status(); // Store status before consuming response
+        let status = response.status();
         if !status.is_success() {
-            // Race reading the error text against cancellation
             let error_text = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
@@ -197,21 +335,38 @@ impl Provider for AnthropicClient {
                     return Err(ApiError::Cancelled{ provider: self.name().to_string()});
                 }
                 text_res = response.text() => {
-                    text_res.map_err(|e| ApiError::Network(e))?
+                    text_res.map_err(ApiError::Network)?
                 }
             };
-            // Map status codes to ApiError variants
             return Err(match status.as_u16() {
-                401 => ApiError::AuthenticationFailed { provider: self.name().to_string(), details: error_text },
-                403 => ApiError::AuthenticationFailed { provider: self.name().to_string(), details: error_text }, // Potentially permission issue, treat as auth for now
-                429 => ApiError::RateLimited { provider: self.name().to_string(), details: error_text },
-                400..=499 => ApiError::InvalidRequest { provider: self.name().to_string(), details: error_text },
-                500..=599 => ApiError::ServerError { provider: self.name().to_string(), status_code: status.as_u16(), details: error_text },
-                _ => ApiError::Unknown { provider: self.name().to_string(), details: error_text },
+                401 => ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                403 => ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                429 => ApiError::RateLimited {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                400..=499 => ApiError::InvalidRequest {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                500..=599 => ApiError::ServerError {
+                    provider: self.name().to_string(),
+                    status_code: status.as_u16(),
+                    details: error_text,
+                },
+                _ => ApiError::Unknown {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
             });
         }
 
-        // Race reading the successful response text against cancellation
         let response_text = tokio::select! {
             biased;
             _ = token.cancelled() => {
@@ -219,11 +374,10 @@ impl Provider for AnthropicClient {
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             text_res = response.text() => {
-                text_res.map_err(|e| ApiError::Network(e))?
+                text_res.map_err(ApiError::Network)?
             }
         };
 
-        // Parse the text into the ClaudeCompletionResponse
         let claude_completion: ClaudeCompletionResponse = serde_json::from_str(&response_text)
             .map_err(|e| ApiError::ResponseParsingError {
                 provider: self.name().to_string(),
@@ -231,7 +385,6 @@ impl Provider for AnthropicClient {
             })?;
         let completion = CompletionResponse {
             content: convert_claude_content(claude_completion.content),
-            extra: claude_completion.extra,
         };
 
         Ok(completion)

@@ -531,7 +531,7 @@ impl Tui {
                 };
 
                 let formatted_message = FormattedMessage {
-                    content: content,
+                    content,
                     role: Role::Tool,
                     id: format!("result_{}", id), // Ensure unique ID for the result display
                     full_tool_result: Some(result),

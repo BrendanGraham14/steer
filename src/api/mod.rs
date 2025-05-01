@@ -1,31 +1,30 @@
 pub mod claude;
-pub mod gemini;
 pub mod error;
+pub mod gemini;
 pub mod messages;
 pub mod openai;
 pub mod provider;
 pub mod tools;
 
-pub use claude::AnthropicClient;
-pub use gemini::GeminiClient;
-pub use messages::Message;
-pub use openai::OpenAIClient;
-pub use provider::{CompletionResponse, ContentBlock, Provider};
-use strum::Display;
-use strum::IntoStaticStr;
-pub use tools::{InputSchema, Tool, ToolCall};
-
-use anyhow::{anyhow, Result};
-pub use error::ApiError;
+use anyhow::{Result, anyhow};
 use clap::builder::PossibleValue;
+pub use claude::AnthropicClient;
+pub use error::ApiError;
+pub use gemini::GeminiClient;
+pub use messages::ContentBlock;
+pub use messages::Message;
 use once_cell::sync::Lazy;
+pub use openai::OpenAIClient;
+pub use provider::{CompletionResponse, Provider};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use strum::Display;
+use strum::IntoStaticStr;
 use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
+pub use tools::{InputSchema, Tool, ToolCall};
 
 use crate::config::LlmConfig;
 
@@ -148,8 +147,11 @@ impl Client {
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse, ApiError> { // Updated return type
-        let provider = self.get_or_create_provider(model).map_err(|e| ApiError::Configuration(e.to_string()))?; // Keep map_err for config errors
+    ) -> Result<CompletionResponse, ApiError> {
+        // Updated return type
+        let provider = self
+            .get_or_create_provider(model)
+            .map_err(|e| ApiError::Configuration(e.to_string()))?; // Keep map_err for config errors
         provider
             .complete(model, messages, system, tools, token)
             .await

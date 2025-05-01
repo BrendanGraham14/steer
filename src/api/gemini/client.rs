@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -6,15 +5,13 @@ use reqwest::{Client as HttpClient, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
-use crate::api::messages::{
-    ContentBlock as MessageContentBlock, Message, MessageContent, MessageRole,
-};
-use crate::api::provider::{CompletionResponse, ContentBlock, Provider};
-use crate::api::tools::{InputSchema, Tool};
+use crate::api::messages::{ContentBlock, Message, MessageContent, MessageRole};
+use crate::api::provider::{CompletionResponse, Provider};
+use crate::api::tools::Tool;
 use rand;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -124,7 +121,7 @@ fn map_role(msg: &Message) -> &str {
                 if content
                     .0
                     .iter()
-                    .any(|block| matches!(block, MessageContentBlock::ToolResult { .. }))
+                    .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
                 {
                     return "function"; // Use "function" role for tool results
                 }
@@ -138,15 +135,15 @@ fn map_role(msg: &Message) -> &str {
 }
 
 fn convert_content_block_to_parts(
-    block: MessageContentBlock,
+    block: ContentBlock,
     gemini_role: &str,
     message_for_logging: &Message, // Pass the whole message for logging context
 ) -> Vec<GeminiPart> {
     match block {
-        MessageContentBlock::Text { text, .. } => {
+        ContentBlock::Text { text, .. } => {
             vec![GeminiPart::Text { text }]
         }
-        MessageContentBlock::ToolUse {
+        ContentBlock::ToolUse {
             id: _, name, input, ..
         } => {
             // Assistant requests a tool call -> functionCall
@@ -159,7 +156,7 @@ fn convert_content_block_to_parts(
                 vec![]
             }
         }
-        MessageContentBlock::ToolResult {
+        ContentBlock::ToolResult {
             tool_use_id,
             content,
             ..
@@ -170,7 +167,7 @@ fn convert_content_block_to_parts(
                 let result_value = content
                     .into_iter()
                     .find_map(|b| {
-                        if let MessageContentBlock::Text { text, .. } = b {
+                        if let ContentBlock::Text { text, .. } = b {
                             // Attempt to parse text as JSON, otherwise treat as string
                             serde_json::from_str(&text).ok().or(Some(Value::String(text)))
                         } else {
@@ -322,13 +319,11 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
         .map(|part| match part {
             GeminiPart::Text { text } => ContentBlock::Text {
                 text: text.clone(),
-                extra: HashMap::new(),
             },
             GeminiPart::FunctionCall { function_call } => ContentBlock::ToolUse {
                 id: format!("call_{}_{}", function_call.name, rand::random::<u32>()),
                 name: function_call.name.clone(),
                 input: function_call.args.clone(),
-                extra: HashMap::new(),
             },
             GeminiPart::FunctionResponse { function_response } => {
                 // Convert FunctionResponse back to a generic structure if needed,
@@ -338,11 +333,10 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
                 // Fallback to representing it as text
                 ContentBlock::Text {
                     text: format!("(Function Response: {})", function_response.name),
-                    extra: HashMap::new(),
                 }
             }
             GeminiPart::ExecutableCode { executable_code } => {
-                info!(target: "gemini::convert_response", "Received ExecutableCode part ({}): {}. Converting to text.", 
+                info!(target: "gemini::convert_response", "Received ExecutableCode part ({}): {}. Converting to text.",
                      executable_code.language, executable_code.code);
                 // Represent executable code as simple text for now
                 info!(target: "gemini::convert_response", "Processing ExecutableCode part for response text conversion.");
@@ -355,16 +349,12 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
                         executable_code.language.to_lowercase(),
                         executable_code.code
                     ),
-                    extra: HashMap::new(),
                 }
             }
         })
         .collect();
 
-    Ok(CompletionResponse {
-        content,
-        extra: HashMap::new(),
-    })
+    Ok(CompletionResponse { content })
 }
 
 #[async_trait]
@@ -419,11 +409,11 @@ impl Provider for GeminiClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| ApiError::Network(e))?;
+            .map_err(ApiError::Network)?;
         let status = response.status(); // Store status before potentially consuming response
 
         if status != StatusCode::OK {
-            let error_text = response.text().await.map_err(|e| ApiError::Network(e))?; // Handle potential error during text read
+            let error_text = response.text().await.map_err(ApiError::Network)?; // Handle potential error during text read
             error!(target: "Gemini API Error Response", "Status: {}, Body: {}", status, error_text); // Use stored status
             // Map status codes to ApiError variants
             return Err(match status.as_u16() {
@@ -452,7 +442,7 @@ impl Provider for GeminiClient {
         }
 
         // Read the response body as text first to allow logging in case of JSON error
-        let response_text = response.text().await.map_err(|e| ApiError::Network(e))?;
+        let response_text = response.text().await.map_err(ApiError::Network)?;
 
         match serde_json::from_str::<GeminiResponse>(&response_text) {
             Ok(gemini_response) => {

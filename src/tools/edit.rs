@@ -196,4 +196,3 @@ Remember: when making multiple file edits in a row to the same file, you should 
         Ok(format!("File edited: {}", params.file_path))
     }
 }
-

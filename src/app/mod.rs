@@ -1,10 +1,6 @@
-use crate::api::messages::{
-    Message as ApiMessage, MessageContent as ApiMessageContent, MessageRole as ApiMessageRole,
-};
 use crate::api::{Client as ApiClient, Model, ProviderKind};
 use anyhow::Result;
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
@@ -877,12 +873,8 @@ impl App {
         let final_system_content = system_content_override
             .filter(|s| !s.trim().is_empty())
             .or_else(|| {
-                if let ApiMessageContent::Text { content } = system_prompt.content {
-                    if content.trim().is_empty() {
-                        None
-                    } else {
-                        Some(content)
-                    }
+                if !system_prompt.trim().is_empty() {
+                    Some(system_prompt)
                 } else {
                     warn!(target:
                         "App.get_claude_response_static",
@@ -1236,14 +1228,10 @@ async fn handle_api_response_logic(
     }
 }
 
-fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> ApiMessage {
+fn create_system_prompt(env_info: &crate::app::EnvironmentInfo) -> String {
     let system_prompt = include_str!("../../prompts/system_prompt.md");
     let mut prompt = system_prompt.to_string();
     prompt.push_str(&env_info.as_context());
 
-    ApiMessage {
-        role: ApiMessageRole::System,
-        content: ApiMessageContent::Text { content: prompt },
-        id: None,
-    }
+    prompt
 }

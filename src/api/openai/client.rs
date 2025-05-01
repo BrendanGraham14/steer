@@ -1,14 +1,14 @@
-use anyhow::{Context as AnyhowContext, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
-use crate::api::messages::{Message, MessageContent, MessageRole};
-use crate::api::provider::{CompletionResponse, ContentBlock, Provider};
+use crate::api::messages::{ContentBlock, Message, MessageContent, MessageRole};
+use crate::api::provider::{CompletionResponse, Provider};
 use crate::api::tools::Tool;
 
 const API_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -227,7 +227,8 @@ impl Provider for OpenAIClient {
         system: Option<String>,
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse, ApiError> { // <-- Use ApiError
+    ) -> Result<CompletionResponse, ApiError> {
+        // <-- Use ApiError
         let openai_messages = self.convert_messages(messages, system);
         let openai_tools = tools.map(|t| self.convert_tools(t));
 
@@ -263,14 +264,16 @@ impl Provider for OpenAIClient {
                 return Err(ApiError::Cancelled{ provider: self.name().to_string() });
             }
             res = request_builder.send() => {
-                res.map_err(|e| ApiError::Network(e))?
+                res.map_err(ApiError::Network)?
             }
         };
 
         // Check for cancellation before processing status
         if token.is_cancelled() {
             debug!(target: "openai::complete", "Cancellation token triggered after sending request, before status check.");
-            return Err(ApiError::Cancelled{ provider: self.name().to_string() });
+            return Err(ApiError::Cancelled {
+                provider: self.name().to_string(),
+            });
         }
 
         let status = response.status(); // Store status before consuming response
@@ -283,16 +286,32 @@ impl Provider for OpenAIClient {
                     return Err(ApiError::Cancelled{ provider: self.name().to_string() });
                 }
                 text_res = response.text() => {
-                    text_res.map_err(|e| ApiError::Network(e))?
+                    text_res.map_err(ApiError::Network)?
                 }
             };
             // Map status codes to ApiError variants
             return Err(match status.as_u16() {
-                401 => ApiError::AuthenticationFailed { provider: self.name().to_string(), details: error_text },
-                429 => ApiError::RateLimited { provider: self.name().to_string(), details: error_text },
-                400..=499 => ApiError::InvalidRequest { provider: self.name().to_string(), details: error_text },
-                500..=599 => ApiError::ServerError { provider: self.name().to_string(), status_code: status.as_u16(), details: error_text },
-                _ => ApiError::Unknown { provider: self.name().to_string(), details: error_text },
+                401 => ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                429 => ApiError::RateLimited {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                400..=499 => ApiError::InvalidRequest {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                500..=599 => ApiError::ServerError {
+                    provider: self.name().to_string(),
+                    status_code: status.as_u16(),
+                    details: error_text,
+                },
+                _ => ApiError::Unknown {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
             });
         }
 
@@ -304,7 +323,7 @@ impl Provider for OpenAIClient {
                 return Err(ApiError::Cancelled{ provider: self.name().to_string() });
             }
             text_res = response.text() => {
-                 text_res.map_err(|e| ApiError::Network(e))?
+                 text_res.map_err(ApiError::Network)?
             }
         };
 
@@ -316,7 +335,9 @@ impl Provider for OpenAIClient {
             })?;
 
         if openai_completion.choices.is_empty() {
-            return Err(ApiError::NoChoices { provider: self.name().to_string() });
+            return Err(ApiError::NoChoices {
+                provider: self.name().to_string(),
+            });
         }
 
         let choice = &openai_completion.choices[0];
@@ -326,10 +347,7 @@ impl Provider for OpenAIClient {
 
         if let Some(text) = &message.content {
             if !text.is_empty() {
-                content_blocks.push(ContentBlock::Text {
-                    text: text.clone(),
-                    extra: std::collections::HashMap::new(),
-                });
+                content_blocks.push(ContentBlock::Text { text: text.clone() });
             }
         }
 
@@ -350,14 +368,12 @@ impl Provider for OpenAIClient {
                     id: tool_call.id.clone(),
                     name: tool_call.function.name.clone(),
                     input,
-                    extra: std::collections::HashMap::new(),
                 });
             }
         }
 
         let completion = CompletionResponse {
             content: content_blocks,
-            extra: std::collections::HashMap::new(),
         };
 
         Ok(completion)
