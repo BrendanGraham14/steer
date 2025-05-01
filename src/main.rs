@@ -5,7 +5,7 @@ use dotenv::dotenv;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::info;
 
 use coder::app::{App, AppCommand, AppConfig, app_actor_loop};
 use coder::config::LlmConfig;

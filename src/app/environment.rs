@@ -2,10 +2,8 @@ use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::tempdir;
 
 /// Information about the environment
 #[derive(Debug, Clone, Serialize, Deserialize)]

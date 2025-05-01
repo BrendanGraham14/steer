@@ -885,7 +885,6 @@ async fn test_gemini_api_with_multiple_tool_responses() {
     let mut tools = tool_executor.to_api_tools();
     tools.push(weather_tool);
 
-
     let response = client
         .complete(
             Model::Gemini2_5FlashPreview0417, // Use Gemini model
@@ -903,4 +902,3 @@ async fn test_gemini_api_with_multiple_tool_responses() {
     );
     println!("Gemini Multiple Tool Responses test passed successfully!");
 }
-

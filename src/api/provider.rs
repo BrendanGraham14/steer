@@ -1,7 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::fmt::Debug;
 use tokio_util::sync::CancellationToken;
 
@@ -10,33 +9,12 @@ use crate::api::messages::Message;
 use crate::api::tools::Tool;
 
 use super::Model;
-
-/// Represents a content block in a message from any provider
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ContentBlock {
-    Text {
-        text: String,
-        #[serde(flatten)]
-        extra: std::collections::HashMap<String, Value>,
-    },
-    /// Tool use content
-    ToolUse {
-        id: String,
-        name: String,
-        input: Value,
-        #[serde(flatten)]
-        extra: std::collections::HashMap<String, Value>,
-    },
-    /// Unknown content type (for forward compatibility)
-    Unknown,
-}
+use super::messages::ContentBlock;
 
 /// Response from the provider's completion API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionResponse {
     pub content: Vec<ContentBlock>,
-    #[serde(flatten)]
-    pub extra: std::collections::HashMap<String, Value>,
 }
 
 impl CompletionResponse {

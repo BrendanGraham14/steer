@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, instrument, debug, info, warn, error};
+use tracing::{Span, debug, error, instrument};
 
 use crate::api::ToolCall;
 use crate::api::tools::Tool as ApiTool;
@@ -80,8 +80,8 @@ impl ToolExecutor {
             }
             None => {
                 error!(
-                    target: "app.tool_executor.execute_tool_with_cancellation", 
-                    "{}", 
+                    target: "app.tool_executor.execute_tool_with_cancellation",
+                    "{}",
                     format!("Unknown tool called: {} ({})", tool_name, tool_id)
                 );
                 Err(ToolError::UnknownTool(tool_name.clone()))
