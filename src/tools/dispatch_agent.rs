@@ -154,6 +154,7 @@ Notes:
     Ok(dispatch_prompt)
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use dotenv::dotenv;
