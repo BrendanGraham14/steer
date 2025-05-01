@@ -6,6 +6,7 @@ use reqwest::{Client as HttpClient, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn, error};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
@@ -154,13 +155,7 @@ fn convert_content_block_to_parts(
                     function_call: GeminiFunctionCall { name, args: input },
                 }]
             } else {
-                crate::utils::logging::warn(
-                    "gemini::convert_content_block_to_parts",
-                    &format!(
-                        "Unexpected ToolUse block in non-model message (role: {}): {:?}",
-                        gemini_role, message_for_logging
-                    ),
-                );
+                warn!(target: "gemini::convert_content_block_to_parts", "Unexpected ToolUse block in non-model message (role: {}): {:?}", gemini_role, message_for_logging);
                 vec![]
             }
         }
@@ -184,7 +179,7 @@ fn convert_content_block_to_parts(
                     })
                     .unwrap_or_else(|| {
                         // If no text or parsing fails, create a default Value (e.g., Null or error string)
-                         crate::utils::logging::warn("gemini::convert_content_block_to_parts", &format!("Could not extract text or parse JSON from ToolResult content for tool_use_id '{}'.", tool_use_id));
+                         warn!(target: "gemini::convert_content_block_to_parts", "Could not extract text or parse JSON from ToolResult content for tool_use_id '{}'.", tool_use_id);
                         serde_json::Value::Null // Use Null as a neutral default
                     });
 
@@ -197,13 +192,7 @@ fn convert_content_block_to_parts(
                     },
                 }]
             } else {
-                crate::utils::logging::warn(
-                    "gemini::convert_content_block_to_parts",
-                    &format!(
-                        "Unexpected ToolResult block in non-function message (role: {}): {:?}",
-                        gemini_role, message_for_logging
-                    ),
-                );
+                warn!(target: "gemini::convert_content_block_to_parts", "Unexpected ToolResult block in non-function message (role: {}): {:?}", gemini_role, message_for_logging);
                 vec![]
             }
         }
@@ -256,23 +245,11 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
                 {
                     *type_val = serde_json::Value::String(primary_type.to_string());
                 } else {
-                    crate::utils::logging::warn(
-                        "gemini::simplify_property_schema",
-                        &format!(
-                            "Could not determine primary type for property '{}' in tool '{}', defaulting to string.",
-                            key, tool_name
-                        ),
-                    );
+                    warn!(target: "gemini::simplify_property_schema", "Could not determine primary type for property '{}' in tool '{}', defaulting to string.", key, tool_name);
                     *type_val = serde_json::Value::String("string".to_string());
                 }
             } else if !type_val.is_string() {
-                crate::utils::logging::warn(
-                    "gemini::simplify_property_schema",
-                    &format!(
-                        "Unexpected 'type' format for property '{}' in tool '{}': {:?}. Defaulting to string.",
-                        key, tool_name, type_val
-                    ),
-                );
+                warn!(target: "gemini::simplify_property_schema", "Unexpected 'type' format for property '{}' in tool '{}': {:?}. Defaulting to string.", key, tool_name, type_val);
                 *type_val = serde_json::Value::String("string".to_string());
             }
             // If it's already a simple string, do nothing.
@@ -290,13 +267,7 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
         }
         serde_json::Value::Object(simplified_prop)
     } else {
-        crate::utils::logging::warn(
-            "gemini::simplify_property_schema",
-            &format!(
-                "Property value for '{}' in tool '{}' is not an object: {:?}. Using original value.",
-                key, tool_name, property_value
-            ),
-        );
+        warn!(target: "gemini::simplify_property_schema", "Property value for '{}' in tool '{}' is not an object: {:?}. Using original value.", key, tool_name, property_value);
         property_value.clone() // Return original if not an object
     }
 }
@@ -363,13 +334,7 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
                 // Convert FunctionResponse back to a generic structure if needed,
                 // though typically the model response won't be a function *result*.
                 // For now, maybe convert it to text or log a warning.
-                crate::utils::logging::warn(
-                    "gemini::convert_response",
-                    &format!(
-                        "Unexpected FunctionResponse in model output: {:?}",
-                        function_response
-                    ),
-                );
+                warn!(target: "gemini::convert_response", "Unexpected FunctionResponse in model output: {:?}", function_response);
                 // Fallback to representing it as text
                 ContentBlock::Text {
                     text: format!("(Function Response: {})", function_response.name),
@@ -377,21 +342,10 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
                 }
             }
             GeminiPart::ExecutableCode { executable_code } => {
-                crate::utils::logging::info(
-                    "gemini::convert_response",
-                    &format!(
-                        "Received ExecutableCode part ({}): {}. Converting to text.",
-                        executable_code.language, executable_code.code
-                    ),
-                );
+                info!(target: "gemini::convert_response", "Received ExecutableCode part ({}): {}. Converting to text.", 
+                     executable_code.language, executable_code.code);
                 // Represent executable code as simple text for now
-                crate::utils::logging::info(
-                    "gemini::convert_response",
-                    &format!(
-                        "Received ExecutableCode part ({}): {}. Converting to text.",
-                        executable_code.language, executable_code.code
-                    ),
-                );
+                info!(target: "gemini::convert_response", "Processing ExecutableCode part for response text conversion.");
                 eprintln!("Received ExecutableCode part. See logs for more details.");
                 ContentBlock::Text {
                     text: format!(
@@ -451,16 +405,10 @@ impl Provider for GeminiClient {
         // Log the request before sending
         match serde_json::to_string_pretty(&request) {
             Ok(json_payload) => {
-                crate::utils::logging::debug(
-                    "Full Gemini API Request Payload (JSON)",
-                    &json_payload,
-                );
+                debug!(target: "Full Gemini API Request Payload (JSON)", "{}", json_payload);
             }
             Err(e) => {
-                crate::utils::logging::error(
-                    "Gemini API Request Serialization Error",
-                    &format!("Failed to serialize request to JSON: {}", e),
-                );
+                error!(target: "Gemini API Request Serialization Error", "Failed to serialize request to JSON: {}", e);
             }
         }
 
@@ -476,10 +424,7 @@ impl Provider for GeminiClient {
 
         if status != StatusCode::OK {
             let error_text = response.text().await.map_err(|e| ApiError::Network(e))?; // Handle potential error during text read
-            crate::utils::logging::error(
-                "Gemini API Error Response",
-                &format!("Status: {}, Body: {}", status, error_text), // Use stored status
-            );
+            error!(target: "Gemini API Error Response", "Status: {}, Body: {}", status, error_text); // Use stored status
             // Map status codes to ApiError variants
             return Err(match status.as_u16() {
                 401 | 403 => ApiError::AuthenticationFailed {
@@ -517,13 +462,7 @@ impl Provider for GeminiClient {
                 })
             }
             Err(e) => {
-                crate::utils::logging::error(
-                    "Gemini API JSON Parsing Error",
-                    &format!(
-                        "Failed to parse JSON: {}. Response body:\n{}",
-                        e, response_text
-                    ),
-                );
+                error!(target: "Gemini API JSON Parsing Error", "Failed to parse JSON: {}. Response body:\n{}", e, response_text);
                 Err(ApiError::ResponseParsingError {
                     provider: self.name().to_string(),
                     details: format!("Error: {}, Body: {}", e, response_text),

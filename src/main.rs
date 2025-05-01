@@ -5,6 +5,7 @@ use dotenv::dotenv;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
+use tracing::{debug, info};
 
 use coder::app::{App, AppCommand, AppConfig, app_actor_loop};
 use coder::config::LlmConfig;
@@ -26,10 +27,6 @@ struct Cli {
     /// Model to use
     #[arg(short, long, value_enum, default_value_t = Model::Gemini2_5ProPreview0325)]
     model: Model,
-
-    /// Enable debug logging to file
-    #[arg(long)]
-    debug: bool,
 
     /// Subcommands
     #[command(subcommand)]
@@ -53,14 +50,8 @@ async fn main() -> Result<()> {
     // Load .env file if it exists
     dotenv().ok();
 
-    utils::logging::init_logging()?;
-
-    // Set log level based on debug flag
-    if !cli.debug {
-        if let Ok(mut logger) = utils::logging::Logger::get().lock() {
-            logger.set_level(utils::logging::LogLevel::Info);
-        }
-    }
+    // Initialize tracing (level configured via RUST_LOG env var)
+    utils::tracing::init_tracing()?;
 
     // Set up a flag to track terminal state for signal handlers
     let terminal_in_raw_mode = Arc::new(AtomicBool::new(false));
@@ -85,7 +76,7 @@ async fn main() -> Result<()> {
                     crossterm::terminal::LeaveAlternateScreen,
                     crossterm::event::DisableMouseCapture
                 );
-                utils::logging::info("signal_handler", "Received SIGTERM, terminal cleaned up");
+                info!(target: "signal_handler", "Received SIGTERM, terminal cleaned up");
             }
 
             std::process::exit(0);
@@ -105,17 +96,14 @@ async fn main() -> Result<()> {
                     crossterm::terminal::LeaveAlternateScreen,
                     crossterm::event::DisableMouseCapture
                 );
-                utils::logging::info("signal_handler", "Received SIGINT, terminal cleaned up");
+                info!(target: "signal_handler", "Received SIGINT, terminal cleaned up");
             }
 
             std::process::exit(0);
         });
     }
 
-    utils::logging::info("main", "Claude Code application starting");
-    if cli.debug {
-        utils::logging::info("main", "Debug logging enabled");
-    }
+    info!(target: "main", "Claude Code application starting");
 
     // Load or initialize config using the library path
     let _config = coder::config::load_config()?;

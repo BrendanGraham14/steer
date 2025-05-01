@@ -3,8 +3,8 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent,
-    MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseEvent, MouseEventKind,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::{
     execute,
@@ -24,10 +24,8 @@ use tokio::select;
 use crate::api::Model;
 use crate::app::command::AppCommand;
 use crate::app::{AppEvent, Role};
-use crate::utils;
-use crate::utils::logging::{debug, error, info, warn};
 use tokio::{sync::mpsc, task::JoinHandle};
-
+use tracing::{debug, error, info, warn};
 mod message_formatter;
 
 use message_formatter::{format_message, format_tool_preview, format_tool_result_block};
@@ -183,7 +181,7 @@ impl Tui {
                     self.max_scroll,
                     &current_model_owned,
                 ) {
-                    error("tui.run.draw", &format!("UI rendering failed: {}", e));
+                    error!(target:"tui.run.draw", "UI rendering failed: {}", e);
                 }
             })?;
 
@@ -196,7 +194,7 @@ impl Tui {
                         Some(Ok(event)) => {
                             match event {
                                 Event::Resize(_, _) => {
-                                    debug("tui.run", "Terminal resized");
+                                    debug!(target:"tui.run", "Terminal resized");
                                     // Recalculate max_scroll based on new size
                                     let all_lines: Vec<Line> = self.messages.iter().flat_map(|fm| fm.content.clone()).collect();
                                     let total_lines_count = all_lines.len();
@@ -217,25 +215,25 @@ impl Tui {
                                     if matches!(self.input_mode, InputMode::Editing) {
                                         let normalized_data = data.replace("\\r\\n", "\\n").replace("\\r", "\\n");
                                         self.textarea.insert_str(&normalized_data);
-                                        debug("tui.run", &format!("Pasted {} chars", normalized_data.len()));
+                                        debug!(target:"tui.run", "Pasted {} chars", normalized_data.len());
                                     }
                                 }
                                 Event::Key(key) => {
                                     match self.handle_input(key).await {
                                         Ok(Some(action)) => {
-                                            debug("tui.run", &format!("Handling input action: {:?}", action));
+                                            debug!(target:"tui.run", "Handling input action: {:?}", action);
                                             if self.dispatch_input_action(action).await? {
                                                 should_exit = true;
                                             }
                                         }
                                         Ok(None) => {}
                                         Err(e) => {
-                                            error("tui.run", &format!("Error handling input: {}", e));
+                                            error!(target:"tui.run",    "Error handling input: {}", e);
                                         }
                                     }
                                 }
-                                Event::FocusGained => debug("tui.run", "Focus gained"),
-                                Event::FocusLost => debug("tui.run", "Focus lost"),
+                                Event::FocusGained => debug!(target:"tui.run", "Focus gained"),
+                                Event::FocusLost => debug!(target:"tui.run", "Focus lost"),
                                 Event::Mouse(event) => {
                                     // Fast path for mouse events to minimize latency
                                     match event {
@@ -265,10 +263,10 @@ impl Tui {
                                                         self.max_scroll,
                                                         &current_model_owned,
                                                     ) {
-                                                        error("tui.run.draw", &format!("UI rendering failed: {}", e));
+                                                        error!(target:"tui.run.draw",   "UI rendering failed: {}", e);
                                                     }
                                                 }) {
-                                                    error("tui.mouse_scroll", &format!("Failed to redraw: {}", e));
+                                                    error!(target:"tui.mouse_scroll", "Failed to redraw: {}", e);
                                                 }
                                             }
                                         }
@@ -295,10 +293,10 @@ impl Tui {
                                                         self.max_scroll,
                                                         &current_model_owned,
                                                     ) {
-                                                        error("tui.run.draw", &format!("UI rendering failed: {}", e));
+                                                        error!(target:"tui.run.draw",   "UI rendering failed: {}", e);
                                                     }
                                                 }) {
-                                                    error("tui.mouse_scroll", &format!("Failed to redraw: {}", e));
+                                                    error!(target:"tui.mouse_scroll", "Failed to redraw: {}", e);
                                                 }
                                             }
                                         }
@@ -308,13 +306,13 @@ impl Tui {
                             }
                         }
                         Some(Err(e)) => {
-                            error("tui.run", &format!("Error reading terminal event: {}", e));
+                            error!(target:"tui.run", "Error reading terminal event: {}", e);
                             // Decide if we should exit on error
                             // should_exit = true;
                         }
                         None => {
                             // Channel closed, input task likely ended
-                            info("tui.run", "Terminal event channel closed.");
+                            info!(target:"tui.run", "Terminal event channel closed.");
                             should_exit = true;
                         }
                     }
@@ -326,7 +324,7 @@ impl Tui {
                             self.handle_app_event(event).await;
                         }
                         None => {
-                            info("tui.run", "App event channel closed.");
+                            info!(target:"tui.run", "App event channel closed.");
                             should_exit = true;
                         }
                     }
@@ -345,30 +343,24 @@ impl Tui {
         let mut messages_updated = false;
         match event {
             AppEvent::ThinkingStarted => {
-                debug("tui.handle_app_event", "Setting is_processing = true");
+                debug!(target:"tui.handle_app_event", "Setting is_processing = true");
                 self.is_processing = true;
                 self.spinner_state = 0;
                 self.progress_message = None;
             }
             AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
-                debug("tui.handle_app_event", "Setting is_processing = false");
+                debug!(target:"tui.handle_app_event", "Setting is_processing = false");
                 self.is_processing = false;
                 self.progress_message = None;
             }
             AppEvent::ModelChanged { model } => {
-                debug(
-                    "tui.handle_app_event",
-                    &format!("Model changed to: {}", model),
-                );
+                debug!(target:"tui.handle_app_event", "Model changed to: {}", model);
                 self.current_model = model;
             }
             AppEvent::ToolCallStarted { name, id } => {
                 self.spinner_state = 0;
                 self.progress_message = Some(format!("Executing tool: {}", name));
-                debug(
-                    "tui.handle_app_event",
-                    &format!("Tool call started: {} ({:?})", name, id),
-                );
+                debug!(target:"tui.handle_app_event", "Tool call started: {} ({:?})", name, id);
 
                 // Find the corresponding raw message
                 let raw_msg = self.raw_messages.iter().find(|m| m.id == id).cloned();
@@ -386,9 +378,9 @@ impl Tui {
 
                     // Check if ID already exists in the TUI's formatted list
                     if self.messages.iter().any(|m| m.id == id) {
-                        warn(
+                        warn!(target:
                             "tui.handle_app_event",
-                            &format!("MessageAdded: ID {} already exists. Skipping.", id),
+                            "MessageAdded: ID {} already exists. Skipping.", id,
                         );
                     } else {
                         let formatted_message = FormattedMessage {
@@ -400,19 +392,13 @@ impl Tui {
                         };
                         self.messages.push(formatted_message);
                         // self.raw_messages.push(crate::app::Message::new_text(role, content.clone())); // Raw message added above
-                        debug("tui.handle_app_event", &format!("Added message ID: {}", id));
+                        debug!(target: "tui.handle_app_event", "Added message ID: {}", id);
                         messages_updated = true;
                     }
                 } else {
                     // This case might happen if the App adds a message but fails to send the event,
                     // or if the event arrives before the App could add it (less likely).
-                    warn(
-                        "tui.handle_app_event",
-                        &format!(
-                            "MessageAdded event received for ID {}, but corresponding raw message not found yet.",
-                            id
-                        ),
-                    );
+                    warn!(target: "tui.handle_app_event", "MessageAdded event received for ID {}, but corresponding raw message not found yet.", id);
                     // Optionally, add a placeholder formatted message
                     // let placeholder_block = crate::app::conversation::MessageContentBlock::Text("[Message content pending...]".to_string());
                     // let formatted = format_message(&[placeholder_block], role);
@@ -425,7 +411,7 @@ impl Tui {
                 id,
             } => {
                 if role == Role::System {
-                    debug("tui.handle_app_event", "Skipping system message display");
+                    debug!(target: "tui.handle_app_event", "Skipping system message display");
                     // Still add to raw messages if needed for context/history?
                     // self.raw_messages.push(crate::app::Message::new_with_blocks(role, content_blocks));
                     return;
@@ -446,13 +432,11 @@ impl Tui {
                 // Check if ID already exists in the TUI's formatted list
                 // (Should ideally not happen with unique IDs, but good safety check)
                 if self.messages.iter().any(|m| m.id == id) {
-                    info(
-                        "tui.handle_app_event",
-                        &format!(
-                            "MessageAdded: ID {} already exists. Content blocks: {}. Skipping.",
-                            id,
-                            content_blocks.len()
-                        ),
+                    info!(
+                        target: "tui.handle_app_event",
+                        "MessageAdded: ID {} already exists. Content blocks: {}. Skipping.",
+                        id,
+                        content_blocks.len()
                     );
                 } else {
                     let formatted_message = FormattedMessage {
@@ -464,21 +448,19 @@ impl Tui {
                     };
                     self.messages.push(formatted_message);
                     messages_updated = true;
-                    debug(
-                        "tui.handle_app_event",
-                        &format!(
-                            "Added message ID: {} with {} content blocks",
-                            id,
-                            content_blocks.len()
-                        ),
+                    debug!(
+                        target: "tui.handle_app_event",
+                        "Added message ID: {} with {} content blocks",
+                        id,
+                        content_blocks.len()
                     );
                 }
             }
             AppEvent::MessageUpdated { id, content } => {
                 if let Some(msg) = self.messages.iter_mut().find(|m| m.id == id) {
-                    debug(
-                        "tui.handle_app_event",
-                        &format!("Updating message ID: {}", id),
+                    debug!(
+                        target: "tui.handle_app_event",
+                        "Updating message ID: {}", id,
                     );
                     // Now use the blocks from the raw message
                     if let Some(raw_msg) = self.raw_messages.iter().find(|m| m.id == id) {
@@ -488,15 +470,12 @@ impl Tui {
                             self.terminal.size().map(|r| r.width).unwrap_or(100),
                         );
                         messages_updated = true; // Mark that message content changed
-                        debug(
-                            "tui.handle_app_event",
-                            &format!("Updated message ID: {} with new blocks", id),
+                        debug!(
+                            target: "tui.handle_app_event",
+                            "Updated message ID: {} with new blocks", id,
                         );
                     } else {
-                        warn(
-                            "tui.handle_app_event",
-                            &format!("MessageUpdated: Raw message ID {} not found.", id),
-                        );
+                        warn!(target: "tui.handle_app_event", "MessageUpdated: Raw message ID {} not found.", id);
                         // Fallback: format the string content as a text block
                         let block = crate::app::conversation::MessageContentBlock::Text(content);
                         msg.content = format_message(
@@ -507,10 +486,7 @@ impl Tui {
                         messages_updated = true; // Mark that message content changed
                     }
                 } else {
-                    warn(
-                        "tui.handle_app_event",
-                        &format!("MessageUpdated: ID {} not found.", id),
-                    );
+                    warn!(target: "tui.handle_app_event", "MessageUpdated: ID {} not found.", id);
                 }
             }
             AppEvent::ToolCallCompleted {
@@ -520,10 +496,7 @@ impl Tui {
             } => {
                 self.progress_message = None;
 
-                debug(
-                    "tui.handle_app_event",
-                    &format!("Adding Tool Result message for ID: {}", id),
-                );
+                debug!(target: "tui.handle_app_event", "Adding Tool Result message for ID: {}", id);
 
                 let formatted_result_lines = format_tool_result_block(
                     &id,
@@ -572,13 +545,7 @@ impl Tui {
 
                 // Similar logic to ToolCallCompleted: Assuming this relates to a Role::Tool message
                 // added via MessageAdded.
-                debug(
-                    "tui.handle_app_event",
-                    &format!(
-                        "Adding Tool Failure message for ID: {}, Error: {}",
-                        id, error
-                    ),
-                );
+                debug!(target: "tui.handle_app_event", "Adding Tool Failure message for ID: {}, Error: {}", id, error);
 
                 // Create a NEW message to display the tool failure
                 let failure_content = format!("Tool '{}' failed: {}.", name, error);
@@ -706,26 +673,17 @@ impl Tui {
 
                 // Scroll to bottom ONLY if user wasn't scrolled away
                 if !self.user_scrolled_away {
-                    debug(
-                        "tui.handle_app_event",
-                        "Scrolling to bottom after message update.",
-                    );
+                    debug!(target: "tui.handle_app_event", "Scrolling to bottom after message update.");
                     self.set_scroll_offset(self.max_scroll);
                 } else {
-                    debug(
-                        "tui.handle_app_event",
-                        "User scrolled away, not scrolling to bottom.",
-                    );
+                    debug!(target: "tui.handle_app_event", "User scrolled away, not scrolling to bottom.");
                     // If the update caused the current offset to become the max, reset the flag
                     if self.scroll_offset == self.max_scroll {
                         self.user_scrolled_away = false;
                     }
                 }
             } else {
-                warn(
-                    "tui.handle_app_event",
-                    "Failed to get terminal size for scroll update.",
-                );
+                warn!(target: "tui.handle_app_event", "Failed to get terminal size for scroll update.");
             }
         }
     }
@@ -1099,10 +1057,7 @@ impl Tui {
                                 last_tool_msg.id.clone(),
                             ));
                         } else {
-                            debug(
-                                "tui.handle_input",
-                                "No tool message found to toggle truncation",
-                            );
+                            debug!(target: "tui.handle_input", "No tool message found to toggle truncation");
                         }
                     }
                 }
@@ -1118,10 +1073,7 @@ impl Tui {
                     return Ok(Some(InputAction::Exit));
                 }
                 _ => {
-                    debug(
-                        "tui.handle_input",
-                        "Ctrl+C detected, entering ConfirmExit mode.",
-                    );
+                    debug!(target: "tui.handle_input", "Ctrl+C detected, entering ConfirmExit mode.");
                     self.input_mode = InputMode::ConfirmExit;
                     return Ok(None); // Change mode, no immediate action
                 }
@@ -1132,10 +1084,7 @@ impl Tui {
         if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL
         // Avoid conflict with editor movement
         {
-            debug(
-                "tui.handle_input",
-                "Ctrl+D detected, triggering immediate Exit action.",
-            );
+            debug!(target: "tui.handle_input", "Ctrl+D detected, triggering immediate Exit action.");
             return Ok(Some(InputAction::Exit)); // Immediate exit
         }
 
@@ -1237,10 +1186,7 @@ impl Tui {
                                         last_tool_msg.id.clone(),
                                     ));
                                 } else {
-                                    debug(
-                                        "tui.handle_input",
-                                        "No tool message found to toggle truncation",
-                                    );
+                                    debug!(target: "tui.handle_input", "No tool message found to toggle truncation");
                                 }
                             }
                         }
@@ -1357,19 +1303,17 @@ impl Tui {
                         }
                         found_and_toggled = true;
                     } else {
-                        warn(
+                        warn!(target:
                             "tui.dispatch",
-                            &format!(
                                 "Message {} found, but has no full_tool_result to toggle.",
                                 id
-                            ),
                         );
                     }
                 }
                 if !found_and_toggled {
-                    warn(
+                    warn!(target:
                         "tui.dispatch",
-                        &format!("ToggleMessageTruncation: No message found with ID {}", id),
+                        "ToggleMessageTruncation: No message found with ID {}", id,
                     );
                 }
                 // No command needs to be sent to App for this purely visual toggle
@@ -1407,9 +1351,9 @@ impl Tui {
             InputAction::Exit => {
                 // Signal exit cleanly if possible
                 if let Err(e) = self.command_tx.send(AppCommand::Shutdown).await {
-                    error(
+                    error!(target:
                         "tui.dispatch",
-                        &format!("Failed to send Shutdown command: {}", e),
+                        "Failed to send Shutdown command: {}", e
                     );
                     // Still exit the TUI loop even if shutdown command fails
                 }
@@ -1426,7 +1370,7 @@ impl Drop for Tui {
         if let Err(e) = self.cleanup_terminal() {
             // Log error if cleanup fails, but don't panic in drop
             eprintln!("Failed to cleanup terminal: {}", e);
-            error("Tui::drop", &format!("Failed to cleanup terminal: {}", e));
+            error!(target:"Tui::drop", "Failed to cleanup terminal: {}", e);
         }
     }
 }
@@ -1445,10 +1389,7 @@ pub async fn run_tui(
         let _ = disable_raw_mode();
         let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
 
-        utils::logging::error(
-            "panic_hook",
-            &format!("Application panicked: {}", panic_info),
-        );
+        error!(target: "panic_hook", "Application panicked: {}", panic_info);
 
         eprintln!("\nERROR: Application crashed: {}", panic_info);
 
@@ -1457,11 +1398,11 @@ pub async fn run_tui(
     }));
 
     // --- TUI Initialization ---
-    utils::logging::info("tui::run_tui", "Initializing TUI");
+    info!(target: "tui::run_tui", "Initializing TUI");
     let mut tui = match Tui::new(command_tx.clone(), initial_model) {
         Ok(tui) => tui,
         Err(e) => {
-            utils::logging::error("tui::run_tui", &format!("Failed to initialize TUI: {}", e));
+            error!(target: "tui::run_tui", "Failed to initialize TUI: {}", e);
             // We might be mid-panic hook here, but try to print
             eprintln!("Error: Failed to initialize terminal UI: {}", e);
             return Err(e);
@@ -1469,18 +1410,18 @@ pub async fn run_tui(
     };
 
     // --- Run the TUI Loop ---
-    utils::logging::info("tui::run_tui", "Starting TUI run loop");
+    info!(target: "tui::run_tui", "Starting TUI run loop");
     let tui_result = tui.run(event_rx).await;
-    utils::logging::info("tui::run_tui", "TUI run loop finished");
+    info!(target: "tui::run_tui", "TUI run loop finished");
 
     // Handle TUI result
     match tui_result {
         Ok(_) => {
-            utils::logging::info("tui::run_tui", "TUI terminated normally");
+            info!(target: "tui::run_tui", "TUI terminated normally");
             Ok(())
         }
         Err(e) => {
-            utils::logging::error("tui::run_tui", &format!("TUI task error: {}", e));
+            error!(target: "tui::run_tui", "TUI task error: {}", e);
             eprintln!("Error in TUI: {}", e);
             Err(e)
         }

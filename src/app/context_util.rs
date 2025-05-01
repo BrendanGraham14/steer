@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, warn};
 
 use crate::api::ToolCall;
 use crate::app::ToolExecutor;
@@ -23,9 +24,9 @@ pub async fn execute_tool_task_logic(
     let tool_id = tool_call.id.clone();
     let tool_name = tool_call.name.clone();
 
-    crate::utils::logging::debug(
-        "app.context_util.execute_tool_task_logic",
-        &format!("Executing tool {} (ID: {}) logic", tool_name, tool_id),
+    debug!(
+        target: "app.context_util.execute_tool_task_logic",
+        "Executing tool {} (ID: {}) logic", tool_name, tool_id,
     );
 
     // Check for cancellation before starting
@@ -41,18 +42,16 @@ pub async fn execute_tool_task_logic(
 
     // Log outcome
     match &result {
-        Ok(output) => crate::utils::logging::debug(
-            "app.context_util.execute_tool_task_logic",
-            &format!(
-                "Tool {} ({}) completed successfully. Output length: {}",
+        Ok(output) => debug!(
+            target:"app.context_util.execute_tool_task_logic",
+            "Tool {} ({}) completed successfully. Output length: {}",
                 tool_name,
                 tool_id,
-                output.len()
-            ),
+                output.len(),
         ),
-        Err(e) => crate::utils::logging::warn(
-            "app.context_util.execute_tool_task_logic",
-            &format!("Tool {} ({}) failed: {}", tool_name, tool_id, e),
+        Err(e) => warn!(
+            target:"app.context_util.execute_tool_task_logic",
+            "Tool {} ({}) failed: {}", tool_name, tool_id, e,
         ),
     }
 

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
+use tracing::{debug, info, warn, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Display)]
 pub enum MessageRole {
@@ -109,13 +110,7 @@ pub fn convert_conversation(
                         {
                             Some(content.as_str())
                         } else {
-                            crate::utils::logging::warn(
-                                "messages.convert_conversation",
-                                &format!(
-                                    "User message ID {} contained non-text block: {:?}",
-                                    app_msg.id, block
-                                ),
-                            );
+                            warn!(target: "messages.convert_conversation", "User message ID {} contained non-text block: {:?}", app_msg.id, block);
                             None
                         }
                     })
@@ -131,10 +126,7 @@ pub fn convert_conversation(
                         id: Some(app_msg.id.clone()),
                     });
                 } else {
-                    crate::utils::logging::debug(
-                        "messages.convert_conversation",
-                        &format!("Skipping empty user message with ID: {}", app_msg.id),
-                    );
+                    debug!(target: "messages.convert_conversation", "Skipping empty user message with ID: {}", app_msg.id);
                 }
             }
             crate::app::Role::Assistant => {
@@ -158,10 +150,7 @@ pub fn convert_conversation(
                         },
                         crate::app::conversation::MessageContentBlock::ToolResult { .. } => {
                             // Assistant should not have ToolResult blocks
-                            crate::utils::logging::error(
-                                "messages.convert_conversation",
-                                &format!("Unexpected ToolResult block found in Assistant message ID: {}", app_msg.id)
-                            );
+                            error!(target: "messages.convert_conversation", "Unexpected ToolResult block found in Assistant message ID: {}", app_msg.id);
                             None // Skip this invalid block
                         }
                     }
@@ -194,13 +183,7 @@ pub fn convert_conversation(
                         id: Some(app_msg.id.clone()),
                     });
                 } else {
-                    crate::utils::logging::warn(
-                        "messages.convert_conversation",
-                        &format!(
-                            "Assistant message ID {} resulted in no valid content blocks, skipping.",
-                            app_msg.id
-                        ),
-                    );
+                    warn!(target: "messages.convert_conversation", "Assistant message ID {} resulted in no valid content blocks, skipping.", app_msg.id);
                 }
             }
             crate::app::Role::Tool => {
@@ -231,13 +214,7 @@ pub fn convert_conversation(
                             is_error: if is_error { Some(true) } else { None },
                         });
                     } else {
-                        crate::utils::logging::error(
-                            "messages.convert_conversation",
-                            &format!(
-                                "Message ID {} (part of Tool group) has unexpected content block: {:?}",
-                                app_msg.id, block
-                            ),
-                        );
+                        error!(target: "messages.convert_conversation", "Message ID {} (part of Tool group) has unexpected content block: {:?}", app_msg.id, block);
                     }
                 }
 
@@ -267,13 +244,7 @@ pub fn convert_conversation(
                                     is_error: if is_error { Some(true) } else { None },
                                 });
                             } else {
-                                crate::utils::logging::error(
-                                    "messages.convert_conversation",
-                                    &format!(
-                                        "Message ID {} (part of Tool group) has unexpected content block: {:?}",
-                                        consumed_msg.id, block
-                                    ),
-                                );
+                                error!(target: "messages.convert_conversation", "Message ID {} (part of Tool group) has unexpected content block: {:?}", consumed_msg.id, block);
                             }
                         }
                     } else {
@@ -317,10 +288,7 @@ pub fn convert_conversation(
         } */
 
         if remove_last {
-            crate::utils::logging::warn(
-                "messages.convert_conversation",
-                "Last message was an empty non-assistant text message, removing it.",
-            );
+            warn!(target: "messages.convert_conversation", "Last message was an empty non-assistant text message, removing it.");
             api_messages.pop();
         }
     }
@@ -348,10 +316,7 @@ pub fn convert_api_content_to_message_content(
                 id, name, input, ..
             } => Some(ContentBlock::ToolUse { id, name, input }),
             crate::api::ContentBlock::Unknown => {
-                crate::utils::logging::warn(
-                    "messages::convert_api_content_to_message_content",
-                    "Received unknown content block type from API",
-                );
+                warn!(target: "messages::convert_api_content_to_message_content", "Received unknown content block type from API");
                 None // Skip unknown blocks
             }
         })

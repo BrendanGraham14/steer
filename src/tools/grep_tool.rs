@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::tools::ToolError;
 use coder_macros::tool;
@@ -94,9 +95,9 @@ fn grep_search_internal(pattern: &str, include: Option<&str>, path: &str) -> Res
                         }
                         Err(e) => {
                             // Log or report the error reading a line
-                            crate::utils::logging::warn(
+                            warn!(target:
                                 "tools.grep.read_line_error",
-                                &format!("Error reading line in {}: {}", file_path.display(), e),
+                                "Error reading line in {}: {}", file_path.display(), e,
                             );
                         }
                     }
@@ -108,9 +109,9 @@ fn grep_search_internal(pattern: &str, include: Option<&str>, path: &str) -> Res
             }
             Err(e) => {
                 // Log or report the error opening the file
-                crate::utils::logging::warn(
+                warn!(target:
                     "tools.grep.open_file_error",
-                    &format!("Failed to open file {}: {}", file_path.display(), e),
+                    "Failed to open file {}: {}", file_path.display(), e,
                 );
                 // Optionally, continue to next file or return an error
                 // For now, we just skip this file.

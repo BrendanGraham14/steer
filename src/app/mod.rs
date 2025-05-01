@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 use uuid;
 
 pub mod cancellation;
@@ -122,18 +123,20 @@ impl App {
     pub(crate) fn emit_event(&self, event: AppEvent) {
         match self.event_sender.try_send(event.clone()) {
             Ok(_) => {
-                crate::utils::logging::debug("app.emit_event", &format!("Sent event: {:?}", event));
+                debug!(target: "app.emit_event", "{}", format!("Sent event: {:?}", event));
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                crate::utils::logging::warn(
-                    "app.emit_event",
-                    &format!("Event channel full, discarding event: {:?}", event),
+                warn!(
+                    target: "app.emit_event",
+                    "{}",
+                    format!("Event channel full, discarding event: {:?}", event)
                 );
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                crate::utils::logging::warn(
-                    "app.emit_event",
-                    &format!("Event channel closed, discarding event: {:?}", event),
+                warn!(
+                    target: "app.emit_event",
+                    "{}",
+                    format!("Event channel closed, discarding event: {:?}", event)
                 );
             }
         }
@@ -209,9 +212,10 @@ impl App {
         self.emit_event(AppEvent::ThinkingStarted);
         // Spawn the API call instead of awaiting handle_response directly
         if let Err(e) = self.spawn_api_call().await {
-            crate::utils::logging::error(
-                "App.process_user_message",
-                &format!("Error spawning API call task: {}", e),
+            error!(
+                target: "App.process_user_message",
+                "{}",
+                format!("Error spawning API call task: {}", e)
             );
             self.emit_event(AppEvent::ThinkingCompleted); // Stop thinking on spawn error
             self.emit_event(AppEvent::Error {
@@ -226,9 +230,9 @@ impl App {
 
     // Refactored function to spawn the API call task and add it to OpContext JoinSet
     async fn spawn_api_call(&mut self) -> Result<()> {
-        crate::utils::logging::debug(
-            "app.spawn_api_call",
-            "Spawning API call task into JoinSet...",
+        debug!(
+            target: "app.spawn_api_call",
+            "Spawning API call task into JoinSet..."
         );
 
         let api_client = self.api_client.clone();
@@ -246,7 +250,7 @@ impl App {
             Some(ctx) => ctx,
             None => {
                 let err = anyhow::anyhow!("No operation context available to spawn API call");
-                crate::utils::logging::error("App.spawn_api_call", &err.to_string());
+                error!(target: "App.spawn_api_call", "{}", err);
                 // Ensure thinking stops if context is missing
                 self.emit_event(AppEvent::ThinkingCompleted);
                 return Err(err);
@@ -265,7 +269,7 @@ impl App {
 
         // Spawn the task directly into the OpContext's JoinSet
         op_context.tasks.spawn(async move {
-            crate::utils::logging::debug("spawn_api_call task (JoinSet)", "Task started.");
+            debug!(target: "spawn_api_call task (JoinSet)", "Task started.");
 
             let response_result = App::get_claude_response_static(
                 conversation,
@@ -277,12 +281,13 @@ impl App {
             )
             .await;
 
-            crate::utils::logging::debug(
-                "spawn_api_call task (JoinSet)",
-                &format!(
+            debug!(
+                target: "spawn_api_call task (JoinSet)",
+                "{}",
+                format!(
                     "API call finished with result: {:?}",
                     response_result.is_ok()
-                ),
+                )
             );
 
             // Return TaskOutcome::ApiResponse
@@ -291,9 +296,9 @@ impl App {
             }
         });
 
-        crate::utils::logging::debug(
-            "app.spawn_api_call",
-            "API call task successfully spawned into JoinSet.",
+        debug!(
+            target: "app.spawn_api_call",
+            "API call task successfully spawned into JoinSet."
         );
 
         Ok(())
@@ -305,12 +310,13 @@ impl App {
         approved: bool,
         always: bool,
     ) -> Result<()> {
-        crate::utils::logging::debug(
-            "App.handle_tool_command_response",
-            &format!(
+        debug!(
+            target: "App.handle_tool_command_response",
+            "{}",
+            format!(
                 "Handling response for tool call ID: {}, Approved: {}, Always: {}",
                 tool_call_id, approved, always
-            ),
+            )
         );
 
         // Get op_context mutably
@@ -325,9 +331,9 @@ impl App {
         let ctx = match self.current_op_context.as_mut() {
             Some(ctx) => ctx,
             None => {
-                crate::utils::logging::error(
-                    "App.handle_tool_command_response",
-                    "No operation context available for tool approval/denial",
+                error!(
+                    target: "App.handle_tool_command_response",
+                    "No operation context available for tool approval/denial"
                 );
                 return Err(anyhow::anyhow!(
                     "No operation context available for tool approval/denial"
@@ -338,12 +344,13 @@ impl App {
         let tool_call = match ctx.pending_tool_calls.remove(&tool_call_id_clone) {
             Some(tool_call) => tool_call,
             None => {
-                crate::utils::logging::warn(
-                    "App.handle_tool_command_response",
-                    &format!(
+                warn!(
+                    target: "App.handle_tool_command_response",
+                    "{}",
+                    format!(
                         "Received response for unknown or already handled tool call ID: {}",
                         tool_call_id
-                    ),
+                    )
                 );
                 return Ok(()); // Early return if tool not found
             }
@@ -353,18 +360,20 @@ impl App {
         tool_name_for_approval = Some(tool_name.clone());
 
         if approved {
-            crate::utils::logging::info(
-                "App.handle_tool_command_response",
-                &format!("Tool call '{}' approved.", tool_name),
+            info!(
+                target: "App.handle_tool_command_response",
+                "{}",
+                format!("Tool call '{}' approved.", tool_name)
             );
 
             tool_call_to_execute = Some(tool_call.clone());
             ctx.expected_tool_results += 1;
             token_for_spawn = Some(ctx.cancel_token.clone());
         } else {
-            crate::utils::logging::info(
-                "App.handle_tool_command_response",
-                &format!("Tool call '{}' was denied by the user.", tool_name),
+            info!(
+                target: "App.handle_tool_command_response",
+                "{}",
+                format!("Tool call '{}' was denied by the user.", tool_name)
             );
             let result_content = format!("Tool '{}' denied by user.", tool_name);
 
@@ -381,9 +390,10 @@ impl App {
         // If approved and 'always' is true, add to approved_tools set
         if approved && always {
             if let Some(tool_name) = &tool_name_for_approval {
-                crate::utils::logging::debug(
-                    "App.handle_tool_command_response",
-                    &format!("Adding tool '{}' to always-approved list.", tool_name),
+                debug!(
+                    target: "App.handle_tool_command_response",
+                    "{}",
+                    format!("Adding tool '{}' to always-approved list.", tool_name)
                 );
                 self.approved_tools.insert(tool_name.clone());
             }
@@ -413,9 +423,9 @@ impl App {
                 });
 
                 if denial_should_continue {
-                    crate::utils::logging::info(
-                        "App.handle_tool_command_response",
-                        "All tools handled after denial. Continuing operation.",
+                    info!(
+                        target: "App.handle_tool_command_response",
+                        "All tools handled after denial. Continuing operation."
                     );
                     // Call continue_operation_after_tools
                     self.continue_operation_after_tools().await?;
@@ -457,12 +467,13 @@ impl App {
                 id: tool_call_id_for_log.clone(),
             });
 
-            crate::utils::logging::debug(
-                "App.handle_tool_command_response",
-                &format!(
+            debug!(
+                target: "App.handle_tool_command_response",
+                "{}",
+                format!(
                     "Spawned task for approved tool '{}' (ID: {}) into JoinSet",
                     tool_name_for_log, tool_call_id_for_log
-                ),
+                )
             );
         }
 
@@ -471,7 +482,7 @@ impl App {
 
     async fn initiate_tool_calls(&mut self, tool_calls: Vec<crate::api::ToolCall>) -> Result<()> {
         if tool_calls.is_empty() {
-            crate::utils::logging::debug("App.initiate_tool_calls", "No tool calls to initiate.");
+            debug!(target: "App.initiate_tool_calls", "No tool calls to initiate.");
             return Ok(());
         }
 
@@ -480,7 +491,7 @@ impl App {
             Some(ctx) => ctx,
             None => {
                 let err = anyhow::anyhow!("No operation context available for tool execution");
-                crate::utils::logging::error("App.initiate_tool_calls", &err.to_string());
+                error!(target: "App.initiate_tool_calls", "{}", err.to_string());
                 self.emit_event(AppEvent::ThinkingCompleted); // Assume thinking stops if context is lost
                 return Err(err);
             }
@@ -491,9 +502,10 @@ impl App {
         let mut tools_to_execute = Vec::new();
         let mut tools_needing_approval = Vec::new();
 
-        crate::utils::logging::info(
-            "App.initiate_tool_calls",
-            &format!("Initiating {} tool calls.", tool_calls.len()),
+        info!(
+            target: "App.initiate_tool_calls",
+            "{}",
+            format!("Initiating {} tool calls.", tool_calls.len())
         );
 
         // Process each tool call
@@ -513,9 +525,10 @@ impl App {
             let is_approved = !requires_approval || self.approved_tools.contains(&tool_name);
 
             if is_approved {
-                crate::utils::logging::debug(
-                    "App.initiate_tool_calls",
-                    &format!(
+                debug!(
+                    target: "App.initiate_tool_calls",
+                    "{}",
+                    format!(
                         "Tool '{}' is {}approved, adding to execution list.",
                         tool_name,
                         if requires_approval {
@@ -523,13 +536,14 @@ impl App {
                         } else {
                             "already "
                         }
-                    ),
+                    )
                 );
                 tools_to_execute.push(tool_call_with_id);
             } else {
-                crate::utils::logging::debug(
-                    "App.initiate_tool_calls",
-                    &format!("Tool '{}' needs approval.", tool_name),
+                debug!(
+                    target: "App.initiate_tool_calls",
+                    "{}",
+                    format!("Tool '{}' needs approval.", tool_name)
                 );
                 // Store in the OpContext's pending_tool_calls
                 // `op_context` is already mutably borrowed
@@ -551,9 +565,10 @@ impl App {
         let _ = op_context; // Explicitly end mutable borrow before immutable borrow for emit_event
 
         for (name, parameters, id) in approval_requests {
-            crate::utils::logging::debug(
-                "App.initiate_tool_calls",
-                &format!("Requesting approval for tool: {}", name),
+            debug!(
+                target: "App.initiate_tool_calls",
+                "{}",
+                format!("Requesting approval for tool: {}", name)
             );
             self.emit_event(AppEvent::RequestToolApproval {
                 name,
@@ -567,12 +582,13 @@ impl App {
 
         // Execute approved tools (if any)
         if !tools_to_execute.is_empty() {
-            crate::utils::logging::debug(
-                "App.initiate_tool_calls",
-                &format!(
+            debug!(
+                target: "App.initiate_tool_calls",
+                "{}",
+                format!(
                     "Executing {} already approved tools.",
                     tools_to_execute.len()
-                ),
+                )
             );
 
             // Re-borrow mutably to modify expected_tool_results and spawn tasks
@@ -619,13 +635,14 @@ impl App {
                     }
                 });
 
-                crate::utils::logging::debug(
-                    "App.initiate_tool_calls",
-                    &format!(
+                debug!(
+                    target: "App.initiate_tool_calls",
+                    "{}",
+                    format!(
                         "Spawned task for tool '{}' (ID: {}) into JoinSet",
                         tool_name, // Use name cloned outside
                         tool_id    // Use id cloned outside
-                    ),
+                    )
                 );
             }
             // Mutable borrow of op_context ends here
@@ -639,15 +656,15 @@ impl App {
         // Check completion status (only if no tools were spawned AND none need approval)
         // This logic needs refinement based on the actor loop polling
         if tools_to_execute.is_empty() && tools_needing_approval.is_empty() {
-            crate::utils::logging::debug(
-                "App.initiate_tool_calls",
-                "No tools needed approval and none were executed immediately.",
+            debug!(
+                target: "App.initiate_tool_calls",
+                "No tools needed approval and none were executed immediately."
             );
             // Let the actor loop polling determine completion/ThinkingCompleted
         } else if tools_to_execute.is_empty() {
-            crate::utils::logging::debug(
-                "App.initiate_tool_calls",
-                "No tools were immediately ready for execution (all need approval). Waiting for user.",
+            debug!(
+                target: "App.initiate_tool_calls",
+                "No tools were immediately ready for execution (all need approval). Waiting for user."
             );
         }
 
@@ -695,16 +712,10 @@ impl App {
                     Err(e) => {
                         // todo: error type for this
                         if e.to_string() == "Request cancelled" {
-                            crate::utils::logging::info(
-                                "App.handle_command",
-                                "Compact command cancelled.",
-                            );
+                            info!(target: "App.handle_command", "Compact command cancelled.",);
                             result = Ok(Some("Compact command cancelled.".to_string()));
                         } else {
-                            crate::utils::logging::error(
-                                "App.handle_command",
-                                &format!("Error during compact: {}", e),
-                            );
+                            error!(target: "App.handle_command", "Error during compact: {}", e);
                             result = Err(e);
                         }
                     }
@@ -737,15 +748,12 @@ impl App {
                     }
                     Err(e) => {
                         if e.to_string() == "Request cancelled" {
-                            crate::utils::logging::info(
-                                "App.handle_command",
-                                "Dispatch command cancelled.",
-                            );
+                            info!(target: "App.handle_command", "Dispatch command cancelled.",);
                             result = Ok(Some("Dispatch command cancelled.".to_string()));
                         } else {
-                            crate::utils::logging::error(
+                            error!(target:
                                 "App.handle_command",
-                                &format!("Error during dispatch: {}", e),
+                                "Error during dispatch: {}", e,
                             );
                             result = Err(e);
                         }
@@ -761,7 +769,7 @@ impl App {
 
     // TODO: Provide a CancellationToken here? Commands are not currently tied to an OpContext.
     pub async fn compact_conversation(&mut self, token: CancellationToken) -> Result<()> {
-        crate::utils::logging::info("App.compact_conversation", "Compacting conversation...");
+        info!(target: "App.compact_conversation", "Compacting conversation...");
 
         // Create a dummy token for now as the call site doesn't have one
         // let token = CancellationToken::new();
@@ -780,17 +788,14 @@ impl App {
             conversation_guard.compact(&client, token).await?;
         }
 
-        crate::utils::logging::info("App.compact_conversation", "Conversation compacted.");
+        info!(target:   "App.compact_conversation", "Conversation compacted.");
         Ok(())
     }
 
     pub async fn cancel_current_processing(&mut self) {
         // Use operation context for cancellation if available
         if let Some(mut op_context) = self.current_op_context.take() {
-            crate::utils::logging::info(
-                "App.cancel_current_processing",
-                "Cancelling current operation via OpContext",
-            );
+            info!(target: "App.cancel_current_processing", "Cancelling current operation via OpContext");
 
             // Capture the current state for the cancellation info
             let active_tools = op_context.active_tools.values().cloned().collect();
@@ -808,21 +813,18 @@ impl App {
             return;
         }
 
-        crate::utils::logging::warn(
+        warn!(target:
             "App.cancel_current_processing",
             "Attempted to cancel processing, but no active operation context was found.",
         );
     }
 
     async fn continue_operation_after_tools(&mut self) -> Result<()> {
-        crate::utils::logging::info(
-            "App.continue_operation_after_tools",
-            "All tools completed, continuing operation with next API call",
-        );
+        info!(target: "App.continue_operation_after_tools", "All tools completed, continuing operation with next API call");
 
         // Ensure context exists
         if self.current_op_context.is_none() {
-            crate::utils::logging::error(
+            error!(target:
                 "App.continue_operation_after_tools",
                 "No operation context found to continue operation.",
             );
@@ -838,9 +840,9 @@ impl App {
         // Start thinking and spawn the *next* API call
         self.emit_event(AppEvent::ThinkingStarted);
         if let Err(e) = self.spawn_api_call().await {
-            crate::utils::logging::error(
+            error!(target:
                 "App.continue_operation_after_tools",
-                &format!("Error spawning subsequent API call task: {}", e),
+                "Error spawning subsequent API call task: {}", e,
             );
             self.emit_event(AppEvent::ThinkingCompleted);
             self.emit_event(AppEvent::Error {
@@ -882,7 +884,7 @@ impl App {
                         Some(content)
                     }
                 } else {
-                    crate::utils::logging::warn(
+                    warn!(target:
                         "App.get_claude_response_static",
                         "Generated system prompt was not Text content.",
                     );
@@ -905,22 +907,22 @@ impl App {
 
 // Define the App actor loop function
 pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppCommand>) {
-    crate::utils::logging::info("app_actor_loop", "App actor loop started.");
+    info!(target: "app_actor_loop", "App actor loop started.");
     loop {
         tokio::select! {
             // Handle incoming commands
             Some(command) = command_rx.recv() => {
-                crate::utils::logging::debug("app_actor_loop", &format!("Received command: {:?}", command));
+                debug!(target: "app_actor_loop", "{}", format!("Received command: {:?}", command));
                 match command {
                     AppCommand::ProcessUserInput(message) => {
                         if let Err(e) = app.process_user_message(message).await {
-                            crate::utils::logging::error("app_actor_loop", &format!("Error processing user message: {}", e));
+                            error!(target: "app_actor_loop", "Error processing user message: {}", e);
                             // Error event is emitted within process_user_message
                         }
                     }
                     AppCommand::HandleToolResponse { id, approved, always } => {
                         if let Err(e) = app.handle_tool_command_response(id, approved, always).await {
-                            crate::utils::logging::error("app_actor_loop", &format!("Error handling tool response: {}", e));
+                            error!(target: "app_actor_loop", "{}", format!("Error handling tool response: {}", e));
                             // Emit error event
                             app.emit_event(AppEvent::Error { message: format!("Failed to handle tool approval: {}", e) });
                             // If handling fails, we might lose context. Ensure spinner stops.
@@ -935,20 +937,20 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                         match app.handle_command(&cmd).await {
                             Ok(response_option) => {
                                 // Log the result using Debug format
-                                crate::utils::logging::info("app_actor_loop", &format!("Command '{}' executed, result: {:?}", cmd, response_option));
+                                info!(target: "app_actor_loop", "{}", format!("Command '{}' executed, result: {:?}", cmd, response_option));
                                 // Emit event only if there is content
                                 if let Some(content) = response_option {
                                      app.emit_event(AppEvent::CommandResponse { content, id: format!("cmd_resp_{}", uuid::Uuid::new_v4()) });
                                 }
                             }
                             Err(e) => {
-                                crate::utils::logging::error("app_actor_loop", &format!("Error running command '{}': {}", cmd, e));
+                                error!(target: "app_actor_loop", "{}", format!("Error running command '{}': {}", cmd, e));
                                 app.emit_event(AppEvent::Error { message: format!("Command failed: {}", e) });
                             }
                         }
                     }
                     AppCommand::Shutdown => {
-                        crate::utils::logging::info("app_actor_loop", "Received Shutdown command. Shutting down.");
+                        info!(target: "app_actor_loop", "Received Shutdown command. Shutting down.");
                         // Perform any necessary cleanup before exiting
                         app.cancel_current_processing().await; // Cancel anything ongoing
                         break; // Exit the loop
@@ -982,7 +984,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
 
                              match task_outcome {
                                  TaskOutcome::ToolResult { tool_call_id, tool_name, result } => {
-                                     crate::utils::logging::debug("app_actor_loop poll", &format!("Polled ToolResult '{}' ({}) result: {}", tool_name, tool_call_id, result.is_ok()));
+                                     debug!(target: "app_actor_loop poll", "Polled ToolResult '{}' ({}) result: {}", tool_name, tool_call_id, result.is_ok());
 
                                      // Process result *before* potentially clearing context
                                      match result {
@@ -1018,20 +1020,20 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                                              && ctx.pending_tool_calls.is_empty()
                                              && ctx.tasks.is_empty(); // Check JoinSet emptiness *after* join_next consumed a task
                                      } else {
-                                         crate::utils::logging::warn("app_actor_loop poll", "OpContext missing when handling ToolResult completion.");
+                                         warn!(target:"app_actor_loop poll", "OpContext missing when handling ToolResult completion.");
                                          // Cannot determine if we should continue; assume not.
                                          should_continue_op = false;
                                      }
                                  }
                                  TaskOutcome::ApiResponse { result: api_result } => {
-                                     crate::utils::logging::debug("app_actor_loop poll", &format!("Polled ApiResponse result: {}", api_result.is_ok()));
+                                     debug!(target: "app_actor_loop poll", "Polled ApiResponse result: {}", api_result.is_ok());
 
                                      // Mark API call complete *if context exists*
                                      if let Some(ctx) = app.current_op_context.as_mut() {
                                          ctx.complete_api_call();
                                      } else {
                                         // This case should be rare - API response received but context is gone.
-                                        crate::utils::logging::warn("app_actor_loop poll", "OpContext missing when marking API call complete.");
+                                        warn!(target:"app_actor_loop poll", "OpContext missing when marking API call complete.");
                                      }
 
 
@@ -1043,14 +1045,14 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                                              // it's an inconsistent state. handle_api_response_logic should probably
                                              // NOT clear context if it returns tools.
                                              if app.current_op_context.is_none() && tools_to_initiate.is_some() {
-                                                  crate::utils::logging::error("app_actor_loop poll", "Context cleared by handler, but tools need initiation!");
+                                                  error!(target:"app_actor_loop poll", "Context cleared by handler, but tools need initiation!");
                                                   tools_to_initiate = None; // Prevent initiation without context
                                                   // Ensure spinner stops if it hasn't already
                                                   app.emit_event(AppEvent::ThinkingCompleted);
                                              }
                                          }
                                          Err(e) => {
-                                             crate::utils::logging::error("app_actor_loop poll", &format!("Error processing polled API response: {}", e));
+                                             error!(target:"app_actor_loop poll", "Error processing polled API response: {}", e);
                                              // Error occurred, clear context and stop thinking (if not already done)
                                              if app.current_op_context.is_some() {
                                                 app.current_op_context = None;
@@ -1069,7 +1071,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                                  if app.current_op_context.is_some() {
                                      // initiate_tool_calls requires mutable app, might interact with context
                                      if let Err(e) = app.initiate_tool_calls(calls).await {
-                                         crate::utils::logging::error("app_actor_loop poll", &format!("Error initiating tool calls after API response: {}", e));
+                                         error!(target:"app_actor_loop poll", "Error initiating tool calls after API response: {}", e);
                                          app.emit_event(AppEvent::Error { message: e.to_string() });
                                          app.current_op_context = None; // Clear context on error
                                          app.emit_event(AppEvent::ThinkingCompleted);
@@ -1077,7 +1079,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                                      // After initiating tools, we wait for them to complete, so don't continue op here.
                                      should_continue_op = false;
                                  } else {
-                                     crate::utils::logging::warn("app_actor_loop poll", "OpContext missing after API response, cannot initiate tool calls.");
+                                     warn!(target:"app_actor_loop poll", "OpContext missing after API response, cannot initiate tool calls.");
                                      app.emit_event(AppEvent::ThinkingCompleted); // Ensure spinner stops
                                      should_continue_op = false; // Cannot continue
                                  }
@@ -1085,13 +1087,13 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
 
                              // Continue operation ONLY if all tools finished (and context still exists)
                              if should_continue_op && app.current_op_context.is_some() {
-                                 crate::utils::logging::info("app_actor_loop poll", "All tool tasks finished. Continuing operation.");
+                                 info!(target: "app_actor_loop poll", "All tool tasks finished. Continuing operation.");
                                  if let Err(e) = app.continue_operation_after_tools().await {
-                                     crate::utils::logging::error("app_actor_loop poll", &format!("Error continuing operation: {}", e));
+                                     error!(target:"app_actor_loop poll", "Error continuing operation: {}", e);
                                      // context might be cleared by continue_operation_after_tools on error
                                  }
                              } else if should_continue_op { // Context must have disappeared if flag is true but context is None
-                                 crate::utils::logging::warn("app_actor_loop poll", "Should continue operation flag set, but OpContext is missing.");
+                                 warn!(target:"app_actor_loop poll", "Should continue operation flag set, but OpContext is missing.");
                                  app.emit_event(AppEvent::ThinkingCompleted); // Ensure spinner stops
                              }
 
@@ -1106,7 +1108,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                                       && !ctx.api_call_in_progress;
 
                                   if is_idle {
-                                       crate::utils::logging::info("app_actor_loop poll", "Context found idle after task handling. Clearing context.");
+                                       info!(target: "app_actor_loop poll", "Context found idle after task handling. Clearing context.");
                                        app.current_op_context = None;
                                        app.emit_event(AppEvent::ThinkingCompleted);
                                   }
@@ -1115,7 +1117,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
 
                          } // end Ok(task_outcome)
                          Err(join_err) => {
-                             crate::utils::logging::error("app_actor_loop poll", &format!("Task join error on poll: {}", join_err));
+                             error!(target:"app_actor_loop poll", "Task join error on poll: {}", join_err);
                              // Handle error, clear context
                              app.current_op_context = None;
                              app.emit_event(AppEvent::ThinkingCompleted);
@@ -1126,10 +1128,10 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                      // join_next().await returned None, meaning the JoinSet became empty and closed.
                      // This is unexpected if the `if` condition checked !is_empty() unless
                      // it closed concurrently or all tasks were aborted externally.
-                     crate::utils::logging::warn("app_actor_loop poll", "join_next().await returned None unexpectedly.");
+                     warn!(target:"app_actor_loop poll", "join_next().await returned None unexpectedly.");
                      // Clear context if it exists, as the JoinSet associated with it is finished.
                      if app.current_op_context.is_some() {
-                         crate::utils::logging::warn("app_actor_loop poll", "Clearing context after unexpected None from join_next.");
+                         warn!(target:"app_actor_loop poll", "Clearing context after unexpected None from join_next.");
                          app.current_op_context = None;
                          app.emit_event(AppEvent::ThinkingCompleted);
                      }
@@ -1139,14 +1141,14 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
             else => {
                 // This branch is reached if command_rx is closed *and* joinset polling is not active/ready
                  if command_rx.recv().await.is_none() {
-                     crate::utils::logging::info("app_actor_loop", "Command channel closed. Exiting loop.");
+                     info!(target: "app_actor_loop", "Command channel closed. Exiting loop.");
                      break;
                  }
                  // If command channel is open, loop continues waiting on select!
             }
         }
     }
-    crate::utils::logging::info("app_actor_loop", "App actor loop finished.");
+    info!(target: "app_actor_loop", "App actor loop finished.");
 }
 
 // Helper function containing the logic previously in handle_api_response
@@ -1157,12 +1159,11 @@ async fn handle_api_response_logic(
 ) -> Result<Option<Vec<crate::api::ToolCall>>> {
     match api_result {
         Ok(response) => {
-            crate::utils::logging::debug(
-                "handle_api_response_logic",
-                &format!(
+            debug!(
+                target: "handle_api_response_logic",
+
                     "Processing successful API response with {} content blocks.",
                     response.content.len()
-                ),
             );
             let response_text = response.extract_text();
             let has_text = !response_text.trim().is_empty();
@@ -1206,10 +1207,7 @@ async fn handle_api_response_logic(
                     id: added_message_id,
                 });
             } else {
-                crate::utils::logging::debug(
-                    "handle_api_response_logic",
-                    "Response had no text or tool calls.",
-                );
+                debug!(target: "handle_api_response_logic", "Response had no text or tool calls.");
             }
 
             if !extracted_tool_calls.is_empty() {
@@ -1222,14 +1220,11 @@ async fn handle_api_response_logic(
         }
         Err(e_str) => {
             if e_str == "Request cancelled" {
-                crate::utils::logging::info("handle_api_response_logic", "API call was cancelled.");
+                info!(target: "handle_api_response_logic", "API call was cancelled.");
                 app.emit_event(AppEvent::ThinkingCompleted);
                 app.current_op_context = None;
             } else {
-                crate::utils::logging::error(
-                    "handle_api_response_logic",
-                    &format!("API call failed: {}", e_str),
-                );
+                error!(target: "handle_api_response_logic", "API call failed: {}", e_str);
                 app.emit_event(AppEvent::ThinkingCompleted);
                 app.emit_event(AppEvent::Error {
                     message: e_str.clone(),
