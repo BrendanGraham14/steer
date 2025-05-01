@@ -1,6 +1,3 @@
-use crate::api::messages::{
-    Message as ApiMessage, MessageContent as ApiMessageContent, MessageRole as ApiMessageRole,
-};
 use crate::api::tools::ToolCall as ApiToolCall;
 use crate::api::{Client as ApiClient, Model, ProviderKind};
 use crate::app::conversation::Role;
@@ -313,7 +310,7 @@ impl App {
     pub async fn handle_command(&mut self, command: &str) -> Result<Option<String>> {
         let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
         let command_name = parts[0];
-        let args = parts.get(1).unwrap_or(&"").trim();
+        let _args = parts.get(1).unwrap_or(&"").trim();
 
         // Cancel any previous operation before starting a command
         // Note: This is also called by start_standard_operation if user input isn't a command
