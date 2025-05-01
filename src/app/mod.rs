@@ -310,7 +310,7 @@ impl App {
     pub async fn handle_command(&mut self, command: &str) -> Result<Option<String>> {
         let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
         let command_name = parts[0];
-        let _args = parts.get(1).unwrap_or(&"").trim();
+        let args = parts.get(1).unwrap_or(&"").trim();
 
         // Cancel any previous operation before starting a command
         // Note: This is also called by start_standard_operation if user input isn't a command
@@ -359,6 +359,43 @@ impl App {
                 }?;
                 self.current_op_context = None; // Clear context after command
                 Ok(result)
+            }
+            "model" => {
+                if args.is_empty() {
+                    // If no model specified, list available models
+                    use crate::api::Model;
+                    use strum::IntoEnumIterator;
+                    
+                    let current_model = self.get_current_model();
+                    let available_models: Vec<String> = Model::iter()
+                        .map(|m| {
+                            let model_str = m.as_ref();
+                            if m == current_model {
+                                format!("* {}", model_str) // Mark current model with asterisk
+                            } else {
+                                format!("  {}", model_str)
+                            }
+                        })
+                        .collect();
+                    
+                    Ok(Some(format!(
+                        "Current model: {}\nAvailable models:\n{}",
+                        current_model.as_ref(),
+                        available_models.join("\n")
+                    )))
+                } else {
+                    // Try to set the model
+                    use crate::api::Model;
+                    use std::str::FromStr;
+                    
+                    match Model::from_str(args) {
+                        Ok(model) => match self.set_model(model) {
+                            Ok(()) => Ok(Some(format!("Model changed to {}", model.as_ref()))),
+                            Err(e) => Ok(Some(format!("Failed to set model: {}", e))),
+                        },
+                        Err(_) => Ok(Some(format!("Unknown model: {}", args))),
+                    }
+                }
             }
             _ => Ok(Some(format!("Unknown command: {}", command_name))),
         }

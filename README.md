@@ -48,6 +48,9 @@ You can provide your Claude API key in several ways (in order of precedence):
 Claude Code RS supports a variety of commands and tools to help with pair programming:
 
 - `/help` - Get help with using Claude Code
+- `/model` - View or change the current LLM model
+- `/clear` - Clear the current conversation
+- `/compact` - Compact the conversation to save context space
 
 ## Installation
 
