@@ -8,25 +8,27 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-/// Initialize the tracing system with a file logger that appends to a timestamp-named file.
-/// Configuration is loaded from the RUST_LOG environment variable.
+/// Initialize the tracing system with either stdout or file logging.
+///
+/// Configuration behavior:
+/// - In normal operation: Logs to file in ~/.coder directory
+/// - Logging level is controlled by the RUST_LOG environment variable
 pub fn init_tracing() -> io::Result<()> {
     // Default log file in the user's home directory with timestamp
     let now = Local::now();
     let timestamp = now.format("%Y%m%d_%H%M%S");
 
-    let home = dirs::home_dir();
+    // Configure the filter based on RUST_LOG env var
+    let filter = EnvFilter::from_default_env();
 
-    if let Some(home_dir) = home {
+    if let Some(home_dir) = dirs::home_dir() {
+        // Normal operation - log to file
         // Create the .coder directory if it doesn't exist
         let log_dir = home_dir.join(".coder");
         std::fs::create_dir_all(&log_dir)?;
 
         // Create the file appender directly (synchronous writing)
         let file_appender = rolling::never(log_dir.clone(), format!("{}.log", timestamp));
-
-        // Configure and initialize the tracing subscriber using RUST_LOG
-        let filter = EnvFilter::from_default_env();
 
         let subscriber = tracing_subscriber::registry()
             .with(
@@ -48,9 +50,7 @@ pub fn init_tracing() -> io::Result<()> {
             "Tracing initialized with file output. Filter configured via RUST_LOG env var."
         );
     } else {
-        // Fallback to stdout
-        let filter = EnvFilter::from_default_env();
-
+        // Fallback to stdout if home directory not available
         let subscriber = tracing_subscriber::registry()
             .with(fmt::Layer::default().with_ansi(true).with_target(true))
             .with(filter);

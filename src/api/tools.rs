@@ -23,8 +23,27 @@ pub struct ToolCall {
     pub id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolResult {
     pub tool_call_id: String,
     pub output: String,
+    pub is_error: bool,
+}
+
+impl ToolResult {
+    pub fn success(tool_call_id: String, output: String) -> Self {
+        Self {
+            tool_call_id,
+            output,
+            is_error: false,
+        }
+    }
+
+    pub fn error(tool_call_id: String, error_message: String) -> Self {
+        Self {
+            tool_call_id,
+            output: error_message,
+            is_error: true,
+        }
+    }
 }

@@ -1,4 +1,3 @@
-
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use reqwest::{Client as HttpClient, StatusCode};
@@ -391,8 +390,6 @@ impl Provider for GeminiClient {
             system_instruction,
             tools: gemini_tools,
         };
-
-        // Log the request before sending
         match serde_json::to_string_pretty(&request) {
             Ok(json_payload) => {
                 debug!(target: "Full Gemini API Request Payload (JSON)", "{}", json_payload);
@@ -402,20 +399,21 @@ impl Provider for GeminiClient {
             }
         }
 
-        // TODO: Add cancellation support for Gemini if possible
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(ApiError::Network)?;
-        let status = response.status(); // Store status before potentially consuming response
+        let response = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                debug!(target: "gemini::complete", "Cancellation token triggered before sending request.");
+                return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+            }
+            res = self.client.post(&url).json(&request).send() => {
+                res.map_err(ApiError::Network)?
+            }
+        };
+        let status = response.status();
 
         if status != StatusCode::OK {
-            let error_text = response.text().await.map_err(ApiError::Network)?; // Handle potential error during text read
-            error!(target: "Gemini API Error Response", "Status: {}, Body: {}", status, error_text); // Use stored status
-            // Map status codes to ApiError variants
+            let error_text = response.text().await.map_err(ApiError::Network)?;
+            error!(target: "Gemini API Error Response", "Status: {}, Body: {}", status, error_text);
             return Err(match status.as_u16() {
                 401 | 403 => ApiError::AuthenticationFailed {
                     provider: self.name().to_string(),

@@ -35,8 +35,28 @@ pub enum MessageContent {
     StructuredContent { content: StructuredContent },
 }
 
+impl MessageContent {
+    pub fn extract_text(&self) -> String {
+        match self {
+            MessageContent::Text { content } => content.clone(),
+            MessageContent::StructuredContent { content } => content
+                .0
+                .iter()
+                .filter_map(|block| {
+                    if let ContentBlock::Text { text } = block {
+                        Some(text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
 /// Represents structured content blocks for messages
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(transparent)]
 pub struct StructuredContent(pub Vec<ContentBlock>);
 
@@ -75,28 +95,14 @@ pub enum ContentBlock {
     },
 }
 
-pub fn convert_conversation(
-    conversation: &crate::app::Conversation,
-) -> (Vec<Message>, Option<String>) {
+pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Message> {
     let mut api_messages = Vec::new();
-    let mut system_content = None;
     // Use iter().peekable() to group consecutive tool messages
     let mut app_messages_iter = conversation.messages.iter().peekable();
 
     while let Some(app_msg) = app_messages_iter.next() {
         match app_msg.role {
-            crate::app::Role::System => {
-                // Store system message content if not empty
-                // Assuming system messages are always single text blocks
-                if let Some(crate::app::conversation::MessageContentBlock::Text(content)) =
-                    app_msg.content_blocks.first()
-                {
-                    if !content.trim().is_empty() {
-                        system_content = Some(content.clone());
-                    }
-                }
-            }
-            crate::app::Role::User => {
+            crate::app::conversation::Role::User => {
                 // Handle User messages (should primarily be text blocks)
                 // Combine consecutive text blocks into one string
                 let combined_text = app_msg
@@ -126,7 +132,7 @@ pub fn convert_conversation(
                     debug!(target: "messages.convert_conversation", "Skipping empty user message with ID: {}", app_msg.id);
                 }
             }
-            crate::app::Role::Assistant => {
+            crate::app::conversation::Role::Assistant => {
                 // Assistant messages can contain multiple content blocks (text, tool_use)
                 let api_blocks: Vec<ContentBlock> = app_msg.content_blocks.iter().filter_map(|block| {
                     match block {
@@ -183,7 +189,7 @@ pub fn convert_conversation(
                     warn!(target: "messages.convert_conversation", "Assistant message ID {} resulted in no valid content blocks, skipping.", app_msg.id);
                 }
             }
-            crate::app::Role::Tool => {
+            crate::app::conversation::Role::Tool => {
                 // Group consecutive Tool messages into a single API user message
                 let mut tool_results = Vec::new();
                 // Use the ID of the first tool message in the sequence for the API message ID
@@ -217,7 +223,7 @@ pub fn convert_conversation(
 
                 // Peek ahead and consume subsequent Tool messages
                 while let Some(next_msg) = app_messages_iter.peek() {
-                    if next_msg.role == crate::app::Role::Tool {
+                    if next_msg.role == crate::app::conversation::Role::Tool {
                         // Consume the message from the iterator
                         let consumed_msg = app_messages_iter.next().unwrap(); // Safe due to peek
                         // Process all blocks within the consumed tool message
@@ -290,7 +296,7 @@ pub fn convert_conversation(
         }
     }
 
-    (api_messages, system_content)
+    api_messages
 }
 
 /// Converts content blocks from an API response (api::ContentBlock)
@@ -330,16 +336,19 @@ pub fn convert_api_content_to_message_content(
 mod tests {
     use super::*;
     use crate::app::{
-        Conversation, Message as AppMessage, MessageContentBlock as AppMessageContentBlock, Role,
-        ToolCall as AppToolCall,
+        Conversation, Message as AppMessage, MessageContentBlock as AppMessageContentBlock,
+        ToolCall as AppToolCall, conversation,
     };
 
     #[test]
     fn test_convert_conversation_basic() {
         let mut conv = Conversation::new();
-        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
         conv.add_message(AppMessage::new_text(
-            Role::Assistant,
+            conversation::Role::User,
+            "Hello".to_string(),
+        ));
+        conv.add_message(AppMessage::new_text(
+            conversation::Role::Assistant,
             "Hi there!".to_string(),
         ));
 
@@ -369,12 +378,15 @@ mod tests {
     fn test_convert_conversation_with_system() {
         let mut conv = Conversation::new();
         conv.add_message(AppMessage::new_text(
-            Role::System,
+            conversation::Role::System,
             "System prompt".to_string(),
         ));
-        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
         conv.add_message(AppMessage::new_text(
-            Role::Assistant,
+            conversation::Role::User,
+            "Hello".to_string(),
+        ));
+        conv.add_message(AppMessage::new_text(
+            conversation::Role::Assistant,
             "Hi there!".to_string(),
         ));
 
@@ -387,15 +399,18 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_tool_results() {
         let mut conv = Conversation::new();
-        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
         conv.add_message(AppMessage::new_text(
-            Role::Assistant,
+            conversation::Role::User,
+            "Hello".to_string(),
+        ));
+        conv.add_message(AppMessage::new_text(
+            conversation::Role::Assistant,
             "Let me check something".to_string(),
         ));
 
         // Add tool result using typed enum
         conv.add_message(AppMessage::new_with_blocks(
-            Role::Tool,
+            conversation::Role::Tool,
             vec![AppMessageContentBlock::ToolResult {
                 tool_use_id: "tool_1".to_string(),
                 result: "Result 1".to_string(),
@@ -456,23 +471,26 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_multiple_tool_results() {
         let mut conv = Conversation::new();
-        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
+        conv.add_message(AppMessage::new_text(
+            conversation::Role::User,
+            "Hello".to_string(),
+        ));
         // Use new_text constructor
         conv.add_message(AppMessage::new_text(
-            Role::Assistant,
+            conversation::Role::Assistant,
             "Let me check something".to_string(),
         ));
 
         // Add two tool results using new constructor
         conv.add_message(AppMessage::new_with_blocks(
-            Role::Tool,
+            conversation::Role::Tool,
             vec![AppMessageContentBlock::ToolResult {
                 tool_use_id: "tool_1".to_string(),
                 result: "Result 1".to_string(),
             }],
         ));
         conv.add_message(AppMessage::new_with_blocks(
-            Role::Tool,
+            conversation::Role::Tool,
             vec![AppMessageContentBlock::ToolResult {
                 tool_use_id: "tool_2".to_string(),
                 result: "Result 2".to_string(),
@@ -550,15 +568,18 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_empty_tool_results() {
         let mut conv = Conversation::new();
-        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
+        conv.add_message(AppMessage::new_text(
+            conversation::Role::User,
+            "Hello".to_string(),
+        ));
         // Use new_text constructor
         conv.add_message(AppMessage::new_text(
-            Role::Assistant,
+            conversation::Role::Assistant,
             "Let me check something".to_string(),
         ));
         // Add empty tool result
         conv.add_message(AppMessage::new_with_blocks(
-            Role::Tool,
+            conversation::Role::Tool,
             vec![AppMessageContentBlock::ToolResult {
                 tool_use_id: "empty_tool".to_string(),
                 result: "".to_string(),
@@ -607,10 +628,13 @@ mod tests {
     #[test]
     fn test_convert_conversation_with_non_tool_messages_after_tool() {
         let mut conv = Conversation::new();
-        conv.add_message(AppMessage::new_text(Role::User, "Hello".to_string()));
+        conv.add_message(AppMessage::new_text(
+            conversation::Role::User,
+            "Hello".to_string(),
+        ));
         // Construct assistant message with ToolCall block
         conv.add_message(AppMessage::new_with_blocks(
-            Role::Assistant,
+            conversation::Role::Assistant,
             vec![AppMessageContentBlock::ToolCall(AppToolCall {
                 id: "tool_call_1".to_string(),
                 name: "tool_1".to_string(),
@@ -620,14 +644,14 @@ mod tests {
 
         // Add ToolResult message
         conv.add_message(AppMessage::new_with_blocks(
-            Role::Tool,
+            conversation::Role::Tool,
             vec![AppMessageContentBlock::ToolResult {
                 tool_use_id: "tool_1".to_string(),
                 result: "Result 1".to_string(),
             }],
         ));
         conv.add_message(AppMessage::new_text(
-            Role::User,
+            conversation::Role::User,
             "What about this?".to_string(),
         ));
 

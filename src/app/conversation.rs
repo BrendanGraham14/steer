@@ -13,7 +13,6 @@ use tokio_util::sync::CancellationToken;
 /// Role in the conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy, Display)]
 pub enum Role {
-    System,
     User,
     Assistant,
     Tool,
@@ -42,6 +41,101 @@ pub struct Message {
     pub content_blocks: Vec<MessageContentBlock>,
     pub timestamp: u64,
     pub id: String,
+}
+
+impl TryFrom<crate::api::messages::Message> for Message {
+    type Error = anyhow::Error;
+
+    fn try_from(api_message: crate::api::messages::Message) -> Result<Self, Self::Error> {
+        use crate::api::messages::{MessageContent, MessageRole};
+
+        // Convert role
+        let role = match api_message.role {
+            MessageRole::User => Role::User,
+            MessageRole::Assistant => Role::Assistant,
+            MessageRole::Tool => Role::Tool,
+        };
+
+        // Convert content blocks
+        let content_blocks = match api_message.content {
+            MessageContent::Text { content } => {
+                vec![MessageContentBlock::Text(content)]
+            }
+            MessageContent::StructuredContent { content } => {
+                // Process structured content blocks
+                content
+                    .0
+                    .into_iter()
+                    .map(|block| {
+                        match block {
+                            crate::api::messages::ContentBlock::Text { text } => {
+                                Ok(MessageContentBlock::Text(text))
+                            }
+                            crate::api::messages::ContentBlock::ToolUse { id, name, input } => {
+                                Ok(MessageContentBlock::ToolCall(ToolCall {
+                                    id,
+                                    name,
+                                    parameters: input,
+                                }))
+                            }
+                            crate::api::messages::ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                ..
+                            } => {
+                                // Extract text from content blocks (usually just one text block)
+                                let result = content
+                                    .into_iter()
+                                    .filter_map(|block| {
+                                        if let crate::api::messages::ContentBlock::Text { text } =
+                                            block
+                                        {
+                                            Some(text)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+
+                                Ok(MessageContentBlock::ToolResult {
+                                    tool_use_id,
+                                    result,
+                                })
+                            }
+                        }
+                    })
+                    .collect::<Result<Vec<_>, anyhow::Error>>()?
+            }
+        };
+
+        // Use provided ID or generate a new one
+        let id = api_message.id.unwrap_or_else(|| {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs();
+
+            let prefix = match role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::Tool => "tool",
+            };
+
+            let random_suffix = format!("{:04x}", (timestamp % 10000));
+            format!("{}_{}{}", prefix, timestamp, random_suffix)
+        });
+
+        Ok(Self {
+            role,
+            content_blocks,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs(),
+            id,
+        })
+    }
 }
 
 impl Message {
@@ -219,6 +313,22 @@ impl Conversation {
                 result,
             }],
         ));
+    }
+
+    /// Find the tool name by its ID by searching through assistant messages with tool calls
+    pub fn find_tool_name_by_id(&self, tool_id: &str) -> Option<String> {
+        for message in self.messages.iter() {
+            if message.role == Role::Assistant {
+                for block in &message.content_blocks {
+                    if let MessageContentBlock::ToolCall(tool_call) = block {
+                        if tool_call.id == tool_id {
+                            return Some(tool_call.name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Compact the conversation by summarizing older messages

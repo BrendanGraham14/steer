@@ -1,4 +1,5 @@
 use crate::app::conversation::MessageContentBlock;
+use crate::app::conversation::Role;
 use crate::tools::edit::EDIT_TOOL_NAME;
 use crate::tools::edit::EditParams;
 use crate::tools::replace::REPLACE_TOOL_NAME;
@@ -9,10 +10,9 @@ use similar::{ChangeTag, TextDiff};
 use textwrap;
 use tracing::debug;
 
-/// Format a message (potentially with multiple content blocks) for display
 pub fn format_message(
     blocks: &[MessageContentBlock],
-    role: crate::app::Role,
+    role: Role,
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
     // Log for debugging
@@ -26,13 +26,13 @@ pub fn format_message(
 
     // Add Role Header (except for Tool/System which have specific formatting)
     let role_header = match role {
-        crate::app::Role::User => Some(Line::from(Span::styled(
+        Role::User => Some(Line::from(Span::styled(
             "User:",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ))),
-        crate::app::Role::Assistant => Some(Line::from(Span::styled(
+        Role::Assistant => Some(Line::from(Span::styled(
             "Assistant:",
             Style::default()
                 .fg(Color::Blue)
@@ -66,7 +66,7 @@ pub fn format_message(
 /// Formats a text block with markdown rendering.
 fn format_text_block(
     content: &str,
-    _role: crate::app::Role, // Role no longer needed here
+    _role: Role, // Role no longer needed here
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
     // Calculate wrap width from terminal width (accounting for List borders + padding)

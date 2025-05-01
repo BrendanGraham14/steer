@@ -266,7 +266,7 @@ impl EnvironmentInfo {
                 match Glob::new(&dir_pattern) {
                     Ok(glob) => {
                         builder.add(glob);
-                        has_valid_patterns = true; // Mark that we added at least one pattern
+                        has_valid_patterns = true;
                     }
                     Err(e) => {
                         // Return error for invalid patterns
@@ -284,7 +284,7 @@ impl EnvironmentInfo {
             match Glob::new(&pattern) {
                 Ok(glob) => {
                     builder.add(glob);
-                    has_valid_patterns = true; // Mark that we added at least one pattern
+                    has_valid_patterns = true;
                 }
                 Err(e) => {
                     // Return error for invalid patterns
@@ -330,34 +330,61 @@ impl EnvironmentInfo {
     pub fn as_context(&self) -> String {
         let mut context = String::new();
 
-        context.push_str("<context name=\"directoryStructure\">Below is a snapshot of this project's file structure at the start of the conversation. This snapshot will NOT update during the conversation.\n\n");
-        context.push_str(&self.directory_structure);
-        context.push_str("</context>\n");
+        context.push_str(&format!(
+            r#"Here is useful information about the environment you are running in:
+<env>
+Working directory: {}
+Is directory a git repo: {}
+Platform: {}
+Today's date: {}
+</env>
+
+<file_structure>
+Below is a snapshot of this project's file structure at the start of the conversation. The file structure may be filtered to omit `.gitignore`ed patterns. This snapshot will NOT update during the conversation.
+
+{}
+</file_structure>
+"#,
+            self.working_directory.display(),
+            self.is_git_repo,
+            self.platform,
+            self.date,
+            self.directory_structure
+        ));
 
         if let Some(git_status) = &self.git_status {
-            context.push_str("<context name=\"gitStatus\">This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.\n");
-            context.push_str(git_status);
-            context.push_str("</context>\n");
+            context.push_str(&format!(r#"<git_status>
+This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.
+
+{}
+</git_status>
+"#,
+                git_status));
         }
 
         if let Some(readme) = &self.readme_content {
-            context.push_str("<context name=\"readme\">\n");
-            context.push_str(readme);
-            context.push_str("</context>\n");
+            context.push_str(&format!(r#"<file name="README.md">
+This is the README.md file at the start of the conversation. Note that this README is a snapshot in time, and will not update during the conversation.
+
+{}
+</file>
+"#,
+                readme
+            ));
+        }
+
+        if let Some(claude_md) = &self.claude_md_content {
+            context.push_str(&format!(r#"<file name="CLAUDE.md">
+This is the CLAUDE.md file at the start of the conversation. Note that this CLAUDE is a snapshot in time, and will not update during the conversation.
+
+{}
+</file>
+"#,
+                claude_md
+            ));
         }
 
         context
-    }
-
-    /// Format environment information as env for the model
-    pub fn as_env(&self) -> String {
-        format!(
-            "<env>\nWorking directory: {}\nIs directory a git repo: {}\nPlatform: {}\nToday's date: {}\nModel: claude-3-7-sonnet-20250219\n</env>",
-            self.working_directory.display(),
-            if self.is_git_repo { "Yes" } else { "No" },
-            self.platform,
-            self.date
-        )
     }
 }
 
@@ -405,7 +432,7 @@ mod tests {
         let mut gitignore = File::create(temp_path.join(".gitignore"))?;
         gitignore.write_all(b"*.log\nignored_dir/\n**/*.tmp\n")?;
 
-        // Expected structure (sorted alphabetically, excluding ignored files/dirs)
+        // Expected structure (sorted alphabetically, excluding ignored files/dirs)dispa
         // Note: deeply_ignored.tmp should be excluded due to **/*.tmp
         // Note: ignored_dir and its contents should be excluded
         // Note: ignored_file.log should be excluded

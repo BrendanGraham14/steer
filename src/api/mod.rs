@@ -161,6 +161,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_model_from_str() {

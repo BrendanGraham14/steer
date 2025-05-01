@@ -7,31 +7,6 @@ use tokio::sync::mpsc;
 
 #[tokio::test]
 #[ignore]
-async fn test_app_initialization() -> Result<()> {
-    // Load environment variables from .env file
-    dotenv().ok();
-
-    // Create app config
-    let config = LlmConfig::from_env().unwrap();
-    let app_config = AppConfig { llm_config: config };
-
-    // Initialize the app
-    // Create a channel for app events
-    let (event_tx, _event_rx) = mpsc::channel(100);
-    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219)?;
-
-    // Verify the app was initialized correctly
-    assert!(
-        !app.env_info.working_directory.as_os_str().is_empty(),
-        "Working directory should not be empty"
-    );
-
-    println!("App initialization test passed successfully!");
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore]
 async fn test_tool_executor() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
