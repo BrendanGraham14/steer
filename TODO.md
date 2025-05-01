@@ -57,4 +57,5 @@
 - [x] Allow read-only tools by default (i.e. don't require approval)
 - [ ] Support including + executing tools via Model Context Protocol
 - [x] Support a `fetch` tool which can fetch the contents of a webpage.
-
+- [ ] Gemini seems to like using diff patches to apply changes. Would be good to provide it with better tools.
+- [ ] Tool approval when multiple are requested is broken
