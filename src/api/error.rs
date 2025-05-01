@@ -33,6 +33,9 @@ pub enum ApiError {
     #[error("API returned no choices/candidates for {provider}")]
     NoChoices { provider: String },
 
+    #[error("Request blocked by {provider}: {details}")]
+    RequestBlocked { provider: String, details: String },
+
     #[error("Unknown API error from {provider}: {details}")]
     Unknown { provider: String, details: String },
 

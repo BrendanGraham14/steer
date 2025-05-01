@@ -15,6 +15,27 @@ use rand;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
 
+#[derive(Debug, Deserialize, Serialize, Clone)] // Added Serialize and Clone for potential future use
+struct GeminiBlob {
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    data: String, // Assuming base64 encoded data
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)] // Added Serialize and Clone
+struct GeminiFileData {
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    #[serde(rename = "fileUri")]
+    file_uri: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)] // Added Serialize and Clone
+struct GeminiCodeExecutionResult {
+    outcome: String, // e.g., "OK", "ERROR"
+                     // Potentially add output field later if needed
+}
+
 pub struct GeminiClient {
     api_key: String,
     client: HttpClient,
@@ -37,40 +58,124 @@ struct GeminiRequest {
     system_instruction: Option<GeminiSystemInstruction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<GeminiTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "generationConfig")]
+    generation_config: Option<GeminiGenerationConfig>,
+}
+
+#[derive(Debug, Serialize, Default, Clone)]
+struct GeminiGenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "stopSequences")]
+    stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "responseMimeType")]
+    response_mime_type: Option<GeminiMimeType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "candidateCount")]
+    candidate_count: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "topP")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "topK")]
+    top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "thinkingConfig")]
+    thinking_config: Option<GeminiThinkingConfig>,
+}
+
+#[derive(Debug, Serialize, Default, Clone)]
+struct GeminiThinkingConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "includeThoughts")]
+    include_thoughts: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "thinkingBudget")]
+    thinking_budget: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GeminiMimeType {
+    MimeTypeUnspecified,
+    TextPlain,
+    ApplicationJson,
 }
 
 #[derive(Debug, Serialize)]
 struct GeminiSystemInstruction {
-    parts: Vec<GeminiPart>,
+    parts: Vec<GeminiRequestPart>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 struct GeminiContent {
     role: String,
-    parts: Vec<GeminiPart>,
+    parts: Vec<GeminiRequestPart>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+// Enum for parts used ONLY in requests
+#[derive(Debug, Serialize)]
 #[serde(untagged)]
-enum GeminiPart {
+enum GeminiRequestPart {
     Text {
         text: String,
     },
     #[serde(rename = "functionCall")]
     FunctionCall {
         #[serde(rename = "functionCall")]
-        function_call: GeminiFunctionCall,
+        function_call: GeminiFunctionCall, // Used for model turns in history
     },
     #[serde(rename = "functionResponse")]
     FunctionResponse {
         #[serde(rename = "functionResponse")]
-        function_response: GeminiFunctionResponse,
+        function_response: GeminiFunctionResponse, // Used for function/tool turns
+    },
+}
+
+// Enum for parts received ONLY in responses
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum GeminiResponsePartData {
+    Text {
+        text: String,
+    },
+    #[serde(rename = "inlineData")]
+    InlineData {
+        #[serde(rename = "inlineData")]
+        inline_data: GeminiBlob,
+    },
+    #[serde(rename = "functionCall")]
+    FunctionCall {
+        #[serde(rename = "functionCall")]
+        function_call: GeminiFunctionCall,
+    },
+    #[serde(rename = "fileData")]
+    FileData {
+        #[serde(rename = "fileData")]
+        file_data: GeminiFileData,
     },
     #[serde(rename = "executableCode")]
     ExecutableCode {
         #[serde(rename = "executableCode")]
         executable_code: GeminiExecutableCode,
     },
+    // Add other variants back here if needed
+}
+
+// 2. Change GeminiResponsePart to a struct
+#[derive(Debug, Deserialize)]
+struct GeminiResponsePart {
+    #[serde(default)] // Defaults to false if missing
+    thought: bool,
+
+    #[serde(flatten)] // Look for data fields directly in this struct's JSON
+    data: GeminiResponsePartData,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,12 +207,154 @@ struct GeminiParameterSchema {
 
 #[derive(Debug, Deserialize)]
 struct GeminiResponse {
-    candidates: Vec<GeminiCandidate>,
+    #[serde(rename = "candidates")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidates: Option<Vec<GeminiCandidate>>,
+    #[serde(rename = "promptFeedback")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_feedback: Option<GeminiPromptFeedback>,
+    #[serde(rename = "usageMetadata")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage_metadata: Option<GeminiUsageMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GeminiCandidate {
-    content: GeminiContent,
+    content: GeminiContentResponse,
+    #[serde(rename = "finishReason")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finish_reason: Option<GeminiFinishReason>,
+    #[serde(rename = "safetyRatings")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safety_ratings: Option<Vec<GeminiSafetyRating>>,
+    #[serde(rename = "citationMetadata")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citation_metadata: Option<GeminiCitationMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GeminiFinishReason {
+    FinishReasonUnspecified,
+    Stop,
+    MaxTokens,
+    Safety,
+    Recitation,
+    Other,
+    #[serde(rename = "TOOL_CODE_ERROR")]
+    ToolCodeError,
+    #[serde(rename = "TOOL_EXECUTION_HALT")]
+    ToolExecutionHalt,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiPromptFeedback {
+    #[serde(rename = "blockReason")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_reason: Option<GeminiBlockReason>,
+    #[serde(rename = "safetyRatings")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    safety_ratings: Option<Vec<GeminiSafetyRating>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GeminiBlockReason {
+    BlockReasonUnspecified,
+    Safety,
+    Other,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiSafetyRating {
+    category: GeminiHarmCategory,
+    probability: GeminiHarmProbability,
+    #[serde(default)] // Default to false if missing
+    blocked: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)] // Add Serialize for potential use in SafetySetting
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GeminiHarmCategory {
+    HarmCategoryUnspecified,
+    HarmCategoryDerogatory,
+    HarmCategoryToxicity,
+    HarmCategoryViolence,
+    HarmCategorySexual,
+    HarmCategoryMedical,
+    HarmCategoryDangerous,
+    HarmCategoryHarassment,
+    HarmCategoryHateSpeech,
+    HarmCategorySexuallyExplicit,
+    HarmCategoryDangerousContent,
+    HarmCategoryCivicIntegrity,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GeminiHarmProbability {
+    HarmProbabilityUnspecified,
+    Negligible,
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiCitationMetadata {
+    #[serde(rename = "citationSources")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citation_sources: Option<Vec<GeminiCitationSource>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiCitationSource {
+    #[serde(rename = "startIndex")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_index: Option<i32>,
+    #[serde(rename = "endIndex")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    license: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiUsageMetadata {
+    #[serde(rename = "promptTokenCount")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_token_count: Option<i32>,
+    #[serde(rename = "candidatesTokenCount")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidates_token_count: Option<i32>,
+    #[serde(rename = "totalTokenCount")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_token_count: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GeminiFunctionResponse {
+    name: String,
+    response: GeminiResponseContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GeminiResponseContent {
+    content: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GeminiExecutableCode {
+    language: String, // e.g., PYTHON
+    code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiContentResponse {
+    role: String,
+    parts: Vec<GeminiResponsePart>,
 }
 
 fn map_role(msg: &Message) -> &str {
@@ -129,25 +376,22 @@ fn map_role(msg: &Message) -> &str {
         }
         // Treat our internal "tool" role as Gemini's "function" role
         MessageRole::Tool => "function",
-        _ => "user", // Default to user for other roles
     }
 }
 
 fn convert_content_block_to_parts(
     block: ContentBlock,
     gemini_role: &str,
-    message_for_logging: &Message, // Pass the whole message for logging context
-) -> Vec<GeminiPart> {
+    message_for_logging: &Message,
+) -> Vec<GeminiRequestPart> {
     match block {
         ContentBlock::Text { text, .. } => {
-            vec![GeminiPart::Text { text }]
+            vec![GeminiRequestPart::Text { text }]
         }
-        ContentBlock::ToolUse {
-            id: _, name, input, ..
-        } => {
+        ContentBlock::ToolUse { name, input, .. } => {
             // Assistant requests a tool call -> functionCall
             if gemini_role == "model" {
-                vec![GeminiPart::FunctionCall {
+                vec![GeminiRequestPart::FunctionCall {
                     function_call: GeminiFunctionCall { name, args: input },
                 }]
             } else {
@@ -179,7 +423,7 @@ fn convert_content_block_to_parts(
                         serde_json::Value::Null // Use Null as a neutral default
                     });
 
-                vec![GeminiPart::FunctionResponse {
+                vec![GeminiRequestPart::FunctionResponse {
                     function_response: GeminiFunctionResponse {
                         name: tool_use_id, // Use tool_use_id for the function name as required by Gemini
                         response: GeminiResponseContent {
@@ -202,10 +446,10 @@ fn convert_messages(messages: Vec<Message>) -> Vec<GeminiContent> {
             // Determine role using helper
             let role = map_role(&msg);
 
-            let parts = match msg.content {
+            let parts: Vec<GeminiRequestPart> = match msg.content {
                 MessageContent::Text { ref content } => {
                     // Simple text message
-                    vec![GeminiPart::Text {
+                    vec![GeminiRequestPart::Text {
                         text: content.clone(),
                     }]
                 }
@@ -305,50 +549,119 @@ fn convert_tools(tools: Vec<Tool>) -> Vec<GeminiTool> {
     }]
 }
 
-fn convert_response(response: GeminiResponse) -> Result<CompletionResponse> {
-    if response.candidates.is_empty() {
-        return Err(anyhow!("No candidates in Gemini response"));
+fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiError> {
+    // Log prompt feedback if present
+    if let Some(feedback) = &response.prompt_feedback {
+        if let Some(reason) = &feedback.block_reason {
+            let details = format!(
+                "Prompt blocked due to {:?}. Safety ratings: {:?}",
+                reason, feedback.safety_ratings
+            );
+            warn!(target: "gemini::convert_response", "{}", details);
+            // Return the specific RequestBlocked error
+            return Err(ApiError::RequestBlocked {
+                provider: "google".to_string(), // Assuming "google" is the provider name
+                details,
+            });
+        }
     }
 
-    let candidate = &response.candidates[0];
-    let content = candidate
-        .content
-        .parts
-        .iter()
-        .map(|part| match part {
-            GeminiPart::Text { text } => ContentBlock::Text {
-                text: text.clone(),
-            },
-            GeminiPart::FunctionCall { function_call } => ContentBlock::ToolUse {
-                id: format!("call_{}_{}", function_call.name, rand::random::<u32>()),
-                name: function_call.name.clone(),
-                input: function_call.args.clone(),
-            },
-            GeminiPart::FunctionResponse { function_response } => {
-                // Convert FunctionResponse back to a generic structure if needed,
-                // though typically the model response won't be a function *result*.
-                // For now, maybe convert it to text or log a warning.
-                warn!(target: "gemini::convert_response", "Unexpected FunctionResponse in model output: {:?}", function_response);
-                // Fallback to representing it as text
-                ContentBlock::Text {
-                    text: format!("(Function Response: {})", function_response.name),
-                }
+    // Check candidates *after* checking for prompt blocking
+    let candidates = match response.candidates {
+        Some(cands) => {
+            if cands.is_empty() {
+                // If it was blocked, the previous check should have caught it.
+                // So, this means no candidates were generated for other reasons.
+                warn!(target: "gemini::convert_response", "No candidates received, and prompt was not blocked.");
+                // Use NoChoices error here
+                return Err(ApiError::NoChoices {
+                    provider: "google".to_string(),
+                });
             }
-            GeminiPart::ExecutableCode { executable_code } => {
-                info!(target: "gemini::convert_response", "Received ExecutableCode part ({}): {}. Converting to text.",
-                     executable_code.language, executable_code.code);
-                // Represent executable code as simple text for now
-                info!(target: "gemini::convert_response", "Processing ExecutableCode part for response text conversion.");
-                eprintln!("Received ExecutableCode part. See logs for more details.");
-                ContentBlock::Text {
-                    text: format!(
-                        "```{}
+            cands // Return the non-empty vector
+        }
+        None => {
+            warn!(target: "gemini::convert_response", "No candidates field in Gemini response.");
+            // Use NoChoices error here as well
+            return Err(ApiError::NoChoices {
+                provider: "google".to_string(),
+            });
+        }
+    };
+
+    // For simplicity, still taking the first candidate. Multi-candidate handling could be added.
+    // Access candidates safely since we've checked it's not None or empty.
+    let candidate = &candidates[0];
+
+    // Log finish reason and safety ratings if present
+    if let Some(reason) = &candidate.finish_reason {
+        match reason {
+            GeminiFinishReason::Stop => { /* Normal completion */ }
+            GeminiFinishReason::MaxTokens => {
+                warn!(target: "gemini::convert_response", "Response stopped due to MaxTokens limit.");
+            }
+            GeminiFinishReason::Safety => {
+                warn!(target: "gemini::convert_response", "Response stopped due to safety settings. Ratings: {:?}", candidate.safety_ratings);
+                // Consider returning an error or modifying the response based on safety ratings
+            }
+            GeminiFinishReason::Recitation => {
+                warn!(target: "gemini::convert_response", "Response stopped due to potential recitation. Citations: {:?}", candidate.citation_metadata);
+            }
+            _ => {
+                info!(target: "gemini::convert_response", "Response finished with reason: {:?}", reason);
+            }
+        }
+    }
+
+    // Log usage metadata if present
+    if let Some(usage) = &response.usage_metadata {
+        debug!(target: "gemini::convert_response", "Usage - Prompt Tokens: {:?}, Candidates Tokens: {:?}, Total Tokens: {:?}",
+               usage.prompt_token_count, usage.candidates_token_count, usage.total_token_count);
+    }
+
+    let content: Vec<ContentBlock> = candidate
+        .content // GeminiContentResponse
+        .parts   // Vec<GeminiResponsePart> (struct)
+        .iter()
+        .filter_map(|part| { // part is &GeminiResponsePart (struct)
+            // Match on the data field of the struct
+
+            if part.thought {
+                debug!(target: "gemini::convert_response", "Received thought part: {:?}", part);
+            }
+
+            match &part.data {
+                GeminiResponsePartData::Text { text } => Some(ContentBlock::Text {
+                    text: text.clone(),
+                }),
+                GeminiResponsePartData::InlineData { inline_data } => {
+                    warn!(target: "gemini::convert_response", "Received InlineData part (MIME type: {}). Converting to placeholder text.", inline_data.mime_type);
+                    Some(ContentBlock::Text { text: format!("[Inline Data: {}]", inline_data.mime_type) })
+                }
+                GeminiResponsePartData::FunctionCall { function_call } => {
+                    Some(ContentBlock::ToolUse {
+                        id: uuid::Uuid::new_v4().to_string(), // Generate a synthetic ID
+                        name: function_call.name.clone(),
+                        input: function_call.args.clone(),
+                    })
+                }
+                GeminiResponsePartData::FileData { file_data } => {
+                    warn!(target: "gemini::convert_response", "Received FileData part (URI: {}). Converting to placeholder text.", file_data.file_uri);
+                    Some(ContentBlock::Text { text: format!("[File Data: {}]", file_data.file_uri) })
+                }
+                 GeminiResponsePartData::ExecutableCode { executable_code } => {
+                     info!(target: "gemini::convert_response", "Received ExecutableCode part ({}). Converting to text.",
+                          executable_code.language);
+                     Some(ContentBlock::Text {
+                         text: format!(
+                             "```{}
 {}
 ```",
-                        executable_code.language.to_lowercase(),
-                        executable_code.code
-                    ),
-                }
+                             executable_code.language.to_lowercase(),
+                             executable_code.code
+                         ),
+                     })
+                 }
             }
         })
         .collect();
@@ -368,9 +681,8 @@ impl Provider for GeminiClient {
         messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<Tool>>,
-        token: CancellationToken, // Keep token for potential future use
+        token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        // <-- Use ApiError
         let model_name = model.as_ref();
         let url = format!(
             "{}/models/{}:generateContent?key={}",
@@ -380,7 +692,7 @@ impl Provider for GeminiClient {
         let gemini_contents = convert_messages(messages);
 
         let system_instruction = system.map(|instructions| GeminiSystemInstruction {
-            parts: vec![GeminiPart::Text { text: instructions }],
+            parts: vec![GeminiRequestPart::Text { text: instructions }],
         });
 
         let gemini_tools = tools.map(convert_tools);
@@ -389,6 +701,16 @@ impl Provider for GeminiClient {
             contents: gemini_contents,
             system_instruction,
             tools: gemini_tools,
+            generation_config: Some(GeminiGenerationConfig {
+                temperature: Some(1.0),
+                top_p: Some(0.95),
+                max_output_tokens: Some(65536),
+                thinking_config: Some(GeminiThinkingConfig {
+                    include_thoughts: Some(true),
+                    thinking_budget: Some(8192),
+                }),
+                ..Default::default()
+            }),
         };
         match serde_json::to_string_pretty(&request) {
             Ok(json_payload) => {
@@ -439,7 +761,6 @@ impl Provider for GeminiClient {
             });
         }
 
-        // Read the response body as text first to allow logging in case of JSON error
         let response_text = response.text().await.map_err(ApiError::Network)?;
 
         match serde_json::from_str::<GeminiResponse>(&response_text) {
@@ -453,26 +774,9 @@ impl Provider for GeminiClient {
                 error!(target: "Gemini API JSON Parsing Error", "Failed to parse JSON: {}. Response body:\n{}", e, response_text);
                 Err(ApiError::ResponseParsingError {
                     provider: self.name().to_string(),
-                    details: format!("Error: {}, Body: {}", e, response_text),
+                    details: format!("Status: {}, Error: {}, Body: {}", status, e, response_text),
                 })
             }
         }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct GeminiFunctionResponse {
-    name: String,
-    response: GeminiResponseContent,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct GeminiResponseContent {
-    content: Value,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct GeminiExecutableCode {
-    language: String, // e.g., PYTHON
-    code: String,
 }
