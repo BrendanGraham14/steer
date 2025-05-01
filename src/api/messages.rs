@@ -352,10 +352,9 @@ mod tests {
             "Hi there!".to_string(),
         ));
 
-        let (messages, system) = convert_conversation(&conv);
+        let messages = convert_conversation(&conv);
 
         assert_eq!(messages.len(), 2);
-        assert!(system.is_none());
 
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
@@ -378,10 +377,6 @@ mod tests {
     fn test_convert_conversation_with_system() {
         let mut conv = Conversation::new();
         conv.add_message(AppMessage::new_text(
-            conversation::Role::System,
-            "System prompt".to_string(),
-        ));
-        conv.add_message(AppMessage::new_text(
             conversation::Role::User,
             "Hello".to_string(),
         ));
@@ -390,10 +385,9 @@ mod tests {
             "Hi there!".to_string(),
         ));
 
-        let (messages, system) = convert_conversation(&conv);
+        let messages = convert_conversation(&conv);
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(system, Some("System prompt".to_string()));
     }
 
     #[test]
@@ -417,11 +411,10 @@ mod tests {
             }],
         ));
 
-        let (messages, system) = convert_conversation(&conv);
+        let messages = convert_conversation(&conv);
         println!("Test messages: {:?}", messages);
 
         assert_eq!(messages.len(), 3); // Now we expect all messages to be preserved
-        assert!(system.is_none());
 
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
@@ -497,11 +490,10 @@ mod tests {
             }],
         ));
 
-        let (messages, system) = convert_conversation(&conv);
+        let messages = convert_conversation(&conv);
         println!("Multiple tool messages: {:?}", messages);
 
         assert_eq!(messages.len(), 3); // Now expecting 3 messages (user, assistant, and 1 tool result)
-        assert!(system.is_none());
 
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
@@ -586,11 +578,10 @@ mod tests {
             }],
         ));
 
-        let (messages, system) = convert_conversation(&conv);
+        let messages = convert_conversation(&conv);
         println!("Empty tool messages: {:?}", messages);
 
         assert_eq!(messages.len(), 3);
-        assert!(system.is_none());
 
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
@@ -655,11 +646,10 @@ mod tests {
             "What about this?".to_string(),
         ));
 
-        let (messages, system) = convert_conversation(&conv);
+        let messages = convert_conversation(&conv);
         println!("Non-tool messages: {:?}", messages);
 
         assert_eq!(messages.len(), 4);
-        assert!(system.is_none());
 
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
