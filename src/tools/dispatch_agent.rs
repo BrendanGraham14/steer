@@ -1,6 +1,7 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tracing::debug;
 
 use crate::api::Client as ApiClient;
 use crate::api::messages::MessageContent;
@@ -155,10 +156,7 @@ impl DispatchAgent {
                 // Execute tool calls and collect results
                 let mut tool_results: Vec<ToolResult> = Vec::new();
                 for tool_call in tool_calls {
-                    crate::utils::logging::debug(
-                        "DispatchAgent.execute",
-                        &format!("Dispatch agent executing tool: {}", tool_call.name),
-                    );
+                    debug!(target:"DispatchAgent.execute", "Dispatch agent executing tool: {}", tool_call.name);
 
                     // Execute the tool using our tool executor
                     let result = self

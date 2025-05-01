@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use similar::{ChangeTag, TextDiff};
 use textwrap;
+use tracing::debug;
 
 /// Format a message (potentially with multiple content blocks) for display
 pub fn format_message(
@@ -15,13 +16,11 @@ pub fn format_message(
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
     // Log for debugging
-    crate::utils::logging::debug(
-        "message_formatter",
-        &format!(
-            "Formatting message with {} blocks for role {:?}",
+    debug!(
+        target: "message_formatter",
+        "Formatting message with {} blocks for role {:?}",
             blocks.len(),
-            role
-        ),
+        role
     );
     let mut formatted_lines = Vec::new();
 

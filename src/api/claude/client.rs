@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn, error};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
@@ -154,18 +155,15 @@ impl Provider for AnthropicClient {
             stream: None,
         };
 
-        crate::utils::logging::debug("API Request", &format!("{:?}", request));
+        debug!(target: "API Request", "{:?}", request);
 
         // Log the full request payload as JSON for detailed debugging
         match serde_json::to_string_pretty(&request) {
             Ok(json_payload) => {
-                crate::utils::logging::debug("Full API Request Payload (JSON)", &json_payload);
+                debug!(target: "Full API Request Payload (JSON)", "{}", json_payload);
             }
             Err(e) => {
-                crate::utils::logging::error(
-                    "API Request Serialization Error",
-                    &format!("Failed to serialize request to JSON: {}", e),
-                );
+                error!(target: "API Request Serialization Error", "Failed to serialize request to JSON: {}", e);
             }
         }
 
@@ -175,7 +173,7 @@ impl Provider for AnthropicClient {
         let response = tokio::select! {
             biased;
             _ = token.cancelled() => {
-                crate::utils::logging::debug("claude::complete", "Cancellation token triggered before sending request.");
+                debug!(target: "claude::complete", "Cancellation token triggered before sending request.");
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             res = request_builder.send() => {
@@ -185,10 +183,7 @@ impl Provider for AnthropicClient {
 
         // Check for cancellation before processing status
         if token.is_cancelled() {
-            crate::utils::logging::debug(
-                "claude::complete",
-                "Cancellation token triggered after sending request, before status check.",
-            );
+            debug!(target: "claude::complete", "Cancellation token triggered after sending request, before status check.");
             return Err(ApiError::Cancelled{ provider: self.name().to_string()});
         }
 
@@ -198,7 +193,7 @@ impl Provider for AnthropicClient {
             let error_text = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
-                    crate::utils::logging::debug("claude::complete", "Cancellation token triggered while reading error response body.");
+                    debug!(target: "claude::complete", "Cancellation token triggered while reading error response body.");
                     return Err(ApiError::Cancelled{ provider: self.name().to_string()});
                 }
                 text_res = response.text() => {
@@ -220,7 +215,7 @@ impl Provider for AnthropicClient {
         let response_text = tokio::select! {
             biased;
             _ = token.cancelled() => {
-                crate::utils::logging::debug("claude::complete", "Cancellation token triggered while reading successful response body.");
+                debug!(target: "claude::complete", "Cancellation token triggered while reading successful response body.");
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             text_res = response.text() => {

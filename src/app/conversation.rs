@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
 use crate::api::Client as ApiClient;
 use crate::api::Model;
@@ -99,10 +100,7 @@ impl Message {
     /// The actual state is managed in the TUI's FormattedMessage.
     pub fn toggle_truncation(&mut self) {
         // No-op here, state is in FormattedMessage
-        crate::utils::logging::debug(
-            "Message.toggle_truncation",
-            &format!("Toggle truncation requested for message ID: {}", self.id),
-        );
+        debug!(target: "Message.toggle_truncation", "Toggle truncation requested for message ID: {}", self.id);
     }
 }
 

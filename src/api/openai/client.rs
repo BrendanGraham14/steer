@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn, error};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
@@ -181,10 +182,7 @@ impl OpenAIClient {
                 }
                 // Skip other roles or handle them differently
                 _ => {
-                    crate::utils::logging::warn(
-                        "openai::convert_messages",
-                        &format!("Skipping message with unsupported role: {}", message.role),
-                    );
+                    warn!(target: "openai::convert_messages", "Skipping message with unsupported role: {}", message.role);
                 }
             }
         }
@@ -243,21 +241,15 @@ impl Provider for OpenAIClient {
             max_tokens: Some(4000),
         };
 
-        crate::utils::logging::debug("OpenAI API Request", &format!("{:?}", request));
+        debug!(target: "OpenAI API Request", "{:?}", request);
 
         // Log the full request payload as JSON for detailed debugging
         match serde_json::to_string_pretty(&request) {
             Ok(json_payload) => {
-                crate::utils::logging::debug(
-                    "Full OpenAI API Request Payload (JSON)",
-                    &json_payload,
-                );
+                debug!(target: "Full OpenAI API Request Payload (JSON)", "{}", json_payload);
             }
             Err(e) => {
-                crate::utils::logging::error(
-                    "OpenAI API Request Serialization Error",
-                    &format!("Failed to serialize request to JSON: {}", e),
-                );
+                error!(target: "OpenAI API Request Serialization Error", "Failed to serialize request to JSON: {}", e);
             }
         }
 
@@ -267,7 +259,7 @@ impl Provider for OpenAIClient {
         let response = tokio::select! {
             biased;
             _ = token.cancelled() => {
-                crate::utils::logging::debug("openai::complete", "Cancellation token triggered before sending request.");
+                debug!(target: "openai::complete", "Cancellation token triggered before sending request.");
                 return Err(ApiError::Cancelled{ provider: self.name().to_string() });
             }
             res = request_builder.send() => {
@@ -277,10 +269,7 @@ impl Provider for OpenAIClient {
 
         // Check for cancellation before processing status
         if token.is_cancelled() {
-            crate::utils::logging::debug(
-                "openai::complete",
-                "Cancellation token triggered after sending request, before status check.",
-            );
+            debug!(target: "openai::complete", "Cancellation token triggered after sending request, before status check.");
             return Err(ApiError::Cancelled{ provider: self.name().to_string() });
         }
 
@@ -290,7 +279,7 @@ impl Provider for OpenAIClient {
             let error_text = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
-                    crate::utils::logging::debug("openai::complete", "Cancellation token triggered while reading error response body.");
+                    debug!(target: "openai::complete", "Cancellation token triggered while reading error response body.");
                     return Err(ApiError::Cancelled{ provider: self.name().to_string() });
                 }
                 text_res = response.text() => {
@@ -311,7 +300,7 @@ impl Provider for OpenAIClient {
         let response_text = tokio::select! {
             biased;
             _ = token.cancelled() => {
-                crate::utils::logging::debug("openai::complete", "Cancellation token triggered while reading successful response body.");
+                debug!(target: "openai::complete", "Cancellation token triggered while reading successful response body.");
                 return Err(ApiError::Cancelled{ provider: self.name().to_string() });
             }
             text_res = response.text() => {
@@ -352,13 +341,7 @@ impl Provider for OpenAIClient {
                 ) {
                     Ok(value) => value,
                     Err(e) => {
-                        crate::utils::logging::error(
-                            "openai::complete",
-                            &format!(
-                                "Failed to parse tool call arguments as JSON: {}. Raw: {}",
-                                e, tool_call.function.arguments
-                            ),
-                        );
+                        error!(target: "openai::complete", "Failed to parse tool call arguments as JSON: {}. Raw: {}", e, tool_call.function.arguments);
                         serde_json::Value::Null
                     }
                 };

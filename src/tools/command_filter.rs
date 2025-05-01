@@ -3,6 +3,7 @@ use crate::api::Model;
 use crate::config::LlmConfig;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 const SYSTEM_MESSAGE: &str = r#"Your task is to process Bash commands that an AI coding agent wants to run.
 
@@ -68,7 +69,7 @@ Command: ${command}"#;
 pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Result<bool> {
     // Get the command prefix
     let prefix = get_command_prefix(command, token).await?;
-    crate::utils::logging::info("CommandFilter", &format!("Command prefix: {}", prefix));
+    info!(target:"CommandFilter", "Command prefix: {}", prefix);
 
     match prefix.as_str() {
         "command_injection_detected" => Ok(false),

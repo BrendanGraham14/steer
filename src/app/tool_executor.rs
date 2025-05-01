@@ -2,12 +2,11 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, instrument};
+use tracing::{Span, instrument, debug, info, warn, error};
 
 use crate::api::ToolCall;
 use crate::api::tools::Tool as ApiTool;
 use crate::tools::{ToolError, traits::Tool as ToolTrait};
-use crate::utils::logging;
 
 /// Manages the execution of tools called by Claude
 #[derive(Clone)]
@@ -56,10 +55,7 @@ impl ToolExecutor {
             })
             .collect();
 
-        logging::debug(
-            "app.tool_executor.to_api_tools",
-            &format!("Converting registry tools to API tools: {:?}", api_tools),
-        );
+        debug!(target: "app.tool_executor.to_api_tools", "Converting registry tools to API tools: {:?}", api_tools);
         api_tools
     }
 
@@ -77,21 +73,16 @@ impl ToolExecutor {
 
         match self.registry.get(tool_name) {
             Some(tool) => {
-                crate::utils::logging::debug(
-                    "app.tool_executor.execute_tool_with_cancellation",
-                    &format!(
-                        "Executing tool {} ({}) via registry with cancellation",
-                        tool_name, tool_id
-                    ),
-                );
+                debug!(target: "app.tool_executor.execute_tool_with_cancellation", "Executing tool {} ({}) via registry with cancellation", tool_name, tool_id);
                 // Pass the token to the trait method
                 tool.execute(tool_call.parameters.clone(), Some(token))
                     .await
             }
             None => {
-                crate::utils::logging::error(
-                    "app.tool_executor.execute_tool_with_cancellation",
-                    &format!("Unknown tool called: {} ({})", tool_name, tool_id),
+                error!(
+                    target: "app.tool_executor.execute_tool_with_cancellation", 
+                    "{}", 
+                    format!("Unknown tool called: {} ({})", tool_name, tool_id)
                 );
                 Err(ToolError::UnknownTool(tool_name.clone()))
             }

@@ -1,4 +1,4 @@
-pub mod logging;
+pub mod tracing;
 
 use std::path::Path;
 

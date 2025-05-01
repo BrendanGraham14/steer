@@ -70,3 +70,5 @@ rand = "0.8"
 strum_macros = "0.27.1"
 strum = { version = "0.27.1", features = ["derive"] }
 shell-words = "1.1.0"
+tracing-subscriber = { version = "0.3.19", features = ["std", "fmt", "env-filter"] }
+tracing-appender = "0.2.3"
