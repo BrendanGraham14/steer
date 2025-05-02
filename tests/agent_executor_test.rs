@@ -58,7 +58,7 @@ mod tests {
         };
 
         let final_message_result = executor
-            .run_operation(
+            .run(
                 model,
                 initial_messages,
                 system_prompt,
@@ -146,7 +146,7 @@ mod tests {
         };
 
         let final_message_result = executor
-            .run_operation(
+            .run(
                 model,
                 initial_messages,
                 Some("You are a helpful assistant.".to_string()),
@@ -292,7 +292,7 @@ mod tests {
         // --- Act ---
         let executor_handle = tokio::spawn(async move {
             executor
-                .run_operation(
+                .run(
                     model,
                     initial_messages,
                     Some("You must use provided tools when asked.".to_string()),
@@ -496,7 +496,7 @@ mod tests {
         // --- Act ---
         let executor_handle = tokio::spawn(async move {
             executor
-                .run_operation(
+                .run(
                     model,
                     initial_messages,
                     Some(
@@ -706,7 +706,7 @@ mod tests {
         let token_clone = token.clone();
         let executor_handle = tokio::spawn(async move {
             executor
-                .run_operation(
+                .run(
                     model,
                     initial_messages,
                     Some("Use tools when requested.".to_string()),
@@ -867,7 +867,7 @@ mod tests {
         let token_clone = token.clone();
         let executor_handle = tokio::spawn(async move {
             executor
-                .run_operation(
+                .run(
                     model,
                     initial_messages,
                     Some("Use tools when requested.".to_string()),
@@ -978,7 +978,7 @@ mod tests {
         // --- Act ---
         let executor_handle = tokio::spawn(async move {
             executor
-                .run_operation(
+                .run(
                     model,
                     initial_messages,
                     Some("Use tools when requested.".to_string()),
