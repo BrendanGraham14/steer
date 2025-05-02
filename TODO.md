@@ -49,8 +49,8 @@
 - [ ] Add conversation saving and loading
 - [ ] Implement command completion for the bash tool
 
-### Protocol / API
-- Support running the tool in headless mode. Headless mode should accept a user prompt, then execute an agentic loop until it terminates.
+### Programmatic usage
+- Support running the tool in headless mode. Headless mode should accept a user prompt, then execute an agentic loop until it terminates. Maybe it should support a list of messages as an input?
 - Support a bi-directional protocol for a client and a "headless" version of the app to communicate. The client / protocol in this context should support a similar set of functionality to that which is supported by the TUI: namely, sending/receiving messages, approving / denying tool calls, cancelling operations, etc.
 
 ### Tools
