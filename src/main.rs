@@ -130,6 +130,9 @@ async fn main() -> Result<()> {
     let (app_command_tx, app_command_rx) = mpsc::channel::<AppCommand>(32);
     let (app_event_tx, app_event_rx) = mpsc::channel(32);
 
+    // Initialize the global command sender for tool approval requests
+    coder::app::OpContext::init_command_tx(app_command_tx.clone());
+
     let app_config = AppConfig { llm_config };
     let app = App::new(app_config, app_event_tx, cli.model)?;
 

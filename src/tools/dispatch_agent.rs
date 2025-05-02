@@ -11,7 +11,7 @@ use crate::api::{
     tools::{Tool as ApiTool, ToolCall as ApiToolCall},
 };
 
-use crate::app::{AgentEvent, AgentExecutor, ApprovalMode};
+use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
 use crate::config::LlmConfig;
 use crate::tools::ToolError;
 use coder_macros::tool;
@@ -86,14 +86,16 @@ Usage notes:
 
         // --- Run AgentExecutor ---
         let operation_result = agent_executor
-            .run_operation(
-                Model::Claude3_7Sonnet20250219, // Or make configurable?
-                initial_messages,
-                Some(system_prompt),
-                available_tools,
-                tool_executor_callback,
+            .run(
+                AgentExecutorRunRequest
+                 {
+                    model: Model::Claude3_7Sonnet20250219, // Or make configurable?
+                    initial_messages,
+                    system_prompt: Some(system_prompt),
+                    available_tools,
+                    tool_executor_callback,
+                },
                 event_tx,
-                ApprovalMode::Automatic, // Read-only tools are safe
                 token,
             )
             .await;

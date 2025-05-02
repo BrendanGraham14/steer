@@ -31,8 +31,7 @@ pub use tool_executor::ToolExecutor;
 
 use crate::config::LlmConfig;
 pub use agent_executor::{
-    AgentEvent, AgentExecutor, AgentExecutorError, ApprovalDecision, ApprovalMode,
-    ToolApprovalRequest,
+    AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
 };
 
 #[derive(Debug, Clone)]
@@ -98,7 +97,7 @@ pub struct App {
     pub api_client: ApiClient,
     agent_executor: AgentExecutor,
     event_sender: mpsc::Sender<AppEvent>,
-    approved_tools: HashSet<String>,
+    approved_tools: HashSet<String>, // Tracks tools approved with "Always" for the session
     current_op_context: Option<OpContext>,
     current_model: Model,
 }
@@ -231,15 +230,8 @@ impl App {
             "Spawning agent operation task...",
         );
 
-        let (tools_for_op, approval_mode) = {
-            let all_tools = self.tool_executor.to_api_tools();
-            let tools_option = if all_tools.is_empty() {
-                None
-            } else {
-                Some(all_tools)
-            };
-            (tools_option, ApprovalMode::Interactive)
-        };
+        // Get tools for the operation
+        let all_tools = self.tool_executor.to_api_tools();
 
         // Get mutable access to OpContext and its token
         let op_context = match &mut self.current_op_context {
@@ -261,14 +253,100 @@ impl App {
         let current_model = self.current_model;
         let agent_executor = self.agent_executor.clone();
         let system_prompt = create_system_prompt()?;
+
+        // --- Updated Tool Executor Callback with Approval Logic ---
         let tool_executor_for_callback = self.tool_executor.clone();
+        let approved_tools_clone = self.approved_tools.clone(); // Clone for capture
+        let event_sender_clone = self.event_sender.clone(); // For emitting ToolCallStarted events
+
+        // Clone command_tx for the tool executor callback
+        // This allows the callback to send tool approval requests to the actor loop
+        let command_tx = OpContext::command_tx().clone();
+
         let tool_executor_callback =
             move |tool_call: ApiToolCall, callback_token: CancellationToken| {
+                // Clone items needed inside the async block
                 let executor = tool_executor_for_callback.clone();
+                let approved_tools = approved_tools_clone.clone();
+                let event_sender = event_sender_clone.clone();
+                let command_tx = command_tx.clone();
+                let tool_call_clone = tool_call.clone(); // Clone for approval request
+                let tool_name = tool_call.name.clone();
+                let tool_id = tool_call.id.clone();
+
                 async move {
-                    executor
-                        .execute_tool_with_cancellation(&tool_call, callback_token)
-                        .await
+                    let requires_approval = match executor.requires_approval(&tool_name) {
+                        Ok(req) => req,
+                        Err(e) => {
+                            return Err(crate::tools::ToolError::InternalError(format!(
+                                "Failed to check tool approval status for {}: {}",
+                                tool_name, e
+                            )));
+                        }
+                    };
+
+                    let decision = if !requires_approval || approved_tools.contains(&tool_name) {
+                        // Skip approval for tools that don't need it or are already approved
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn't require approval or already in approved_tools set");
+                        ApprovalDecision::Approved
+                    } else {
+                        // Needs interactive approval - create oneshot channel for receiving the decision
+                        let (tx, rx) = oneshot::channel();
+
+                        // Send approval request to the actor loop via command channel
+                        if let Err(e) = command_tx
+                            .send(AppCommand::RequestToolApprovalInternal {
+                                tool_call: tool_call_clone,
+                                responder: tx,
+                            })
+                            .await
+                        {
+                            // If we can't send the request, treat as an error
+                            error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
+                            return Err(crate::tools::ToolError::InternalError(format!(
+                                "Failed to request tool approval: {}",
+                                e
+                            )));
+                        }
+
+                        // Wait for the decision or cancellation
+                        tokio::select! {
+                            biased;
+                            _ = callback_token.cancelled() => {
+                                 info!(tool_id=%tool_id, tool_name=%tool_name, "Tool approval cancelled while waiting for user response.");
+                                 return Err(crate::tools::ToolError::Cancelled(tool_name));
+                            }
+                            decision_result = rx => {
+                                match decision_result {
+                                    Ok(d) => d, // User made a choice
+                                    Err(_) => {
+                                         // Responder was dropped (likely due to cancellation elsewhere or shutdown)
+                                         warn!(tool_id=%tool_id, tool_name=%tool_name, "Approval decision channel closed for tool.");
+                                         ApprovalDecision::Denied // Treat as denied
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    // --- Execute or Deny ---
+                    match decision {
+                        ApprovalDecision::Approved => {
+                            // Approval granted, execute the tool
+                            info!(tool_id=%tool_id, tool_name=%tool_name, "Executing approved tool via callback.");
+
+                            // NOTE: AgentExecutor now sends the ExecutingTool event after we return from this callback
+                            // to properly signal UI when a tool is being executed
+
+                            executor
+                                .execute_tool_with_cancellation(&tool_call, callback_token)
+                                .await
+                        }
+                        ApprovalDecision::Denied => {
+                            warn!(tool_id=%tool_id, tool_name=%tool_name, "Tool execution denied via callback.");
+                            Err(crate::tools::ToolError::DeniedByUser(tool_name))
+                        }
+                    }
                 }
             };
 
@@ -278,17 +356,15 @@ impl App {
                 "spawn_agent_operation task",
                 "Agent operation task started.",
             );
+            let request = AgentExecutorRunRequest {
+                model: current_model,
+                initial_messages: api_messages,
+                system_prompt: Some(system_prompt),
+                available_tools: all_tools,
+                tool_executor_callback,
+            };
             let operation_result = agent_executor
-                .run_operation(
-                    current_model,
-                    api_messages,
-                    Some(system_prompt),
-                    tools_for_op.unwrap_or_default(),
-                    tool_executor_callback,
-                    agent_event_tx, // Sender passed to executor
-                    approval_mode,
-                    token,
-                )
+                .run(request, agent_event_tx, token)
                 .await;
 
             debug!(target: "spawn_agent_operation task", "Agent operation task finished with result: {:?}", operation_result.is_ok());
@@ -365,7 +441,7 @@ impl App {
                     // If no model specified, list available models
                     use crate::api::Model;
                     use strum::IntoEnumIterator;
-                    
+
                     let current_model = self.get_current_model();
                     let available_models: Vec<String> = Model::iter()
                         .map(|m| {
@@ -377,7 +453,7 @@ impl App {
                             }
                         })
                         .collect();
-                    
+
                     Ok(Some(format!(
                         "Current model: {}\nAvailable models:\n{}",
                         current_model.as_ref(),
@@ -387,7 +463,7 @@ impl App {
                     // Try to set the model
                     use crate::api::Model;
                     use std::str::FromStr;
-                    
+
                     match Model::from_str(args) {
                         Ok(model) => match self.set_model(model) {
                             Ok(()) => Ok(Some(format!("Model changed to {}", model.as_ref()))),
@@ -458,8 +534,8 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
     info!(target:"app_actor_loop", "App actor loop started.");
 
     // State for managing the interactive tool approval process
+    // Maps Tool Call ID -> Responder channel to send decision back to callback
     let mut pending_approvals: HashMap<String, oneshot::Sender<ApprovalDecision>> = HashMap::new();
-    // Removed old approval state and channels (current_approval_state, approval_req_tx, approval_req_rx)
 
     // Hold the active agent event receiver directly in the loop state
     let mut active_agent_event_rx: Option<mpsc::Receiver<AgentEvent>> = None;
@@ -551,8 +627,8 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
             maybe_agent_event = async { active_agent_event_rx.as_mut().unwrap().recv().await }, if active_agent_event_rx.is_some() => {
                 match maybe_agent_event {
                     Some(event) => {
-                        // Handle the event immediately
-                        handle_agent_event(&mut app, event, &mut pending_approvals).await;
+                        // Handle the event immediately - remove pending_approvals param
+                        handle_agent_event(&mut app, event).await;
                     }
                     None => {
                         // Channel closed, agent task finished sending events.
@@ -650,7 +726,12 @@ async fn handle_app_command(
                     ApprovalDecision::Denied
                 };
 
-                // Send the decision back to the AgentExecutor via the oneshot channel
+                // Add to always approved if requested *before* sending response
+                if approved && always {
+                    // Logic to find tool name and add to app.approved_tools (see below)
+                }
+
+                // Send the decision back to the waiting tool_executor_callback via the oneshot channel
                 if responder.send(decision).is_err() {
                     // This typically means the AgentExecutor already moved on or was cancelled.
                     warn!(target: "handle_app_command", "Failed to send approval decision for tool ID '{}'. AgentExecutor may have already stopped waiting.", id);
@@ -658,9 +739,11 @@ async fn handle_app_command(
 
                 // Add to always approved if requested
                 if approved && always {
-                    // Find the tool name (this requires looking it up, perhaps store name with sender?)
-                    // For now, let's assume we can find it if needed, or adjust the stored state.
-                    // Placeholder: Get tool name associated with 'id'. Needs conversation context or storing name.
+                    // Find the tool name. We need the name to add to the approved_tools set.
+                    // We stored the full tool_call with the RequestToolApproval event handler,
+                    // but we only have the ID here. We MUST get the name somehow.
+                    // Option 1: Store (tool_id, tool_name) -> responder in pending_approvals.
+                    // Option 2: Look up tool_name from conversation using tool_id.
                     let tool_name = app
                         .conversation
                         .lock()
@@ -742,15 +825,37 @@ async fn handle_app_command(
             *active_agent_event_rx = None;
             true // Exit the loop
         }
+        AppCommand::RequestToolApprovalInternal {
+            tool_call,
+            responder,
+        } => {
+            let tool_id = tool_call.id.clone();
+            let tool_name = tool_call.name.clone();
+            let parameters = tool_call.parameters.clone();
+
+            info!(target: "handle_app_command", "Received internal request for tool approval: '{}' (ID: {})", tool_name, tool_id);
+
+            // Store the responder, keyed by tool call ID
+            if pending_approvals.contains_key(&tool_id) {
+                warn!(target: "handle_app_command", "Received duplicate internal approval request for tool ID '{}'. Ignoring.", tool_id);
+                // Drop the new responder implicitly
+            } else {
+                pending_approvals.insert(tool_id.clone(), responder);
+                // Emit the external event to the UI to request approval
+                debug!(target:"handle_app_command", "Emitting AppEvent::RequestToolApproval to UI for '{}' (ID: {})", tool_name, tool_id);
+                app.emit_event(AppEvent::RequestToolApproval {
+                    name: tool_name,
+                    parameters, // Use cloned parameters
+                    id: tool_id,
+                });
+            }
+            false // Don't exit the loop
+        }
     }
 }
 
 // Handles events received from the AgentExecutor's event channel
-async fn handle_agent_event(
-    app: &mut App,
-    event: AgentEvent,
-    pending_approvals: &mut HashMap<String, oneshot::Sender<ApprovalDecision>>, // Updated state
-) {
+async fn handle_agent_event(app: &mut App, event: AgentEvent) {
     debug!(target: "handle_agent_event", "Handling event: {:?}", event); // Added log
     match event {
         AgentEvent::AssistantMessagePart(delta) => {
@@ -822,30 +927,7 @@ async fn handle_agent_event(
                     });
                 }
             }
-        }
-        AgentEvent::RequestToolApprovals(requests) => {
-            info!(target: "handle_agent_event", "Received batch of {} tool approval requests.", requests.len());
-            // Clear any potentially stale previous requests
-            pending_approvals.clear();
-
-            for request in requests {
-                let tool_id = request.tool_call.id.clone();
-                let tool_name = request.tool_call.name.clone();
-                let parameters = request.tool_call.parameters.clone(); // Clone parameters
-
-                // Store the responder for this tool call ID
-                pending_approvals.insert(tool_id.clone(), request.responder);
-
-                // Emit the event to the UI to request approval
-                debug!(target:"handle_agent_event", "Emitting AppEvent::RequestToolApproval for '{}' (ID: {})", tool_name, tool_id);
-                app.emit_event(AppEvent::RequestToolApproval {
-                    name: tool_name,
-                    parameters, // Use cloned parameters
-                    id: tool_id,
-                });
-            }
-            // No background task needed anymore
-        }
+        } // End AgentEvent::AssistantMessageFinal
 
         AgentEvent::ExecutingTool { tool_call_id, name } => {
             app.emit_event(AppEvent::ToolCallStarted {
@@ -882,6 +964,8 @@ async fn handle_agent_event(
                 });
             }
         }
+        // Other AppEvent variants are handled directly or ignored by the agent event handler
+        _ => {}
     }
 }
 

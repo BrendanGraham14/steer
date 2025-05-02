@@ -17,6 +17,12 @@ pub enum ToolError {
     #[error("Tool execution timed out: {0}")]
     Timeout(String), // Tool name or ID
 
+    #[error("Tool execution denied by user: {0}")]
+    DeniedByUser(String), // Tool name
+
+    #[error("Internal error during tool execution: {0}")]
+    InternalError(String), // Error message
+
     #[error("I/O error during tool execution for {tool_name}: {source}")]
     Io {
         tool_name: String,

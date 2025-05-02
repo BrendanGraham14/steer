@@ -397,7 +397,7 @@ impl Tui {
                 self.spinner_state = 0;
                 self.progress_message = None;
             }
-            AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
+            AppEvent::ThinkingCompleted | AppEvent::Error { .. } | AppEvent::OperationCancelled { .. } => {
                 debug!(target:"tui.handle_app_event", "Setting is_processing = false");
                 self.is_processing = false;
                 self.progress_message = None;
