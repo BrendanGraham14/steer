@@ -6,6 +6,7 @@ A command line tool for pair programming with Claude, written in Rust.
 
 - Terminal-based chat interface with Claude
 - Context-aware tooling for file operations, search, and more
+- Headless one-shot mode for programmatic and CLI usage
 - Git integration
 - Memory management via CLAUDE.md files
 - API key management from multiple sources
@@ -26,6 +27,12 @@ claude-code-rs --directory /path/to/your/project
 
 # Initialize a configuration file
 claude-code-rs init
+
+# Run in headless one-shot mode reading prompt from stdin
+echo "What is 2+2?" | claude-code-rs headless --timeout 30
+
+# Run in headless one-shot mode with a JSON file containing messages
+claude-code-rs headless --messages-json /path/to/messages.json --model gemini-pro
 
 # Clear conversation history
 claude-code-rs clear
@@ -83,4 +90,52 @@ Claude Code RS includes a tool approval system to ensure safety when executing t
 - Write tools (edit_file, replace_file, bash, etc.) require explicit approval
 - When approving a tool, you can use the "always" option to save that tool to your approved list for the current session
 - Tools approved with "always" will not prompt for approval again during the same session
+
+## Headless One-Shot Mode
+
+The headless one-shot mode allows for non-interactive, programmatic usage of Claude Code RS:
+
+- Run Claude as a single request-response cycle with automatic tool execution
+- Perfect for scripting, automation, and API-like usage
+- Supports both simple prompts and structured message JSON files as input
+- Returns structured JSON with the assistant's message and all tool result details
+- Optional timeout setting to limit execution time
+
+### Example JSON Message Format
+
+```json
+[
+  {
+    "role": "user",
+    "content": {
+      "content": "Analyze the code in the current directory."
+    }
+  }
+]
+```
+
+### Example JSON Output
+
+```json
+{
+  "final_msg": {
+    "role": "assistant",
+    "content": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Here is my analysis..."
+        }
+      ]
+    }
+  },
+  "tool_results": [
+    {
+      "tool_call_id": "call_123",
+      "output": "src/main.rs\nsrc/lib.rs\n...",
+      "is_error": false
+    }
+  ]
+}
+```
 

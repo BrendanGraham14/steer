@@ -1,9 +1,16 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
-use coder::api::Model;
+use coder::api::{
+    Model,
+    messages::{Message, MessageContent, MessageRole},
+};
 use dotenv::dotenv;
+use std::fs;
+use std::io::{self, Read};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -40,6 +47,20 @@ enum Commands {
         /// Force overwrite of existing config
         #[arg(short, long)]
         force: bool,
+    },
+    /// Run in headless one-shot mode
+    Headless {
+        /// Model to use (overrides global setting)
+        #[arg(long)]
+        model: Option<Model>,
+
+        /// JSON file containing a Vec<Message> to use. If not provided, reads prompt from stdin.
+        #[arg(long)]
+        messages_json: Option<PathBuf>,
+
+        /// Timeout in seconds
+        #[arg(long)]
+        timeout: Option<u64>,
     },
 }
 
@@ -115,6 +136,58 @@ async fn main() -> Result<()> {
                 // Use library path for config functions
                 coder::config::init_config(force)?;
                 println!("Configuration initialized successfully.");
+                return Ok(());
+            }
+            Commands::Headless {
+                model,
+                messages_json,
+                timeout,
+            } => {
+                // Parse input into Vec<Message>
+                let messages = if let Some(json_path) = messages_json {
+                    // Read messages from JSON file
+                    let json_content = fs::read_to_string(json_path)
+                        .map_err(|e| anyhow!("Failed to read messages JSON file: {}", e))?;
+
+                    serde_json::from_str::<Vec<Message>>(&json_content)
+                        .map_err(|e| anyhow!("Failed to parse messages JSON: {}", e))?
+                } else {
+                    // Read prompt from stdin
+                    let mut buffer = String::new();
+                    match io::stdin().read_to_string(&mut buffer) {
+                        Ok(_) => {
+                            if buffer.trim().is_empty() {
+                                return Err(anyhow!("No input provided via stdin"));
+                            }
+                        }
+                        Err(e) => return Err(anyhow!("Failed to read from stdin: {}", e)),
+                    }
+                    // Create a single user message from stdin content
+                    vec![Message {
+                        role: MessageRole::User,
+                        content: MessageContent::Text { content: buffer },
+                        id: None,
+                    }]
+                };
+
+                // Set up timeout if provided
+                let timeout_duration = timeout.map(|secs| Duration::from_secs(secs));
+
+                // Use model override if provided, otherwise use the global setting
+                let model_to_use = model.unwrap_or(cli.model);
+
+                let llm_config = LlmConfig::from_env()
+                    .expect("Failed to load LLM configuration from environment variables.");
+
+                // Run the agent in one-shot mode
+                let result =
+                    coder::run_once(messages, model_to_use, &llm_config, timeout_duration).await?;
+
+                // Output the result as JSON
+                let json_output = serde_json::to_string_pretty(&result)
+                    .map_err(|e| anyhow!("Failed to serialize result to JSON: {}", e))?;
+
+                println!("{}", json_output);
                 return Ok(());
             }
         }
