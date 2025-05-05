@@ -24,6 +24,7 @@
 - [ ] Esc to clear input
 - [x] Handle slash commands
 
+
 ### Prompt Building
 - [ ] Add utilities for formatting data as XML prompts
 - [ ] (Optional) Add utilities for prompt truncation
@@ -59,3 +60,4 @@
 - [x] Support a `fetch` tool which can fetch the contents of a webpage.
 - [ ] Gemini seems to like using diff patches to apply changes. Would be good to provide it with better tools.
 - [ ] Tool approval when multiple are requested is broken
+- [ ] Support separate visualization vs llm representation of tools
