@@ -16,4 +16,5 @@ pub mod glob_tool;
 pub mod grep_tool;
 pub mod ls;
 pub mod replace;
+pub mod todo;
 pub mod view;
