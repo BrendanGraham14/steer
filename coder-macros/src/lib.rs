@@ -231,8 +231,11 @@ pub fn tool(input: TokenStream) -> TokenStream {
 
             fn input_schema(&self) -> &'static crate::api::InputSchema {
                 static SCHEMA: ::once_cell::sync::Lazy<crate::api::InputSchema> = ::once_cell::sync::Lazy::new(|| {
-                    let schema_gen = ::schemars::r#gen::SchemaGenerator::default();
-                    // Use root_schema_for to get the full schema including definitions
+                    let settings = schemars::r#gen::SchemaSettings::draft07().with(|s| {
+                        s.inline_subschemas = true;
+                    });
+                    let schema_gen = settings.into_generator();
+                    // Use into_root_schema_for to get the full schema including definitions
                     let root_schema = schema_gen.into_root_schema_for::<#params_struct_name>();
 
                     // Extract properties and required fields directly from the schema object within the root schema
