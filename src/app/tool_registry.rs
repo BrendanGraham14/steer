@@ -50,6 +50,8 @@ impl ToolExecutorBuilder {
             .add_tool::<crate::tools::edit::EditTool>()
             .add_tool::<crate::tools::replace::ReplaceTool>()
             .add_tool::<crate::tools::fetch::FetchTool>()
+            .add_tool::<crate::tools::todo::read::TodoReadTool>()
+            .add_tool::<crate::tools::todo::write::TodoWriteTool>()
     }
 
     /// Create a builder pre-configured with read-only tools
@@ -59,6 +61,8 @@ impl ToolExecutorBuilder {
             .add_tool::<crate::tools::glob_tool::GlobTool>()
             .add_tool::<crate::tools::ls::LsTool>()
             .add_tool::<crate::tools::view::ViewTool>()
+            .add_tool::<crate::tools::todo::read::TodoReadTool>()
+            .add_tool::<crate::tools::todo::write::TodoWriteTool>()
     }
 
     /// Convert registry tools to API tool descriptions
