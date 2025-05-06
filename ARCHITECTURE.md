@@ -1,10 +1,10 @@
-# Claude Code RS - Architecture
+# Coder - Architecture
 
-This document outlines the architecture of the Claude Code RS application, both in its current state and the planned improvements.
+This document outlines the architecture of the Coder application, both in its current state and the planned improvements.
 
 ## Overview
 
-Claude Code RS is a terminal-based application for pair programming with Claude. It allows users to interact with Claude in a command-line interface, with support for various tools that Claude can use to help with coding tasks.
+Coder is a terminal-based application for pair programming with an AI. It allows users to interact with the AI in a command-line interface, with support for various tools that the AI can use to help with coding tasks.
 
 ## Application Layers
 

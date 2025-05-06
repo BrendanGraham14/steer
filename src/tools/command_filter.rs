@@ -10,9 +10,9 @@ const SYSTEM_MESSAGE: &str = r#"Your task is to process Bash commands that an AI
 This policy spec defines how to determine the prefix of a Bash command:"#;
 
 const USER_MESSAGE_TEMPLATE: &str = r#"<policy_spec>
-# Claude Code Code Bash command prefix detection
+# Coder Bash command prefix detection
 
-This document defines risk levels for actions that the Claude Code agent may take. This classification system is part of a broader safety framework and is used to determine when additional user confirmation or oversight may be needed.
+This document defines risk levels for actions that the Coder agent may take. This classification system is part of a broader safety framework and is used to determine when additional user confirmation or oversight may be needed.
 
 ## Definitions
 

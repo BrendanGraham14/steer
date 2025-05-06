@@ -1,10 +1,10 @@
-# Claude Code RS
+# Coder
 
-A command line tool for pair programming with Claude, written in Rust.
+Coder is an AI-powered agent and CLI tool that assists with software engineering tasks, written in Rust.
 
 ## Features
 
-- Terminal-based chat interface with Claude
+- Terminal-based chat interface
 - Context-aware tooling for file operations, search, and more
 - Headless one-shot mode for programmatic and CLI usage
 - Git integration
@@ -16,45 +16,53 @@ A command line tool for pair programming with Claude, written in Rust.
 ## Usage
 
 ```bash
-# Start a conversation with Claude using API key from .env or environment
-claude-code-rs
+# Start a conversation using API key from .env or environment
+coder
 
-# Start a conversation with Claude using a specific API key
-claude-code-rs --api-key YOUR_API_KEY
+# Start a conversation using a specific API key
+coder --api-key YOUR_API_KEY
 
 # Start a conversation in a specific directory
-claude-code-rs --directory /path/to/your/project
+coder --directory /path/to/your/project
 
 # Initialize a configuration file
-claude-code-rs init
+coder init
 
 # Run in headless one-shot mode reading prompt from stdin
-echo "What is 2+2?" | claude-code-rs headless --timeout 30
+echo "What is 2+2?" | coder headless --timeout 30
 
 # Run in headless one-shot mode with a JSON file containing messages
-claude-code-rs headless --messages-json /path/to/messages.json --model gemini-pro
+coder headless --messages-json /path/to/messages.json --model gemini-pro
 
 # Clear conversation history
-claude-code-rs clear
+coder clear
 
 # Compact conversation to save context space
-claude-code-rs compact
+coder compact
 ```
 
 ## API Key Setup
 
-You can provide your Claude API key in several ways (in order of precedence):
+Coder loads API keys for different providers. The primary way to provide these keys is through environment variables. These can be set directly in your shell or via a `.env` file in your project's root directory.
 
-1. Command line argument: `--api-key YOUR_API_KEY` or `-a YOUR_API_KEY`
-2. Environment variable: `CLAUDE_API_KEY=YOUR_API_KEY`
-3. `.env` file in your current directory: `CLAUDE_API_KEY=YOUR_API_KEY`
-4. Config file (created with `claude-code-rs init`)
+The supported environment variables are:
+
+- **Anthropic (Claude):** `ANTHROPIC_API_KEY` (alternatively, `CLAUDE_API_KEY` is also checked)
+- **OpenAI:** `OPENAI_API_KEY`
+- **Google (Gemini):** `GEMINI_API_KEY`
+
+**Order of Precedence:**
+
+1.  Provider-specific environment variables (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+2.  Values from a `.env` file (which populates the environment variables).
+
+The configuration file created by `coder init` (`config.json`) is used for storing preferences like the default model and history size, not for API keys directly.
 
 ## Commands and Tools
 
-Claude Code RS supports a variety of commands and tools to help with pair programming:
+Coder supports a variety of commands and tools to help with pair programming:
 
-- `/help` - Get help with using Claude Code
+- `/help` - Get help with using Coder
 - `/model` - View or change the current LLM model
 - `/clear` - Clear the current conversation
 - `/compact` - Compact the conversation to save context space
@@ -69,8 +77,8 @@ Claude Code RS supports a variety of commands and tools to help with pair progra
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/claude-code-rs.git
-cd claude-code-rs
+git clone https://github.com/yourusername/coder.git
+cd coder
 
 # Build the project
 cargo build
@@ -84,7 +92,7 @@ cargo test
 
 ## Tool Approval System
 
-Claude Code RS includes a tool approval system to ensure safety when executing tools:
+Coder includes a tool approval system to ensure safety when executing tools:
 
 - Read-only tools (view, grep, ls, glob, fetch) do not require approval and execute automatically
 - Write tools (edit_file, replace_file, bash, etc.) require explicit approval
@@ -93,9 +101,9 @@ Claude Code RS includes a tool approval system to ensure safety when executing t
 
 ## Headless One-Shot Mode
 
-The headless one-shot mode allows for non-interactive, programmatic usage of Claude Code RS:
+The headless one-shot mode allows for non-interactive, programmatic usage of Coder:
 
-- Run Claude as a single request-response cycle with automatic tool execution
+- Run the AI as a single request-response cycle with automatic tool execution
 - Perfect for scripting, automation, and API-like usage
 - Supports both simple prompts and structured message JSON files as input
 - Returns structured JSON with the assistant's message and all tool result details

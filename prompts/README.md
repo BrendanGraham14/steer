@@ -1,6 +1,6 @@
-This repository contains some of the prompts used by Claude Code.
+This repository contains some of the prompts used by Coder.
 
-These are extracted partially by prompting Claude, and partially by combing through the minified javascript source code.
+These are extracted partially by prompting an AI model, and partially by combing through the minified javascript source code.
 
 ## Main Agent
 This is the agent users interact with. It can dispatch work to the [Dispatch Agent](#dispatch-agent), and take read and write actions.

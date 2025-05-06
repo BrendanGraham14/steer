@@ -8,7 +8,7 @@ use crate::api::ToolCall;
 use crate::api::tools::Tool as ApiTool;
 use crate::tools::{ToolError, traits::Tool as ToolTrait};
 
-/// Manages the execution of tools called by Claude
+/// Manages the execution of tools called by the AI model
 #[derive(Clone)]
 pub struct ToolExecutor {
     pub(crate) registry: Arc<HashMap<String, Arc<dyn ToolTrait>>>,

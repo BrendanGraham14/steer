@@ -18,7 +18,7 @@ use coder::app::{App, AppCommand, AppConfig, app_actor_loop};
 use coder::config::LlmConfig;
 use coder::utils;
 
-/// A command line tool to pair program with Claude
+/// An AI-powered agent and CLI tool that assists with software engineering tasks.
 #[derive(Parser)]
 #[command(version, about, long_about = None, author)]
 struct Cli {
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    info!(target: "main", "Claude Code application starting");
+    info!(target: "main", "Coder application starting");
 
     // Load or initialize config using the library path
     let _config = coder::config::load_config()?;

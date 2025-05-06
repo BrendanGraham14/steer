@@ -15,7 +15,7 @@ pub enum MessageRole {
     Tool,
 }
 
-/// Represents a message to be sent to the Claude API
+/// Represents a message in a conversation, adaptable to different provider APIs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
     pub role: MessageRole,
