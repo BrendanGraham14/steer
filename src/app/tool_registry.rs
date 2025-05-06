@@ -48,6 +48,7 @@ impl ToolExecutorBuilder {
             .add_tool::<crate::tools::ls::LsTool>()
             .add_tool::<crate::tools::view::ViewTool>()
             .add_tool::<crate::tools::edit::EditTool>()
+            .add_tool::<crate::tools::edit::multi_edit::MultiEditTool>()
             .add_tool::<crate::tools::replace::ReplaceTool>()
             .add_tool::<crate::tools::fetch::FetchTool>()
             .add_tool::<crate::tools::todo::read::TodoReadTool>()
