@@ -28,7 +28,7 @@ async fn test_headless_mode_integration() {
     let timeout = Some(Duration::from_secs(30));
 
     // Call run_once
-    let result = coder::run_once(messages, Model::Claude3_7Sonnet20240620, &config, timeout)
+    let result = coder::run_once(messages, Model::Claude3_7Sonnet20250219, &config, timeout)
         .await
         .expect("run_once should succeed");
 
