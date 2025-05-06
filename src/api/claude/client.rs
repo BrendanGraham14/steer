@@ -89,18 +89,30 @@ struct ClaudeCompletionResponse {
     #[serde(default)]
     stop_sequence: Option<String>,
     #[serde(default)]
-    usage: Usage,
+    usage: ClaudeUsage,
     // Allow other fields for API flexibility
     #[serde(flatten)]
     extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
+fn default_cache_type() -> String {
+    "ephemeral".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct CacheControl {
+    #[serde(rename = "type", default = "default_cache_type")]
+    cache_type: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]
-enum ClaudeContentBlock {
+pub enum ClaudeContentBlock {
     #[serde(rename = "text")]
     Text {
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
@@ -109,6 +121,8 @@ enum ClaudeContentBlock {
         id: String,
         name: String,
         input: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
@@ -116,6 +130,8 @@ enum ClaudeContentBlock {
     ToolResult {
         tool_use_id: String,
         content: Vec<ClaudeContentBlock>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
         #[serde(flatten)]
@@ -126,11 +142,13 @@ enum ClaudeContentBlock {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-struct Usage {
-    #[serde(default)]
+struct ClaudeUsage {
     input_tokens: usize,
-    #[serde(default)]
     output_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_creation_input_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_read_input_tokens: Option<usize>,
 }
 
 impl AnthropicClient {
@@ -219,12 +237,14 @@ fn convert_block(block: ContentBlock) -> Result<ClaudeContentBlock, ApiError> {
     match block {
         ContentBlock::Text { text } => Ok(ClaudeContentBlock::Text {
             text,
+            cache_control: None,
             extra: Default::default(),
         }),
         ContentBlock::ToolUse { id, name, input } => Ok(ClaudeContentBlock::ToolUse {
             id,
             name,
             input,
+            cache_control: None,
             extra: Default::default(),
         }),
         ContentBlock::ToolResult {
@@ -239,6 +259,7 @@ fn convert_block(block: ContentBlock) -> Result<ClaudeContentBlock, ApiError> {
                 tool_use_id,
                 content: inner_blocks,
                 is_error,
+                cache_control: None,
                 extra: Default::default(),
             })
         }
@@ -281,7 +302,39 @@ impl Provider for AnthropicClient {
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let claude_messages = convert_messages(messages)?;
+        let mut claude_messages = convert_messages(messages)?;
+
+        if claude_messages.is_empty() {
+            return Err(ApiError::InvalidRequest {
+                provider: self.name().to_string(),
+                details: "No messages provided".to_string(),
+            });
+        }
+
+        let last_message = claude_messages.last_mut().unwrap();
+        let cache_setting = Some(CacheControl {
+            cache_type: "ephemeral".to_string(),
+        });
+
+        match &mut last_message.content {
+            ClaudeMessageContent::StructuredContent { content } => {
+                for block in content.0.iter_mut() {
+                    if let ClaudeContentBlock::ToolResult { cache_control, .. } = block {
+                        *cache_control = cache_setting.clone();
+                    }
+                }
+            }
+            ClaudeMessageContent::Text { content } => {
+                let text_content = content.clone();
+                last_message.content = ClaudeMessageContent::StructuredContent {
+                    content: ClaudeStructuredContent(vec![ClaudeContentBlock::Text {
+                        text: text_content,
+                        cache_control: cache_setting,
+                        extra: Default::default(),
+                    }]),
+                };
+            }
+        }
 
         let request = CompletionRequest {
             model: model.as_ref().to_string(),

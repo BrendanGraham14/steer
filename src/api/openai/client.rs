@@ -116,10 +116,28 @@ struct OpenAIResponseMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct PromptTokensDetails {
+    cached_tokens: usize,
+    audio_tokens: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CompletionTokensDetails {
+    reasoning_tokens: usize,
+    audio_tokens: usize,
+    accepted_prediction_tokens: usize,
+    rejected_prediction_tokens: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct OpenAIUsage {
     prompt_tokens: usize,
     completion_tokens: usize,
     total_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completion_tokens_details: Option<CompletionTokensDetails>,
 }
 
 impl OpenAIClient {
