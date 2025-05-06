@@ -210,7 +210,13 @@ async fn main() -> Result<()> {
     let app = App::new(app_config, app_event_tx, cli.model)?;
 
     tokio::spawn(app_actor_loop(app, app_command_rx));
-    tui::run_tui(app_command_tx, app_event_rx, cli.model).await?;
+
+    // Set panic hook for terminal cleanup
+    coder::tui::setup_panic_hook();
+
+    // Create and run the TUI
+    let mut tui = coder::tui::Tui::new(app_command_tx, cli.model)?;
+    tui.run(app_event_rx).await?;
 
     Ok(())
 }
