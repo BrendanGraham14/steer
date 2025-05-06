@@ -42,6 +42,20 @@ enum InputMode {
     ConfirmExit,
 }
 
+// Define scroll direction and amount
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ScrollDirection {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ScrollAmount {
+    Line(usize),
+    HalfPage,
+    FullPage,
+}
+
 // Define a struct to hold the necessary info for a pending approval
 #[derive(Debug, Clone)]
 struct PendingApprovalInfo {
@@ -237,30 +251,20 @@ impl Tui {
                             match event {
                                 Event::Resize(_, _) => {
                                     debug!(target:"tui.run", "Terminal resized");
-                                    // Recalculate max_scroll based on new size
-                                    let all_lines: Vec<Line> = self.display_items.iter().flat_map(|di| match di {
-                                        DisplayItem::Message { content, .. } => content.clone(),
-                                        DisplayItem::ToolResult { content, .. } => content.clone(),
-                                        DisplayItem::CommandResponse { content, .. } => content.clone(),
-                                        DisplayItem::SystemInfo { content, .. } => content.clone(),
-                                    }).collect();
-                                    let total_lines_count = all_lines.len();
-                                    let terminal_height = self.terminal.size()?.height;
-                                    let input_height = (self.textarea.lines().len() as u16 + 2).min(MAX_INPUT_HEIGHT).min(terminal_height);
-                                    let messages_area_height = terminal_height.saturating_sub(input_height).saturating_sub(2); // Account for borders
-                                    let new_max_scroll = if total_lines_count > messages_area_height as usize {
-                                        total_lines_count.saturating_sub(messages_area_height as usize)
+                                    // Recalculate max_scroll based on new size and adjust offset
+                                    self.recalculate_max_scroll();
+                                    // Check if we should still be considered scrolled away after resize
+                                    if self.scroll_offset < self.max_scroll {
+                                        // User might still be scrolled away, keep the flag
+                                        // (Unless they were at the bottom before resize)
+                                        // This logic could be refined, but for now, let's assume they remain scrolled away if not at the new bottom.
                                     } else {
-                                        0
-                                    };
-                                    self.set_max_scroll(new_max_scroll);
-                                    if self.scroll_offset == self.max_scroll {
-                                        self.user_scrolled_away = false;
+                                        self.user_scrolled_away = false; // At the new bottom
                                     }
                                 }
                                 Event::Paste(data) => {
                                     if matches!(self.input_mode, InputMode::Editing) {
-                                        let normalized_data = data.replace("\\r\\n", "\\n").replace("\\r", "\\n");
+                                        let normalized_data = data.replace("\r\n", "\n").replace("\r", "\n");
                                         self.textarea.insert_str(&normalized_data);
                                         debug!(target:"tui.run", "Pasted {} chars", normalized_data.len());
                                     }
@@ -288,66 +292,15 @@ impl Tui {
                                             kind: MouseEventKind::ScrollDown,
                                             ..
                                         } => {
-                                            let current_offset = self.get_scroll_offset();
-                                            let max_scroll = self.get_max_scroll();
-                                            if current_offset < max_scroll {
-                                                let new_offset = (current_offset + 20).min(max_scroll);
-                                                self.set_scroll_offset(new_offset);
-                                                if new_offset == max_scroll {
-                                                    self.user_scrolled_away = false; // Reached bottom
-                                                }
-
-                                                // Immediate redraw for better responsiveness
-                                                if let Err(e) = self.terminal.draw(|f| {
-                                                    let textarea_ref = &self.textarea;
-                                                    let display_items_ref = &self.display_items;
-                                                    if let Err(e) = Tui::render_ui_static(
-                                                        f,
-                                                        textarea_ref,
-                                                        display_items_ref,
-                                                        input_mode,
-                                                        self.scroll_offset,
-                                                        self.max_scroll,
-                                                        &current_model_owned,
-                                                        self.current_tool_approval.as_ref(), // Pass current approval
-                                                    ) {
-                                                        error!(target:"tui.run.draw",   "UI rendering failed: {}", e);
-                                                    }
-                                                }) {
-                                                    error!(target:"tui.mouse_scroll", "Failed to redraw: {}", e);
-                                                }
-                                            }
+                                            self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(3))?; // Scroll a few lines per mouse wheel tick
+                                            // No need to redraw here, the main loop will handle it
                                         }
                                         MouseEvent {
                                             kind: MouseEventKind::ScrollUp,
                                             ..
                                         } => {
-                                            let current_offset = self.get_scroll_offset();
-                                            if current_offset > 0 {
-                                                let new_offset = current_offset.saturating_sub(20);
-                                                self.set_scroll_offset(new_offset);
-                                                self.user_scrolled_away = true; // User scrolled up
-
-                                                // Immediate redraw for better responsiveness
-                                                if let Err(e) = self.terminal.draw(|f| {
-                                                    let textarea_ref = &self.textarea;
-                                                    let display_items_ref = &self.display_items;
-                                                    if let Err(e) = Tui::render_ui_static(
-                                                        f,
-                                                        textarea_ref,
-                                                        display_items_ref,
-                                                        input_mode,
-                                                        self.scroll_offset,
-                                                        self.max_scroll,
-                                                        &current_model_owned,
-                                                        self.current_tool_approval.as_ref(), // Pass current approval
-                                                    ) {
-                                                        error!(target:"tui.run.draw",   "UI rendering failed: {}", e);
-                                                    }
-                                                }) {
-                                                    error!(target:"tui.mouse_scroll", "Failed to redraw: {}", e);
-                                                }
-                                            }
+                                           self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(3))?; // Scroll a few lines per mouse wheel tick
+                                            // No need to redraw here, the main loop will handle it
                                         }
                                         _ => {} // Ignore other mouse events
                                     }
@@ -397,7 +350,9 @@ impl Tui {
                 self.spinner_state = 0;
                 self.progress_message = None;
             }
-            AppEvent::ThinkingCompleted | AppEvent::Error { .. } | AppEvent::OperationCancelled { .. } => {
+            AppEvent::ThinkingCompleted
+            | AppEvent::Error { .. }
+            | AppEvent::OperationCancelled { .. } => {
                 debug!(target:"tui.handle_app_event", "Setting is_processing = false");
                 self.is_processing = false;
                 self.progress_message = None;
@@ -435,7 +390,7 @@ impl Tui {
 
                 if let Some(raw_msg) = raw_msg {
                     // Add the raw message to the TUI's internal list
-                    self.raw_messages.push(raw_msg.clone());
+                    // self.raw_messages.push(raw_msg.clone()); // Already added by MessageAdded
 
                     // Format using the actual blocks
                     let formatted = format_message(
@@ -449,27 +404,25 @@ impl Tui {
                         DisplayItem::Message { id: item_id, .. } => *item_id == id,
                         _ => false,
                     }) {
-                        warn!(target:
-                            "tui.handle_app_event",
-                            "MessageAdded: ID {} already exists. Skipping.", id,
-                        );
+                        // Tool call might start before MessageAdded event completes streaming,
+                        // so just update the progress message if the message already exists.
+                        // warn!(target:
+                        //     "tui.handle_app_event",
+                        //     "ToolCallStarted: Message ID {} already exists. Content blocks: {}",
+                        //     id,
+                        //     raw_msg.content_blocks.len()
+                        // );
                     } else {
                         self.display_items.push(DisplayItem::Message {
                             id: id.clone(),
                             role: Role::Tool,
                             content: formatted,
                         });
-                        debug!(target: "tui.handle_app_event", "Added message ID: {}", id);
+                        debug!(target: "tui.handle_app_event", "Added message ID (ToolCallStarted): {}", id);
                         display_items_updated = true;
                     }
                 } else {
-                    // This case might happen if the App adds a message but fails to send the event,
-                    // or if the event arrives before the App could add it (less likely).
-                    warn!(target: "tui.handle_app_event", "MessageAdded event received for ID {}, but corresponding raw message not found yet.", id);
-                    // Optionally, add a placeholder formatted message
-                    // let placeholder_block = crate::app::conversation::MessageContentBlock::Text("[Message content pending...]".to_string());
-                    // let formatted = format_message(&[placeholder_block], role);
-                    // ... add formatted message ...
+                    warn!(target: "tui.handle_app_event", "ToolCallStarted event received for ID {}, but corresponding raw message not found yet.", id);
                 }
             }
             AppEvent::MessageAdded {
@@ -747,7 +700,17 @@ impl Tui {
         // --- Handle Scrolling After Display Items Updates ---
         if display_items_updated {
             // Recalculate max scroll based on the *potentially updated* display items list
-            self.recalculate_max_scroll();
+            self.recalculate_max_scroll(); // This needs to be called first
+
+            // --- Auto-scroll logic ---
+            if !self.user_scrolled_away {
+                let new_max_scroll = self.get_max_scroll(); // Get the updated max scroll
+                self.set_scroll_offset(new_max_scroll);
+                debug!(target: "tui.handle_app_event", "Auto-scrolled to bottom (offset={})", new_max_scroll);
+            } else {
+                debug!(target: "tui.handle_app_event", "Display updated, but user scrolled away (offset={}, max_scroll={}). Skipping auto-scroll.", self.scroll_offset, self.max_scroll);
+            }
+            // --- End Auto-scroll logic ---
         }
     }
 
@@ -757,7 +720,14 @@ impl Tui {
 
     fn set_scroll_offset(&mut self, offset: usize) {
         let clamped_offset = offset.min(self.max_scroll);
-        self.scroll_offset = clamped_offset;
+        // Only update if the offset actually changes
+        if clamped_offset != self.scroll_offset {
+            self.scroll_offset = clamped_offset;
+            debug!(target: "tui.set_scroll_offset", "Set scroll_offset={}, max_scroll={}", self.scroll_offset, self.max_scroll);
+            // Update user_scrolled_away based on the *new* offset
+            self.user_scrolled_away = self.scroll_offset < self.max_scroll;
+            debug!(target: "tui.set_scroll_offset", "user_scrolled_away={}", self.user_scrolled_away);
+        }
     }
 
     fn get_max_scroll(&self) -> usize {
@@ -766,8 +736,11 @@ impl Tui {
 
     fn set_max_scroll(&mut self, max: usize) {
         self.max_scroll = max;
+        // Clamp current offset if it's now beyond the new max
         if self.scroll_offset > self.max_scroll {
+            let old_offset = self.scroll_offset;
             self.scroll_offset = self.max_scroll;
+            debug!(target: "tui.set_max_scroll", "Clamped scroll_offset from {} to {} due to new max_scroll={}", old_offset, self.scroll_offset, self.max_scroll);
         }
     }
 
@@ -1027,15 +1000,7 @@ impl Tui {
 
     async fn handle_input(&mut self, key: KeyEvent) -> Result<Option<InputAction>> {
         let mut action = None;
-        let half_page_height = self
-            .terminal
-            .size()?
-            .height
-            .saturating_sub(self.textarea.lines().len() as u16 + 2)
-            .saturating_sub(2)
-            .saturating_div(2) as usize;
 
-        let full_page_height = half_page_height * 2;
         // --- Global keys handled first ---
 
         // Handle ESC specifically for denying the current tool approval
@@ -1053,73 +1018,34 @@ impl Tui {
             match key.code {
                 // Full Page Scroll Up
                 KeyCode::PageUp => {
-                    let current_offset = self.get_scroll_offset();
-                    let new_offset = current_offset.saturating_sub(full_page_height);
-                    if new_offset < current_offset {
-                        // Check if scroll actually happened
-                        self.set_scroll_offset(new_offset);
-                        self.user_scrolled_away = true; // User scrolled up
-                    }
+                    self.perform_scroll(ScrollDirection::Up, ScrollAmount::FullPage)?;
                     return Ok(None); // Just scroll
                 }
                 // Full Page Scroll Down
                 KeyCode::PageDown => {
-                    let current_offset = self.get_scroll_offset();
-                    let max_scroll = self.get_max_scroll();
-                    let new_offset = (current_offset + full_page_height).min(max_scroll);
-                    if new_offset > current_offset {
-                        // Check if scroll actually happened
-                        self.set_scroll_offset(new_offset);
-                        if new_offset == max_scroll {
-                            self.user_scrolled_away = false; // Reached bottom
-                        }
-                    }
+                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::FullPage)?;
                     return Ok(None); // Just scroll
                 }
 
                 // Line Scroll Up (Arrows)
                 KeyCode::Up => {
-                    let current_offset = self.get_scroll_offset();
-                    if current_offset > 0 {
-                        self.set_scroll_offset(current_offset - 1);
-                        self.user_scrolled_away = true; // User scrolled up
-                    }
+                    self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(1))?;
                     return Ok(None); // Just scroll
                 }
                 // Line Scroll Down (Arrows)
                 KeyCode::Down => {
-                    let current_offset = self.get_scroll_offset();
-                    let max_scroll = self.get_max_scroll();
-                    if current_offset < max_scroll {
-                        let new_offset = current_offset + 1;
-                        self.set_scroll_offset(new_offset);
-                        if new_offset == max_scroll {
-                            self.user_scrolled_away = false; // Reached bottom
-                        }
-                    }
+                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(1))?;
                     return Ok(None); // Just scroll
                 }
 
                 // Line Scroll Up (k in Normal Mode only)
                 KeyCode::Char('k') if self.input_mode == InputMode::Normal => {
-                    let current_offset = self.get_scroll_offset();
-                    if current_offset > 0 {
-                        self.set_scroll_offset(current_offset - 1);
-                        self.user_scrolled_away = true; // User scrolled up
-                    }
+                    self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(1))?;
                     return Ok(None); // Just scroll
                 }
                 // Line Scroll Down (j in Normal Mode only)
                 KeyCode::Char('j') if self.input_mode == InputMode::Normal => {
-                    let current_offset = self.get_scroll_offset();
-                    let max_scroll = self.get_max_scroll();
-                    if current_offset < max_scroll {
-                        let new_offset = current_offset + 1;
-                        self.set_scroll_offset(new_offset);
-                        if new_offset == max_scroll {
-                            self.user_scrolled_away = false; // Reached bottom
-                        }
-                    }
+                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(1))?;
                     return Ok(None); // Just scroll
                 }
 
@@ -1127,31 +1053,16 @@ impl Tui {
                 KeyCode::Char('u') if self.input_mode == InputMode::Normal => {
                     if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
                     {
-                        let current_offset = self.get_scroll_offset();
-                        let new_offset = current_offset.saturating_sub(half_page_height);
-                        if new_offset < current_offset {
-                            // Check if scroll actually happened
-                            self.set_scroll_offset(new_offset);
-                            self.user_scrolled_away = true; // User scrolled up
-                        }
+                        self.perform_scroll(ScrollDirection::Up, ScrollAmount::HalfPage)?;
                         return Ok(None); // Just scroll
                     }
                 }
-                // Half Page Scroll Down (d/Ctrl+d in Normal Mode only)
+                // Half Page Scroll Down (d in Normal Mode only)
                 KeyCode::Char('d')
                     if (self.input_mode == InputMode::Normal
                         && key.modifiers == KeyModifiers::NONE) =>
                 {
-                    let current_offset = self.get_scroll_offset();
-                    let max_scroll = self.get_max_scroll();
-                    let new_offset = (current_offset + half_page_height).min(max_scroll);
-                    if new_offset > current_offset {
-                        // Check if scroll actually happened
-                        self.set_scroll_offset(new_offset);
-                        if new_offset == max_scroll {
-                            self.user_scrolled_away = false; // Reached bottom
-                        }
-                    }
+                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::HalfPage)?;
                     return Ok(None); // Just scroll
                 }
 
@@ -1161,322 +1072,293 @@ impl Tui {
                 {
                     let scroll_offset = self.get_scroll_offset();
                     // Find the message corresponding to the current view port top
-                    // This is an approximation - ideally we'd track selected message
-                    let mut line_count = 0;
-                    let mut target_message_id = None;
-                    for di in &self.display_items {
-                        let di_lines = match di {
-                            // Calculate lines based on variant content field
+                    let mut current_line_index = 0;
+                    let mut target_display_item_id = None;
+
+                    for item in &self.display_items {
+                        let item_line_count = match item {
                             DisplayItem::Message { content, .. } => content.len(),
                             DisplayItem::ToolResult { content, .. } => content.len(),
                             DisplayItem::CommandResponse { content, .. } => content.len(),
                             DisplayItem::SystemInfo { content, .. } => content.len(),
                         };
-                        if line_count + di_lines > scroll_offset {
-                            // Check if it's a ToolResult variant
-                            if let DisplayItem::ToolResult { id, .. } = di {
-                                target_message_id = Some(id.clone());
-                            }
-                            break; // Found the item at the current scroll offset
-                        }
-                        line_count += di_lines;
-                    }
 
-                    if let Some(id) = target_message_id {
-                        action = Some(InputAction::ToggleMessageTruncation(id));
-                    } else {
-                        // Maybe check the last ToolResult item if no specific one found?
-                        if let Some(last_tool_result) =
-                            self.display_items.iter().rev().find_map(|di| match di {
-                                DisplayItem::ToolResult { id, .. } => Some(id.clone()),
-                                _ => None,
-                            })
+                        if scroll_offset >= current_line_index
+                            && scroll_offset < current_line_index + item_line_count
                         {
-                            action = Some(InputAction::ToggleMessageTruncation(last_tool_result));
-                        } else {
-                            debug!(target: "tui.handle_input", "No tool result found to toggle truncation");
+                            // We found the item at the top of the viewport
+                            if let DisplayItem::ToolResult { id, .. } = item {
+                                target_display_item_id = Some(id.clone());
+                            }
+                            break;
                         }
+                        current_line_index += item_line_count;
                     }
+
+                    if let Some(target_id) = target_display_item_id {
+                        action = Some(InputAction::ToggleMessageTruncation(target_id));
+                    } else {
+                        debug!(target: "tui.handle_input", "Ctrl+R: No tool result found at scroll offset {}", scroll_offset);
+                    }
+                    return Ok(action);
                 }
-                _ => {} // Other keys ignored in this block
+
+                // Toggle Tool Result Truncation (Ctrl+R)
+                KeyCode::Char('r') | KeyCode::Char('R')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    let scroll_offset = self.get_scroll_offset();
+                    // Find the message corresponding to the current view port top
+                    let mut current_line_index = 0;
+                    let mut target_display_item_id = None;
+
+                    for item in &self.display_items {
+                        let item_line_count = match item {
+                            DisplayItem::Message { content, .. } => content.len(),
+                            DisplayItem::ToolResult { content, .. } => content.len(),
+                            DisplayItem::CommandResponse { content, .. } => content.len(),
+                            DisplayItem::SystemInfo { content, .. } => content.len(),
+                        };
+
+                        if scroll_offset >= current_line_index
+                            && scroll_offset < current_line_index + item_line_count
+                        {
+                            // We found the item at the top of the viewport
+                            if let DisplayItem::ToolResult { id, .. } = item {
+                                target_display_item_id = Some(id.clone());
+                            }
+                            break;
+                        }
+                        current_line_index += item_line_count;
+                    }
+
+                    if let Some(target_id) = target_display_item_id {
+                        action = Some(InputAction::ToggleMessageTruncation(target_id));
+                    } else {
+                        debug!(target: "tui.handle_input", "Ctrl+R: No tool result found at scroll offset {}", scroll_offset);
+                    }
+                    return Ok(action);
+                }
+
+                // Add a wildcard arm to make the match exhaustive for non-editing mode keys handled here
+                _ => {}
             }
         }
 
-        // --- Ctrl+C / Ctrl+D Exit Handling ---
-        // This remains mostly the same, might need slight adjustment based on approval mode presence
-        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
-            match self.input_mode {
-                InputMode::ConfirmExit => {
-                    return Ok(Some(InputAction::Exit));
-                }
-                _ => {
-                    debug!(target: "tui.handle_input", "Ctrl+C detected, entering ConfirmExit mode.");
-                    self.input_mode = InputMode::ConfirmExit;
-                    return Ok(None); // Change mode, no immediate action
-                }
-            }
-        }
-
-        // --- Mode-specific handling OR Current Approval Handling ---
-
-        // Handle Approval Keys if a tool approval is currently active
-        if let Some(approval_info) = &self.current_tool_approval {
-            // Clone the ID now because we might take() the approval later
-            let current_approval_id = approval_info.id.clone();
-            let mut approval_action_taken = false;
-
-            match key.code {
-                // Approve Normal
-                KeyCode::Char('y') | KeyCode::Char('Y') if key.modifiers == KeyModifiers::NONE => {
-                    action = Some(InputAction::ApproveToolNormal(current_approval_id));
-                    approval_action_taken = true;
-                }
-                // Approve Always (Shift + Tab)
-                KeyCode::BackTab if key.modifiers == KeyModifiers::SHIFT => {
-                    action = Some(InputAction::ApproveToolAlways(current_approval_id));
-                    approval_action_taken = true;
-                }
-                // Deny (n/N) - Esc is handled earlier
-                KeyCode::Char('n') | KeyCode::Char('N') => {
-                    action = Some(InputAction::DenyTool(current_approval_id));
-                    approval_action_taken = true;
-                }
-                _ => {} // Other keys ignored while waiting for approval
-            }
-
-            if approval_action_taken {
-                self.current_tool_approval.take(); // Consume the current approval
-                // Activate next approval after sending the command
-                // self.activate_next_approval();
-                return Ok(action);
-            }
-            // If no approval action was taken, prevent other mode-specific actions
-            // while waiting for approval, except for global keys handled above.
-            return Ok(None);
-        }
-
-        // --- Original Mode-Specific Handling (Only if NOT waiting for approval) ---
-        // Existing logic for Editing, Normal, ConfirmExit modes
+        // --- Mode-specific keys ---
         match self.input_mode {
+            InputMode::Normal => {
+                match key.code {
+                    KeyCode::Esc => {
+                        if self.is_processing {
+                            action = Some(InputAction::CancelProcessing);
+                        } else {
+                            self.clear_textarea();
+                        }
+                        return Ok(action);
+                    }
+                    // Enter Edit Mode
+                    KeyCode::Char('i') | KeyCode::Char('s') => {
+                        self.input_mode = InputMode::Editing;
+                    }
+                    // Send Message
+                    KeyCode::Enter => {
+                        let input = self.textarea.lines().join("\n");
+                        if input.trim().is_empty() {
+                            return Ok(action);
+                        }
+                        self.clear_textarea();
+                        action = Some(InputAction::SendMessage(input));
+                        return Ok(action);
+                    }
+                    // Cancel Processing (Ctrl+C)
+                    KeyCode::Char('c') | KeyCode::Char('C')
+                        if key.modifiers == KeyModifiers::CONTROL =>
+                    {
+                        if self.is_processing {
+                            action = Some(InputAction::CancelProcessing);
+                        } else {
+                            // Enter ConfirmExit mode if not processing
+                            self.input_mode = InputMode::ConfirmExit;
+                        }
+                        return Ok(action);
+                    }
+                    _ => {} // Ignore other keys in Normal mode (covered by global/scroll)
+                }
+            }
             InputMode::Editing => {
-                match key.into() {
-                    // Send message on Enter (unless Shift+Enter for newline)
-                    Input {
-                        key: Key::Enter,
-                        ctrl: false,
-                        alt: false,
-                        shift: false, // Explicitly check shift is NOT pressed
-                    } => {
-                        let current_input = self.textarea.lines().join("\n"); // Use newline char
-                        if !current_input.trim().is_empty() {
-                            action = Some(InputAction::SendMessage(current_input));
-                            // Reset textarea fully after sending
+                match key.code {
+                    // Stop editing
+                    KeyCode::Esc => {
+                        self.input_mode = InputMode::Normal;
+                    }
+                    // Send Message
+                    KeyCode::Enter => {
+                        let input = self.textarea.lines().join("\n");
+                        if !input.trim().is_empty() {
+                            action = Some(InputAction::SendMessage(input));
+                            // Re-initialize the textarea to clear it
                             let mut new_textarea = TextArea::default();
                             new_textarea
                                 .set_block(self.textarea.block().cloned().unwrap_or_default());
                             new_textarea.set_placeholder_text(self.textarea.placeholder_text());
                             new_textarea.set_style(self.textarea.style());
                             self.textarea = new_textarea;
-                            self.input_mode = InputMode::Normal; // Switch back after sending
-                        } else {
-                            self.input_mode = InputMode::Normal; // Switch back even if empty
+                            self.input_mode = InputMode::Normal;
                         }
                     }
-                    // Stop editing on Esc
-                    Input { key: Key::Esc, .. } => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    // Default: Pass key to textarea
-                    input => {
-                        // Only pass input if no action was already determined (like scrolling)
-                        if action.is_none() {
-                            self.textarea.input(input);
-                        }
-                    }
-                }
-            }
-            InputMode::Normal => {
-                // Only handle non-scrolling keys here if no action already set
-                if action.is_none() {
-                    match key.code {
-                        // Start editing
-                        KeyCode::Char('i') | KeyCode::Char('I') => {
-                            self.input_mode = InputMode::Editing;
-                        }
-                        // Send message directly if Enter is pressed in Normal mode
-                        KeyCode::Enter => {
-                            let current_input = self.textarea.lines().join("\n"); // Use newline char
-                            if !current_input.trim().is_empty() {
-                                action = Some(InputAction::SendMessage(current_input));
-                                // Reset textarea fully after sending
-                                let mut new_textarea = TextArea::default();
-                                new_textarea
-                                    .set_block(self.textarea.block().cloned().unwrap_or_default());
-                                new_textarea.set_placeholder_text(self.textarea.placeholder_text());
-                                new_textarea.set_style(self.textarea.style());
-                                self.textarea = new_textarea;
-                            }
-                        }
-                        // Cancel processing on Esc in Normal mode
-                        KeyCode::Esc => {
+                    // Cancel Processing (Ctrl+C)
+                    KeyCode::Char('c') | KeyCode::Char('C')
+                        if key.modifiers == KeyModifiers::CONTROL =>
+                    {
+                        if self.is_processing {
                             action = Some(InputAction::CancelProcessing);
+                        } else {
+                            // Enter ConfirmExit mode if not processing
+                            self.input_mode = InputMode::ConfirmExit;
                         }
-                        // Toggle Tool Result Truncation (Ctrl+R)
-                        KeyCode::Char('r') | KeyCode::Char('R')
-                            if key.modifiers == KeyModifiers::CONTROL =>
-                        {
-                            let scroll_offset = self.get_scroll_offset();
-                            // Find the message corresponding to the current view port top
-                            // This is an approximation - ideally we'd track selected message
-                            let mut line_count = 0;
-                            let mut target_message_id = None;
-                            for di in &self.display_items {
-                                let di_lines = match di {
-                                    // Calculate lines based on variant content field
-                                    DisplayItem::Message { content, .. } => content.len(),
-                                    DisplayItem::ToolResult { content, .. } => content.len(),
-                                    DisplayItem::CommandResponse { content, .. } => content.len(),
-                                    DisplayItem::SystemInfo { content, .. } => content.len(),
-                                };
-                                if line_count + di_lines > scroll_offset {
-                                    // Check if it's a ToolResult variant
-                                    if let DisplayItem::ToolResult { id, .. } = di {
-                                        target_message_id = Some(id.clone());
-                                    }
-                                    break; // Found the item at the current scroll offset
-                                }
-                                line_count += di_lines;
-                            }
-
-                            if let Some(id) = target_message_id {
-                                action = Some(InputAction::ToggleMessageTruncation(id));
-                            } else {
-                                // Maybe check the last ToolResult item if no specific one found?
-                                if let Some(last_tool_result) =
-                                    self.display_items.iter().rev().find_map(|di| match di {
-                                        DisplayItem::ToolResult { id, .. } => Some(id.clone()),
-                                        _ => None,
-                                    })
-                                {
-                                    action = Some(InputAction::ToggleMessageTruncation(
-                                        last_tool_result,
-                                    ));
-                                } else {
-                                    debug!(target: "tui.handle_input", "No tool result found to toggle truncation");
-                                }
-                            }
-                        }
-                        _ => {} // Other keys ignored in Normal mode unless handled globally/as scrolling
+                        return Ok(action);
+                    }
+                    // Pass other keys to text area
+                    _ => {
+                        // Pass ratatui KeyEvent directly, as tui-textarea's input() expects `impl Into<Input>`
+                        self.textarea.input(key);
                     }
                 }
             }
             InputMode::AwaitingApproval => {
-                // This mode is now primarily handled by the `if let Some(approval_info) = &self.current_tool_approval` block above.
-                // We shouldn't reach here if an approval is active.
-                warn!(target:"tui.handle_input", "In AwaitingApproval mode but current_tool_approval is None. Resetting to Normal.");
-                self.input_mode = InputMode::Normal;
-            }
-            InputMode::ConfirmExit => {
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        action = Some(InputAction::Exit); // Confirm exit
+                if let Some(approval_info) = self.current_tool_approval.clone() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            action = Some(InputAction::ApproveToolNormal(approval_info.id));
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            action = Some(InputAction::DenyTool(approval_info.id));
+                        }
+                        KeyCode::BackTab => {
+                            // Shift+Tab for Approve Always
+                            action = Some(InputAction::ApproveToolAlways(approval_info.id));
+                        }
+                        // Cancel Processing (Ctrl+C)
+                        KeyCode::Char('c') | KeyCode::Char('C')
+                            if key.modifiers == KeyModifiers::CONTROL =>
+                        {
+                            if self.is_processing {
+                                action = Some(InputAction::CancelProcessing);
+                            } else {
+                                // Enter ConfirmExit mode if not processing
+                                self.input_mode = InputMode::ConfirmExit;
+                            }
+                            return Ok(action);
+                        }
+                        _ => {} // Ignore other keys
                     }
-                    KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
-                        action = Some(InputAction::Exit);
-                    }
-                    _ => {
-                        // Any other key cancels
-                        self.input_mode = InputMode::Normal; // Go back to normal mode
-                    }
+                } else {
+                    // Should not happen, but revert to normal mode if no approval is active
+                    warn!(target: "tui.handle_input", "In AwaitingApproval mode but no current approval info. Reverting to Normal.");
+                    self.input_mode = InputMode::Normal;
                 }
             }
+            InputMode::ConfirmExit => match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    action = Some(InputAction::Exit);
+                }
+                // Also exit if Ctrl+C is pressed *again*
+                KeyCode::Char('c') | KeyCode::Char('C')
+                    if key.modifiers == KeyModifiers::CONTROL =>
+                {
+                    action = Some(InputAction::Exit);
+                }
+                _ => {
+                    // Any other key cancels exit confirmation
+                    self.input_mode = InputMode::Normal;
+                }
+            },
         }
-
         Ok(action)
     }
 
-    // Dispatch action, sending commands if necessary
-    // Returns Ok(true) if the app should exit, Ok(false) otherwise
     async fn dispatch_input_action(&mut self, action: InputAction) -> Result<bool> {
+        let mut should_exit = false;
         match action {
-            InputAction::SendMessage(message) => {
-                if message.starts_with('/') {
-                    // Send as command
-                    self.command_tx
-                        .send(AppCommand::ExecuteCommand(message))
-                        .await?;
-                } else {
-                    // Now send command to App to process this *already added* message
-                    self.command_tx
-                        .send(AppCommand::ProcessUserInput(message))
-                        .await?;
-                    // Let the App handle adding the message and sending MessageAdded event
-                    // The TUI will display the message when it receives that event
-                }
+            InputAction::SendMessage(input) => {
+                self.command_tx
+                    .send(AppCommand::ProcessUserInput(input))
+                    .await?;
+                // Clear scroll lock when user sends a message
+                self.user_scrolled_away = false;
+                debug!(target: "tui.dispatch_input_action", "Sent UserInput command, user_scrolled_away=false");
             }
-            InputAction::ToggleMessageTruncation(id) => {
-                // Find the ToolResult display item and modify it
+            InputAction::ToggleMessageTruncation(target_id) => {
                 let mut found_and_toggled = false;
+                let mut scroll_adjustment = 0; // Track line count difference
+
                 if let Some(item) = self.display_items.iter_mut().find(|di| match di {
-                    DisplayItem::ToolResult { id: item_id, .. } => *item_id == id,
+                    DisplayItem::ToolResult { id, .. } => *id == target_id,
                     _ => false,
                 }) {
                     if let DisplayItem::ToolResult {
-                        is_truncated,
-                        full_result,
                         content,
-                        .. // id and tool_use_id are not needed here
+                        full_result,
+                        is_truncated,
+                        .. // Ignore tool_use_id
                     } = item
                     {
+                        let old_line_count = content.len();
                         *is_truncated = !*is_truncated;
 
-                        if *is_truncated {
+                        let new_content = if *is_truncated {
+                            // Re-truncate
                             const MAX_PREVIEW_LINES: usize = 5;
                             let lines: Vec<&str> = full_result.lines().collect();
-                            let preview_content = if lines.len() > MAX_PREVIEW_LINES {
-                                format!(
-                                    "{}
+                            let preview_content = format!(
+                                "{}
 ... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
-                                    lines
-                                        .iter()
-                                        .take(MAX_PREVIEW_LINES)
-                                        .cloned()
-                                        .collect::<Vec<_>>()
-                                        .join("\n"),
-                                    lines.len() - MAX_PREVIEW_LINES
-                                )
-                            } else {
-                                full_result.clone()
-                            };
-                            *content = format_tool_preview(
+                                lines
+                                    .iter()
+                                    .take(MAX_PREVIEW_LINES)
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                                lines.len().saturating_sub(MAX_PREVIEW_LINES)
+                            );
+                            format_tool_preview(
                                 &preview_content,
                                 self.terminal.size().map(|r| r.width).unwrap_or(100),
-                            );
+                            )
                         } else {
-                            // Show full result using the same preview formatter
-                            *content = format_tool_preview(
+                            // Expand to full result
+                            format_tool_preview(
                                 full_result,
                                 self.terminal.size().map(|r| r.width).unwrap_or(100),
-                            );
-                        }
+                            )
+                        };
+
+                        *content = new_content;
                         found_and_toggled = true;
-                        // Recalculate max scroll after changing content length
-                        self.recalculate_max_scroll();
-                    } else {
-                         warn!(target:
-                            "tui.dispatch",
-                                "Found DisplayItem {}, but it's not a ToolResult variant.",
-                                id
-                        );
+                        let new_line_count = content.len();
+                        scroll_adjustment = new_line_count as isize - old_line_count as isize;
+                        debug!(target: "tui.dispatch_input_action", "Toggled truncation for ToolResult {}, is_truncated={}, line diff={}", target_id, *is_truncated, scroll_adjustment);
                     }
                 }
-                if !found_and_toggled {
-                    warn!(target:
-                        "tui.dispatch",
-                        "ToggleMessageTruncation: No ToolResult found with ID {}", id,
-                    );
+
+                if found_and_toggled {
+                    // Recalculate max scroll due to content change
+                    self.recalculate_max_scroll();
+                    // Attempt to adjust scroll offset to keep the toggled item roughly in view
+                    // This is imperfect but better than jumping abruptly.
+                    let current_offset = self.get_scroll_offset();
+                    if scroll_adjustment > 0 {
+                        // Content grew, increase offset by the difference
+                        self.set_scroll_offset(current_offset + scroll_adjustment as usize);
+                    } else {
+                        // Content shrank, decrease offset, ensuring it doesn't go below zero
+                        self.set_scroll_offset(
+                            current_offset.saturating_sub((-scroll_adjustment) as usize),
+                        );
+                    }
+                    debug!(target: "tui.dispatch_input_action", "Adjusted scroll offset after toggle: {}", self.scroll_offset);
                 }
-                // No command needs to be sent to App for this purely visual toggle
             }
             InputAction::ApproveToolNormal(id) => {
                 self.command_tx
@@ -1486,8 +1368,8 @@ impl Tui {
                         always: false,
                     })
                     .await?;
-                // Activate next approval after sending the command
-                self.activate_next_approval();
+                // Let activate_next_approval handle the current_tool_approval state
+                self.activate_next_approval(); // Activate next
             }
             InputAction::ApproveToolAlways(id) => {
                 self.command_tx
@@ -1497,8 +1379,8 @@ impl Tui {
                         always: true,
                     })
                     .await?;
-                // Activate next approval after sending the command
-                self.activate_next_approval();
+                // Let activate_next_approval handle the current_tool_approval state
+                self.activate_next_approval(); // Activate next
             }
             InputAction::DenyTool(id) => {
                 self.command_tx
@@ -1508,82 +1390,112 @@ impl Tui {
                         always: false,
                     })
                     .await?;
-                // Activate next approval after sending the command
-                self.activate_next_approval();
+                // Let activate_next_approval handle the current_tool_approval state
+                self.activate_next_approval(); // Activate next
             }
             InputAction::CancelProcessing => {
                 self.command_tx.send(AppCommand::CancelProcessing).await?;
             }
             InputAction::Exit => {
-                // Signal exit cleanly if possible
-                if let Err(e) = self.command_tx.send(AppCommand::Shutdown).await {
-                    error!(target:
-                        "tui.dispatch",
-                        "Failed to send Shutdown command: {}", e
-                    );
-                    // Still exit the TUI loop even if shutdown command fails
-                }
-                return Ok(true); // Signal exit
+                should_exit = true;
             }
         }
-        Ok(false) // Don't exit by default
+        Ok(should_exit)
     }
 
-    // Helper function to activate the next approval from the queue
+    // New function to activate the next pending approval
     fn activate_next_approval(&mut self) {
         if let Some(next_approval) = self.pending_tool_approvals.pop_front() {
-            debug!(target: "tui.activate_next", "Activating approval for {} ({}). Pending approvals: {}", next_approval.name, next_approval.id, self.pending_tool_approvals.len());
+            debug!(target: "tui.activate_next_approval", "Activating next tool approval: {} ({})", next_approval.name, next_approval.id);
             self.current_tool_approval = Some(next_approval);
             self.input_mode = InputMode::AwaitingApproval;
-            // Set progress message for the active approval
-            self.progress_message = self
-                .current_tool_approval
-                .as_ref()
-                .map(|info| format!("Tool: {} - Approval Required", info.name));
-            self.is_processing = true; // Ensure spinner is active
         } else {
-            debug!(target: "tui.activate_next", "No more pending approvals.");
+            debug!(target: "tui.activate_next_approval", "No more pending approvals. Returning to Normal mode.");
             self.current_tool_approval = None;
+            // Always return to Normal mode when the queue is empty after an approval action.
+            // The is_processing flag will handle the spinner display separately.
             self.input_mode = InputMode::Normal;
-            // Clear progress message only if we are not otherwise processing
-            if !self.is_processing {
-                self.progress_message = None;
-            }
-            // Don't set is_processing = false here, other background tasks might still be running
         }
     }
 
-    // Helper function to recalculate max_scroll based on current display_items
+    // Recalculates max scroll based on current display items and terminal size
     fn recalculate_max_scroll(&mut self) {
+        let all_lines: Vec<Line> = self
+            .display_items
+            .iter()
+            .flat_map(|di| match di {
+                DisplayItem::Message { content, .. } => content.clone(),
+                DisplayItem::ToolResult { content, .. } => content.clone(),
+                DisplayItem::CommandResponse { content, .. } => content.clone(),
+                DisplayItem::SystemInfo { content, .. } => content.clone(),
+            })
+            .collect();
+        let total_lines_count = all_lines.len();
+
         if let Ok(term_size) = self.terminal.size() {
-            let all_lines: Vec<Line> = self
-                .display_items
-                .iter()
-                .flat_map(|di| match di {
-                    // Access named content field
-                    DisplayItem::Message { content, .. } => content.clone(),
-                    DisplayItem::ToolResult { content, .. } => content.clone(),
-                    DisplayItem::CommandResponse { content, .. } => content.clone(),
-                    DisplayItem::SystemInfo { content, .. } => content.clone(),
-                })
-                .collect();
-            let total_lines_count = all_lines.len();
-            let terminal_height = term_size.height;
             let input_height = (self.textarea.lines().len() as u16 + 2)
                 .min(MAX_INPUT_HEIGHT)
-                .min(terminal_height);
-            let messages_area_height = terminal_height
+                .min(term_size.height);
+            let messages_area_height = term_size
+                .height
                 .saturating_sub(input_height)
-                .saturating_sub(2);
+                .saturating_sub(2); // Account for borders
+
             let new_max_scroll = if total_lines_count > messages_area_height as usize {
                 total_lines_count.saturating_sub(messages_area_height as usize)
             } else {
                 0
             };
             self.set_max_scroll(new_max_scroll);
+            debug!(target: "tui.recalculate_max_scroll", "Recalculated max_scroll={}, total_lines={}, area_height={}", new_max_scroll, total_lines_count, messages_area_height);
         } else {
             warn!(target: "tui.recalculate_max_scroll", "Failed to get terminal size for scroll update.");
         }
+    }
+
+    // --- Scrolling Helpers ---
+
+    fn get_page_height(&self) -> Result<usize> {
+        let term_size = self.terminal.size()?;
+        let input_height = (self.textarea.lines().len() as u16 + 2)
+            .min(MAX_INPUT_HEIGHT)
+            .min(term_size.height);
+        let messages_area_height = term_size
+            .height
+            .saturating_sub(input_height)
+            .saturating_sub(2); // Account for borders
+        Ok(messages_area_height as usize)
+    }
+
+    fn perform_scroll(&mut self, direction: ScrollDirection, amount: ScrollAmount) -> Result<()> {
+        let current_offset = self.get_scroll_offset();
+        let max_scroll = self.get_max_scroll();
+        let page_height = self.get_page_height()?;
+
+        let scroll_lines = match amount {
+            ScrollAmount::Line(lines) => lines,
+            ScrollAmount::HalfPage => page_height / 2,
+            ScrollAmount::FullPage => page_height,
+        };
+
+        let new_offset = match direction {
+            ScrollDirection::Up => current_offset.saturating_sub(scroll_lines),
+            ScrollDirection::Down => (current_offset + scroll_lines).min(max_scroll),
+        };
+
+        // Update offset using the setter which handles clamping and user_scrolled_away
+        self.set_scroll_offset(new_offset);
+
+        Ok(())
+    }
+
+    // --- End Scrolling Helpers ---
+
+    // New function to clear the textarea and reset cursor
+    fn clear_textarea(&mut self) {
+        self.textarea.delete_line_by_end();
+        self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
+        self.textarea.move_cursor(tui_textarea::CursorMove::End);
     }
 }
 
@@ -1591,62 +1503,25 @@ impl Tui {
 impl Drop for Tui {
     fn drop(&mut self) {
         if let Err(e) = self.cleanup_terminal() {
-            // Log error if cleanup fails, but don't panic in drop
-            eprintln!("Failed to cleanup terminal: {}", e);
-            error!(target:"Tui::drop", "Failed to cleanup terminal: {}", e);
+            error!(target:"tui.drop", "Failed to cleanup terminal: {}", e);
         }
     }
 }
 
-pub async fn run_tui(
-    command_tx: mpsc::Sender<AppCommand>,
-    event_rx: mpsc::Receiver<AppEvent>,
-    initial_model: Model,
-) -> Result<()> {
-    // Set up panic hook to ensure terminal is reset if the app crashes
-    // Clone command_tx for potential use in panic hook if needed later
-    let _command_tx_panic = command_tx.clone();
-    let orig_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        // Attempt to clean up the terminal
+// Helper to wrap terminal cleanup in panic handler
+pub fn setup_panic_hook() {
+    panic::set_hook(Box::new(|panic_info| {
+        let mut stdout = io::stdout();
+        let _ = execute!(
+            stdout,
+            LeaveAlternateScreen,
+            DisableBracketedPaste,
+            PopKeyboardEnhancementFlags,
+            DisableMouseCapture
+        );
         let _ = disable_raw_mode();
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
-
-        error!(target: "panic_hook", "Application panicked: {}", panic_info);
-
-        eprintln!("\nERROR: Application crashed: {}", panic_info);
-
-        // Call the original panic hook
-        orig_hook(panic_info);
+        // Print panic info to stderr after restoring terminal state
+        eprintln!("Application panicked:");
+        eprintln!("{}", panic_info);
     }));
-
-    // --- TUI Initialization ---
-    info!(target: "tui::run_tui", "Initializing TUI");
-    let mut tui = match Tui::new(command_tx.clone(), initial_model) {
-        Ok(tui) => tui,
-        Err(e) => {
-            error!(target: "tui::run_tui", "Failed to initialize TUI: {}", e);
-            // We might be mid-panic hook here, but try to print
-            eprintln!("Error: Failed to initialize terminal UI: {}", e);
-            return Err(e);
-        }
-    };
-
-    // --- Run the TUI Loop ---
-    info!(target: "tui::run_tui", "Starting TUI run loop");
-    let tui_result = tui.run(event_rx).await;
-    info!(target: "tui::run_tui", "TUI run loop finished");
-
-    // Handle TUI result
-    match tui_result {
-        Ok(_) => {
-            info!(target: "tui::run_tui", "TUI terminated normally");
-            Ok(())
-        }
-        Err(e) => {
-            error!(target: "tui::run_tui", "TUI task error: {}", e);
-            eprintln!("Error in TUI: {}", e);
-            Err(e)
-        }
-    }
 }
