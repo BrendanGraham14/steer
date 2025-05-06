@@ -16,7 +16,6 @@ use tracing::info;
 
 use coder::app::{App, AppCommand, AppConfig, app_actor_loop};
 use coder::config::LlmConfig;
-use coder::tui;
 use coder::utils;
 
 /// A command line tool to pair program with Claude
@@ -27,12 +26,8 @@ struct Cli {
     #[arg(short, long)]
     directory: Option<std::path::PathBuf>,
 
-    /// API Key for Claude (can also be set via CLAUDE_API_KEY env var)
-    #[arg(short, long, env = "CLAUDE_API_KEY")]
-    api_key: Option<String>,
-
     /// Model to use
-    #[arg(short, long, value_enum, default_value_t = Model::Gemini2_5ProPreview0325)]
+    #[arg(short, long, value_enum, default_value_t = Model::Gemini2_5ProPreview0506)]
     model: Model,
 
     /// Subcommands

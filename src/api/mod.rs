@@ -56,10 +56,8 @@ pub enum Model {
     O3_20250416,
     #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
     Gemini2_5FlashPreview0417,
-    #[strum(serialize = "gemini-2.5-pro-exp-03-25")]
-    Gemini2_5ProExp0325,
-    #[strum(serialize = "gemini-2.5-pro-preview-03-25")]
-    Gemini2_5ProPreview0325,
+    #[strum(serialize = "gemini-2.5-pro-preview-05-06")]
+    Gemini2_5ProPreview0506,
 }
 
 impl Model {
@@ -75,9 +73,9 @@ impl Model {
             | Model::Gpt4_1Nano20250414
             | Model::O3_20250416 => ProviderKind::OpenAI,
 
-            Model::Gemini2_5FlashPreview0417
-            | Model::Gemini2_5ProExp0325
-            | Model::Gemini2_5ProPreview0325 => ProviderKind::Google,
+            Model::Gemini2_5FlashPreview0417 | Model::Gemini2_5ProPreview0506 => {
+                ProviderKind::Google
+            }
         }
     }
 }
