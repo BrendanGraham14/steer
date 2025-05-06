@@ -26,10 +26,15 @@ struct DispatchAgentParams {
 tool! {
     DispatchAgentTool {
         params: DispatchAgentParams,
-        description: r#"Launch a new agent that has access to the following tools: glob, grep, ls, view. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you. For example:
-- If you are searching for a keyword like "config" or "logger", the Agent tool is appropriate
-- If you want to read a specific file path, use the View or GlobTool tool instead of the Agent tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the GlobTool tool instead, to find the match more quickly
+        description: r#"Launch a new agent that has access to the following tools: glob, grep, ls, view. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
+
+When to use the Agent tool:
+- If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended
+
+When NOT to use the Agent tool:
+- If you want to read a specific file path, use the read_file or glob tool instead of the Agent tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the grep tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the grep tool instead, to find the match more quickly
 
 Usage notes:
 1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
