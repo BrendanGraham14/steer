@@ -4,6 +4,6 @@ cargo test
 cargo run
 cargo build
 
-# Style
 
-Use tabs for indentation
+# Commits
+Follow the conventional commits format.
