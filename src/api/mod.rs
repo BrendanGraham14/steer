@@ -25,6 +25,7 @@ use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
 pub use tools::{InputSchema, Tool, ToolCall};
+use tracing::warn;
 
 use crate::config::LlmConfig;
 
@@ -146,13 +147,93 @@ impl Client {
         tools: Option<Vec<Tool>>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        // Updated return type
         let provider = self
             .get_or_create_provider(model)
-            .map_err(|e| ApiError::Configuration(e.to_string()))?; // Keep map_err for config errors
+            .map_err(|e| ApiError::Configuration(e.to_string()))?;
+
+        if token.is_cancelled() {
+            return Err(ApiError::Cancelled {
+                provider: provider.name().to_string(),
+            });
+        }
+
         provider
             .complete(model, messages, system, tools, token)
             .await
+    }
+
+    pub async fn complete_with_retry(
+        &self,
+        model: Model,
+        messages: &Vec<Message>,
+        system_prompt: &Option<String>,
+        tools: &Option<Vec<Tool>>,
+        token: CancellationToken,
+        max_attempts: usize,
+    ) -> Result<CompletionResponse, ApiError> {
+        let mut attempts = 0;
+
+        loop {
+            match self
+                .complete(
+                    model,
+                    messages.clone(),
+                    system_prompt.clone(),
+                    tools.clone(),
+                    token.clone(),
+                )
+                .await
+            {
+                Ok(response) => {
+                    return Ok(response);
+                }
+                Err(error) => {
+                    attempts += 1;
+                    warn!(
+                        "API completion attempt {}/{} failed for model {}: {:?}",
+                        attempts,
+                        max_attempts,
+                        model.as_ref(),
+                        error
+                    );
+
+                    if attempts >= max_attempts {
+                        return Err(error);
+                    }
+
+                    match error {
+                        ApiError::RateLimited { provider, details } => {
+                            let sleep_duration =
+                                std::time::Duration::from_secs(1 << (attempts - 1));
+                            warn!(
+                                "Rate limited by API: {} {} (retrying in {} seconds)",
+                                provider,
+                                details,
+                                sleep_duration.as_secs()
+                            );
+                            tokio::time::sleep(sleep_duration).await;
+                        }
+                        ApiError::NoChoices { provider } => {
+                            warn!("No choices returned from API: {}", provider);
+                        }
+                        ApiError::ServerError {
+                            provider,
+                            status_code,
+                            details,
+                        } => {
+                            warn!(
+                                "Server error for API: {} {} {}",
+                                provider, status_code, details
+                            );
+                        }
+                        _ => {
+                            // Not retryable
+                            return Err(error);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

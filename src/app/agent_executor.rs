@@ -1,7 +1,6 @@
 use crate::api::{
-    ApiError, Client as ApiClient, Model,
-    messages::ContentBlock,
-    messages::{Message, MessageContent, MessageRole, StructuredContent},
+    ApiError, Client as ApiClient, CompletionResponse, Model,
+    messages::{ContentBlock, Message, MessageContent, MessageRole, StructuredContent},
     tools::{Tool, ToolCall, ToolResult},
 };
 use crate::tools::ToolError;
@@ -101,12 +100,13 @@ impl AgentExecutor {
             info!(target: "AgentExecutor::run", model = ?request.model, "Calling LLM API");
             let completion_response = self
                 .api_client
-                .complete(
+                .complete_with_retry(
                     request.model,
-                    messages.clone(), // Clone messages for the API call
-                    request.system_prompt.clone(),
-                    tools.clone(),
+                    &messages,
+                    &request.system_prompt,
+                    &tools,
                     token.clone(),
+                    3,
                 )
                 .await?;
 
