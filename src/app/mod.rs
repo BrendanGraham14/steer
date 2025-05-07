@@ -257,7 +257,6 @@ impl App {
         // --- Updated Tool Executor Callback with Approval Logic ---
         let tool_executor_for_callback = self.tool_executor.clone();
         let approved_tools_clone = self.approved_tools.clone(); // Clone for capture
-        let event_sender_clone = self.event_sender.clone(); // For emitting ToolCallStarted events
 
         // Clone command_tx for the tool executor callback
         // This allows the callback to send tool approval requests to the actor loop
@@ -268,7 +267,6 @@ impl App {
                 // Clone items needed inside the async block
                 let executor = tool_executor_for_callback.clone();
                 let approved_tools = approved_tools_clone.clone();
-                let event_sender = event_sender_clone.clone();
                 let command_tx = command_tx.clone();
                 let tool_call_clone = tool_call.clone(); // Clone for approval request
                 let tool_name = tool_call.name.clone();
@@ -287,7 +285,7 @@ impl App {
 
                     let decision = if !requires_approval || approved_tools.contains(&tool_name) {
                         // Skip approval for tools that don't need it or are already approved
-                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn't require approval or already in approved_tools set");
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn\'t require approval or already in approved_tools set");
                         ApprovalDecision::Approved
                     } else {
                         // Needs interactive approval - create oneshot channel for receiving the decision
@@ -534,8 +532,17 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
     info!(target:"app_actor_loop", "App actor loop started.");
 
     // State for managing the interactive tool approval process
-    // Maps Tool Call ID -> Responder channel to send decision back to callback
-    let mut pending_approvals: HashMap<String, oneshot::Sender<ApprovalDecision>> = HashMap::new();
+    // Holds the tool call ID, the tool call itself, and the responder channel
+    let mut current_tool_approval_request: Option<(
+        String,
+        ApiToolCall,
+        oneshot::Sender<ApprovalDecision>,
+    )> = None;
+    let mut queued_tool_approval_requests: std::collections::VecDeque<(
+        String,
+        ApiToolCall,
+        oneshot::Sender<ApprovalDecision>,
+    )> = std::collections::VecDeque::new();
 
     // Hold the active agent event receiver directly in the loop state
     let mut active_agent_event_rx: Option<mpsc::Receiver<AgentEvent>> = None;
@@ -546,8 +553,16 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
         tokio::select! {
             // Handle incoming commands from the UI/Main thread
             Some(command) = command_rx.recv() => {
-                // Pass mutable reference to active_agent_event_rx and pending_approvals
-                if handle_app_command(&mut app, command, &mut pending_approvals, &mut active_agent_event_rx).await {
+                // Pass mutable reference to active_agent_event_rx and new approval states
+                if handle_app_command(
+                    &mut app,
+                    command,
+                    &mut current_tool_approval_request,
+                    &mut queued_tool_approval_requests,
+                    &mut active_agent_event_rx,
+                )
+                .await
+                {
                     break; // Exit loop if Shutdown command was received
                 }
                 // Reset task completion flag only if a *new* standard operation actually started
@@ -651,12 +666,67 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
     info!(target:"app_actor_loop", "App actor loop finished.");
 }
 
+// Helper function to process the next approval request from the queue
+async fn process_and_send_next_approval_request(
+    app: &mut App,
+    current_tool_approval_request: &mut Option<(
+        String,
+        ApiToolCall,
+        oneshot::Sender<ApprovalDecision>,
+    )>,
+    queued_tool_approval_requests: &mut std::collections::VecDeque<(
+        String,
+        ApiToolCall,
+        oneshot::Sender<ApprovalDecision>,
+    )>,
+) {
+    if current_tool_approval_request.is_some() {
+        debug!(target: "process_and_send_next_approval_request", "An approval request is already active. Doing nothing.");
+        return;
+    }
+
+    while let Some((id, tool_call, responder)) = queued_tool_approval_requests.pop_front() {
+        if app.approved_tools.contains(&tool_call.name) {
+            info!(target: "process_and_send_next_approval_request", "Auto-approving tool '{}' (ID: {}) as it is in the always-approved set.", tool_call.name, id);
+            if responder.send(ApprovalDecision::Approved).is_err() {
+                warn!(target: "process_and_send_next_approval_request", "Failed to send auto-approval for tool ID '{}'. AgentExecutor may have already moved on.", id);
+            }
+            // Continue to the next item in the queue
+        } else {
+            // Not auto-approved, send to UI
+            info!(target: "process_and_send_next_approval_request", "Sending tool approval request to UI for '{}' (ID: {})", tool_call.name, id);
+            let parameters = tool_call.parameters.clone(); // Clone for the event
+            let name = tool_call.name.clone(); // Clone for the event
+
+            // Set as current request before emitting event
+            *current_tool_approval_request = Some((id.clone(), tool_call, responder));
+
+            app.emit_event(AppEvent::RequestToolApproval {
+                name,
+                parameters,
+                id,
+            });
+            return; // Waiting for UI response for this request
+        }
+    }
+    debug!(target: "process_and_send_next_approval_request", "Approval queue processed. No new UI request sent (either queue empty or all auto-approved).");
+}
+
 // <<< Helper function for handling AppCommands >>>
 async fn handle_app_command(
     app: &mut App,
     command: AppCommand,
-    pending_approvals: &mut HashMap<String, oneshot::Sender<ApprovalDecision>>, // Updated state type
-    active_agent_event_rx: &mut Option<mpsc::Receiver<AgentEvent>>, // Added receiver state
+    current_tool_approval_request: &mut Option<(
+        String,
+        ApiToolCall,
+        oneshot::Sender<ApprovalDecision>,
+    )>,
+    queued_tool_approval_requests: &mut std::collections::VecDeque<(
+        String,
+        ApiToolCall,
+        oneshot::Sender<ApprovalDecision>,
+    )>,
+    active_agent_event_rx: &mut Option<mpsc::Receiver<AgentEvent>>,
 ) -> bool {
     // Returns true if the loop should exit
     debug!(target:"handle_app_command", "Received command: {:?}", command);
@@ -671,7 +741,6 @@ async fn handle_app_command(
                 }
                 // Execute the command
                 match app.handle_command(&message).await {
-                    // handle_command returns Result<Option<String>>
                     Ok(response_option) => {
                         if let Some(content) = response_option {
                             app.emit_event(AppEvent::CommandResponse {
@@ -679,121 +748,110 @@ async fn handle_app_command(
                                 id: format!("cmd_resp_{}", uuid::Uuid::new_v4()),
                             });
                         }
-                        // If handle_command started a task (like /dispatch),
-                        // ThinkingStarted was emitted there. ThinkingCompleted is handled
-                        // by handle_task_outcome for DispatchAgentResult.
                     }
                     Err(e) => {
                         error!(target:"handle_app_command", "Error running command '{}': {}", message, e);
                         app.emit_event(AppEvent::Error {
                             message: format!("Command failed: {}", e),
                         });
-                        // Ensure thinking stops if command fails to start
                         app.emit_event(AppEvent::ThinkingCompleted);
                     }
                 }
             } else {
                 // Regular user message, start a standard operation
-                // Clear previous receiver if any before starting new operation
                 if active_agent_event_rx.is_some() {
                     warn!(target:"handle_app_command", "Clearing previous active agent event receiver due to new user input.");
                     *active_agent_event_rx = None;
                 }
-                // App::start_standard_operation calls cancel_current_processing internally
                 match app.process_user_message(message).await {
                     Ok(maybe_receiver) => {
-                        // Store the new receiver if one was returned
-                        debug!(target:"handle_app_command", "Storing new agent event receiver: {}", maybe_receiver.is_some());
                         *active_agent_event_rx = maybe_receiver;
                     }
                     Err(e) => {
                         error!(target:"handle_app_command", "Error starting standard operation: {}", e);
-                        // Error events are emitted by start_standard_operation
                     }
                 }
             }
             false // Don't exit loop
         }
         AppCommand::HandleToolResponse {
+            // START OF HandleToolResponse
             id,
             approved,
             always,
         } => {
-            if let Some(responder) = pending_approvals.remove(&id) {
-                let decision = if approved {
-                    ApprovalDecision::Approved
+            if let Some((current_id, current_tool_call, responder)) =
+                current_tool_approval_request.take()
+            {
+                if current_id != id {
+                    error!(target:"handle_app_command", "Mismatched tool ID in HandleToolResponse. Expected '{}', got '{}'. Re-queuing original.", current_id, id);
+                    // This is an unexpected state. Put the original request back at the front of the queue.
+                    queued_tool_approval_requests.push_front((
+                        current_id,
+                        current_tool_call,
+                        responder,
+                    ));
+                    // We should probably not process the incoming mismatched response.
                 } else {
-                    ApprovalDecision::Denied
-                };
-
-                // Add to always approved if requested *before* sending response
-                if approved && always {
-                    // Logic to find tool name and add to app.approved_tools (see below)
-                }
-
-                // Send the decision back to the waiting tool_executor_callback via the oneshot channel
-                if responder.send(decision).is_err() {
-                    // This typically means the AgentExecutor already moved on or was cancelled.
-                    warn!(target: "handle_app_command", "Failed to send approval decision for tool ID '{}'. AgentExecutor may have already stopped waiting.", id);
-                }
-
-                // Add to always approved if requested
-                if approved && always {
-                    // Find the tool name. We need the name to add to the approved_tools set.
-                    // We stored the full tool_call with the RequestToolApproval event handler,
-                    // but we only have the ID here. We MUST get the name somehow.
-                    // Option 1: Store (tool_id, tool_name) -> responder in pending_approvals.
-                    // Option 2: Look up tool_name from conversation using tool_id.
-                    let tool_name = app
-                        .conversation
-                        .lock()
-                        .await
-                        .find_tool_name_by_id(&id)
-                        .unwrap_or_else(|| "unknown_tool".to_string());
-                    if tool_name != "unknown_tool" {
-                        app.approved_tools.insert(tool_name.clone());
-                        debug!(target:
-                            "handle_app_command",
-                            "Added tool '{}' to always-approved list.", tool_name,
-                        );
+                    let decision = if approved {
+                        ApprovalDecision::Approved
                     } else {
-                        warn!(target:"handle_app_command", "Could not find tool name for ID {} to add to always-approved list.", id);
+                        ApprovalDecision::Denied
+                    };
+                    let approved_tool_name = current_tool_call.name.clone();
+
+                    if approved && always {
+                        app.approved_tools.insert(approved_tool_name.clone());
+                        debug!(target: "handle_app_command", "Added tool '{}' to always-approved list for session.", approved_tool_name);
+                    }
+
+                    // Send the decision for the original tool call that was responded to
+                    if responder.send(decision).is_err() {
+                        warn!(target: "handle_app_command", "Failed to send approval decision for tool ID '{}'. AgentExecutor may have already stopped waiting.", id);
                     }
                 }
             } else {
-                error!(target:"handle_app_command", "Received tool response for ID '{}' but no pending approval found.", id);
+                error!(target:"handle_app_command", "Received tool response for ID '{}' but no current approval request was active.", id);
             }
-            false // Don't exit
-        }
+            // After handling the response, try to process the next item in the queue.
+            process_and_send_next_approval_request(
+                app,
+                current_tool_approval_request,
+                queued_tool_approval_requests,
+            )
+            .await;
+            false
+        } // END OF HandleToolResponse
         AppCommand::CancelProcessing => {
             debug!(target:"handle_app_command", "Handling CancelProcessing command.");
-            app.cancel_current_processing().await; // Cancels context + tasks
-            // Also explicitly cancel any ongoing approval process by clearing the pending map
-            // Dropping the senders notifies the AgentExecutor via RecvError
-            if !pending_approvals.is_empty() {
-                info!(target:"handle_app_command", "Cancelling active tool approvals by dropping senders.");
-                pending_approvals.clear();
+            app.cancel_current_processing().await;
+
+            // Cancel the currently active UI approval request, if any.
+            // Dropping the responder will signal cancellation to the AgentExecutor if it's waiting.
+            if let Some((id, _, _responder)) = current_tool_approval_request.take() {
+                info!(target:"handle_app_command", "Cancelled active tool approval request for ID '{}' by dropping responder.", id);
             }
-            // Clear the event receiver as well
+
+            // Clear the queue of pending approvals. Dropping responders signals cancellation.
+            if !queued_tool_approval_requests.is_empty() {
+                info!(target:"handle_app_command", "Clearing {} queued tool approval requests by dropping responders.", queued_tool_approval_requests.len());
+                queued_tool_approval_requests.clear();
+            }
+
             if active_agent_event_rx.is_some() {
                 debug!(target:"handle_app_command", "Clearing active agent event receiver due to cancellation.");
                 *active_agent_event_rx = None;
             }
-            // Emit ThinkingCompleted because cancellation stops everything
             app.emit_event(AppEvent::ThinkingCompleted);
-            false // Don't exit
+            false
         }
         AppCommand::ExecuteCommand(cmd) => {
-            // This command seems redundant now? process_user_input handles /commands
             warn!(target:"handle_app_command", "Received ExecuteCommand, which might be redundant: {}", cmd);
-            // Clear previous receiver if any
             if active_agent_event_rx.is_some() {
                 warn!(target:"handle_app_command", "Clearing previous active agent event receiver due to ExecuteCommand.");
                 *active_agent_event_rx = None;
             }
-            // App::handle_command calls cancel_current_processing internally
             match app.handle_command(&cmd).await {
-                // handle_command now returns Result<Option<String>>
                 Ok(response_option) => {
                     if let Some(content) = response_option {
                         app.emit_event(AppEvent::CommandResponse {
@@ -801,29 +859,28 @@ async fn handle_app_command(
                             id: format!("cmd_resp_{}", uuid::Uuid::new_v4()),
                         });
                     }
-                    // If handle_command started a task (like /dispatch),
-                    // ThinkingStarted was emitted there. ThinkingCompleted is handled
-                    // by handle_task_outcome for DispatchAgentResult.
                 }
                 Err(e) => {
                     error!(target:"handle_app_command", "Error running command '{}': {}", cmd, e);
                     app.emit_event(AppEvent::Error {
                         message: format!("Command failed: {}", e),
                     });
-                    // Ensure thinking stops if command fails to start
                     app.emit_event(AppEvent::ThinkingCompleted);
                 }
             }
-            false // Don't exit
+            false
         }
         AppCommand::Shutdown => {
             info!(target:"handle_app_command", "Received Shutdown command. Shutting down.");
             app.cancel_current_processing().await;
-            if !pending_approvals.is_empty() {
-                pending_approvals.clear(); // Drop senders
+            if current_tool_approval_request.is_some() {
+                current_tool_approval_request.take(); // Drop responder
+            }
+            if !queued_tool_approval_requests.is_empty() {
+                queued_tool_approval_requests.clear(); // Drop responders
             }
             *active_agent_event_rx = None;
-            true // Exit the loop
+            true
         }
         AppCommand::RequestToolApprovalInternal {
             tool_call,
@@ -831,25 +888,26 @@ async fn handle_app_command(
         } => {
             let tool_id = tool_call.id.clone();
             let tool_name = tool_call.name.clone();
-            let parameters = tool_call.parameters.clone();
 
             info!(target: "handle_app_command", "Received internal request for tool approval: '{}' (ID: {})", tool_name, tool_id);
 
-            // Store the responder, keyed by tool call ID
-            if pending_approvals.contains_key(&tool_id) {
-                warn!(target: "handle_app_command", "Received duplicate internal approval request for tool ID '{}'. Ignoring.", tool_id);
-                // Drop the new responder implicitly
-            } else {
-                pending_approvals.insert(tool_id.clone(), responder);
-                // Emit the external event to the UI to request approval
-                debug!(target:"handle_app_command", "Emitting AppEvent::RequestToolApproval to UI for '{}' (ID: {})", tool_name, tool_id);
-                app.emit_event(AppEvent::RequestToolApproval {
-                    name: tool_name,
-                    parameters, // Use cloned parameters
-                    id: tool_id,
-                });
-            }
-            false // Don't exit the loop
+            // Add to the queue. The process_and_send_next_approval_request will handle duplicates if necessary,
+            // though ideally AgentExecutor shouldn't send duplicates for the same ID.
+            queued_tool_approval_requests.push_back((
+                tool_id.clone(),
+                tool_call.clone(),
+                responder,
+            ));
+            debug!(target:"handle_app_command", "Added tool approval request for '{}' (ID: {}) to queue. Queue size: {}", tool_name, tool_id, queued_tool_approval_requests.len());
+
+            // Attempt to process the queue immediately.
+            process_and_send_next_approval_request(
+                app,
+                current_tool_approval_request,
+                queued_tool_approval_requests,
+            )
+            .await;
+            false
         }
     }
 }
@@ -1010,11 +1068,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     // Add the response as a single assistant message
                     app.add_message(Message::new_text(
                         Role::Assistant,
-                        format!(
-                            "Dispatch Agent Result:
-{}",
-                            response_text
-                        ),
+                        format!("Dispatch Agent Result:\n{}", response_text),
                     ))
                     .await;
                 }

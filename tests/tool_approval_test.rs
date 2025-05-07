@@ -1,20 +1,20 @@
 use anyhow::Result;
 use coder::api::Model;
-use coder::app::{App, AppConfig};
+use coder::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision};
 use coder::config::LlmConfig;
 use coder::tools::edit::EditTool;
 use coder::tools::traits::Tool;
 use coder::tools::view::ViewTool;
 use dotenv::dotenv;
-use tokio::sync::mpsc;
+use serde_json::json;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Duration, timeout};
+use tracing::warn; // Added warn import
 
 #[tokio::test]
 async fn test_requires_approval_tool_detection() -> Result<()> {
-    // Create read-only and write tools
     let view_tool = ViewTool;
     let edit_tool = EditTool;
-
-    // Test is_read_only implementation
     assert!(
         !view_tool.requires_approval(),
         "ViewTool should not require approval"
@@ -23,68 +23,174 @@ async fn test_requires_approval_tool_detection() -> Result<()> {
         edit_tool.requires_approval(),
         "EditTool should require approval"
     );
-
     Ok(())
 }
 
 #[tokio::test]
 async fn test_tool_executor_requires_approval_check() -> Result<()> {
     dotenv().ok();
-
     let llm_config = LlmConfig::from_env()?;
     let app_config = AppConfig { llm_config };
     let (event_tx, _event_rx) = mpsc::channel(100);
+    // Changed Model::Default to a specific model
     let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219)?;
 
-    // Check read-only status through the tool executor
-    assert!(
-        !app.tool_executor.requires_approval("read_file").unwrap(),
-        "read_file should not require approval by default"
-    );
-    assert!(
-        !app.tool_executor.requires_approval("grep").unwrap(),
-        "grep should not require approval by default"
-    );
-    assert!(
-        !app.tool_executor.requires_approval("ls").unwrap(),
-        "ls should not require approval by default"
-    );
-    assert!(
-        !app.tool_executor.requires_approval("glob").unwrap(),
-        "glob should not require approval by default"
-    );
-    assert!(
-        app.tool_executor.requires_approval("web_fetch").unwrap(),
-        "web_fetch should require approval by default"
-    );
-
-    assert!(
-        app.tool_executor.requires_approval("edit_file").unwrap(),
-        "edit_file should require approval by default"
-    );
-    assert!(
-        app.tool_executor.requires_approval("write_file").unwrap(),
-        "replace_file should require approval by default"
-    );
-    assert!(
-        app.tool_executor.requires_approval("bash").unwrap(),
-        "bash should require approval by default"
-    );
-
-    // Test non-existent tool
+    assert!(!app.tool_executor.requires_approval("read_file").unwrap());
+    assert!(!app.tool_executor.requires_approval("grep").unwrap());
+    assert!(!app.tool_executor.requires_approval("ls").unwrap());
+    assert!(!app.tool_executor.requires_approval("glob").unwrap());
+    assert!(app.tool_executor.requires_approval("web_fetch").unwrap());
+    assert!(app.tool_executor.requires_approval("edit_file").unwrap());
+    assert!(app.tool_executor.requires_approval("write_file").unwrap());
+    assert!(app.tool_executor.requires_approval("bash").unwrap());
     assert!(
         app.tool_executor
             .requires_approval("non_existent_tool")
-            .is_err(),
-        "Non-existent tool should throw an error"
+            .is_err()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
+    dotenv().ok();
+    let llm_config = LlmConfig::from_env()?;
+    let app_config_for_actor = AppConfig {
+        llm_config: llm_config.clone(),
+    };
+
+    let (event_tx, mut event_rx) = mpsc::channel(100);
+    let (command_tx_to_actor, command_rx_for_actor) = mpsc::channel(100);
+
+    // Changed Model::Default to a specific model
+    let app_for_actor = App::new(
+        app_config_for_actor,
+        event_tx.clone(),
+        Model::Claude3_7Sonnet20250219,
+    )?;
+    let actor_handle = tokio::spawn(coder::app::app_actor_loop(
+        app_for_actor,
+        command_rx_for_actor,
+    ));
+
+    let tool_name_to_approve = "edit_file".to_string();
+
+    // Tool Call 1
+    let tool_call_id_1 = "test_tool_call_id_1".to_string();
+    let api_tool_call_1 = coder::api::tools::ToolCall {
+        id: tool_call_id_1.clone(),
+        name: tool_name_to_approve.clone(),
+        parameters: json!({"path": "/test/file1.txt", "content": "content1"}),
+    };
+    let (responder_tx_1, responder_rx_1) = oneshot::channel::<ApprovalDecision>();
+    command_tx_to_actor
+        .send(AppCommand::RequestToolApprovalInternal {
+            tool_call: api_tool_call_1.clone(),
+            responder: responder_tx_1,
+        })
+        .await?;
+
+    let event1_option = timeout(Duration::from_secs(2), event_rx.recv()).await?;
+    let event1 = event1_option.expect("Event channel closed or no event for call 1");
+    match event1 {
+        AppEvent::RequestToolApproval { name, id, .. } => {
+            assert_eq!(name, tool_name_to_approve);
+            assert_eq!(id, tool_call_id_1);
+        }
+        _ => panic!(
+            "Unexpected event received instead of RequestToolApproval for call 1: {:?}",
+            event1
+        ),
+    }
+
+    // Tool Call 2 is sent to the app and queued, but no UI event is expected for it yet,
+    // as the first one is still active at the UI.
+    let tool_call_id_2 = "test_tool_call_id_2".to_string();
+    let api_tool_call_2 = coder::api::tools::ToolCall {
+        id: tool_call_id_2.clone(),
+        name: tool_name_to_approve.clone(), // Same tool name
+        parameters: json!({"path": "/test/file2.txt", "content": "content2"}),
+    };
+    let (responder_tx_2, responder_rx_2) = oneshot::channel::<ApprovalDecision>();
+    command_tx_to_actor
+        .send(AppCommand::RequestToolApprovalInternal {
+            tool_call: api_tool_call_2.clone(),
+            responder: responder_tx_2,
+        })
+        .await?;
+
+    // No event is expected for tool_call_id_2 at this point.
+    // It will be auto-approved when tool_call_id_1 is 'always' approved.
+    // Let's check that no immediate event comes for tool_call_id_2 to be sure.
+    match timeout(Duration::from_millis(200), event_rx.recv()).await {
+        Ok(Some(unexpected_event)) => {
+            if let AppEvent::RequestToolApproval {
+                id: unexpected_id, ..
+            } = &unexpected_event
+            {
+                if unexpected_id == &tool_call_id_2 {
+                    panic!(
+                        "Received RequestToolApproval for tool_call_id_2 prematurely: {:?}",
+                        unexpected_event
+                    );
+                }
+            }
+            // Log if it's some other event, though still unexpected here
+            warn!(
+                "Received an unexpected event while tool_call_id_1 is active: {:?}",
+                unexpected_event
+            );
+        }
+        Ok(None) => { /* Channel closed, unlikely but possible */ }
+        Err(_) => { /* Timeout is expected, good. No event for tool_call_id_2 yet. */ }
+    }
+
+    // User "Always Approves" the first tool call (tool_call_id_1)
+    command_tx_to_actor
+        .send(AppCommand::HandleToolResponse {
+            id: tool_call_id_1.clone(),
+            approved: true,
+            always: true,
+        })
+        .await?;
+
+    match timeout(Duration::from_secs(2), responder_rx_1).await? {
+        Ok(ApprovalDecision::Approved) => { /* Good */ }
+        Ok(ApprovalDecision::Denied) => panic!("Tool call 1 was unexpectedly denied."),
+        Err(_) => panic!("Timeout waiting for decision on tool call 1 responder."),
+    }
+
+    match timeout(Duration::from_secs(2), responder_rx_2).await? {
+        Ok(ApprovalDecision::Approved) => { /* Good */ }
+        Ok(ApprovalDecision::Denied) => {
+            panic!("Tool call 2 was unexpectedly auto-denied instead of auto-approved.")
+        }
+        Err(_) => panic!(
+            "Timeout waiting for decision on tool call 2 responder (should have been auto-approved)."
+        ),
+    }
+
+    // After 'always' approval of tool_call_id_1, and subsequent auto-approval of tool_call_id_2,
+    // there should be no more RequestToolApproval events.
+    match timeout(Duration::from_millis(200), event_rx.recv()).await {
+        Ok(Some(event)) => panic!(
+            "Unexpected third AppEvent::RequestToolApproval received after 'always' approval and cascade: {:?}",
+            event
+        ),
+        Ok(None) => { /* Channel closed, can happen if actor shuts down. */ }
+        Err(_) => { /* Timeout is expected, good. */ }
+    }
+
+    command_tx_to_actor.send(AppCommand::Shutdown).await?;
+    match timeout(Duration::from_secs(1), actor_handle).await {
+        Ok(Ok(_)) => { /* Actor shut down cleanly */ }
+        Ok(Err(e)) => return Err(anyhow::anyhow!("Actor task panicked: {:?}", e)),
+        Err(_) => warn!("Timeout waiting for actor to shut down."),
+    }
 
     Ok(())
 }
 
-// Note: The following test would require more complex setup with mocking
-// to test the actual initiate_tool_calls flow and the always-approve behavior
-// This is left as a comment for future implementation
 /*
 #[tokio::test]
 async fn test_tool_approval_flow() -> Result<()> {

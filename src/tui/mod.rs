@@ -74,8 +74,7 @@ pub struct Tui {
     last_spinner_update: Instant,
     spinner_state: usize,
     command_tx: mpsc::Sender<AppCommand>,
-    pending_tool_approvals: VecDeque<PendingApprovalInfo>, // New queue
-    current_tool_approval: Option<PendingApprovalInfo>,    // New current approval state
+    current_tool_approval: Option<PendingApprovalInfo>,
     scroll_offset: usize,
     max_scroll: usize,
     user_scrolled_away: bool,
@@ -162,8 +161,7 @@ impl Tui {
             last_spinner_update: Instant::now(),
             spinner_state: 0,
             command_tx,
-            pending_tool_approvals: VecDeque::new(), // Initialize queue
-            current_tool_approval: None,             // Initialize current
+            current_tool_approval: None,
             scroll_offset: 0,
             max_scroll: 0,
             user_scrolled_away: false,
@@ -210,22 +208,20 @@ impl Tui {
             let spinner_char_owned: String = self.get_spinner_char();
             let current_model_owned: String = self.current_model.to_string();
             let current_tool_approval_info = self.current_tool_approval.clone();
-            let pending_tool_approvals_count = self.pending_tool_approvals.len();
 
             let input_block = Tui::create_input_block_static(
                 input_mode,
                 is_processing,
                 progress_message_owned,
                 spinner_char_owned,
-                current_tool_approval_info.as_ref(), // Pass current approval info
-                pending_tool_approvals_count,        // Pass queue count
+                current_tool_approval_info.as_ref(),
             );
             self.textarea.set_block(input_block);
 
             self.terminal.draw(|f| {
                 let textarea_ref = &self.textarea;
                 let display_items_ref = &self.display_items;
-                let current_approval_ref = self.current_tool_approval.as_ref(); // Pass reference
+                let current_approval_ref = self.current_tool_approval.as_ref();
 
                 if let Err(e) = Tui::render_ui_static(
                     f,
@@ -235,7 +231,7 @@ impl Tui {
                     self.scroll_offset,
                     self.max_scroll,
                     &current_model_owned,
-                    current_approval_ref, // Pass current approval info for rendering preview
+                    current_approval_ref,
                 ) {
                     error!(target:"tui.run.draw", "UI rendering failed: {}", e);
                 }
@@ -348,13 +344,6 @@ impl Tui {
                 debug!(target:"tui.handle_app_event", "Setting is_processing = true");
                 self.is_processing = true;
                 self.spinner_state = 0;
-                self.progress_message = None;
-            }
-            AppEvent::ThinkingCompleted
-            | AppEvent::Error { .. }
-            | AppEvent::OperationCancelled { .. } => {
-                debug!(target:"tui.handle_app_event", "Setting is_processing = false");
-                self.is_processing = false;
                 self.progress_message = None;
             }
             AppEvent::MessagePart { id, delta } => {
@@ -553,9 +542,14 @@ impl Tui {
                 if let Some(current_approval) = &self.current_tool_approval {
                     if current_approval.id == id {
                         // Compare with original tool call ID
-                        debug!(target: "tui.handle_app_event", "Tool {} (which was pending approval) completed. Activating next.", id);
+                        debug!(target: "tui.handle_app_event", "Tool {} (which was pending approval) completed.", id);
                         self.current_tool_approval = None; // Clear current explicitly
-                    // self.activate_next_approval(); // Called by dispatch_input_action
+                    // If a tool completes that was the one being approved,
+                    // we might want to revert to normal input mode if nothing else is processing.
+                    // However, App will send a new RequestToolApproval if there's another,
+                    // or ThinkingCompleted if the sequence is done.
+                    // For now, just clearing current_tool_approval is safest.
+                    // The input mode will be managed by RequestToolApproval or user's response.
                     } else {
                         // A different tool completed, progress message was likely set by ToolCallStarted
                         self.progress_message = None;
@@ -644,13 +638,9 @@ impl Tui {
                     name: name.clone(),
                     parameters,
                 };
-                self.pending_tool_approvals.push_back(approval_info);
-                debug!(target: "tui.handle_app_event", "Queued tool approval request for {} ({}). Pending approvals: {}", name, id, self.pending_tool_approvals.len());
-
-                // If no approval is currently active, activate this one
-                if self.current_tool_approval.is_none() {
-                    self.activate_next_approval();
-                }
+                self.current_tool_approval = Some(approval_info);
+                self.input_mode = InputMode::AwaitingApproval;
+                debug!(target: "tui.handle_app_event", "Set current tool approval for {} ({}). Mode: AwaitingApproval.", name, id);
             }
             AppEvent::CommandResponse { content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
@@ -672,19 +662,10 @@ impl Tui {
             AppEvent::OperationCancelled { info } => {
                 self.is_processing = false;
                 self.progress_message = None;
-                // Clear the queue and the current approval on cancellation
-                self.pending_tool_approvals.clear();
                 self.current_tool_approval = None;
                 self.input_mode = InputMode::Normal;
                 self.spinner_state = 0;
-                // Use the Display impl of CancellationInfo directly
                 let cancellation_text = format!("Operation cancelled: {}", info);
-                // Add raw message (optional)
-                // self.raw_messages.push(crate::app::Message::new_text(
-                //     Role::System, // Keep for raw log
-                //     cancellation_text.clone(),
-                // ));
-                // Create SystemInfo display item
                 let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
                 self.display_items.push(DisplayItem::SystemInfo {
                     id: display_id,
@@ -694,6 +675,11 @@ impl Tui {
                     ),
                 });
                 display_items_updated = true;
+            }
+            AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
+                debug!(target:"tui.handle_app_event", "Setting is_processing = false (ThinkingCompleted/Error)");
+                self.is_processing = false;
+                self.progress_message = None;
             }
         }
 
@@ -761,8 +747,7 @@ impl Tui {
         is_processing: bool,
         progress_message: Option<String>,
         spinner_char: String,
-        current_tool_approval_info: Option<&PendingApprovalInfo>, // New arg
-        pending_tool_approvals_count: usize,                      // New arg
+        current_tool_approval_info: Option<&PendingApprovalInfo>,
     ) -> Block<'a> {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -785,14 +770,9 @@ impl Tui {
             InputMode::AwaitingApproval => {
                 // Update title based on current approval info
                 if let Some(info) = current_tool_approval_info {
-                    let queue_count_str = if pending_tool_approvals_count > 0 {
-                        format!(" [{} more queued]", pending_tool_approvals_count)
-                    } else {
-                        String::new()
-                    };
                     format!(
-                        "Approve Tool: '{}'? (y/n, Shift+Tab=always, Esc=deny){}",
-                        info.name, queue_count_str
+                        "Approve Tool: '{}'? (y/n, Shift+Tab=always, Esc=deny)",
+                        info.name
                     )
                     .to_string()
                 } else {
@@ -833,7 +813,7 @@ impl Tui {
         scroll_offset: usize,
         max_scroll: usize,
         current_model: &str,
-        current_approval_info: Option<&PendingApprovalInfo>, // New arg for preview
+        current_approval_info: Option<&PendingApprovalInfo>,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -1004,10 +984,10 @@ impl Tui {
         // --- Global keys handled first ---
 
         // Handle ESC specifically for denying the current tool approval
-        if key.code == KeyCode::Esc && self.current_tool_approval.is_some() {
+        if key.code == KeyCode::Esc && self.input_mode == InputMode::AwaitingApproval {
             if let Some(approval_info) = self.current_tool_approval.take() {
                 action = Some(InputAction::DenyTool(approval_info.id));
-                // self.activate_next_approval(); // Activate next after taking action
+                self.input_mode = InputMode::Normal; // Revert to normal mode
                 return Ok(action);
             }
         }
@@ -1064,43 +1044,6 @@ impl Tui {
                 {
                     self.perform_scroll(ScrollDirection::Down, ScrollAmount::HalfPage)?;
                     return Ok(None); // Just scroll
-                }
-
-                // Toggle Tool Result Truncation (Ctrl+R)
-                KeyCode::Char('r') | KeyCode::Char('R')
-                    if key.modifiers == KeyModifiers::CONTROL =>
-                {
-                    let scroll_offset = self.get_scroll_offset();
-                    // Find the message corresponding to the current view port top
-                    let mut current_line_index = 0;
-                    let mut target_display_item_id = None;
-
-                    for item in &self.display_items {
-                        let item_line_count = match item {
-                            DisplayItem::Message { content, .. } => content.len(),
-                            DisplayItem::ToolResult { content, .. } => content.len(),
-                            DisplayItem::CommandResponse { content, .. } => content.len(),
-                            DisplayItem::SystemInfo { content, .. } => content.len(),
-                        };
-
-                        if scroll_offset >= current_line_index
-                            && scroll_offset < current_line_index + item_line_count
-                        {
-                            // We found the item at the top of the viewport
-                            if let DisplayItem::ToolResult { id, .. } = item {
-                                target_display_item_id = Some(id.clone());
-                            }
-                            break;
-                        }
-                        current_line_index += item_line_count;
-                    }
-
-                    if let Some(target_id) = target_display_item_id {
-                        action = Some(InputAction::ToggleMessageTruncation(target_id));
-                    } else {
-                        debug!(target: "tui.handle_input", "Ctrl+R: No tool result found at scroll offset {}", scroll_offset);
-                    }
-                    return Ok(action);
                 }
 
                 // Toggle Tool Result Truncation (Ctrl+R)
@@ -1231,13 +1174,19 @@ impl Tui {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             action = Some(InputAction::ApproveToolNormal(approval_info.id));
+                            self.current_tool_approval = None; // Clear approval
+                            self.input_mode = InputMode::Normal; // Revert to normal
                         }
                         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                             action = Some(InputAction::DenyTool(approval_info.id));
+                            self.current_tool_approval = None; // Clear approval
+                            self.input_mode = InputMode::Normal; // Revert to normal
                         }
                         KeyCode::BackTab => {
                             // Shift+Tab for Approve Always
                             action = Some(InputAction::ApproveToolAlways(approval_info.id));
+                            self.current_tool_approval = None; // Clear approval
+                            self.input_mode = InputMode::Normal; // Revert to normal
                         }
                         // Cancel Processing (Ctrl+C)
                         KeyCode::Char('c') | KeyCode::Char('C')
@@ -1405,7 +1354,7 @@ impl Tui {
 
     // New function to activate the next pending approval
     fn activate_next_approval(&mut self) {
-        if let Some(next_approval) = self.pending_tool_approvals.pop_front() {
+        if let Some(next_approval) = self.current_tool_approval.take() {
             debug!(target: "tui.activate_next_approval", "Activating next tool approval: {} ({})", next_approval.name, next_approval.id);
             self.current_tool_approval = Some(next_approval);
             self.input_mode = InputMode::AwaitingApproval;
