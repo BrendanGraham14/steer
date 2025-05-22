@@ -18,6 +18,7 @@ async fn test_api_basic() {
         Model::Claude3_5Haiku20241022,
         Model::Gpt4_1Nano20250414,
         Model::Gemini2_5FlashPreview0417,
+        Model::ClaudeSonnet4_20250514,
     ];
 
     let mut tasks = Vec::new();

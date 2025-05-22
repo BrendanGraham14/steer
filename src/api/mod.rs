@@ -47,6 +47,10 @@ pub enum Model {
     Claude3_7Sonnet20250219,
     #[strum(serialize = "claude-3-5-haiku-20241022")]
     Claude3_5Haiku20241022,
+    #[strum(serialize = "claude-sonnet-4-20250514")]
+    ClaudeSonnet4_20250514,
+    #[strum(serialize = "claude-opus-4-20250514")]
+    ClaudeOpus4_20250514,
     #[strum(serialize = "gpt-4.1-2025-04-14")]
     Gpt4_1_20250414,
     #[strum(serialize = "gpt-4.1-mini-2025-04-14")]
@@ -67,7 +71,9 @@ impl Model {
             Model::Claude3_7Sonnet20250219
             | Model::Claude3_5Sonnet20240620
             | Model::Claude3_5Sonnet20241022
-            | Model::Claude3_5Haiku20241022 => ProviderKind::Anthropic,
+            | Model::Claude3_5Haiku20241022
+            | Model::ClaudeSonnet4_20250514
+            | Model::ClaudeOpus4_20250514 => ProviderKind::Anthropic,
 
             Model::Gpt4_1_20250414
             | Model::Gpt4_1Mini20250414
