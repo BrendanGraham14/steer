@@ -55,7 +55,6 @@ impl ToolExecutor {
             })
             .collect();
 
-        debug!(target: "app.tool_executor.to_api_tools", "Converting registry tools to API tools: {:?}", api_tools);
         api_tools
     }
 

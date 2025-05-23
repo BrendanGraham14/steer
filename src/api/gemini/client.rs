@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::{Client as HttpClient, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,6 @@ use crate::api::error::ApiError;
 use crate::api::messages::{ContentBlock, Message, MessageContent, MessageRole};
 use crate::api::provider::{CompletionResponse, Provider};
 use crate::api::tools::Tool;
-use rand;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -712,14 +711,6 @@ impl Provider for GeminiClient {
                 ..Default::default()
             }),
         };
-        match serde_json::to_string_pretty(&request) {
-            Ok(json_payload) => {
-                debug!(target: "Full Gemini API Request Payload (JSON)", "{}", json_payload);
-            }
-            Err(e) => {
-                error!(target: "Gemini API Request Serialization Error", "Failed to serialize request to JSON: {}", e);
-            }
-        }
 
         let response = tokio::select! {
             biased;

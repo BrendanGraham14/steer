@@ -4,7 +4,7 @@ use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
@@ -347,17 +347,6 @@ impl Provider for AnthropicClient {
             top_k: None,
             stream: None,
         };
-
-        debug!(target: "API Request", "{:?}", request);
-
-        match serde_json::to_string_pretty(&request) {
-            Ok(json_payload) => {
-                debug!(target: "Full API Request Payload (JSON)", "{}", json_payload);
-            }
-            Err(e) => {
-                error!(target: "API Request Serialization Error", "Failed to serialize request to JSON: {}", e);
-            }
-        }
 
         let request_builder = self.http_client.post(API_URL).json(&request);
 
