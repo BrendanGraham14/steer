@@ -27,7 +27,7 @@ struct Cli {
     directory: Option<std::path::PathBuf>,
 
     /// Model to use
-    #[arg(short, long, value_enum, default_value_t = Model::Gemini2_5ProPreview0506)]
+    #[arg(short, long, value_enum, default_value_t = Model::ClaudeSonnet4_20250514)]
     model: Model,
 
     /// Subcommands
