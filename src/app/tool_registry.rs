@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::api::tools::Tool as ApiTool;
 use crate::tools::traits::Tool as ToolTrait;
+use crate::tools::{LocalBackend, BackendRegistry};
 
 /// Builder for constructing a tool registry
 pub struct ToolExecutorBuilder {
@@ -34,8 +35,16 @@ impl ToolExecutorBuilder {
     }
 
     pub fn build(self) -> super::tool_executor::ToolExecutor {
+        // Create LocalBackend with the same registry
+        let local_backend = Arc::new(LocalBackend::new(Arc::new(self.registry.clone())));
+        
+        // Create backend registry and register the local backend
+        let mut backend_registry = BackendRegistry::new();
+        backend_registry.register("local".to_string(), local_backend);
+        
         super::tool_executor::ToolExecutor {
             registry: Arc::new(self.registry),
+            backend_registry: Some(Arc::new(backend_registry)),
         }
     }
 
