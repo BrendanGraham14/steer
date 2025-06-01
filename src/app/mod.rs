@@ -18,7 +18,7 @@ pub mod conversation;
 mod environment;
 
 mod tool_executor;
-mod tool_registry;
+pub mod tool_registry;
 
 use crate::app::context::TaskOutcome;
 
