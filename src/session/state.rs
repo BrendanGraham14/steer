@@ -425,7 +425,13 @@ mod tests {
         let session = Session::new("test-session".to_string(), config.clone());
 
         assert_eq!(session.id, "test-session");
-        assert_eq!(session.config.tool_policy.should_ask_for_approval("any_tool"), true);
+        assert_eq!(
+            session
+                .config
+                .tool_policy
+                .should_ask_for_approval("any_tool"),
+            true
+        );
         assert_eq!(session.state.message_count(), 0);
     }
 
