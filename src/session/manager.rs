@@ -843,6 +843,24 @@ async fn update_session_state_for_event(
         } => {
             let update = ToolCallUpdate::set_result(result.clone());
             store.update_tool_call(tool_call_id, update).await?;
+
+            // Also add a Tool message with the result
+            let tool_message = ApiMessage {
+                id: Some(format!("tool_result_{}", tool_call_id)),
+                role: crate::api::messages::MessageRole::Tool,
+                content: crate::api::messages::MessageContent::StructuredContent {
+                    content: crate::api::messages::StructuredContent(vec![
+                        crate::api::messages::ContentBlock::ToolResult {
+                            tool_use_id: tool_call_id.clone(),
+                            content: vec![crate::api::messages::ContentBlock::Text {
+                                text: result.output.clone(),
+                            }],
+                            is_error: if result.success { None } else { Some(true) },
+                        },
+                    ]),
+                },
+            };
+            store.append_message(session_id, &tool_message).await?;
         }
         StreamEvent::ToolCallFailed {
             tool_call_id,
@@ -851,6 +869,24 @@ async fn update_session_state_for_event(
         } => {
             let update = ToolCallUpdate::set_error(error.clone());
             store.update_tool_call(tool_call_id, update).await?;
+
+            // Also add a Tool message with the error
+            let tool_message = ApiMessage {
+                id: Some(format!("tool_result_{}", tool_call_id)),
+                role: crate::api::messages::MessageRole::Tool,
+                content: crate::api::messages::MessageContent::StructuredContent {
+                    content: crate::api::messages::StructuredContent(vec![
+                        crate::api::messages::ContentBlock::ToolResult {
+                            tool_use_id: tool_call_id.clone(),
+                            content: vec![crate::api::messages::ContentBlock::Text {
+                                text: format!("Error: {}", error),
+                            }],
+                            is_error: Some(true),
+                        },
+                    ]),
+                },
+            };
+            store.append_message(session_id, &tool_message).await?;
         }
         // Other events don't directly modify stored state
         _ => {}
