@@ -1,4 +1,5 @@
 use crate::api::tools::ToolCall as ApiToolCall;
+use crate::app::Message;
 use crate::app::agent_executor::ApprovalDecision;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -25,4 +26,11 @@ pub enum AppCommand {
         tool_call: ApiToolCall,
         responder: oneshot::Sender<ApprovalDecision>,
     },
+    /// Restore a message to the conversation (used when resuming sessions)
+    RestoreMessage(Message),
+    /// Pre-approve tools for the session (used when resuming sessions)
+    PreApproveTools(Vec<String>),
+    /// Request to send the current conversation state
+    /// Used by TUI to populate display after session restoration
+    GetCurrentConversation,
 }
