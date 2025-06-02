@@ -40,6 +40,7 @@ pub enum AppEvent {
         role: Role,
         content_blocks: Vec<MessageContentBlock>,
         id: String,
+        model: Model,
     },
     MessageUpdated {
         id: String,
@@ -53,16 +54,19 @@ pub enum AppEvent {
     ToolCallStarted {
         name: String,
         id: String,
+        model: Model,
     },
     ToolCallCompleted {
         name: String,
         result: String,
         id: String,
+        model: Model,
     },
     ToolCallFailed {
         name: String,
         error: String,
         id: String,
+        model: Model,
     },
     ThinkingStarted,
     ThinkingCompleted,
@@ -86,6 +90,7 @@ pub enum AppEvent {
     },
 }
 
+#[derive(Clone)]
 pub struct AppConfig {
     pub llm_config: LlmConfig,
 }
@@ -192,6 +197,7 @@ impl App {
                 role: message.role,
                 content_blocks: message.content_blocks.clone(),
                 id: msg_id, // Use the message's guaranteed ID
+                model: self.current_model,
             });
         }
     }
@@ -915,6 +921,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
             app.emit_event(AppEvent::ToolCallStarted {
                 id: tool_call_id,
                 name,
+                model: app.current_model,
             });
         }
         AgentEvent::ToolResultReceived(tool_result) => {
@@ -937,12 +944,14 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                     id: tool_result.tool_call_id,
                     name: tool_name,
                     error: tool_result.output,
+                    model: app.current_model,
                 });
             } else {
                 app.emit_event(AppEvent::ToolCallCompleted {
                     id: tool_result.tool_call_id,
                     name: tool_name,
                     result: tool_result.output,
+                    model: app.current_model,
                 });
             }
         }

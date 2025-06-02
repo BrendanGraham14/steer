@@ -369,7 +369,7 @@ impl Tui {
                 debug!(target:"tui.handle_app_event", "Model changed to: {}", model);
                 self.current_model = model;
             }
-            AppEvent::ToolCallStarted { name, id } => {
+            AppEvent::ToolCallStarted { name, id, .. } => {
                 self.spinner_state = 0;
                 self.progress_message = Some(format!("Executing tool: {}", name));
                 debug!(target:"tui.handle_app_event", "Tool call started: {} ({:?})", name, id);
@@ -418,6 +418,7 @@ impl Tui {
                 role,
                 content_blocks,
                 id,
+                ..
             } => {
                 // MessageAdded now carries the blocks directly
                 // Add the raw message first
@@ -534,6 +535,7 @@ impl Tui {
                 name: _,
                 result,
                 id,
+                ..
             } => {
                 // If the completed tool matches the *currently* displayed approval,
                 // clear the current approval state and activate the next one.
@@ -605,7 +607,7 @@ impl Tui {
                 self.display_items.push(display_item);
                 display_items_updated = true;
             }
-            AppEvent::ToolCallFailed { name, error, id } => {
+            AppEvent::ToolCallFailed { name, error, id, .. } => {
                 self.progress_message = None; // Clear progress on failure
 
                 debug!(target: "tui.handle_app_event", "Adding Tool Failure System Info for ID: {}, Error: {}", id, error);
