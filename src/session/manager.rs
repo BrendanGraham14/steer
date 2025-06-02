@@ -1031,4 +1031,157 @@ mod tests {
             _ => panic!("Expected CapacityExceeded error"),
         }
     }
+
+    #[tokio::test]
+    async fn test_tool_result_persistence_on_resume() {
+        let (manager, _temp) = create_test_manager().await;
+        let app_config = create_test_app_config();
+
+        // Create session
+        let session_config = SessionConfig {
+            tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
+            tool_config: crate::session::SessionToolConfig::default(),
+            metadata: std::collections::HashMap::new(),
+        };
+        let (session_id, _command_tx) = manager
+            .create_session(session_config, app_config.clone())
+            .await
+            .unwrap();
+
+        // Simulate adding messages including tool calls and results
+        // First, add a user message
+        let user_message = ApiMessage {
+            id: Some("user_1".to_string()),
+            role: crate::api::messages::MessageRole::User,
+            content: crate::api::messages::MessageContent::Text {
+                content: "Read the file test.txt".to_string(),
+            },
+        };
+        manager
+            .store
+            .append_message(&session_id, &user_message)
+            .await
+            .unwrap();
+
+        // Add an assistant message with a tool call
+        let assistant_message = ApiMessage {
+            id: Some("assistant_1".to_string()),
+            role: crate::api::messages::MessageRole::Assistant,
+            content: crate::api::messages::MessageContent::StructuredContent {
+                content: crate::api::messages::StructuredContent(vec![
+                    crate::api::messages::ContentBlock::Text {
+                        text: "I'll read that file for you.".to_string(),
+                    },
+                    crate::api::messages::ContentBlock::ToolUse {
+                        id: "tool_call_1".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({"path": "test.txt"}),
+                    },
+                ]),
+            },
+        };
+        manager
+            .store
+            .append_message(&session_id, &assistant_message)
+            .await
+            .unwrap();
+
+        // Simulate tool call events
+        let tool_call_started = StreamEvent::ToolCallStarted {
+            tool_call: ApiToolCall {
+                id: "tool_call_1".to_string(),
+                name: "read_file".to_string(),
+                parameters: serde_json::json!({"path": "test.txt"}),
+            },
+            metadata: std::collections::HashMap::new(),
+            model: Model::Claude3_5Sonnet20241022,
+        };
+
+        let tool_call_completed = StreamEvent::ToolCallCompleted {
+            tool_call_id: "tool_call_1".to_string(),
+            result: ToolResult::success("File contents: Hello, world!".to_string(), 100),
+            metadata: std::collections::HashMap::new(),
+            model: Model::Claude3_5Sonnet20241022,
+        };
+
+        // Process the events through update_session_state_for_event
+        update_session_state_for_event(&manager.store, &session_id, &tool_call_started)
+            .await
+            .unwrap();
+        update_session_state_for_event(&manager.store, &session_id, &tool_call_completed)
+            .await
+            .unwrap();
+
+        // Add a follow-up assistant message
+        let followup_message = ApiMessage {
+            id: Some("assistant_2".to_string()),
+            role: crate::api::messages::MessageRole::Assistant,
+            content: crate::api::messages::MessageContent::Text {
+                content: "The file contains: Hello, world!".to_string(),
+            },
+        };
+        manager
+            .store
+            .append_message(&session_id, &followup_message)
+            .await
+            .unwrap();
+
+        // Suspend the session
+        manager.suspend_session(&session_id).await.unwrap();
+
+        // Load the session from storage and verify tool result message exists
+        let loaded_session = manager
+            .store
+            .get_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Should have 4 messages: user, assistant with tool call, tool result, followup
+        assert_eq!(loaded_session.state.messages.len(), 4);
+
+        // Verify the tool result message exists and has correct content
+        let tool_result_msg = &loaded_session.state.messages[2];
+        assert_eq!(
+            tool_result_msg.role,
+            crate::api::messages::MessageRole::Tool
+        );
+
+        // Verify the content structure
+        match &tool_result_msg.content {
+            crate::api::messages::MessageContent::StructuredContent { content } => {
+                assert_eq!(content.0.len(), 1);
+                match &content.0[0] {
+                    crate::api::messages::ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } => {
+                        assert_eq!(tool_use_id, "tool_call_1");
+                        assert_eq!(is_error, &None);
+                        assert_eq!(content.len(), 1);
+                        match &content[0] {
+                            crate::api::messages::ContentBlock::Text { text } => {
+                                assert_eq!(text, "File contents: Hello, world!");
+                            }
+                            _ => panic!("Expected Text block in tool result"),
+                        }
+                    }
+                    _ => panic!("Expected ToolResult block"),
+                }
+            }
+            _ => panic!("Expected StructuredContent for tool result message"),
+        }
+
+        // Now test resuming the session - it should work without API errors
+        let (resumed, _command_tx) = manager
+            .resume_session(&session_id, app_config)
+            .await
+            .unwrap();
+        assert!(resumed);
+
+        // The session should be properly restored with all messages including tool results
+        // If the bug were still present, trying to send a new message would fail with the
+        // "tool_use ids were found without tool_result blocks" error from the API
+    }
 }
