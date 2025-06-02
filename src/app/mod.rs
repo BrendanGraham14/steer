@@ -88,6 +88,13 @@ pub enum AppEvent {
     Error {
         message: String,
     },
+    /// Messages that are being restored from a session (not to be persisted again)
+    RestoredMessage {
+        role: Role,
+        content_blocks: Vec<MessageContentBlock>,
+        id: String,
+        model: Model,
+    },
 }
 
 #[derive(Clone)]
@@ -151,11 +158,11 @@ impl App {
     pub fn get_current_model(&self) -> Model {
         self.current_model
     }
-    
+
     pub fn is_tool_approved(&self, tool_name: &str) -> bool {
         self.approved_tools.contains(tool_name)
     }
-    
+
     pub fn add_approved_tool(&mut self, tool_name: String) {
         self.approved_tools.insert(tool_name);
     }
@@ -555,7 +562,12 @@ impl ApprovalQueue {
         }
     }
 
-    fn add_request(&mut self, id: String, tool_call: ApiToolCall, responder: oneshot::Sender<ApprovalDecision>) {
+    fn add_request(
+        &mut self,
+        id: String,
+        tool_call: ApiToolCall,
+        responder: oneshot::Sender<ApprovalDecision>,
+    ) {
         self.queued.push_back((id, tool_call, responder));
     }
 
@@ -578,10 +590,10 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
 
     // Approval queue state
     let mut approval_queue = ApprovalQueue::new();
-    
-    // Active agent event receiver 
+
+    // Active agent event receiver
     let mut active_agent_event_rx: Option<mpsc::Receiver<AgentEvent>> = None;
-    
+
     // Track if the associated task for the active receiver has completed
     let mut agent_task_completed = false;
 
@@ -619,14 +631,14 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                     match join_result {
                         Ok(task_outcome) => {
                             let is_standard_op = matches!(task_outcome, TaskOutcome::AgentOperationComplete{..});
-                            
+
                             handle_task_outcome(&mut app, task_outcome).await;
-                            
+
                             if is_standard_op {
                                 debug!(target: "app_actor_loop", "Agent task completed flag set to true.");
                                 agent_task_completed = true;
                             }
-                            
+
                             // Check if we should signal ThinkingCompleted now
                             if agent_task_completed && active_agent_event_rx.is_none() {
                                 debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (Task done, receiver drained).");
@@ -640,8 +652,8 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                             active_agent_event_rx = None;
                             agent_task_completed = false;
                             app.emit_event(AppEvent::ThinkingCompleted);
-                            app.emit_event(AppEvent::Error { 
-                                message: format!("A task failed unexpectedly: {}", join_err) 
+                            app.emit_event(AppEvent::Error {
+                                message: format!("A task failed unexpectedly: {}", join_err)
                             });
                         }
                     }
@@ -650,7 +662,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                     if let Some(_ctx) = app.current_op_context.take() {
                         debug!(target: "app_actor_loop", "JoinSet empty. Clearing context.");
                         agent_task_completed = true;
-                        
+
                         if agent_task_completed && active_agent_event_rx.is_none() {
                             debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (JoinSet empty, receiver drained).");
                             app.emit_event(AppEvent::ThinkingCompleted);
@@ -662,7 +674,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
 
             // Poll for incoming AgentEvents
             // Poll this *after* task completion to ensure correct ordering
-            maybe_agent_event = async { active_agent_event_rx.as_mut().unwrap().recv().await }, 
+            maybe_agent_event = async { active_agent_event_rx.as_mut().unwrap().recv().await },
             if active_agent_event_rx.is_some() => {
                 match maybe_agent_event {
                     Some(event) => {
@@ -672,7 +684,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                         // Channel closed
                         debug!(target: "app_actor_loop", "Agent event channel closed.");
                         active_agent_event_rx = None;
-                        
+
                         if agent_task_completed {
                             debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (Receiver closed, task completed).");
                             app.emit_event(AppEvent::ThinkingCompleted);
@@ -729,7 +741,7 @@ async fn handle_app_command(
     active_agent_event_rx: &mut Option<mpsc::Receiver<AgentEvent>>,
 ) -> bool {
     debug!(target: "handle_app_command", "Received command: {:?}", command);
-    
+
     match command {
         AppCommand::ProcessUserInput(message) => {
             if message.starts_with('/') {
@@ -756,19 +768,43 @@ async fn handle_app_command(
             }
             false
         }
-        
-        AppCommand::HandleToolResponse { id, approved, always } => {
-            if let Some((current_id, current_tool_call, responder)) = approval_queue.current.take() {
+        AppCommand::RestoreMessage(message) => {
+            // Directly add the message to the conversation without emitting events
+            // This is used during session restoration
+            debug!(target:"handle_app_command", "Restoring message to conversation");
+            let mut conversation_guard = app.conversation.lock().await;
+            conversation_guard.messages.push(message);
+            drop(conversation_guard);
+            false
+        }
+        AppCommand::PreApproveTools(tool_names) => {
+            // Add tools to the approved set for this session
+            debug!(target:"handle_app_command", "Pre-approving tools: {:?}", tool_names);
+            for tool_name in tool_names {
+                app.approved_tools.insert(tool_name);
+            }
+            false
+        }
+
+        AppCommand::HandleToolResponse {
+            id,
+            approved,
+            always,
+        } => {
+            if let Some((current_id, current_tool_call, responder)) = approval_queue.current.take()
+            {
                 if current_id != id {
                     error!(target: "handle_app_command", "Mismatched tool ID. Expected '{}', got '{}'", current_id, id);
-                    approval_queue.queued.push_front((current_id, current_tool_call, responder));
+                    approval_queue
+                        .queued
+                        .push_front((current_id, current_tool_call, responder));
                 } else {
                     let decision = if approved {
                         ApprovalDecision::Approved
                     } else {
                         ApprovalDecision::Denied
                     };
-                    
+
                     let approved_tool_name = current_tool_call.name.clone();
                     if approved && always {
                         app.approved_tools.insert(approved_tool_name.clone());
@@ -782,16 +818,16 @@ async fn handle_app_command(
             } else {
                 error!(target: "handle_app_command", "Received tool response for ID '{}' but no current approval request was active.", id);
             }
-            
+
             process_next_approval_request(app, approval_queue).await;
             false
         }
-        
+
         AppCommand::CancelProcessing => {
             debug!(target: "handle_app_command", "Handling CancelProcessing command.");
             app.cancel_current_processing().await;
             approval_queue.cancel_all();
-            
+
             if active_agent_event_rx.is_some() {
                 debug!(target: "handle_app_command", "Clearing active agent event receiver due to cancellation.");
                 *active_agent_event_rx = None;
@@ -799,7 +835,7 @@ async fn handle_app_command(
             app.emit_event(AppEvent::ThinkingCompleted);
             false
         }
-        
+
         AppCommand::Shutdown => {
             info!(target: "handle_app_command", "Received Shutdown command.");
             app.cancel_current_processing().await;
@@ -807,18 +843,42 @@ async fn handle_app_command(
             *active_agent_event_rx = None;
             true
         }
-        
-        AppCommand::RequestToolApprovalInternal { tool_call, responder } => {
+        AppCommand::GetCurrentConversation => {
+            // Get all messages from the conversation and emit them as RestoredMessage events
+            // These will be displayed by the TUI but won't be persisted again by the session
+            // system since they're already stored
+            let conversation_messages = {
+                let conv_guard = app.conversation.lock().await;
+                conv_guard.messages.clone()
+            };
+
+            debug!(target:"handle_app_command", "Sending {} existing messages to TUI", conversation_messages.len());
+
+            for message in conversation_messages {
+                // Emit RestoredMessage event which TUI will handle but session won't persist
+                app.emit_event(AppEvent::RestoredMessage {
+                    role: message.role,
+                    content_blocks: message.content_blocks.clone(),
+                    id: message.id.clone(),
+                    model: app.current_model, // Use current model as a placeholder
+                });
+            }
+            false
+        }
+        AppCommand::RequestToolApprovalInternal {
+            tool_call,
+            responder,
+        } => {
             let tool_id = tool_call.id.clone();
             let tool_name = tool_call.name.clone();
 
             info!(target: "handle_app_command", "Received internal request for tool approval: '{}' (ID: {})", tool_name, tool_id);
-            
+
             approval_queue.add_request(tool_id, tool_call, responder);
             process_next_approval_request(app, approval_queue).await;
             false
         }
-        
+
         AppCommand::ExecuteCommand(cmd) => {
             warn!(target: "handle_app_command", "Received ExecuteCommand: {}", cmd);
             if active_agent_event_rx.is_some() {
@@ -887,18 +947,22 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                         // Update existing message content
                         existing_msg.content_blocks = app_message.content_blocks.clone();
                         drop(conversation_guard);
-                        
+
                         debug!(target: "handle_agent_event", "Updated existing message ID {} with final content.", msg_id);
-                        
+
                         // Extract text content for the event
-                        let content = app_message.content_blocks.iter()
+                        let content = app_message
+                            .content_blocks
+                            .iter()
                             .filter_map(|block| match block {
-                                crate::app::conversation::MessageContentBlock::Text(text) => Some(text.as_str()),
+                                crate::app::conversation::MessageContentBlock::Text(text) => {
+                                    Some(text.as_str())
+                                }
                                 _ => None,
                             })
                             .collect::<Vec<_>>()
                             .join("");
-                        
+
                         app.emit_event(AppEvent::MessageUpdated {
                             id: msg_id.clone(),
                             content,
@@ -963,7 +1027,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
     match task_outcome {
         TaskOutcome::AgentOperationComplete { result } => {
             info!(target: "handle_task_outcome", "Standard agent operation task completed processing.");
-            
+
             match result {
                 Ok(_) => {
                     info!(target: "handle_task_outcome", "Agent operation task reported success.");
@@ -978,14 +1042,14 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     }
                 }
             }
-            
+
             // Clear the context
             debug!(target: "handle_task_outcome", "Clearing OpContext for completed standard operation.");
             app.current_op_context = None;
         }
         TaskOutcome::DispatchAgentResult { result } => {
             info!(target: "handle_task_outcome", "Dispatch agent operation task completed.");
-            
+
             match result {
                 Ok(response_text) => {
                     info!(target: "handle_task_outcome", "Dispatch agent successful.");
@@ -1002,7 +1066,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     });
                 }
             }
-            
+
             // Clear context and stop thinking immediately for dispatch operations
             debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ThinkingCompleted for dispatch operation.");
             app.current_op_context = None;

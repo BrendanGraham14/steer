@@ -183,6 +183,16 @@ impl Tui {
     }
 
     pub async fn run(&mut self, mut event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
+        // Request current conversation state to populate display with any existing messages
+        // (e.g., when resuming a session)
+        if let Err(e) = self
+            .command_tx
+            .send(AppCommand::GetCurrentConversation)
+            .await
+        {
+            warn!(target:"tui.run", "Failed to request current conversation: {}", e);
+        }
+
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let _input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
@@ -460,6 +470,50 @@ impl Tui {
                     );
                 }
             }
+            AppEvent::RestoredMessage {
+                role,
+                content_blocks,
+                id,
+                model: _,
+            } => {
+                // Handle restored messages the same as new messages for display purposes
+                // Add the raw message first
+                let raw_msg = crate::app::Message::new_with_blocks(role, content_blocks.clone());
+                self.raw_messages.push(raw_msg.clone());
+
+                // Format using the actual blocks
+                let formatted = format_message(
+                    &content_blocks,
+                    role,
+                    self.terminal.size().map(|r| r.width).unwrap_or(100),
+                );
+
+                // Check if ID already exists in the TUI's formatted list
+                if self.display_items.iter().any(|di| match di {
+                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                    _ => false,
+                }) {
+                    debug!(
+                        target: "tui.handle_app_event",
+                        "RestoredMessage: ID {} already exists. Skipping.",
+                        id,
+                    );
+                } else {
+                    let display_item = DisplayItem::Message {
+                        id: id.clone(),
+                        role,
+                        content: formatted,
+                    };
+                    self.display_items.push(display_item);
+                    display_items_updated = true;
+                    debug!(
+                        target: "tui.handle_app_event",
+                        "Restored message ID: {} with {} content blocks",
+                        id,
+                        content_blocks.len()
+                    );
+                }
+            }
             AppEvent::MessageUpdated { id, content } => {
                 if self.display_items.iter().any(|di| match di {
                     DisplayItem::Message { id: item_id, .. } => *item_id == id,
@@ -607,7 +661,9 @@ impl Tui {
                 self.display_items.push(display_item);
                 display_items_updated = true;
             }
-            AppEvent::ToolCallFailed { name, error, id, .. } => {
+            AppEvent::ToolCallFailed {
+                name, error, id, ..
+            } => {
                 self.progress_message = None; // Clear progress on failure
 
                 debug!(target: "tui.handle_app_event", "Adding Tool Failure System Info for ID: {}, Error: {}", id, error);

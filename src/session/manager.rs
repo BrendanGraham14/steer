@@ -46,14 +46,18 @@ pub struct SessionManagerConfig {
 pub struct ManagedSession {
     /// The session data
     pub session: Session,
-    /// The App instance for this session
-    pub app: App,
-    /// Event sender for streaming events
+    /// Command sender for the App
+    pub command_tx: mpsc::Sender<AppCommand>,
+    /// Event receiver from the App (for external consumers like TUI)
+    pub event_rx: Option<mpsc::Receiver<AppEvent>>,
+    /// Event sender for streaming events (deprecated, will be removed)
     pub event_tx: mpsc::Sender<StreamEvent>,
     /// Event subscriber count
     pub subscriber_count: usize,
     /// Last activity timestamp for cleanup
     pub last_activity: chrono::DateTime<chrono::Utc>,
+    /// Handle to the app actor loop task
+    pub app_task_handle: JoinHandle<()>,
     /// Handle to the event translation task
     pub event_task_handle: JoinHandle<()>,
 }
@@ -66,34 +70,87 @@ impl ManagedSession {
         event_tx: mpsc::Sender<StreamEvent>,
         store: Arc<dyn SessionStore>,
         global_event_tx: mpsc::Sender<StreamEventWithMetadata>,
+        default_model: Model,
     ) -> Result<Self> {
-        // Create an internal event channel for the App
-        let (app_event_tx, app_event_rx) = mpsc::channel(100);
+        // Create channels for the App
+        let (app_event_tx, mut app_event_rx) = mpsc::channel(100);
+        let (app_command_tx, app_command_rx) = mpsc::channel::<AppCommand>(32);
 
-        let app = App::new(
-            app_config,
-            app_event_tx,
-            crate::api::Model::Claude3_5Sonnet20241022,
-        )?; // TODO: Get initial model from session or config
+        // Always create external event channel
+        let (external_event_tx, external_event_rx) = mpsc::channel(100);
 
-        // Spawn the event translation task
+        // Initialize the global command sender for tool approval requests
+        crate::app::OpContext::init_command_tx(app_command_tx.clone());
+
+        // Create the App instance
+        let mut app = App::new(app_config, app_event_tx, default_model)?;
+
+        // Set the initial model if specified in session metadata
+        if let Some(model_str) = session.config.metadata.get("initial_model") {
+            if let Ok(model) = model_str.parse::<crate::api::Model>() {
+                let _ = app.set_model(model);
+            }
+        }
+
+        // Spawn the app actor loop
+        let app_task_handle = tokio::spawn(crate::app::app_actor_loop(app, app_command_rx));
+
+        // Spawn the event translation/duplication task
         let session_id = session.id.clone();
         let store_clone = store.clone();
         let global_event_tx_clone = global_event_tx.clone();
 
         let event_task_handle = tokio::spawn(async move {
-            event_translation_loop(session_id, app_event_rx, store_clone, global_event_tx_clone)
-                .await;
+            while let Some(app_event) = app_event_rx.recv().await {
+                // Always duplicate to external consumer
+                if let Err(e) = external_event_tx.try_send(app_event.clone()) {
+                    warn!(session_id = %session_id, "Failed to send event to external consumer: {}", e);
+                }
+
+                // Translate and persist
+                if let Some(stream_event) = translate_app_event(app_event, &session_id) {
+                    // Persist event
+                    if let Ok(sequence_num) =
+                        store_clone.append_event(&session_id, &stream_event).await
+                    {
+                        // Update session state
+                        if let Err(e) =
+                            update_session_state_for_event(&store_clone, &session_id, &stream_event)
+                                .await
+                        {
+                            error!(session_id = %session_id, error = %e, "Failed to update session state");
+                        }
+
+                        // Broadcast
+                        let event_with_metadata = StreamEventWithMetadata::new(
+                            sequence_num,
+                            session_id.clone(),
+                            stream_event,
+                        );
+                        if let Err(e) = global_event_tx_clone.try_send(event_with_metadata) {
+                            warn!(session_id = %session_id, error = %e, "Failed to broadcast event");
+                        }
+                    }
+                }
+            }
+            info!(session_id = %session_id, "Event translation loop ended");
         });
 
         Ok(Self {
             session,
-            app,
+            command_tx: app_command_tx,
+            event_rx: Some(external_event_rx),
             event_tx,
             subscriber_count: 0,
             last_activity: chrono::Utc::now(),
+            app_task_handle,
             event_task_handle,
         })
+    }
+
+    /// Take the event receiver (can only be called once)
+    pub fn take_event_rx(&mut self) -> Option<mpsc::Receiver<AppEvent>> {
+        self.event_rx.take()
     }
 
     /// Update last activity timestamp
@@ -104,6 +161,16 @@ impl ManagedSession {
     /// Check if session is inactive (no subscribers and old)
     pub fn is_inactive(&self, max_idle_time: chrono::Duration) -> bool {
         self.subscriber_count == 0 && chrono::Utc::now() - self.last_activity > max_idle_time
+    }
+
+    /// Shutdown the session gracefully
+    pub async fn shutdown(self) {
+        // Send shutdown command to app
+        let _ = self.command_tx.send(AppCommand::Shutdown).await;
+
+        // Wait for tasks to complete
+        let _ = self.app_task_handle.await;
+        let _ = self.event_task_handle.await;
     }
 }
 
@@ -139,7 +206,7 @@ impl SessionManager {
         &self,
         config: SessionConfig,
         app_config: AppConfig,
-    ) -> Result<String, SessionManagerError> {
+    ) -> Result<(String, mpsc::Sender<AppCommand>), SessionManagerError> {
         let session_config = config;
 
         // Create session in store
@@ -175,10 +242,14 @@ impl SessionManager {
             event_tx,
             self.store.clone(),
             self.event_tx.clone(),
+            self.config.default_model,
         )
         .map_err(|e| SessionManagerError::CreationFailed {
             message: format!("Failed to create managed session: {}", e),
         })?;
+
+        // Get command sender before moving into sessions map
+        let command_tx = managed_session.command_tx.clone();
 
         // Add to active sessions
         {
@@ -195,7 +266,13 @@ impl SessionManager {
         self.emit_event(session_id.clone(), event).await;
 
         info!(session_id = %session_id, "Session created and activated");
-        Ok(session_id)
+        Ok((session_id, command_tx))
+    }
+
+    /// Take the event receiver for a session (can only be called once per session)
+    pub async fn take_event_receiver(&self, session_id: &str) -> Option<mpsc::Receiver<AppEvent>> {
+        let mut sessions = self.active_sessions.write().await;
+        sessions.get_mut(session_id)?.take_event_rx()
     }
 
     /// Get session information
@@ -224,13 +301,13 @@ impl SessionManager {
         &self,
         session_id: &str,
         app_config: AppConfig,
-    ) -> Result<bool, SessionManagerError> {
+    ) -> Result<(bool, mpsc::Sender<AppCommand>), SessionManagerError> {
         // Check if already active
         {
             let sessions = self.active_sessions.read().await;
-            if sessions.contains_key(session_id) {
+            if let Some(managed_session) = sessions.get(session_id) {
                 debug!(session_id = %session_id, "Session already active");
-                return Ok(true);
+                return Ok((true, managed_session.command_tx.clone()));
             }
         }
 
@@ -239,7 +316,9 @@ impl SessionManager {
             Some(session) => session,
             None => {
                 debug!(session_id = %session_id, "Session not found in store");
-                return Ok(false);
+                return Err(SessionManagerError::SessionNotActive {
+                    session_id: session_id.to_string(),
+                });
             }
         };
 
@@ -269,14 +348,51 @@ impl SessionManager {
             event_tx,
             self.store.clone(),
             self.event_tx.clone(),
+            self.config.default_model,
         )
         .map_err(|e| SessionManagerError::CreationFailed {
             message: format!("Failed to create managed session: {}", e),
         })?;
 
-        // Restore session state to the App
-        // TODO: Implement session state restoration in App
-        // For now, we just set up the basic structure
+        // Get command sender before restoration
+        let command_tx = managed_session.command_tx.clone();
+
+        // Restore conversation history
+        if !session.state.messages.is_empty() {
+            info!(session_id = %session_id, message_count = session.state.messages.len(), "Restoring conversation history");
+
+            // Send messages to the App to rebuild conversation state
+            for message in &session.state.messages {
+                // Convert from stored format to App format
+                let app_message = crate::app::Message::try_from(message.clone()).map_err(|e| {
+                    SessionManagerError::CreationFailed {
+                        message: format!("Failed to restore message: {}", e),
+                    }
+                })?;
+
+                // Send command to add message to conversation
+                command_tx
+                    .send(AppCommand::RestoreMessage(app_message))
+                    .await
+                    .map_err(|_| SessionManagerError::CreationFailed {
+                        message: "Failed to send restore command to App".to_string(),
+                    })?;
+            }
+        }
+
+        // Restore approved tools
+        if !session.state.approved_tools.is_empty() {
+            info!(session_id = %session_id, tool_count = session.state.approved_tools.len(), "Restoring approved tools");
+
+            // Send all approved tools at once
+            let tools: Vec<String> = session.state.approved_tools.iter().cloned().collect();
+            command_tx
+                .send(AppCommand::PreApproveTools(tools))
+                .await
+                .map_err(|_| SessionManagerError::CreationFailed {
+                    message: "Failed to send tool approval command to App".to_string(),
+                })?;
+        }
 
         // Add to active sessions
         {
@@ -295,7 +411,7 @@ impl SessionManager {
         self.emit_event(session_id.to_string(), event).await;
 
         info!(session_id = %session_id, last_sequence = last_sequence, "Session resumed");
-        Ok(true)
+        Ok((true, command_tx))
     }
 
     /// Suspend a session (save to storage and deactivate)
@@ -363,17 +479,23 @@ impl SessionManager {
         sessions.contains_key(session_id)
     }
 
-    /// Get a reference to an active session's App
-    pub async fn with_session_app<F, R>(&self, session_id: &str, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut App) -> R,
-    {
-        let mut sessions = self.active_sessions.write().await;
-        if let Some(managed_session) = sessions.get_mut(session_id) {
-            managed_session.touch();
-            Some(f(&mut managed_session.app))
+    /// Send a command to an active session
+    pub async fn send_command(
+        &self,
+        session_id: &str,
+        command: AppCommand,
+    ) -> Result<(), SessionManagerError> {
+        let sessions = self.active_sessions.read().await;
+        if let Some(managed_session) = sessions.get(session_id) {
+            managed_session.command_tx.send(command).await.map_err(|_| {
+                SessionManagerError::SessionNotActive {
+                    session_id: session_id.to_string(),
+                }
+            })
         } else {
-            None
+            Err(SessionManagerError::SessionNotActive {
+                session_id: session_id.to_string(),
+            })
         }
     }
 
@@ -469,162 +591,6 @@ impl SessionManager {
     pub fn store(&self) -> &Arc<dyn SessionStore> {
         &self.store
     }
-
-    /// Create an interactive session that exposes command and event channels for direct UI interaction
-    /// This creates a separate event channel for the UI while maintaining the translation loop for persistence
-    ///
-    /// # Design Notes
-    ///
-    /// This method is designed for interactive UIs (like the TUI) that need direct access to
-    /// AppCommand and AppEvent channels. It differs from `create_session` in that:
-    ///
-    /// 1. It spawns the app_actor_loop directly rather than using ManagedSession's internal management
-    /// 2. It duplicates AppEvents to both the UI and the persistence/translation layer
-    /// 3. It returns the command and event channels for direct UI interaction
-    ///
-    /// This approach allows the TUI to work with its existing AppEvent-based architecture while
-    /// still benefiting from SessionManager's persistence and session management capabilities.
-    ///
-    /// # Future Improvements
-    ///
-    /// - Refactor ManagedSession to better support both headless and interactive use cases
-    /// - Track the current model state for proper event translation
-    /// - Consider unifying the session creation APIs once we have more use cases
-    pub async fn create_interactive_session(
-        &self,
-        config: SessionConfig,
-        app_config: AppConfig,
-    ) -> Result<(String, mpsc::Sender<AppCommand>, mpsc::Receiver<AppEvent>), SessionManagerError>
-    {
-        let session_config = config;
-
-        // Create session in store
-        let session = self.store.create_session(session_config).await?;
-        let session_id = session.id.clone();
-
-        info!(session_id = %session_id, "Creating new interactive session");
-
-        // Check if we're at max capacity
-        {
-            let sessions = self.active_sessions.read().await;
-            if sessions.len() >= self.config.max_concurrent_sessions {
-                error!(
-                    session_id = %session_id,
-                    active_count = sessions.len(),
-                    max_capacity = self.config.max_concurrent_sessions,
-                    "Session creation rejected: at maximum capacity"
-                );
-                return Err(SessionManagerError::CapacityExceeded {
-                    current: sessions.len(),
-                    max: self.config.max_concurrent_sessions,
-                });
-            }
-        }
-
-        // Create channels for the App
-        let (app_event_tx, mut app_event_rx) = mpsc::channel(100);
-        let (ui_event_tx, ui_event_rx) = mpsc::channel(100);
-        let (app_command_tx, app_command_rx) = mpsc::channel::<AppCommand>(32);
-
-        // Initialize the global command sender for tool approval requests
-        crate::app::OpContext::init_command_tx(app_command_tx.clone());
-
-        // Create the App instance
-        let mut app = App::new(app_config.clone(), app_event_tx, self.config.default_model)
-            .map_err(|e| SessionManagerError::CreationFailed {
-                message: format!("Failed to create App: {}", e),
-            })?;
-
-        // Set the initial model if specified in session metadata
-        if let Some(model_str) = session.config.metadata.get("initial_model") {
-            if let Ok(model) = model_str.parse::<Model>() {
-                let _ = app.set_model(model);
-            }
-        }
-
-        // Create event channel for this session (for persistence)
-        let (event_tx, _event_rx) = mpsc::channel(100);
-
-        // Spawn the app actor loop
-        let app_for_actor = app;
-        tokio::spawn(crate::app::app_actor_loop(app_for_actor, app_command_rx));
-
-        // Spawn a task to duplicate events to both UI and translation loop
-        let session_id_clone = session_id.clone();
-        let store_clone = self.store.clone();
-        let global_event_tx_clone = self.event_tx.clone();
-
-        let event_duplication_handle = tokio::spawn(async move {
-            while let Some(app_event) = app_event_rx.recv().await {
-                // Send to UI
-                if let Err(e) = ui_event_tx.try_send(app_event.clone()) {
-                    warn!(session_id = %session_id_clone, "Failed to send event to UI: {}", e);
-                }
-
-                // Translate and persist
-                let current_model = crate::api::Model::Claude3_5Sonnet20241022; // TODO: Track current model
-                if let Some(stream_event) =
-                    translate_app_event(app_event, &session_id_clone, current_model)
-                {
-                    // Persist event
-                    if let Ok(sequence_num) = store_clone
-                        .append_event(&session_id_clone, &stream_event)
-                        .await
-                    {
-                        // Update session state
-                        if let Err(e) = update_session_state_for_event(
-                            &store_clone,
-                            &session_id_clone,
-                            &stream_event,
-                        )
-                        .await
-                        {
-                            error!(session_id = %session_id_clone, error = %e, "Failed to update session state");
-                        }
-
-                        // Broadcast
-                        let event_with_metadata = StreamEventWithMetadata::new(
-                            sequence_num,
-                            session_id_clone.clone(),
-                            stream_event,
-                        );
-                        if let Err(e) = global_event_tx_clone.try_send(event_with_metadata) {
-                            warn!(session_id = %session_id_clone, error = %e, "Failed to broadcast event");
-                        }
-                    }
-                }
-            }
-            info!(session_id = %session_id_clone, "Event duplication loop ended");
-        });
-
-        // Create a minimal ManagedSession for tracking (without App since we manage it separately)
-        // Note: This is a temporary solution. Ideally we'd refactor ManagedSession to support this use case properly.
-        let managed_session = ManagedSession {
-            session: session.clone(),
-            app: App::new(app_config, mpsc::channel(1).0, self.config.default_model).unwrap(), // Dummy app for now
-            event_tx,
-            subscriber_count: 0,
-            last_activity: chrono::Utc::now(),
-            event_task_handle: event_duplication_handle,
-        };
-
-        // Add to active sessions
-        {
-            let mut sessions = self.active_sessions.write().await;
-            sessions.insert(session_id.clone(), managed_session);
-        }
-
-        // Emit session created event
-        let metadata = crate::events::SessionMetadata::from(&SessionInfo::from(&session));
-        let event = StreamEvent::SessionCreated {
-            session_id: session_id.clone(),
-            metadata,
-        };
-        self.emit_event(session_id.clone(), event).await;
-
-        info!(session_id = %session_id, "Interactive session created and activated");
-        Ok((session_id, app_command_tx, ui_event_rx))
-    }
 }
 
 /// Event translation loop that converts AppEvents to StreamEvents
@@ -640,9 +606,7 @@ async fn event_translation_loop(
         debug!(session_id = %session_id, "Translating app event: {:?}", app_event);
 
         // Translate AppEvent to StreamEvent
-        // TODO: Get current model from session or app state
-        let current_model = crate::api::Model::Claude3_5Sonnet20241022; // Default for now
-        let stream_event = match translate_app_event(app_event, &session_id, current_model) {
+        let stream_event = match translate_app_event(app_event, &session_id) {
             Some(event) => event,
             None => continue, // Skip events that don't need to be streamed
         };
@@ -673,11 +637,7 @@ async fn event_translation_loop(
 }
 
 /// Convert AppEvent to StreamEvent, returning None for events that shouldn't be streamed
-fn translate_app_event(
-    app_event: AppEvent,
-    _session_id: &str,
-    current_model: Model,
-) -> Option<StreamEvent> {
+fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamEvent> {
     use crate::api::messages::{MessageContent, MessageRole};
     use crate::app::conversation::Role;
 
@@ -849,20 +809,7 @@ fn translate_app_event(
         AppEvent::ThinkingCompleted => Some(StreamEvent::OperationCompleted {
             operation_id: format!("op_{}", uuid::Uuid::new_v4()),
         }),
-        AppEvent::CommandResponse { content, id } => {
-            // Convert command response to a message
-            let message = ApiMessage {
-                id: Some(id),
-                role: MessageRole::Assistant,
-                content: MessageContent::Text { content },
-            };
-            Some(StreamEvent::MessageComplete {
-                message,
-                usage: None,
-                metadata: std::collections::HashMap::new(),
-                model: current_model,
-            })
-        }
+        AppEvent::CommandResponse { .. } => None, // System messages, not persisted
         AppEvent::OperationCancelled { info } => Some(StreamEvent::OperationCancelled {
             operation_id: format!("op_{}", uuid::Uuid::new_v4()),
             reason: format!("Operation cancelled: {:?}", info),
@@ -872,6 +819,7 @@ fn translate_app_event(
             message,
             error_type: crate::events::ErrorType::Internal,
         }),
+        AppEvent::RestoredMessage { .. } => None, // Already persisted, don't double-log
     }
 }
 
@@ -955,7 +903,7 @@ mod tests {
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
         };
-        let session_id = manager
+        let (session_id, _command_tx) = manager
             .create_session(session_config, app_config.clone())
             .await
             .unwrap();
@@ -967,12 +915,11 @@ mod tests {
         assert!(!manager.is_session_active(&session_id).await);
 
         // Resume session
-        assert!(
-            manager
-                .resume_session(&session_id, app_config)
-                .await
-                .unwrap()
-        );
+        let (resumed, _command_tx) = manager
+            .resume_session(&session_id, app_config)
+            .await
+            .unwrap();
+        assert!(resumed);
         assert!(manager.is_session_active(&session_id).await);
     }
 
@@ -987,7 +934,7 @@ mod tests {
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
         };
-        let session_id = manager
+        let (session_id, _command_tx) = manager
             .create_session(session_config, app_config)
             .await
             .unwrap();
@@ -1030,7 +977,7 @@ mod tests {
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
         };
-        let session_id1 = manager
+        let (session_id1, _command_tx) = manager
             .create_session(session_config.clone(), app_config.clone())
             .await
             .unwrap();

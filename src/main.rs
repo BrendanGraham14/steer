@@ -269,7 +269,7 @@ async fn main() -> Result<()> {
     let session_manager =
         SessionManager::new(session_store, session_manager_config, global_event_tx);
 
-    // Create an interactive session for the TUI
+    // Create a new interactive session
     let session_config = create_default_session_config();
     let app_config = AppConfig { llm_config };
 
@@ -279,19 +279,26 @@ async fn main() -> Result<()> {
         .metadata
         .insert("initial_model".to_string(), cli.model.to_string());
 
-    let (session_id, app_command_tx, app_event_rx) = session_manager
-        .create_interactive_session(session_config_with_model, app_config)
+    let (session_id, command_tx) = session_manager
+        .create_session(session_config_with_model, app_config)
         .await
-        .map_err(|e| anyhow!("Failed to create interactive session: {}", e))?;
+        .map_err(|e| anyhow!("Failed to create session: {}", e))?;
 
-    info!(target: "main", "Created interactive session: {}", session_id);
+    // Get the event receiver
+    let event_rx = session_manager
+        .take_event_receiver(&session_id)
+        .await
+        .ok_or_else(|| anyhow!("Failed to get event receiver for new session"))?;
+
+    info!(target: "main", "Created new session: {}", session_id);
+    println!("Session ID: {}", session_id);
 
     // Set panic hook for terminal cleanup
     coder::tui::setup_panic_hook();
 
     // Create and run the TUI
-    let mut tui = coder::tui::Tui::new(app_command_tx, cli.model)?;
-    tui.run(app_event_rx).await?;
+    let mut tui = coder::tui::Tui::new(command_tx, cli.model)?;
+    tui.run(event_rx).await?;
 
     Ok(())
 }
@@ -372,7 +379,7 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
                 llm_config: LlmConfig::from_env()?,
             };
 
-            let session_id = session_manager
+            let (session_id, _) = session_manager
                 .create_session(session_config, app_config)
                 .await
                 .map_err(|e| anyhow!("Failed to create session: {}", e))?;
@@ -380,24 +387,62 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
             println!("Created session: {}", session_id);
         }
         SessionCommands::Resume { session_id } => {
-            // Check if session exists
-            let session_info = session_manager
-                .get_session(&session_id)
-                .await
-                .map_err(|e| anyhow!("Failed to get session: {}", e))?;
+            // Resume the session in the TUI directly
+            println!("Resuming session: {}", session_id);
 
-            match session_info {
-                Some(_) => {
-                    println!(
-                        "Session {} exists. Use the interactive mode to work with it.",
-                        session_id
-                    );
-                    println!(
-                        "Note: Session resumption in interactive mode is not yet implemented."
-                    );
+            let llm_config = LlmConfig::from_env()?;
+
+            // Create session manager with SQLite store
+            let session_store = create_session_store().await?;
+            let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
+
+            let session_manager_config = SessionManagerConfig {
+                max_concurrent_sessions: 10,
+                default_model: Model::ClaudeSonnet4_20250514,
+                auto_persist: true,
+            };
+
+            let session_manager =
+                SessionManager::new(session_store, session_manager_config, global_event_tx);
+
+            // Resume the session
+            let app_config = AppConfig { llm_config };
+
+            match session_manager
+                .resume_session(&session_id, app_config)
+                .await
+            {
+                Ok((true, command_tx)) => {
+                    // Get the event receiver
+                    let event_rx = session_manager
+                        .take_event_receiver(&session_id)
+                        .await
+                        .ok_or_else(|| {
+                            anyhow!("Failed to get event receiver for resumed session")
+                        })?;
+
+                    // Get the session info to determine the model
+                    let session_info = session_manager
+                        .get_session(&session_id)
+                        .await?
+                        .ok_or_else(|| anyhow!("Session not found after resume"))?;
+
+                    let model = session_info
+                        .last_model
+                        .unwrap_or(Model::ClaudeSonnet4_20250514);
+
+                    // Set panic hook for terminal cleanup
+                    coder::tui::setup_panic_hook();
+
+                    // Create and run the TUI
+                    let mut tui = coder::tui::Tui::new(command_tx, model)?;
+                    tui.run(event_rx).await?;
                 }
-                None => {
-                    return Err(anyhow!("Session not found: {}", session_id));
+                Ok((false, _)) => {
+                    return Err(anyhow!("Session {} not found", session_id));
+                }
+                Err(e) => {
+                    return Err(anyhow!("Failed to resume session: {}", e));
                 }
             }
         }
@@ -419,7 +464,7 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
                 return Err(anyhow!("No sessions found"));
             }
 
-            let latest_session = &sessions[0]; // First session is the most recent due to DESC ordering
+            let latest_session = &sessions[0];
             let session_id = &latest_session.id;
 
             println!("Resuming latest session: {}", session_id);
@@ -428,24 +473,51 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
                 latest_session.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
             );
 
-            // Check if session exists and resume it (same logic as Resume command)
-            let session_info = session_manager
-                .get_session(session_id)
-                .await
-                .map_err(|e| anyhow!("Failed to get session: {}", e))?;
+            // Resume the session in the TUI directly
+            let llm_config = LlmConfig::from_env()?;
 
-            match session_info {
-                Some(_) => {
-                    println!(
-                        "Session {} exists. Use the interactive mode to work with it.",
-                        session_id
-                    );
-                    println!(
-                        "Note: Session resumption in interactive mode is not yet implemented."
-                    );
+            // Create session manager with SQLite store
+            let session_store = create_session_store().await?;
+            let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
+
+            let session_manager_config = SessionManagerConfig {
+                max_concurrent_sessions: 10,
+                default_model: Model::ClaudeSonnet4_20250514,
+                auto_persist: true,
+            };
+
+            let session_manager =
+                SessionManager::new(session_store, session_manager_config, global_event_tx);
+
+            // Resume the session
+            let app_config = AppConfig { llm_config };
+
+            match session_manager.resume_session(session_id, app_config).await {
+                Ok((true, command_tx)) => {
+                    // Get the event receiver
+                    let event_rx = session_manager
+                        .take_event_receiver(session_id)
+                        .await
+                        .ok_or_else(|| {
+                            anyhow!("Failed to get event receiver for resumed session")
+                        })?;
+
+                    let model = latest_session
+                        .last_model
+                        .unwrap_or(Model::ClaudeSonnet4_20250514);
+
+                    // Set panic hook for terminal cleanup
+                    coder::tui::setup_panic_hook();
+
+                    // Create and run the TUI
+                    let mut tui = coder::tui::Tui::new(command_tx, model)?;
+                    tui.run(event_rx).await?;
                 }
-                None => {
-                    return Err(anyhow!("Session not found: {}", session_id));
+                Ok((false, _)) => {
+                    return Err(anyhow!("Session {} not found", session_id));
+                }
+                Err(e) => {
+                    return Err(anyhow!("Failed to resume session: {}", e));
                 }
             }
         }
