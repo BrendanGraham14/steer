@@ -11,7 +11,6 @@ pub struct ExecutionContext {
     pub tool_call_id: String,
     pub cancellation_token: CancellationToken,
     pub timeout: Duration,
-    pub trace_context: TraceContext,
     pub environment: ExecutionEnvironment,
 }
 
@@ -46,40 +45,6 @@ pub struct VolumeMount {
     pub read_only: bool,
 }
 
-/// Observability context for distributed tracing
-#[derive(Debug, Clone)]
-pub struct TraceContext {
-    pub trace_id: String,
-    pub span_id: String,
-    pub parent_span_id: Option<String>,
-    pub baggage: HashMap<String, String>,
-}
-
-impl Default for ExecutionContext {
-    fn default() -> Self {
-        Self {
-            session_id: "default".to_string(),
-            operation_id: "default".to_string(),
-            tool_call_id: "default".to_string(),
-            cancellation_token: CancellationToken::new(),
-            timeout: Duration::from_secs(300), // 5 minutes default
-            trace_context: TraceContext::default(),
-            environment: ExecutionEnvironment::Local,
-        }
-    }
-}
-
-impl Default for TraceContext {
-    fn default() -> Self {
-        Self {
-            trace_id: uuid::Uuid::new_v4().to_string(),
-            span_id: uuid::Uuid::new_v4().to_string(),
-            parent_span_id: None,
-            baggage: HashMap::new(),
-        }
-    }
-}
-
 impl ExecutionContext {
     pub fn new(
         session_id: String,
@@ -93,7 +58,7 @@ impl ExecutionContext {
             tool_call_id,
             cancellation_token,
             timeout: Duration::from_secs(300),
-            trace_context: TraceContext::default(),
+
             environment: ExecutionEnvironment::Local,
         }
     }
@@ -105,32 +70,6 @@ impl ExecutionContext {
 
     pub fn with_environment(mut self, environment: ExecutionEnvironment) -> Self {
         self.environment = environment;
-        self
-    }
-
-    pub fn with_trace_context(mut self, trace_context: TraceContext) -> Self {
-        self.trace_context = trace_context;
-        self
-    }
-}
-
-impl TraceContext {
-    pub fn new(trace_id: String, span_id: String) -> Self {
-        Self {
-            trace_id,
-            span_id,
-            parent_span_id: None,
-            baggage: HashMap::new(),
-        }
-    }
-
-    pub fn with_parent(mut self, parent_span_id: String) -> Self {
-        self.parent_span_id = Some(parent_span_id);
-        self
-    }
-
-    pub fn with_baggage(mut self, key: String, value: String) -> Self {
-        self.baggage.insert(key, value);
         self
     }
 }

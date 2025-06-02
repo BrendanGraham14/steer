@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ToolCall;
-use crate::tools::{ToolError, ExecutionContext};
+use crate::tools::{ExecutionContext, ToolError};
 
 /// Metadata about a tool backend for debugging and monitoring
 #[derive(Debug, Clone)]
@@ -12,17 +12,6 @@ pub struct BackendMetadata {
     pub backend_type: String,
     pub location: Option<String>,
     pub additional_info: HashMap<String, String>,
-}
-
-impl Default for BackendMetadata {
-    fn default() -> Self {
-        Self {
-            name: "Unknown".to_string(),
-            backend_type: "Unknown".to_string(),
-            location: None,
-            additional_info: HashMap::new(),
-        }
-    }
 }
 
 impl BackendMetadata {
@@ -47,18 +36,18 @@ impl BackendMetadata {
 }
 
 /// Simple trait for tool execution backends
-/// 
+///
 /// This trait abstracts different execution environments for tools,
 /// allowing tools to run locally, on remote machines, in containers,
 /// or through proxy services.
 #[async_trait]
 pub trait ToolBackend: Send + Sync {
     /// Execute a tool call in this backend's environment
-    /// 
+    ///
     /// # Arguments
     /// * `tool_call` - The tool call containing name, parameters, and ID
     /// * `context` - Execution context with session info, cancellation, etc.
-    /// 
+    ///
     /// # Returns
     /// The string output of the tool on success, or a ToolError on failure
     async fn execute(
@@ -66,23 +55,21 @@ pub trait ToolBackend: Send + Sync {
         tool_call: &ToolCall,
         context: &ExecutionContext,
     ) -> Result<String, ToolError>;
-    
+
     /// List the tools this backend can handle
-    /// 
+    ///
     /// Returns a vector of tool names that this backend supports.
     /// The backend registry uses this to map tools to backends.
     fn supported_tools(&self) -> Vec<&'static str>;
-    
+
     /// Backend metadata for debugging and monitoring
-    /// 
+    ///
     /// Override this method to provide additional information about
     /// the backend for observability and troubleshooting.
-    fn metadata(&self) -> BackendMetadata {
-        BackendMetadata::default()
-    }
-    
+    fn metadata(&self) -> BackendMetadata;
+
     /// Check if the backend is healthy and ready to execute tools
-    /// 
+    ///
     /// This method can be used for health checks and load balancing.
     /// Default implementation returns true.
     async fn health_check(&self) -> bool {
@@ -91,7 +78,7 @@ pub trait ToolBackend: Send + Sync {
 }
 
 /// Registry that maps tool names to their backends
-/// 
+///
 /// When a backend is registered, the registry queries its supported_tools()
 /// and creates mappings for each tool. This allows for efficient lookup
 /// of the appropriate backend for a given tool name.
@@ -110,27 +97,28 @@ impl BackendRegistry {
     }
 
     /// Register a backend with the given name
-    /// 
+    ///
     /// This method queries the backend's supported_tools() and creates
     /// mappings for each tool. If a tool is already mapped to another
     /// backend, it will be overwritten.
-    /// 
+    ///
     /// # Arguments
     /// * `name` - A unique name for this backend instance
     /// * `backend` - The backend implementation
     pub fn register(&mut self, name: String, backend: Arc<dyn ToolBackend>) {
         // Map each tool this backend supports
         for tool_name in backend.supported_tools() {
-            self.tool_mapping.insert(tool_name.to_string(), backend.clone());
+            self.tool_mapping
+                .insert(tool_name.to_string(), backend.clone());
         }
         self.backends.push((name, backend));
     }
-    
+
     /// Get the backend for a specific tool
-    /// 
+    ///
     /// Returns the backend that can handle the given tool name,
     /// or None if no backend supports that tool.
-    /// 
+    ///
     /// # Arguments
     /// * `tool_name` - The name of the tool to look up
     pub fn get_backend_for_tool(&self, tool_name: &str) -> Option<&Arc<dyn ToolBackend>> {
@@ -138,39 +126,38 @@ impl BackendRegistry {
     }
 
     /// Get all registered backends
-    /// 
+    ///
     /// Returns a vector of (name, backend) pairs for all registered backends.
     pub fn backends(&self) -> &Vec<(String, Arc<dyn ToolBackend>)> {
         &self.backends
     }
 
     /// Get all tool mappings
-    /// 
+    ///
     /// Returns a reference to the tool name -> backend mapping.
     pub fn tool_mappings(&self) -> &HashMap<String, Arc<dyn ToolBackend>> {
         &self.tool_mapping
     }
 
     /// Check which tools are supported
-    /// 
+    ///
     /// Returns a vector of all tool names that have registered backends.
     pub fn supported_tools(&self) -> Vec<String> {
         self.tool_mapping.keys().cloned().collect()
     }
 
     /// Remove a backend by name
-    /// 
+    ///
     /// This removes the backend and all its tool mappings.
     /// Returns true if a backend was removed, false if the name wasn't found.
     pub fn unregister(&mut self, name: &str) -> bool {
         if let Some(pos) = self.backends.iter().position(|(n, _)| n == name) {
             let (_, backend) = self.backends.remove(pos);
-            
+
             // Remove all tool mappings for this backend
-            self.tool_mapping.retain(|_tool, mapped_backend| {
-                !Arc::ptr_eq(mapped_backend, &backend)
-            });
-            
+            self.tool_mapping
+                .retain(|_tool, mapped_backend| !Arc::ptr_eq(mapped_backend, &backend));
+
             true
         } else {
             false
@@ -209,7 +196,10 @@ mod tests {
             tool_call: &ToolCall,
             _context: &ExecutionContext,
         ) -> Result<String, ToolError> {
-            Ok(format!("Mock execution of {} by {}", tool_call.name, self.name))
+            Ok(format!(
+                "Mock execution of {} by {}",
+                tool_call.name, self.name
+            ))
         }
 
         fn supported_tools(&self) -> Vec<&'static str> {
@@ -252,7 +242,7 @@ mod tests {
         // Test backend removal
         assert!(registry.unregister("backend1"));
         assert!(!registry.unregister("nonexistent"));
-        
+
         // tool1 and tool2 should no longer be mapped
         assert!(registry.get_backend_for_tool("tool1").is_none());
         assert!(registry.get_backend_for_tool("tool3").is_some());
