@@ -1,4 +1,5 @@
 pub mod tracing;
+pub mod session;
 
 use std::path::Path;
 

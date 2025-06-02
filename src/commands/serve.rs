@@ -1,0 +1,53 @@
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use tracing::info;
+
+use crate::api::Model;
+use crate::session::SessionManagerConfig;
+use super::Command;
+
+pub struct ServeCommand {
+    pub port: u16,
+    pub bind: String,
+    pub model: Model,
+}
+
+#[async_trait]
+impl Command for ServeCommand {
+    async fn execute(&self) -> Result<()> {
+        let addr = format!("{}:{}", self.bind, self.port)
+            .parse()
+            .map_err(|e| anyhow!("Invalid bind address: {}", e))?;
+
+        info!("Starting gRPC server on {}", addr);
+        
+        // Create session store path
+        let db_path = crate::utils::session::create_session_store_path()?;
+
+        let config = crate::runners::StreamingConfig {
+            db_path,
+            session_manager_config: SessionManagerConfig {
+                max_concurrent_sessions: 100,
+                default_model: self.model,
+                auto_persist: true,
+            },
+            bind_addr: addr,
+        };
+
+        let mut runner = crate::runners::StreamingRunner::new(config).await?;
+        runner.start().await?;
+
+        info!("gRPC server started on {}", addr);
+        println!("Server listening on {}", addr);
+        println!("Press Ctrl+C to shutdown");
+
+        // Wait for shutdown signal
+        tokio::signal::ctrl_c().await?;
+        info!("Shutdown signal received");
+
+        runner.shutdown().await?;
+        info!("Server shutdown complete");
+
+        Ok(())
+    }
+}
