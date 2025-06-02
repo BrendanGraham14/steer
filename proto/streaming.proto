@@ -1,0 +1,424 @@
+syntax = "proto3";
+package coder.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+service AgentService {
+  // Bidirectional streaming for interactive sessions
+  rpc StreamSession(stream ClientMessage) returns (stream ServerEvent);
+
+  // Unary calls for session management
+  rpc CreateSession(CreateSessionRequest) returns (SessionInfo);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc GetSession(GetSessionRequest) returns (SessionState);
+  rpc DeleteSession(DeleteSessionRequest) returns (google.protobuf.Empty);
+
+  // Unary calls for non-streaming operations
+  rpc SendMessage(SendMessageRequest) returns (Operation);
+  rpc ApproveTool(ApproveToolRequest) returns (google.protobuf.Empty);
+  rpc CancelOperation(CancelOperationRequest) returns (google.protobuf.Empty);
+}
+
+// Client to server messages in the bidirectional stream
+message ClientMessage {
+  string session_id = 1;
+
+  oneof message {
+    SendMessageRequest send_message = 2;
+    ToolApprovalResponse tool_approval = 3;
+    CancelOperationRequest cancel = 4;
+    SubscribeRequest subscribe = 5;
+    UpdateConfigRequest update_config = 6;
+  }
+}
+
+// Server to client events in the bidirectional stream
+message ServerEvent {
+  uint64 sequence_num = 1;
+  google.protobuf.Timestamp timestamp = 2;
+
+  oneof event {
+    MessageAddedEvent message_added = 3;
+    MessageUpdatedEvent message_updated = 4;
+    MessagePartEvent message_part = 5;
+    ToolCallStartedEvent tool_call_started = 6;
+    ToolCallCompletedEvent tool_call_completed = 7;
+    ToolCallFailedEvent tool_call_failed = 8;
+    ThinkingStartedEvent thinking_started = 9;
+    ThinkingCompletedEvent thinking_completed = 10;
+    CommandResponseEvent command_response = 11;
+    RequestToolApprovalEvent request_tool_approval = 12;
+    OperationCancelledEvent operation_cancelled = 13;
+    ModelChangedEvent model_changed = 14;
+    ErrorEvent error = 15;
+    RestoredMessageEvent restored_message = 16;
+  }
+}
+
+// Event message definitions
+message MessageAddedEvent {
+  MessageRole role = 1;
+  repeated MessageContentBlock content_blocks = 2;
+  string id = 3;
+  string model = 4;
+}
+
+message MessageUpdatedEvent {
+  string id = 1;
+  string content = 2;
+}
+
+message MessagePartEvent {
+  string id = 1;
+  string delta = 2;
+}
+
+message ToolCallStartedEvent {
+  string name = 1;
+  string id = 2;
+  string model = 3;
+}
+
+message ToolCallCompletedEvent {
+  string name = 1;
+  string result = 2;
+  string id = 3;
+  string model = 4;
+}
+
+message ToolCallFailedEvent {
+  string name = 1;
+  string error = 2;
+  string id = 3;
+  string model = 4;
+}
+
+message RequestToolApprovalEvent {
+  string name = 1;
+  string parameters_json = 2;  // JSON-encoded serde_json::Value
+  string id = 3;
+}
+
+message ThinkingStartedEvent {
+  // No fields needed
+}
+
+message ThinkingCompletedEvent {
+  // No fields needed
+}
+
+message CommandResponseEvent {
+  string content = 1;
+  string id = 2;
+}
+
+message ModelChangedEvent {
+  string model = 1;
+}
+
+message ErrorEvent {
+  string message = 1;
+}
+
+message RestoredMessageEvent {
+  MessageRole role = 1;
+  repeated MessageContentBlock content_blocks = 2;
+  string id = 3;
+  string model = 4;
+}
+
+message OperationCancelledEvent {
+  CancellationInfo info = 1;
+}
+
+// Request/Response message definitions
+message CreateSessionRequest {
+  optional ToolApprovalPolicy tool_policy = 1;
+  map<string, string> metadata = 2;
+  optional SessionToolConfig tool_config = 3;
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string message = 2;
+  repeated Attachment attachments = 3;
+}
+
+message ToolApprovalResponse {
+  string tool_call_id = 1;
+  ApprovalDecision decision = 2;
+}
+
+message SubscribeRequest {
+  repeated string event_types = 1;
+  optional uint64 since_sequence = 2;
+}
+
+message UpdateConfigRequest {
+  optional ToolApprovalPolicy tool_policy = 1;
+  optional SessionToolConfig tool_config = 2;
+  map<string, string> metadata_updates = 3;
+}
+
+message CancelOperationRequest {
+  string session_id = 1;
+  string operation_id = 2;
+}
+
+message ApproveToolRequest {
+  string session_id = 1;
+  string tool_call_id = 2;
+  ApprovalDecision decision = 3;
+}
+
+message ListSessionsRequest {
+  optional SessionFilter filter = 1;
+  optional uint32 page_size = 2;
+  optional string page_token = 3;
+}
+
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+  optional string next_page_token = 2;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message DeleteSessionRequest {
+  string session_id = 1;
+}
+
+// Core data types
+message SessionInfo {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  SessionStatus status = 4;
+  SessionMetadata metadata = 5;
+}
+
+message SessionState {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  SessionConfig config = 4;
+  repeated Message messages = 5;
+  map<string, ToolCallState> tool_calls = 6;
+  repeated string approved_tools = 7;
+  uint64 last_event_sequence = 8;
+  map<string, string> metadata = 9;
+}
+
+message SessionConfig {
+  ToolApprovalPolicy tool_policy = 1;
+  SessionToolConfig tool_config = 2;
+  map<string, string> metadata = 3;
+}
+
+message SessionMetadata {
+  map<string, string> labels = 1;
+  map<string, string> annotations = 2;
+}
+
+message SessionFilter {
+  repeated string session_ids = 1;
+  map<string, string> metadata_filters = 2;
+  SessionStatus status = 3;
+  google.protobuf.Timestamp created_after = 4;
+  google.protobuf.Timestamp created_before = 5;
+}
+
+message Operation {
+  string id = 1;
+  string session_id = 2;
+  OperationType type = 3;
+  OperationStatus status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  optional google.protobuf.Timestamp completed_at = 6;
+  map<string, string> metadata = 7;
+}
+
+message Message {
+  string id = 1;
+  MessageRole role = 2;
+  repeated MessageContentBlock content_blocks = 3;
+  google.protobuf.Timestamp created_at = 4;
+  map<string, string> metadata = 5;
+}
+
+message MessageContentBlock {
+  oneof content {
+    string text = 1;
+    ToolCall tool_call = 2;
+    ToolResult tool_result = 3;
+    Attachment attachment = 4;
+  }
+}
+
+message ToolCall {
+  string id = 1;
+  string name = 2;
+  map<string, string> parameters = 3;
+}
+
+message ToolResult {
+  string tool_call_id = 1;
+  bool success = 2;
+  string content = 3;
+  optional string error = 4;
+  map<string, string> metadata = 5;
+}
+
+message ToolCallState {
+  ToolCall tool_call = 1;
+  ToolCallStatus status = 2;
+  optional google.protobuf.Timestamp started_at = 3;
+  optional google.protobuf.Timestamp completed_at = 4;
+  optional ToolResult result = 5;
+}
+
+message Attachment {
+  string name = 1;
+  string content_type = 2;
+  bytes data = 3;
+  map<string, string> metadata = 4;
+}
+
+message Usage {
+  uint32 input_tokens = 1;
+  uint32 output_tokens = 2;
+  uint32 total_tokens = 3;
+  optional double cost_usd = 4;
+}
+
+message CancellationInfo {
+  bool api_call_in_progress = 1;
+  repeated string active_tools = 2;
+  bool pending_tool_approvals = 3;
+}
+
+// Tool configuration
+message SessionToolConfig {
+  repeated ToolBackendConfig backends = 1;
+  repeated string disabled_tools = 2;
+}
+
+message ToolBackendConfig {
+  string name = 1;
+  repeated string tools = 2;
+  oneof backend {
+    LocalBackend local = 3;
+    RemoteBackend remote = 4;
+    McpBackend mcp = 5;
+  }
+}
+
+message LocalBackend {
+  // No configuration needed for local execution
+}
+
+message RemoteBackend {
+  string agent_address = 1;
+  optional AuthMethod auth = 2;
+}
+
+message McpBackend {
+  string endpoint = 1;
+  McpTransport transport = 2;
+}
+
+message AuthMethod {
+  oneof method {
+    string api_key = 1;
+    TlsCertAuth tls_cert = 2;
+  }
+}
+
+message TlsCertAuth {
+  string cert_path = 1;
+  string key_path = 2;
+  optional string ca_path = 3;
+}
+
+// Approval policy
+message ToolApprovalPolicy {
+  oneof policy {
+    AlwaysAskPolicy always_ask = 1;
+    PreApprovedPolicy pre_approved = 2;
+    MixedPolicy mixed = 3;
+  }
+}
+
+message AlwaysAskPolicy {
+  optional uint64 timeout_ms = 1;
+  ApprovalDecision default_decision = 2;
+}
+
+message PreApprovedPolicy {
+  repeated string tools = 1;
+}
+
+message MixedPolicy {
+  repeated string pre_approved_tools = 1;
+  bool ask_for_others = 2;
+  optional uint64 timeout_ms = 3;
+  ApprovalDecision default_decision = 4;
+}
+
+// Enums
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_ACTIVE = 1;
+  SESSION_STATUS_INACTIVE = 2;
+}
+
+enum OperationType {
+  OPERATION_TYPE_UNSPECIFIED = 0;
+  OPERATION_TYPE_SEND_MESSAGE = 1;
+  OPERATION_TYPE_TOOL_EXECUTION = 2;
+}
+
+enum OperationStatus {
+  OPERATION_STATUS_UNSPECIFIED = 0;
+  OPERATION_STATUS_PENDING = 1;
+  OPERATION_STATUS_RUNNING = 2;
+  OPERATION_STATUS_COMPLETED = 3;
+  OPERATION_STATUS_FAILED = 4;
+  OPERATION_STATUS_CANCELLED = 5;
+}
+
+enum MessageRole {
+  MESSAGE_ROLE_UNSPECIFIED = 0;
+  MESSAGE_ROLE_USER = 1;
+  MESSAGE_ROLE_ASSISTANT = 2;
+  MESSAGE_ROLE_SYSTEM = 3;
+  MESSAGE_ROLE_TOOL = 4;
+}
+
+enum ToolCallStatus {
+  TOOL_CALL_STATUS_UNSPECIFIED = 0;
+  TOOL_CALL_STATUS_PENDING_APPROVAL = 1;
+  TOOL_CALL_STATUS_APPROVED = 2;
+  TOOL_CALL_STATUS_DENIED = 3;
+  TOOL_CALL_STATUS_EXECUTING = 4;
+  TOOL_CALL_STATUS_COMPLETED = 5;
+  TOOL_CALL_STATUS_FAILED = 6;
+}
+
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  APPROVAL_DECISION_APPROVE = 1;
+  APPROVAL_DECISION_DENY = 2;
+  APPROVAL_DECISION_ALWAYS_APPROVE = 3;
+}
+
+
+enum McpTransport {
+  MCP_TRANSPORT_UNSPECIFIED = 0;
+  MCP_TRANSPORT_STDIO = 1;
+  MCP_TRANSPORT_HTTP = 2;
+  MCP_TRANSPORT_WEBSOCKET = 3;
+}

@@ -24,6 +24,9 @@ pub enum SessionManagerError {
     #[error("Session not active: {session_id}")]
     SessionNotActive { session_id: String },
 
+    #[error("Session {session_id} already has an active listener")]
+    SessionAlreadyHasListener { session_id: String },
+
     #[error("Failed to create managed session: {message}")]
     CreationFailed { message: String },
 
@@ -270,9 +273,25 @@ impl SessionManager {
     }
 
     /// Take the event receiver for a session (can only be called once per session)
-    pub async fn take_event_receiver(&self, session_id: &str) -> Option<mpsc::Receiver<AppEvent>> {
+    pub async fn take_event_receiver(
+        &self,
+        session_id: &str,
+    ) -> Result<mpsc::Receiver<AppEvent>, SessionManagerError> {
         let mut sessions = self.active_sessions.write().await;
-        sessions.get_mut(session_id)?.take_event_rx()
+        match sessions.get_mut(session_id) {
+            Some(managed_session) => {
+                if let Some(receiver) = managed_session.take_event_rx() {
+                    Ok(receiver)
+                } else {
+                    Err(SessionManagerError::SessionAlreadyHasListener {
+                        session_id: session_id.to_string(),
+                    })
+                }
+            }
+            None => Err(SessionManagerError::SessionNotActive {
+                session_id: session_id.to_string(),
+            }),
+        }
     }
 
     /// Get session information
@@ -590,6 +609,277 @@ impl SessionManager {
     /// Get session store reference
     pub fn store(&self) -> &Arc<dyn SessionStore> {
         &self.store
+    }
+
+    /// Increment the subscriber count for a session
+    pub async fn increment_subscriber_count(
+        &self,
+        session_id: &str,
+    ) -> Result<(), SessionManagerError> {
+        let mut sessions = self.active_sessions.write().await;
+        if let Some(managed_session) = sessions.get_mut(session_id) {
+            managed_session.subscriber_count += 1;
+            managed_session.touch();
+            debug!(
+                session_id = %session_id,
+                subscriber_count = managed_session.subscriber_count,
+                "Incremented subscriber count"
+            );
+            Ok(())
+        } else {
+            Err(SessionManagerError::SessionNotActive {
+                session_id: session_id.to_string(),
+            })
+        }
+    }
+
+    /// Decrement the subscriber count for a session
+    pub async fn decrement_subscriber_count(
+        &self,
+        session_id: &str,
+    ) -> Result<(), SessionManagerError> {
+        let mut sessions = self.active_sessions.write().await;
+        if let Some(managed_session) = sessions.get_mut(session_id) {
+            managed_session.subscriber_count = managed_session.subscriber_count.saturating_sub(1);
+            managed_session.touch();
+            debug!(
+                session_id = %session_id,
+                subscriber_count = managed_session.subscriber_count,
+                "Decremented subscriber count"
+            );
+            Ok(())
+        } else {
+            // Session might have already been cleaned up
+            debug!(session_id = %session_id, "Session not active when decrementing subscriber count");
+            Ok(())
+        }
+    }
+
+    /// Touch a session to update its last activity timestamp
+    pub async fn touch_session(&self, session_id: &str) -> Result<(), SessionManagerError> {
+        let mut sessions = self.active_sessions.write().await;
+        if let Some(managed_session) = sessions.get_mut(session_id) {
+            managed_session.touch();
+            Ok(())
+        } else {
+            // Session might have been suspended, which is okay
+            Ok(())
+        }
+    }
+
+    /// Check if a session should be suspended due to no subscribers
+    pub async fn maybe_suspend_idle_session(
+        &self,
+        session_id: &str,
+    ) -> Result<(), SessionManagerError> {
+        // Check if session has no subscribers
+        let should_suspend = {
+            let sessions = self.active_sessions.read().await;
+            if let Some(managed_session) = sessions.get(session_id) {
+                managed_session.subscriber_count == 0
+            } else {
+                false // Already suspended or deleted
+            }
+        };
+
+        if should_suspend {
+            info!(session_id = %session_id, "No active subscribers, suspending session");
+            self.suspend_session(session_id).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Get session state for gRPC responses
+    pub async fn get_session_state(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::session::SessionState>, SessionManagerError> {
+        // First check if it's active
+        {
+            let sessions = self.active_sessions.read().await;
+            if let Some(managed_session) = sessions.get(session_id) {
+                return Ok(Some(managed_session.session.state.clone()));
+            }
+        }
+
+        // If not active, load from store
+        match self.store.get_session(session_id).await {
+            Ok(Some(session)) => Ok(Some(session.state)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(SessionManagerError::Storage(e)),
+        }
+    }
+
+    /// Get session state as protobuf SessionState
+    pub async fn get_session_proto(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::grpc::proto::SessionState>, SessionManagerError> {
+        match self.get_session_state(session_id).await? {
+            Some(state) => {
+                // Convert internal SessionState to protobuf SessionState
+                let proto_state = crate::grpc::proto::SessionState {
+                    id: session_id.to_string(),
+                    created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())), // TODO: Get real creation time
+                    updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
+                    config: Some(crate::grpc::proto::SessionConfig {
+                        tool_policy: Some(crate::grpc::proto::ToolApprovalPolicy {
+                            policy: Some(crate::grpc::proto::tool_approval_policy::Policy::AlwaysAsk(
+                                crate::grpc::proto::AlwaysAskPolicy {
+                                    timeout_ms: None,
+                                    default_decision: crate::grpc::proto::ApprovalDecision::Deny as i32,
+                                }
+                            )),
+                        }),
+                        tool_config: Some(crate::grpc::proto::SessionToolConfig {
+                            backends: vec![],
+                            disabled_tools: vec![],
+                        }),
+                        metadata: std::collections::HashMap::new(),
+                    }),
+                    messages: state.messages.into_iter().map(|msg| {
+                        crate::grpc::proto::Message {
+                            id: msg.id.clone().unwrap_or_default(),
+                            role: match msg.role {
+                                crate::api::messages::MessageRole::User => crate::grpc::proto::MessageRole::User as i32,
+                                crate::api::messages::MessageRole::Assistant => crate::grpc::proto::MessageRole::Assistant as i32,
+                                crate::api::messages::MessageRole::Tool => crate::grpc::proto::MessageRole::Tool as i32,
+                            },
+                            content_blocks: match msg.content {
+                                crate::api::messages::MessageContent::Text { content } => {
+                                    vec![crate::grpc::proto::MessageContentBlock {
+                                        content: Some(crate::grpc::proto::message_content_block::Content::Text(content)),
+                                    }]
+                                }
+                                crate::api::messages::MessageContent::StructuredContent { content } => {
+                                    content.0.into_iter().map(|block| match block {
+                                        crate::api::messages::ContentBlock::Text { text } => {
+                                            crate::grpc::proto::MessageContentBlock {
+                                                content: Some(crate::grpc::proto::message_content_block::Content::Text(text)),
+                                            }
+                                        }
+                                        crate::api::messages::ContentBlock::ToolUse { id, name, input } => {
+                                            crate::grpc::proto::MessageContentBlock {
+                                                content: Some(crate::grpc::proto::message_content_block::Content::ToolCall(
+                                                    crate::grpc::proto::ToolCall {
+                                                        id,
+                                                        name,
+                                                        parameters: match input {
+                                                            serde_json::Value::Object(map) => {
+                                                                map.into_iter().map(|(k, v)| (k, v.to_string())).collect()
+                                                            }
+                                                            _ => std::collections::HashMap::new(),
+                                                        },
+                                                    }
+                                                )),
+                                            }
+                                        }
+                                        crate::api::messages::ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+                                            let result_content = content.into_iter()
+                                                .filter_map(|block| match block {
+                                                    crate::api::messages::ContentBlock::Text { text } => Some(text),
+                                                    _ => None,
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+
+                                            crate::grpc::proto::MessageContentBlock {
+                                                content: Some(crate::grpc::proto::message_content_block::Content::ToolResult(
+                                                    crate::grpc::proto::ToolResult {
+                                                        tool_call_id: tool_use_id,
+                                                        success: is_error.map(|e| !e).unwrap_or(true),
+                                                        content: result_content,
+                                                        error: None,
+                                                        metadata: std::collections::HashMap::new(),
+                                                    }
+                                                )),
+                                            }
+                                        }
+                                    }).collect()
+                                }
+                            },
+                            created_at: Some(prost_types::Timestamp::from(
+                                std::time::UNIX_EPOCH + std::time::Duration::from_secs(
+                                    msg.id.as_ref()
+                                        .and_then(|id| id.split('_').nth(1))
+                                        .and_then(|ts| ts.parse::<u64>().ok())
+                                        .unwrap_or(0)
+                                )
+                            )),
+                            metadata: std::collections::HashMap::new(),
+                        }
+                    }).collect(),
+                    tool_calls: std::collections::HashMap::new(), // TODO: Convert tool calls
+                    approved_tools: state.approved_tools.into_iter().collect(),
+                    last_event_sequence: state.last_event_sequence,
+                    metadata: state.metadata,
+                };
+                Ok(Some(proto_state))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Create session for gRPC
+    pub async fn create_session_grpc(
+        &self,
+        config: crate::grpc::proto::CreateSessionRequest,
+        app_config: crate::app::AppConfig,
+    ) -> Result<(String, crate::grpc::proto::SessionInfo), SessionManagerError> {
+        // Convert protobuf config to internal SessionConfig
+        let tool_policy = config
+            .tool_policy
+            .map(|policy| match policy.policy {
+                Some(crate::grpc::proto::tool_approval_policy::Policy::AlwaysAsk(_)) => {
+                    crate::session::ToolApprovalPolicy::AlwaysAsk
+                }
+                Some(crate::grpc::proto::tool_approval_policy::Policy::PreApproved(
+                    pre_approved,
+                )) => crate::session::ToolApprovalPolicy::PreApproved(
+                    pre_approved.tools.into_iter().collect(),
+                ),
+                Some(crate::grpc::proto::tool_approval_policy::Policy::Mixed(mixed)) => {
+                    crate::session::ToolApprovalPolicy::Mixed {
+                        pre_approved: mixed.pre_approved_tools.into_iter().collect(),
+                        ask_for_others: mixed.ask_for_others,
+                    }
+                }
+                None => crate::session::ToolApprovalPolicy::AlwaysAsk,
+            })
+            .unwrap_or(crate::session::ToolApprovalPolicy::AlwaysAsk);
+
+        let session_config = crate::session::SessionConfig {
+            tool_policy,
+            tool_config: crate::session::SessionToolConfig::default(),
+            metadata: config.metadata,
+        };
+
+        let (session_id, _command_tx) = self.create_session(session_config, app_config).await?;
+
+        // Get session info for response
+        let session_info = self.get_session(&session_id).await?.ok_or_else(|| {
+            SessionManagerError::SessionNotActive {
+                session_id: session_id.clone(),
+            }
+        })?;
+
+        let proto_info = crate::grpc::proto::SessionInfo {
+            id: session_info.id,
+            created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::from(
+                session_info.created_at,
+            ))),
+            updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::from(
+                session_info.updated_at,
+            ))),
+            status: crate::grpc::proto::SessionStatus::Active as i32,
+            metadata: Some(crate::grpc::proto::SessionMetadata {
+                labels: session_info.metadata,
+                annotations: std::collections::HashMap::new(),
+            }),
+        };
+
+        Ok((session_id, proto_info))
     }
 }
 
