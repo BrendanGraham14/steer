@@ -121,7 +121,9 @@ pub struct SessionMetadata {
 impl From<&SessionInfo> for SessionMetadata {
     fn from(session_info: &SessionInfo) -> Self {
         Self {
-            model: session_info.last_model.unwrap_or(crate::api::Model::Claude3_5Sonnet20241022),
+            model: session_info
+                .last_model
+                .unwrap_or(crate::api::Model::Claude3_5Sonnet20241022),
             created_at: session_info.created_at,
             metadata: session_info.metadata.clone(),
         }

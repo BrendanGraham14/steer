@@ -6,7 +6,7 @@ use tracing::{Span, debug, error, instrument};
 
 use crate::api::ToolCall;
 use crate::api::tools::Tool as ApiTool;
-use crate::tools::{ToolError, traits::Tool as ToolTrait, BackendRegistry, ExecutionContext};
+use crate::tools::{BackendRegistry, ExecutionContext, ToolError, traits::Tool as ToolTrait};
 
 /// Manages the execution of tools called by the AI model
 #[derive(Clone)]
@@ -69,10 +69,10 @@ impl ToolExecutor {
     }
 
     /// Set the backend registry for this tool executor
-    /// 
+    ///
     /// When a backend registry is set, the executor will first check if
     /// a backend can handle the tool before falling back to local execution.
-    /// 
+    ///
     /// # Arguments
     /// * `backend_registry` - The backend registry to use for tool routing
     pub fn with_backend_registry(mut self, backend_registry: Arc<BackendRegistry>) -> Self {
@@ -103,22 +103,22 @@ impl ToolExecutor {
         Span::current().record("tool.id", tool_id);
 
         // Check if we have a backend registry configured
-        let backend_registry = self.backend_registry.as_ref()
-            .ok_or_else(|| {
-                error!(
-                    target: "app.tool_executor.execute_tool_with_cancellation",
-                    "No backend registry configured for tool executor"
-                );
-                ToolError::InternalError("No backend registry configured".to_string())
-            })?;
+        let backend_registry = self.backend_registry.as_ref().ok_or_else(|| {
+            error!(
+                target: "app.tool_executor.execute_tool_with_cancellation",
+                "No backend registry configured for tool executor"
+            );
+            ToolError::InternalError("No backend registry configured".to_string())
+        })?;
 
         // Get the backend for this tool
-        let backend = backend_registry.get_backend_for_tool(tool_name)
+        let backend = backend_registry
+            .get_backend_for_tool(tool_name)
             .ok_or_else(|| {
                 error!(
                     target: "app.tool_executor.execute_tool_with_cancellation",
-                    "No backend configured for tool: {} ({})", 
-                    tool_name, 
+                    "No backend configured for tool: {} ({})",
+                    tool_name,
                     tool_id
                 );
                 ToolError::UnknownTool(tool_name.clone())
@@ -126,19 +126,19 @@ impl ToolExecutor {
 
         debug!(
             target: "app.tool_executor.execute_tool_with_cancellation",
-            "Executing tool {} ({}) via backend with cancellation", 
-            tool_name, 
+            "Executing tool {} ({}) via backend with cancellation",
+            tool_name,
             tool_id
         );
-        
+
         // Create execution context for the backend
         let context = ExecutionContext::new(
             "default".to_string(), // TODO: Get real session ID
-            "default".to_string(), // TODO: Get real operation ID  
+            "default".to_string(), // TODO: Get real operation ID
             tool_call.id.clone(),
             token,
         );
-        
+
         backend.execute(tool_call, &context).await
     }
 }

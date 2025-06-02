@@ -36,8 +36,19 @@ pub enum ProviderKind {
     Google,
 }
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, EnumString, AsRefStr, Display, IntoStaticStr,
-    serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    EnumString,
+    AsRefStr,
+    Display,
+    IntoStaticStr,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub enum Model {
     #[strum(serialize = "claude-3-5-sonnet-20240620")]

@@ -4,12 +4,11 @@ use std::sync::Arc;
 
 use crate::api::ToolCall;
 use crate::tools::{
-    ToolError, ExecutionContext, ToolBackend, BackendMetadata,
-    traits::Tool as ToolTrait,
+    BackendMetadata, ExecutionContext, ToolBackend, ToolError, traits::Tool as ToolTrait,
 };
 
 /// Local backend that executes tools in the current process
-/// 
+///
 /// This backend uses the existing tool registry to execute tools directly
 /// in the local environment. It serves as the default/fallback backend
 /// and is equivalent to the current tool execution behavior.
@@ -20,7 +19,7 @@ pub struct LocalBackend {
 
 impl LocalBackend {
     /// Create a new LocalBackend with the given tool registry
-    /// 
+    ///
     /// # Arguments
     /// * `registry` - The tool registry to use for tool execution
     pub fn new(registry: Arc<HashMap<String, Arc<dyn ToolTrait>>>) -> Self {
@@ -28,7 +27,7 @@ impl LocalBackend {
     }
 
     /// Create a LocalBackend with the standard tool set
-    /// 
+    ///
     /// This is a convenience method that creates a backend with all
     /// the standard tools available in the application.
     pub fn standard() -> Self {
@@ -37,7 +36,7 @@ impl LocalBackend {
     }
 
     /// Create a LocalBackend with read-only tools
-    /// 
+    ///
     /// This creates a backend with only read-only tools, useful for
     /// sandboxed or restricted execution environments.
     pub fn read_only() -> Self {
@@ -69,7 +68,9 @@ impl ToolBackend for LocalBackend {
         context: &ExecutionContext,
     ) -> Result<String, ToolError> {
         // Get the tool from the registry
-        let tool = self.registry.get(&tool_call.name)
+        let tool = self
+            .registry
+            .get(&tool_call.name)
             .ok_or_else(|| ToolError::UnknownTool(tool_call.name.clone()))?;
 
         // Execute the tool using the existing trait method
@@ -77,7 +78,8 @@ impl ToolBackend for LocalBackend {
         tool.execute(
             tool_call.parameters.clone(),
             Some(context.cancellation_token.clone()),
-        ).await
+        )
+        .await
     }
 
     fn supported_tools(&self) -> Vec<&'static str> {
@@ -87,7 +89,7 @@ impl ToolBackend for LocalBackend {
         vec![
             "bash",
             "grep",
-            "dispatch_agent", 
+            "dispatch_agent",
             "glob",
             "ls",
             "read_file",
@@ -101,13 +103,10 @@ impl ToolBackend for LocalBackend {
     }
 
     fn metadata(&self) -> BackendMetadata {
-        BackendMetadata::new(
-            "Local".to_string(),
-            "Local".to_string(),
-        )
-        .with_location("localhost".to_string())
-        .with_info("tool_count".to_string(), self.registry.len().to_string())
-        .with_info("execution_env".to_string(), "current_process".to_string())
+        BackendMetadata::new("Local".to_string(), "Local".to_string())
+            .with_location("localhost".to_string())
+            .with_info("tool_count".to_string(), self.registry.len().to_string())
+            .with_info("execution_env".to_string(), "current_process".to_string())
     }
 
     async fn health_check(&self) -> bool {
@@ -150,7 +149,7 @@ mod tests {
     async fn test_local_backend_metadata() {
         let backend = LocalBackend::standard();
         let metadata = backend.metadata();
-        
+
         assert_eq!(metadata.name, "Local");
         assert_eq!(metadata.backend_type, "Local");
         assert_eq!(metadata.location, Some("localhost".to_string()));
@@ -162,7 +161,7 @@ mod tests {
     async fn test_local_backend_supported_tools() {
         let backend = LocalBackend::standard();
         let supported = backend.supported_tools();
-        
+
         assert!(!supported.is_empty());
         assert!(supported.contains(&"bash"));
         assert!(supported.contains(&"read_file"));
@@ -173,7 +172,7 @@ mod tests {
     async fn test_local_backend_health_check() {
         let backend = LocalBackend::standard();
         assert!(backend.health_check().await);
-        
+
         // Test with empty registry
         let empty_backend = LocalBackend::new(Arc::new(HashMap::new()));
         assert!(!empty_backend.health_check().await);
@@ -182,7 +181,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_backend_execution_unknown_tool() {
         let backend = LocalBackend::standard();
-        
+
         let tool_call = ToolCall {
             name: "unknown_tool".to_string(),
             parameters: json!({}),
@@ -198,7 +197,7 @@ mod tests {
 
         let result = backend.execute(&tool_call, &context).await;
         assert!(result.is_err());
-        
+
         match result.unwrap_err() {
             ToolError::UnknownTool(name) => assert_eq!(name, "unknown_tool"),
             _ => panic!("Expected UnknownTool error"),
