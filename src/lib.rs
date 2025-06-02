@@ -2,6 +2,7 @@ pub mod api;
 pub mod app;
 pub mod config;
 pub mod events;
+pub mod grpc;
 pub mod runners;
 pub mod session;
 pub mod tools;

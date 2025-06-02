@@ -170,6 +170,94 @@ impl Tui {
         })
     }
 
+    /// Create a new TUI that connects to a remote gRPC server
+    pub async fn new_remote(
+        addr: &str,
+        initial_model: Model,
+        session_config: Option<crate::session::SessionConfig>,
+    ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
+        use crate::grpc::GrpcClientAdapter;
+        use crate::session::{SessionConfig, SessionToolConfig, ToolApprovalPolicy};
+        use std::collections::HashMap;
+
+        info!("Creating TUI in remote mode, connecting to {}", addr);
+
+        // Connect to the gRPC server
+        let mut client = GrpcClientAdapter::connect(addr).await?;
+
+        // Create or use provided session config
+        let session_config = session_config.unwrap_or_else(|| SessionConfig {
+            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            tool_config: SessionToolConfig::default(),
+            metadata: HashMap::new(),
+        });
+
+        // Create session on server
+        let session_id = client.create_session(session_config).await?;
+        info!("Created remote session: {}", session_id);
+
+        // Start streaming
+        let event_rx = client.start_streaming().await?;
+
+        // Create command sender that forwards to the gRPC client
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<AppCommand>(32);
+
+        // Spawn task to forward commands to gRPC client
+        tokio::spawn(async move {
+            while let Some(command) = cmd_rx.recv().await {
+                if let Err(e) = client.send_command(command).await {
+                    error!("Failed to send command to gRPC server: {}", e);
+                    // For now, continue processing other commands
+                }
+            }
+            info!("Command forwarding task ended");
+        });
+
+        // Initialize TUI with the command sender
+        let tui = Self::new(cmd_tx, initial_model)?;
+
+        Ok((tui, event_rx))
+    }
+
+    /// Resume an existing remote session
+    pub async fn resume_remote(
+        addr: &str,
+        session_id: String,
+        initial_model: Model,
+    ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
+        use crate::grpc::GrpcClientAdapter;
+
+        info!("Resuming remote session {} at {}", session_id, addr);
+
+        // Connect to the gRPC server
+        let mut client = GrpcClientAdapter::connect(addr).await?;
+
+        // Resume the session
+        client.resume_session(session_id.clone()).await?;
+        info!("Resumed remote session: {}", session_id);
+
+        // Start streaming
+        let event_rx = client.start_streaming().await?;
+
+        // Create command sender that forwards to the gRPC client
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<AppCommand>(32);
+
+        // Spawn task to forward commands to gRPC client
+        tokio::spawn(async move {
+            while let Some(command) = cmd_rx.recv().await {
+                if let Err(e) = client.send_command(command).await {
+                    error!("Failed to send command to gRPC server: {}", e);
+                }
+            }
+            info!("Command forwarding task ended for session: {}", session_id);
+        });
+
+        // Initialize TUI with the command sender
+        let tui = Self::new(cmd_tx, initial_model)?;
+
+        Ok((tui, event_rx))
+    }
+
     fn cleanup_terminal(&mut self) -> Result<()> {
         execute!(
             self.terminal.backend_mut(),

@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use coder::app::{App, AppCommand, AppConfig, app_actor_loop};
+use coder::app::AppConfig;
 use coder::config::LlmConfig;
 use coder::events::StreamEventWithMetadata;
 use coder::session::stores::sqlite::SqliteSessionStore;
@@ -23,6 +23,7 @@ use coder::session::{
 };
 use coder::utils;
 
+use chrono::{DateTime, TimeZone, Utc};
 /// An AI-powered agent and CLI tool that assists with software engineering tasks.
 #[derive(Parser)]
 #[command(version, about, long_about = None, author)]
@@ -34,6 +35,10 @@ struct Cli {
     /// Model to use
     #[arg(short, long, value_enum, default_value_t = Model::ClaudeSonnet4_20250514)]
     model: Model,
+
+    /// Connect to a remote gRPC server instead of running locally
+    #[arg(long)]
+    remote: Option<String>,
 
     /// Subcommands
     #[command(subcommand)]
@@ -61,6 +66,16 @@ enum Commands {
         /// Timeout in seconds
         #[arg(long)]
         timeout: Option<u64>,
+    },
+    /// Start the gRPC server for client/server mode
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "50051")]
+        port: u16,
+
+        /// Bind address
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
     },
     /// Session management commands
     Session {
@@ -240,11 +255,43 @@ async fn main() -> Result<()> {
                 println!("{}", json_output);
                 return Ok(());
             }
-            Commands::Session { session_command } => {
-                let llm_config = LlmConfig::from_env()
-                    .expect("Failed to load LLM configuration from environment variables.");
+            Commands::Serve { port, bind } => {
+                let addr = format!("{}:{}", bind, port)
+                    .parse()
+                    .map_err(|e| anyhow!("Invalid bind address: {}", e))?;
 
-                return handle_session_command(session_command).await;
+                info!("Starting gRPC server on {}", addr);
+                // Create session store path
+                let db_path = create_session_store_path()?;
+
+                let config = coder::runners::StreamingConfig {
+                    db_path,
+                    session_manager_config: SessionManagerConfig {
+                        max_concurrent_sessions: 100,
+                        default_model: cli.model,
+                        auto_persist: true,
+                    },
+                    bind_addr: addr,
+                };
+
+                let mut runner = coder::runners::StreamingRunner::new(config).await?;
+                runner.start().await?;
+
+                info!("gRPC server started on {}", addr);
+                println!("Server listening on {}", addr);
+                println!("Press Ctrl+C to shutdown");
+
+                // Wait for shutdown signal
+                tokio::signal::ctrl_c().await?;
+                info!("Shutdown signal received");
+
+                runner.shutdown().await?;
+                info!("Server shutdown complete");
+
+                return Ok(());
+            }
+            Commands::Session { session_command } => {
+                return handle_session_command(session_command, cli.remote.as_deref()).await;
             }
         }
     }
@@ -253,6 +300,26 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
+    // Check if we should run in remote mode
+    if let Some(remote_addr) = cli.remote {
+        info!("Connecting to remote server at {}", remote_addr);
+
+        // Set panic hook for terminal cleanup
+        coder::tui::setup_panic_hook();
+
+        // Create TUI in remote mode
+        let (mut tui, event_rx) =
+            coder::tui::Tui::new_remote(&remote_addr, cli.model, None).await?;
+
+        println!("Connected to remote server at {}", remote_addr);
+
+        // Run the TUI with events from the remote server
+        tui.run(event_rx).await?;
+
+        return Ok(());
+    }
+
+    // Local mode - existing behavior
     let llm_config = LlmConfig::from_env()
         .expect("Failed to load LLM configuration from environment variables.");
 
@@ -288,7 +355,7 @@ async fn main() -> Result<()> {
     let event_rx = session_manager
         .take_event_receiver(&session_id)
         .await
-        .ok_or_else(|| anyhow!("Failed to get event receiver for new session"))?;
+        .map_err(|e| anyhow!("Failed to get event receiver for new session: {}", e))?;
 
     info!(target: "main", "Created new session: {}", session_id);
     println!("Session ID: {}", session_id);
@@ -303,7 +370,278 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_session_command(command: SessionCommands) -> Result<()> {
+async fn handle_remote_session_command(command: SessionCommands, remote_addr: &str) -> Result<()> {
+    use coder::grpc::GrpcClientAdapter;
+
+    // Connect to the gRPC server
+    let mut client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
+        anyhow!(
+            "Failed to connect to remote server at {}: {}",
+            remote_addr,
+            e
+        )
+    })?;
+
+    match command {
+        SessionCommands::List {
+            active: _,
+            limit: _,
+        } => {
+            // List remote sessions via gRPC
+            let sessions = client
+                .list_sessions()
+                .await
+                .map_err(|e| anyhow!("Failed to list remote sessions: {}", e))?;
+
+            if sessions.is_empty() {
+                println!("No remote sessions found.");
+                return Ok(());
+            }
+
+            println!("Remote Sessions:");
+            println!(
+                "{:<36} {:<20} {:<20} {:<10}",
+                "ID", "Created", "Updated", "Status"
+            );
+            println!("{}", "-".repeat(86));
+
+            for session in sessions {
+                let created_str = session
+                    .created_at
+                    .as_ref()
+                    .map(|ts: &prost_types::Timestamp| {
+                        let secs = ts.seconds;
+                        let nsecs = ts.nanos as u32;
+                        let datetime = Utc.timestamp_opt(secs, nsecs).single();
+                        match datetime {
+                            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                            None => "N/A".to_string(),
+                        }
+                    })
+                    .unwrap_or_else(|| "N/A".to_string());
+
+                let updated_str = session
+                    .updated_at
+                    .as_ref()
+                    .map(|ts: &prost_types::Timestamp| {
+                        let secs = ts.seconds;
+                        let nsecs = ts.nanos as u32;
+                        let datetime = Utc.timestamp_opt(secs, nsecs).single();
+                        match datetime {
+                            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                            None => "N/A".to_string(),
+                        }
+                    })
+                    .unwrap_or_else(|| "N/A".to_string());
+
+                let status_str = match session.status {
+                    0 => "Unspecified",
+                    1 => "Active",
+                    2 => "Inactive",
+                    _ => "Unknown",
+                };
+
+                println!(
+                    "{:<36} {:<20} {:<20} {:<10}",
+                    session.id, created_str, updated_str, status_str,
+                );
+            }
+        }
+        SessionCommands::Create {
+            tool_policy,
+            pre_approved_tools,
+            metadata,
+        } => {
+            let policy = parse_tool_policy(&tool_policy, pre_approved_tools.as_deref())?;
+            let session_metadata = parse_metadata(metadata.as_deref())?;
+
+            let session_config = SessionConfig {
+                tool_policy: policy,
+                tool_config: SessionToolConfig::default(),
+                metadata: session_metadata,
+            };
+
+            println!("Creating remote session at {}", remote_addr);
+
+            // Set panic hook for terminal cleanup
+            coder::tui::setup_panic_hook();
+
+            // Create TUI in remote mode with custom session config
+            let (mut tui, event_rx) = coder::tui::Tui::new_remote(
+                remote_addr,
+                Model::ClaudeSonnet4_20250514, // Default model, could be made configurable
+                Some(session_config),
+            )
+            .await?;
+
+            println!("Connected to remote server and created session");
+
+            // Run the TUI with events from the remote server
+            tui.run(event_rx).await?;
+        }
+        SessionCommands::Resume { session_id } => {
+            println!("Resuming remote session: {} at {}", session_id, remote_addr);
+
+            // Set panic hook for terminal cleanup
+            coder::tui::setup_panic_hook();
+
+            // Resume the remote session
+            let (mut tui, event_rx) = coder::tui::Tui::resume_remote(
+                remote_addr,
+                session_id,
+                Model::ClaudeSonnet4_20250514, // Default model, could be made configurable
+            )
+            .await?;
+
+            println!("Connected to remote server and resumed session");
+
+            // Run the TUI with events from the remote server
+            tui.run(event_rx).await?;
+        }
+        SessionCommands::Latest => {
+            // Get latest session via gRPC, then resume it
+            let sessions = client
+                .list_sessions()
+                .await
+                .map_err(|e| anyhow!("Failed to list remote sessions: {}", e))?;
+
+            if sessions.is_empty() {
+                return Err(anyhow!("No remote sessions found"));
+            }
+
+            // Find the most recently updated session
+            let latest_session = sessions
+                .into_iter()
+                .max_by_key(|session| {
+                    session
+                        .updated_at
+                        .as_ref()
+                        .and_then(|ts: &prost_types::Timestamp| {
+                            let secs = ts.seconds;
+                            let nsecs = ts.nanos as u32;
+                            let datetime = Utc.timestamp_opt(secs, nsecs).single();
+                            datetime.map(|dt| dt.timestamp())
+                        })
+                        .unwrap_or(0)
+                })
+                .ok_or_else(|| anyhow!("Failed to find latest session"))?;
+
+            let session_id = latest_session.id;
+            println!("Resuming latest remote session: {}", session_id);
+
+            if let Some(updated_at) = latest_session.updated_at {
+                let secs = updated_at.seconds;
+                let nsecs = updated_at.nanos as u32;
+                let datetime = Utc.timestamp_opt(secs, nsecs).single();
+                match datetime {
+                    Some(dt) => println!("Last updated: {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
+                    None => println!("Last updated: N/A"),
+                }
+            }
+
+            // Set panic hook for terminal cleanup
+            coder::tui::setup_panic_hook();
+
+            // Resume the remote session
+            let (mut tui, event_rx) = coder::tui::Tui::resume_remote(
+                remote_addr,
+                session_id,
+                Model::ClaudeSonnet4_20250514, // Default model, could be made configurable
+            )
+            .await?;
+
+            println!("Connected to remote server and resumed latest session");
+
+            // Run the TUI with events from the remote server
+            tui.run(event_rx).await?;
+        }
+        SessionCommands::Delete { session_id, force } => {
+            if !force {
+                print!(
+                    "Are you sure you want to delete remote session {}? (y/N): ",
+                    session_id
+                );
+                io::stdout().flush()?;
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+
+                if !input.trim().to_lowercase().starts_with('y') {
+                    println!("Deletion cancelled.");
+                    return Ok(());
+                }
+            }
+
+            let deleted = client
+                .delete_session(&session_id)
+                .await
+                .map_err(|e| anyhow!("Failed to delete remote session: {}", e))?;
+
+            if deleted {
+                println!("Remote session {} deleted.", session_id);
+            } else {
+                return Err(anyhow!("Remote session not found: {}", session_id));
+            }
+        }
+        SessionCommands::Show { session_id } => {
+            let session_state = client
+                .get_session(&session_id)
+                .await
+                .map_err(|e| anyhow!("Failed to get remote session: {}", e))?;
+
+            match session_state {
+                Some(state) => {
+                    println!("Remote Session Details:");
+                    println!("ID: {}", state.id);
+
+                    if let Some(created_at) = state.created_at {
+                        let secs = created_at.seconds;
+                        let nsecs = created_at.nanos as u32;
+                        let datetime = Utc.timestamp_opt(secs, nsecs).single();
+                        match datetime {
+                            Some(dt) => println!("Created: {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
+                            None => println!("Created: N/A"),
+                        }
+                    }
+
+                    if let Some(updated_at) = state.updated_at {
+                        let secs = updated_at.seconds;
+                        let nsecs = updated_at.nanos as u32;
+                        let datetime = Utc.timestamp_opt(secs, nsecs).single();
+                        match datetime {
+                            Some(dt) => println!("Updated: {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
+                            None => println!("Updated: N/A"),
+                        }
+                    }
+
+                    println!("Messages: {}", state.messages.len());
+                    println!("Last Event Sequence: {}", state.last_event_sequence);
+                    println!("Approved Tools: {:?}", state.approved_tools);
+
+                    if !state.metadata.is_empty() {
+                        println!("Metadata:");
+                        for (key, value) in &state.metadata {
+                            println!("  {}: {}", key, value);
+                        }
+                    }
+                }
+                None => {
+                    return Err(anyhow!("Remote session not found: {}", session_id));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_session_command(command: SessionCommands, remote: Option<&str>) -> Result<()> {
+    // If remote is specified, handle via gRPC
+    if let Some(remote_addr) = remote {
+        return handle_remote_session_command(command, remote_addr).await;
+    }
+
+    // Local session handling
     let session_store = create_session_store().await?;
     let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
 
@@ -417,8 +755,8 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
                     let event_rx = session_manager
                         .take_event_receiver(&session_id)
                         .await
-                        .ok_or_else(|| {
-                            anyhow!("Failed to get event receiver for resumed session")
+                        .map_err(|e| {
+                            anyhow!("Failed to get event receiver for resumed session: {}", e)
                         })?;
 
                     // Get the session info to determine the model
@@ -498,8 +836,8 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
                     let event_rx = session_manager
                         .take_event_receiver(session_id)
                         .await
-                        .ok_or_else(|| {
-                            anyhow!("Failed to get event receiver for resumed session")
+                        .map_err(|e| {
+                            anyhow!("Failed to get event receiver for resumed session: {}", e)
                         })?;
 
                     let model = latest_session
@@ -592,11 +930,15 @@ async fn handle_session_command(command: SessionCommands) -> Result<()> {
     Ok(())
 }
 
+fn create_session_store_path() -> Result<std::path::PathBuf> {
+    let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    let db_path = home_dir.join(".coder").join("sessions.db");
+    Ok(db_path)
+}
+
 async fn create_session_store() -> Result<Arc<dyn coder::session::SessionStore>> {
     // Create SQLite session store in user's home directory
-    let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
-
-    let db_path = home_dir.join(".coder").join("sessions.db");
+    let db_path = create_session_store_path()?;
 
     // Create directory if it doesn't exist
     if let Some(parent) = db_path.parent() {
