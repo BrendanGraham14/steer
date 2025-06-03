@@ -1,0 +1,206 @@
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use tokio_util::sync::CancellationToken;
+
+use crate::api::ToolCall;
+
+#[derive(Debug)]
+pub struct ValidationContext {
+    pub cancellation_token: CancellationToken,
+    pub user_id: Option<String>,
+    pub session_id: String,
+}
+
+#[derive(Debug)]
+pub struct ValidationResult {
+    pub allowed: bool,
+    pub reason: Option<String>,
+    pub requires_user_approval: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("Invalid parameters: {0}")]
+    InvalidParams(String),
+    #[error("Filter error: {0}")]
+    FilterError(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+#[async_trait]
+pub trait ToolValidator: Send + Sync {
+    fn tool_name(&self) -> &'static str;
+
+    async fn validate(
+        &self,
+        tool_call: &ToolCall,
+        context: &ValidationContext,
+    ) -> Result<ValidationResult, ValidationError>;
+}
+
+pub struct ValidatorRegistry {
+    validators: HashMap<String, Box<dyn ToolValidator>>,
+}
+
+impl ValidatorRegistry {
+    pub fn new() -> Self {
+        let mut validators = HashMap::new();
+
+        // Register tool-specific validators
+        validators.insert(
+            "bash".to_string(),
+            Box::new(BashValidator::new()) as Box<dyn ToolValidator>,
+        );
+
+        Self { validators }
+    }
+
+    pub fn get_validator(&self, tool_name: &str) -> Option<&Box<dyn ToolValidator>> {
+        self.validators.get(tool_name)
+    }
+}
+
+// Bash validator implementation
+use once_cell::sync::Lazy;
+use regex::Regex;
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BashParams {
+    pub command: String,
+    pub timeout: Option<u64>,
+}
+
+pub struct BashValidator;
+
+impl BashValidator {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Check if a command is banned (basic, fast check) - matches src/tools/bash.rs
+    fn is_banned_command(&self, command: &str) -> bool {
+        static BANNED_COMMAND_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {
+            let banned_commands = [
+                // Network tools
+                "curl",
+                "wget",
+                "nc",
+                "telnet",
+                "ssh",
+                "scp",
+                "ftp",
+                "sftp",
+                // Web browsers/clients
+                "lynx",
+                "w3m",
+                "links",
+                "elinks",
+                "httpie",
+                "xh",
+                "http-prompt",
+                "chrome",
+                "firefox",
+                "safari",
+                "edge",
+                "opera",
+                "chromium",
+                // Download managers
+                "axel",
+                "aria2c",
+                // Shell utilities that might be risky if misused
+                "alias",
+                "unalias",
+                "exec",
+                "source",
+                ".",
+                "history",
+                // Potentially dangerous system modification tools
+                "sudo",
+                "su",
+                "chown",
+                "chmod",
+                "useradd",
+                "userdel",
+                "groupadd",
+                "groupdel",
+                // File editors (could be used to modify sensitive files)
+                "vi",
+                "vim",
+                "nano",
+                "pico",
+                "emacs",
+                "ed",
+            ];
+            banned_commands
+                .iter()
+                .map(|cmd| {
+                    Regex::new(&format!(r"^\s*(\S*/)?{}\b", regex::escape(cmd)))
+                        .expect("Failed to compile banned command regex")
+                })
+                .collect()
+        });
+
+        BANNED_COMMAND_REGEXES.iter().any(|re| re.is_match(command))
+    }
+
+    /// Advanced command filtering using existing command_filter module
+    async fn is_command_allowed(&self, command: &str, context: &ValidationContext) -> Result<bool, ValidationError> {
+        crate::tools::command_filter::is_command_allowed(command, context.cancellation_token.clone())
+            .await
+            .map_err(|e| ValidationError::FilterError(e.to_string()))
+    }
+}
+
+#[async_trait]
+impl ToolValidator for BashValidator {
+    fn tool_name(&self) -> &'static str {
+        "bash"
+    }
+
+    async fn validate(
+        &self,
+        tool_call: &ToolCall,
+        context: &ValidationContext,
+    ) -> Result<ValidationResult, ValidationError> {
+        let params: BashParams = serde_json::from_value(tool_call.parameters.clone())
+            .map_err(|e| ValidationError::InvalidParams(e.to_string()))?;
+
+        // First check basic banned commands (fast path)
+        if self.is_banned_command(&params.command) {
+            return Ok(ValidationResult {
+                allowed: false,
+                reason: Some(format!(
+                    "Command '{}' is disallowed for security reasons",
+                    params.command
+                )),
+                requires_user_approval: false,
+            });
+        }
+
+        // Advanced filter check using LLM (slower, more thorough)
+        let is_allowed = self.is_command_allowed(&params.command, context).await?;
+
+        if !is_allowed {
+            return Ok(ValidationResult {
+                allowed: false,
+                reason: Some(format!(
+                    "Command '{}' was blocked by the command filter",
+                    params.command
+                )),
+                requires_user_approval: false,
+            });
+        }
+
+        // Command passed all checks
+        Ok(ValidationResult {
+            allowed: true,
+            reason: None,
+            requires_user_approval: false,
+        })
+    }
+}

@@ -50,13 +50,8 @@ impl ToolExecutorBuilder {
 
     pub fn standard() -> Self {
         Self::new()
-            .add_tool::<crate::tools::bash::BashTool>()
-            .add_tool::<crate::tools::grep_tool::GrepTool>()
+            // For now, just use the remaining tools that haven't been migrated yet
             .add_tool::<crate::tools::dispatch_agent::DispatchAgentTool>()
-            .add_tool::<crate::tools::glob_tool::GlobTool>()
-            .add_tool::<crate::tools::ls::LsTool>()
-            .add_tool::<crate::tools::view::ViewTool>()
-            .add_tool::<crate::tools::edit::EditTool>()
             .add_tool::<crate::tools::edit::multi_edit::MultiEditTool>()
             .add_tool::<crate::tools::replace::ReplaceTool>()
             .add_tool::<crate::tools::fetch::FetchTool>()
@@ -67,10 +62,6 @@ impl ToolExecutorBuilder {
     /// Create a builder pre-configured with read-only tools
     pub fn read_only() -> Self {
         Self::new()
-            .add_tool::<crate::tools::grep_tool::GrepTool>()
-            .add_tool::<crate::tools::glob_tool::GlobTool>()
-            .add_tool::<crate::tools::ls::LsTool>()
-            .add_tool::<crate::tools::view::ViewTool>()
             .add_tool::<crate::tools::todo::read::TodoReadTool>()
             .add_tool::<crate::tools::todo::write::TodoWriteTool>()
     }

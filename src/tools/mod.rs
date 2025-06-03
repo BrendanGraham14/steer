@@ -1,26 +1,18 @@
-// Publicly export the error and trait types
+// Publicly export the main types
 pub mod backend;
-pub mod error;
 pub mod execution_context;
 pub mod local_backend;
-pub mod traits;
 
 pub use backend::{BackendMetadata, BackendRegistry, ToolBackend};
-pub use error::ToolError;
+// Re-export coder_tools types as the primary tool abstractions
+pub use coder_tools::{Tool, ToolError};
 pub use execution_context::{AuthMethod, ExecutionContext, ExecutionEnvironment, VolumeMount};
 pub use local_backend::LocalBackend;
-pub use traits::Tool;
 
-// Export the individual tool modules
-// These modules will now contain the Tool implementations
-pub mod bash;
+// Export the remaining main-app specific tool modules
 pub mod command_filter;
 pub mod dispatch_agent;
-pub mod edit;
 pub mod fetch;
-pub mod glob_tool;
-pub mod grep_tool;
-pub mod ls;
-pub mod replace;
-pub mod todo;
-pub mod view;
+
+pub use dispatch_agent::DispatchAgentTool;
+pub use fetch::FetchTool;

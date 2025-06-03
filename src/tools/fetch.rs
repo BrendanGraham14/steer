@@ -1,10 +1,9 @@
 use crate::api::Model;
 use crate::config::LlmConfig;
 use crate::tools::ToolError;
-use coder_macros::tool;
+use coder_macros::tool_external as tool;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 
 #[derive(Deserialize, Debug, JsonSchema)]
 struct FetchParams {
@@ -40,8 +39,9 @@ Usage notes:
     async fn run(
         _tool: &FetchTool,
         params: FetchParams,
-        token: Option<CancellationToken>,
+        context: &coder_tools::ExecutionContext,
     ) -> Result<String, ToolError> {
+        let token = Some(context.cancellation_token.clone());
         // Create a reqwest client
         let client = reqwest::Client::new();
 
@@ -67,7 +67,7 @@ Usage notes:
                 if !status.is_success() {
                     return Err(ToolError::execution(
                         "Fetch",
-                        anyhow::anyhow!("HTTP error: {} when fetching URL: {}", status, url)
+                        format!("HTTP error: {} when fetching URL: {}", status, url)
                     ));
                 }
 
@@ -87,13 +87,13 @@ Usage notes:
                     }
                     Err(e) => Err(ToolError::execution(
                         "Fetch",
-                        anyhow::anyhow!("Failed to read response body from {}: {}", url, e)
+                        format!("Failed to read response body from {}: {}", url, e)
                     )),
                 }
             }
             Err(e) => Err(ToolError::execution(
                 "Fetch",
-                anyhow::anyhow!("Request to URL {} failed: {}", params.url, e)
+                format!("Request to URL {} failed: {}", params.url, e)
             )),
         }
     }
@@ -109,9 +109,9 @@ impl FetchTool {
 async fn process_web_page_content(
     content: String,
     prompt: String,
-    token: Option<CancellationToken>,
+    token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ToolError> {
-    let config = LlmConfig::from_env().map_err(|e| ToolError::execution("Fetch", e))?;
+    let config = LlmConfig::from_env().map_err(|e| ToolError::execution("Fetch", e.to_string()))?;
     let client = crate::api::Client::new(&config);
     let user_message = format!(
         r#"Web page content:
@@ -137,7 +137,7 @@ Provide a concise response based only on the content above.
     let token = if let Some(ref token) = token {
         token.clone()
     } else {
-        CancellationToken::new()
+        tokio_util::sync::CancellationToken::new()
     };
 
     match client
@@ -150,7 +150,7 @@ Provide a concise response based only on the content above.
         }
         Err(e) => Err(ToolError::execution(
             "Fetch",
-            anyhow::anyhow!("Failed to process web page content: {}", e),
+            format!("Failed to process web page content: {}", e),
         )),
     }
 }

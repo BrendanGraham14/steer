@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use coder_macros::tool;
 use once_cell::sync::Lazy;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -9,8 +9,8 @@ use tokio::fs;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::ToolError;
-use coder_macros::tool;
+use crate::context::ExecutionContext;
+use crate::error::ToolError;
 
 // Global lock manager for file paths
 static FILE_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
@@ -61,7 +61,7 @@ async fn perform_edit_operations(
             if operations.is_empty() {
                 return Err(ToolError::execution(
                     tool_name_for_errors,
-                    anyhow::anyhow!(
+                    format!(
                         "File {} does not exist and no operations provided to create it.",
                         file_path_str
                     ),
@@ -80,14 +80,12 @@ async fn perform_edit_operations(
                                 return Err(ToolError::Cancelled(tool_name_for_errors.to_string()));
                             }
                         }
-                        fs::create_dir_all(parent)
-                            .await
-                            .context(format!(
-                                "{}: Failed to create directory: {}",
+                        fs::create_dir_all(parent).await.map_err(|e| {
+                            ToolError::io(
                                 tool_name_for_errors,
-                                parent.display()
-                            ))
-                            .map_err(|e_ctx| ToolError::io(tool_name_for_errors, e_ctx))?;
+                                format!("Failed to create directory {}: {}", parent.display(), e),
+                            )
+                        })?;
                     }
                 }
                 current_content = first_op.new_string.clone();
@@ -95,7 +93,7 @@ async fn perform_edit_operations(
             } else {
                 return Err(ToolError::io(
                     tool_name_for_errors,
-                    anyhow::anyhow!(
+                    format!(
                         "File {} not found, and the first/only operation's old_string is not empty (required for creation).",
                         file_path_str
                     ),
@@ -106,7 +104,7 @@ async fn perform_edit_operations(
             // Other read error
             return Err(ToolError::io(
                 tool_name_for_errors,
-                anyhow::anyhow!("Failed to read file {}: {}", file_path_str, e),
+                format!("Failed to read file {}: {}", file_path_str, e),
             ));
         }
     }
@@ -137,7 +135,7 @@ async fn perform_edit_operations(
             } else {
                 return Err(ToolError::execution(
                     tool_name_for_errors,
-                    anyhow::anyhow!(
+                    format!(
                         "Edit #{} for file {} has an empty old_string. This is only allowed for the first operation if the file is being created or for a single operation to overwrite the file.",
                         index + 1,
                         file_path_str
@@ -150,7 +148,7 @@ async fn perform_edit_operations(
             if occurrences == 0 {
                 return Err(ToolError::execution(
                     tool_name_for_errors,
-                    anyhow::anyhow!(
+                    format!(
                         "For edit #{}, string not found in file {} (after {} previous successful edits). String to find (first 50 chars): '{}'",
                         index + 1,
                         file_path_str,
@@ -162,7 +160,7 @@ async fn perform_edit_operations(
             if occurrences > 1 {
                 return Err(ToolError::execution(
                     tool_name_for_errors,
-                    anyhow::anyhow!(
+                    format!(
                         "For edit #{}, found {} occurrences of string in file {} (after {} previous successful edits). String to find (first 50 chars): '{}'. Please provide more context.",
                         index + 1,
                         occurrences,
@@ -179,7 +177,7 @@ async fn perform_edit_operations(
     Ok((current_content, edits_applied_count, file_created_this_op))
 }
 
-#[derive(Deserialize, Debug, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EditParams {
     /// The absolute path to the file to edit
     pub file_path: String,
@@ -192,7 +190,7 @@ pub struct EditParams {
 tool! {
     EditTool {
         params: EditParams,
-        description: r#"This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the replace tool to overwrite files. For Jupyter notebooks (.ipynb files), use the NotebookEditCell instead.
+        description: r#"This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the replace tool to overwrite files.
 
 Before using this tool:
 
@@ -247,7 +245,7 @@ Remember: when making multiple file edits in a row to the same file, you should 
     async fn run(
         _tool: &EditTool,
         params: EditParams,
-        token: Option<CancellationToken>,
+        context: &ExecutionContext,
     ) -> Result<String, ToolError> {
         let file_lock = get_file_lock(&params.file_path).await;
         let _lock_guard = file_lock.lock().await;
@@ -257,17 +255,16 @@ Remember: when making multiple file edits in a row to the same file, you should 
             new_string: params.new_string,
         };
 
-        match perform_edit_operations(&params.file_path, &[operation], token.as_ref(), "Edit").await {
+        match perform_edit_operations(&params.file_path, &[operation], Some(&context.cancellation_token), EDIT_TOOL_NAME).await {
             Ok((final_content, num_ops, created_or_overwritten)) => {
                 // perform_edit_operations ensures num_ops is 1 if Ok for a single op, or 0 if it was a no-op on existing file.
                 // It also handles the "creation" logic if old_string was empty.
 
                 if created_or_overwritten || num_ops > 0 { // If created, or if existing file was modified
-                    if let Some(t) = &token { if t.is_cancelled() { return Err(ToolError::Cancelled("Edit".to_string())); } }
+                    if context.cancellation_token.is_cancelled() { return Err(ToolError::Cancelled(EDIT_TOOL_NAME.to_string())); }
                     fs::write(Path::new(&params.file_path), &final_content)
                         .await
-                        .context(format!("Edit: Failed to write file: {}", params.file_path))
-                        .map_err(|e| ToolError::io("Edit", e))?;
+                        .map_err(|e| ToolError::io(EDIT_TOOL_NAME, format!("Failed to write file {}: {}", params.file_path, e)))?;
 
                     if created_or_overwritten {
                         // The "created_or_overwritten" flag from perform_edit_operations handles if old_string was empty.
@@ -300,7 +297,7 @@ pub mod multi_edit {
     tool! {
         MultiEditTool {
             params: MultiEditParams,
-            description: r#"This is a tool for making multiple edits to a single file in one operation. It is built on top of the ${C8.name} tool and allows you to perform multiple find-and-replace operations efficiently. Prefer this tool over the ${C8.name} tool and ${kW} tool when you need to make multiple edits to the same file.
+            description: format!(r#"This is a tool for making multiple edits to a single file in one operation. It is built on top of the {} tool and allows you to perform multiple find-and-replace operations efficiently. Prefer this tool over the {} tool when you need to make multiple edits to the same file.
 
 Before using this tool:
 
@@ -312,14 +309,12 @@ To make multiple file edits, provide the following:
 2. edits: An array of edit operations to perform, where each edit contains:
    - old_string: The text to replace (must match the file contents exactly, including all whitespace and indentation)
    - new_string: The edited text to replace the old_string
-   - expected_replacements: The number of replacements you expect to make. Defaults to 1 if not specified.
 
 IMPORTANT:
 - All edits are applied in sequence, in the order they are provided
 - Each edit operates on the result of the previous edit
 - All edits must be valid for the operation to succeed - if any edit fails, none will be applied
 - This tool is ideal when you need to make several changes to different parts of the same file
-- For Jupyter notebooks (.ipynb files), use the ${uB.name} instead
 
 CRITICAL REQUIREMENTS:
 1. All edits follow the same requirements as the single Edit tool
@@ -337,7 +332,7 @@ If you want to create a new file, use:
 - A new file path, including dir name if needed
 - First edit: empty old_string and the new file's contents as new_string
 - Subsequent edits: normal edit operations on the created content
-"#,
+"#, EDIT_TOOL_NAME, EDIT_TOOL_NAME),
             name: "multi_edit_file",
             require_approval: true
         }
@@ -345,7 +340,7 @@ If you want to create a new file, use:
         async fn run(
             _tool: &MultiEditTool,
             params: MultiEditParams,
-            token: Option<CancellationToken>,
+            context: &ExecutionContext,
         ) -> Result<String, ToolError> {
             let file_lock = super::get_file_lock(&params.file_path).await;
             let _lock_guard = file_lock.lock().await;
@@ -355,25 +350,24 @@ If you want to create a new file, use:
                 let path = Path::new(&params.file_path);
                  if !fs::metadata(path).await.map(|m| m.is_file()).unwrap_or(false) {
                      return Err(ToolError::execution(
-                        "MultiEdit",
-                        anyhow::anyhow!("File {} does not exist and no edit operations provided to create or modify it.", params.file_path),
+                        MULTI_EDIT_TOOL_NAME,
+                        format!("File {} does not exist and no edit operations provided to create or modify it.", params.file_path),
                     ));
                  }
                 return Ok(format!("File {} not changed as no edits were provided.", params.file_path));
             }
 
-            match super::perform_edit_operations(&params.file_path, &params.edits, token.as_ref(), "MultiEdit").await {
+            match super::perform_edit_operations(&params.file_path, &params.edits, Some(&context.cancellation_token), MULTI_EDIT_TOOL_NAME).await {
                 Ok((final_content, num_ops_processed, file_was_created)) => {
                     // If perform_edit_operations returned Ok, it means all operations in params.edits were valid and processed.
                     // num_ops_processed should equal params.edits.len().
                     // The content is now ready to be written.
 
                     if num_ops_processed > 0 || file_was_created { // If any actual changes or creation happened
-                        if let Some(t) = &token { if t.is_cancelled() { return Err(ToolError::Cancelled("MultiEdit".to_string())); } }
+                        if context.cancellation_token.is_cancelled() { return Err(ToolError::Cancelled(MULTI_EDIT_TOOL_NAME.to_string())); }
                         fs::write(Path::new(&params.file_path), &final_content)
                             .await
-                            .context(format!("MultiEdit: Failed to write file: {}", params.file_path))
-                            .map_err(|e| ToolError::io("MultiEdit", e))?;
+                            .map_err(|e| ToolError::io(MULTI_EDIT_TOOL_NAME, format!("Failed to write file {}: {}", params.file_path, e)))?;
 
                         if file_was_created {
                             Ok(format!(

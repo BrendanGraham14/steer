@@ -3,7 +3,7 @@ use crate::api::{
     messages::{ContentBlock, Message, MessageContent, MessageRole, StructuredContent},
     tools::{Tool, ToolCall, ToolResult},
 };
-use crate::tools::ToolError;
+use coder_tools::ToolError;
 use std::future::Future;
 use std::sync::Arc;
 use thiserror::Error;

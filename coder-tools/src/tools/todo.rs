@@ -1,18 +1,10 @@
-use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::fs;
-use std::path::{Path, PathBuf};
-use tokio_util::sync::CancellationToken;
-use tracing;
-use uuid::Uuid;
-
-use crate::tools::ToolError;
-use coder_macros::tool;
+use std::path::PathBuf;
 
 // Define TodoStatus enum
-#[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Eq, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
     Pending,
@@ -21,7 +13,7 @@ pub enum TodoStatus {
 }
 
 // Define TodoPriority enum
-#[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, Ord, PartialOrd, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoPriority {
     High = 0,
@@ -30,7 +22,7 @@ pub enum TodoPriority {
 }
 
 // Define TodoItem struct
-#[derive(Deserialize, Serialize, Debug, JsonSchema, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, JsonSchema)]
 pub struct TodoItem {
     /// Content of the todo item
     pub content: String,
@@ -45,18 +37,6 @@ pub struct TodoItem {
 // Define TodoList type
 pub type TodoList = Vec<TodoItem>;
 
-// Define TodoWriteParams struct
-#[derive(Deserialize, Debug, JsonSchema)]
-pub struct TodoWriteParams {
-    /// The updated todo list
-    pub todos: TodoList,
-}
-
-// Define TodoReadParams struct (empty)
-#[derive(Deserialize, Debug, JsonSchema)]
-/// This tool takes in no parameters. So leave the input blank or empty. DO NOT include a dummy object, placeholder string or a key like "input" or "empty". LEAVE IT BLANK.
-pub struct TodoReadParams {}
-
 // Helper function to get the .coder/todos directory
 fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
     let home_dir = dirs::home_dir().ok_or_else(|| {
@@ -65,10 +45,7 @@ fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
     let todos_dir = home_dir.join(".coder").join("todos");
 
     if !todos_dir.exists() {
-        fs::create_dir_all(&todos_dir).map_err(|e| {
-            tracing::error!("Failed to create todos directory {:?}: {}", todos_dir, e);
-            e
-        })?;
+        fs::create_dir_all(&todos_dir)?;
     }
 
     Ok(todos_dir)
@@ -97,38 +74,31 @@ fn read_todos() -> Result<TodoList, std::io::Error> {
         return Ok(Vec::new());
     }
 
-    match fs::read_to_string(&file_path) {
-        Ok(content) => match serde_json::from_str(&content) {
-            Ok(todos) => Ok(todos),
-            Err(e) => {
-                tracing::error!("Error parsing todo list JSON from {:?}: {}", file_path, e);
-                // Return an IO error for parse failure
-                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-            }
-        },
-        Err(e) => {
-            tracing::error!("Error reading todo list file {:?}: {}", file_path, e);
-            Err(e)
-        }
-    }
+    let content = fs::read_to_string(&file_path)?;
+    serde_json::from_str(&content)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 // Helper function to write todos to file
 fn write_todos(todos: &TodoList) -> Result<(), std::io::Error> {
     let file_path = get_todo_file_path()?;
-    let content = serde_json::to_string_pretty(todos).map_err(|e| {
-        tracing::error!("Failed to serialize todos to JSON: {}", e);
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-    })?;
-    fs::write(&file_path, content).map_err(|e| {
-        tracing::error!("Failed to write todo list to file {:?}: {}", file_path, e);
-        e
-    })
+    let content = serde_json::to_string_pretty(todos)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    fs::write(&file_path, content)
 }
 
-// Put each tool in its own module to avoid name conflicts
 pub mod read {
-    use super::*;
+    use super::read_todos;
+    use crate::{ExecutionContext, ToolError};
+    use coder_macros::tool;
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+    /// This tool takes in no parameters. So leave the input blank or empty. DO NOT include a dummy object, placeholder string or a key like "input" or "empty". LEAVE IT BLANK.
+    pub struct TodoReadParams {
+        // Empty parameters - this tool takes no input
+    }
 
     tool! {
         TodoReadTool {
@@ -154,17 +124,15 @@ Usage:
         async fn run(
             _tool: &TodoReadTool,
             _params: TodoReadParams,
-            token: Option<CancellationToken>,
+            context: &ExecutionContext,
         ) -> Result<String, ToolError> {
             // Cancellation check
-            if let Some(t) = &token {
-                if t.is_cancelled() {
-                    return Err(ToolError::Cancelled("TodoRead".to_string()));
-                }
+            if context.cancellation_token.is_cancelled() {
+                return Err(ToolError::Cancelled(TODO_READ_TOOL_NAME.to_string()));
             }
 
             // Read the todos
-            let todos = read_todos().map_err(|e| ToolError::io("TodoRead", e.into()))?;
+            let todos = read_todos().map_err(|e| ToolError::io(TODO_READ_TOOL_NAME, e.to_string()))?;
 
             Ok(format!("Remember to continue to use update and read from the todo list as you make progress. Here is the current list: \n{}", serde_json::to_string_pretty(&todos).unwrap_or_default()))
         }
@@ -172,7 +140,17 @@ Usage:
 }
 
 pub mod write {
-    use super::*;
+    use super::{write_todos, TodoList};
+    use crate::{ExecutionContext, ToolError};
+    use coder_macros::tool;
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+    pub struct TodoWriteParams {
+        /// The updated todo list
+        pub todos: TodoList,
+    }
 
     tool! {
         TodoWriteTool {
@@ -331,20 +309,17 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         async fn run(
             _tool: &TodoWriteTool,
             params: TodoWriteParams,
-            token: Option<CancellationToken>,
+            context: &ExecutionContext,
         ) -> Result<String, ToolError> {
             // Cancellation check
-            if let Some(t) = &token {
-                if t.is_cancelled() {
-                    return Err(ToolError::Cancelled("TodoWrite".to_string()));
-                }
+            if context.cancellation_token.is_cancelled() {
+                return Err(ToolError::Cancelled(TODO_WRITE_TOOL_NAME.to_string()));
             }
 
             // Write the new todos
-            let new_todos = params.todos;
-            write_todos(&new_todos).map_err(|e| ToolError::io("TodoWrite", e.into()))?;
+            write_todos(&params.todos).map_err(|e| ToolError::io(TODO_WRITE_TOOL_NAME, e.to_string()))?;
 
-            Ok(format!("Todos have been modified successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}", serde_json::to_string_pretty(&new_todos).unwrap_or_default()))
+            Ok(format!("Todos have been modified successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}", serde_json::to_string_pretty(&params.todos).unwrap_or_default()))
         }
     }
 }

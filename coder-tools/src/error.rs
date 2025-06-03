@@ -23,27 +23,35 @@ pub enum ToolError {
     #[error("Internal error during tool execution: {0}")]
     InternalError(String), // Error message
 
-    #[error("I/O error during tool execution for {tool_name}: {source}")]
-    Io {
-        tool_name: String,
-        #[source]
-        source: anyhow::Error, // Can wrap std::io::Error or others via anyhow
-    },
-    // Add other specific error types as needed
+    #[error("I/O error during tool execution for {tool_name}: {message}")]
+    Io { tool_name: String, message: String },
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+
+    #[error("Regex error: {0}")]
+    Regex(#[from] regex::Error),
 }
 
-// Helper to convert anyhow::Error to ToolError::Execution
 impl ToolError {
-    pub fn execution<S: Into<String>>(tool_name: S, err: anyhow::Error) -> Self {
+    pub fn execution<T: Into<String>, M: Into<String>>(tool_name: T, message: M) -> Self {
         ToolError::Execution {
             tool_name: tool_name.into(),
-            message: err.to_string(),
+            message: message.into(),
         }
     }
-    pub fn io<S: Into<String>>(tool_name: S, err: anyhow::Error) -> Self {
+
+    pub fn io<T: Into<String>, M: Into<String>>(tool_name: T, message: M) -> Self {
         ToolError::Io {
             tool_name: tool_name.into(),
-            source: err,
+            message: message.into(),
         }
+    }
+
+    pub fn invalid_params<T: Into<String>, M: Into<String>>(tool_name: T, message: M) -> Self {
+        ToolError::InvalidParams(tool_name.into(), message.into())
     }
 }
