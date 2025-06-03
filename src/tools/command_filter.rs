@@ -78,7 +78,7 @@ pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Resu
 }
 
 /// Get the prefix of a command
-async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<String> {
+pub async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<String> {
     let config = LlmConfig::from_env()?;
     let client = crate::api::Client::new(&config);
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);

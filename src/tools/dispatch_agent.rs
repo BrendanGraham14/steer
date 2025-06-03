@@ -14,7 +14,7 @@ use crate::api::{
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
 use crate::config::LlmConfig;
 use crate::tools::ToolError;
-use coder_macros::tool;
+use coder_macros::tool_external as tool;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Deserialize, Debug, JsonSchema, Serialize)]
@@ -49,13 +49,13 @@ Usage notes:
     async fn run(
         _tool: &DispatchAgentTool,
         params: DispatchAgentParams,
-        token: Option<CancellationToken>,
+        context: &coder_tools::ExecutionContext,
     ) -> Result<String, ToolError> {
-        let token = token.unwrap_or_default();
+        let token = context.cancellation_token.clone();
 
         // --- Setup AgentExecutor dependencies ---
         let llm_config = LlmConfig::from_env()
-             .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, anyhow::anyhow!("Failed to load LLM config: {}", e)))?;
+             .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to load LLM config: {}", e)))?;
         let api_client = Arc::new(ApiClient::new(&llm_config)); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
@@ -84,7 +84,7 @@ Usage notes:
         }];
 
         let system_prompt = create_dispatch_agent_system_prompt()
-            .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, anyhow::anyhow!("Failed to create system prompt: {}", e)))?;
+            .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to create system prompt: {}", e)))?;
 
         // Use a channel to receive events, though we might just aggregate the final result here.
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
@@ -137,7 +137,7 @@ Usage notes:
                  Ok(final_text)
             }
             Err(e) => {
-                 Err(ToolError::execution(DISPATCH_AGENT_TOOL_NAME, e.into_anyhow_error()))
+                 Err(ToolError::execution(DISPATCH_AGENT_TOOL_NAME, e.to_string()))
             }
         }
     }
@@ -185,7 +185,11 @@ fn search_database() {}
 ",
         )
         .unwrap();
-        let token = CancellationToken::new(); // Create cancellation token
+
+        // Create execution context
+        let context = coder_tools::ExecutionContext::new("test_tool_call".to_string())
+            .with_working_directory(temp_dir.path().to_path_buf())
+            .with_cancellation_token(tokio_util::sync::CancellationToken::new());
 
         // Test prompt that should search for specific code
         let prompt = "Find all files that contain definitions of functions or methods related to search or find operations. Return only the absolute file path.";
@@ -198,7 +202,7 @@ fn search_database() {}
         let tool_instance = DispatchAgentTool; // Assuming it's a unit struct or has Default impl
 
         // Execute the agent using the run method
-        let result = run(&tool_instance, params, Some(token)).await;
+        let result = run(&tool_instance, params, &context).await;
 
         // Check if we got a valid response
         assert!(result.is_ok(), "Agent execution failed: {:?}", result.err());

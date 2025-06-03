@@ -1,9 +1,8 @@
 use crate::app::conversation::MessageContentBlock;
 use crate::app::conversation::Role;
-use crate::tools::edit::EDIT_TOOL_NAME;
-use crate::tools::edit::EditParams;
-use crate::tools::replace::REPLACE_TOOL_NAME;
-use crate::tools::replace::ReplaceParams;
+use coder_tools::tools::edit::{EditParams, EDIT_TOOL_NAME};
+use coder_tools::tools::replace::{ReplaceParams, REPLACE_TOOL_NAME};
+
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use similar::{ChangeTag, TextDiff};

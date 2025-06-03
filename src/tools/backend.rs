@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ToolCall;
-use crate::tools::{ExecutionContext, ToolError};
+use crate::api::tools::Tool as ApiTool;
+use crate::tools::ExecutionContext;
+use coder_tools::ToolError;
 
 /// Metadata about a tool backend for debugging and monitoring
 #[derive(Debug, Clone)]
@@ -61,6 +63,12 @@ pub trait ToolBackend: Send + Sync {
     /// Returns a vector of tool names that this backend supports.
     /// The backend registry uses this to map tools to backends.
     fn supported_tools(&self) -> Vec<&'static str>;
+
+    /// Get API tool descriptions for this backend
+    ///
+    /// Returns a vector of ApiTool objects containing name, description,
+    /// and input schema for each tool this backend supports.
+    fn to_api_tools(&self) -> Vec<ApiTool>;
 
     /// Backend metadata for debugging and monitoring
     ///
@@ -169,6 +177,20 @@ impl BackendRegistry {
         self.backends.clear();
         self.tool_mapping.clear();
     }
+
+    /// Get API tools from all registered backends
+    ///
+    /// Collects and returns all API tool descriptions from all registered backends.
+    /// This provides a unified view of all available tools across all backends.
+    pub fn to_api_tools(&self) -> Vec<ApiTool> {
+        let mut all_tools = Vec::new();
+
+        for (_, backend) in &self.backends {
+            all_tools.extend(backend.to_api_tools());
+        }
+
+        all_tools
+    }
 }
 
 impl Default for BackendRegistry {
@@ -204,6 +226,10 @@ mod tests {
 
         fn supported_tools(&self) -> Vec<&'static str> {
             self.tools.clone()
+        }
+
+        fn to_api_tools(&self) -> Vec<ApiTool> {
+            Vec::new()
         }
 
         fn metadata(&self) -> BackendMetadata {

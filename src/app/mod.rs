@@ -18,7 +18,8 @@ pub mod conversation;
 mod environment;
 
 mod tool_executor;
-pub mod tool_registry;
+// pub mod tool_registry; // TODO: Remove after migration complete
+pub mod validation;
 
 use crate::app::context::TaskOutcome;
 

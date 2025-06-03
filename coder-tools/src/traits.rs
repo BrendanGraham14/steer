@@ -1,34 +1,34 @@
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio_util::sync::CancellationToken;
 
-use crate::api::InputSchema;
-use crate::tools::error::ToolError;
+use crate::context::ExecutionContext;
+use crate::error::ToolError;
+use crate::schema::InputSchema;
 
 #[async_trait]
 pub trait Tool: Send + Sync + 'static {
-    /// A unique, stable identifier for the tool (e.g., "Bash", "GrepTool").
+    /// A unique, stable identifier for the tool (e.g., "bash", "edit_file").
     fn name(&self) -> &'static str;
 
     /// A description of what the tool does.
-    fn description(&self) -> &'static str;
+    fn description(&self) -> String;
 
     /// The JSON schema defining the tool's expected input parameters.
     fn input_schema(&self) -> &'static InputSchema;
 
-    /// Executes the tool with the given parameters and cancellation token.
+    /// Executes the tool with the given parameters and execution context.
     ///
     /// # Arguments
     /// * `parameters` - The parameters for the tool call, matching the `input_schema`.
-    /// * `token` - An optional cancellation token to signal interruption.
+    /// * `context` - Execution context containing cancellation token, working directory, etc.
     ///
     /// # Returns
     /// A `Result` containing the string output of the tool on success,
     /// or a `ToolError` on failure.
     async fn execute(
         &self,
-        parameters: Value, // Will be deserialized within the impl
-        token: Option<CancellationToken>,
+        parameters: Value,
+        context: &ExecutionContext,
     ) -> Result<String, ToolError>;
 
     /// Indicates if this tool requires user approval before execution.

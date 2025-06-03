@@ -12,5 +12,3 @@ syn = { version = "2.0", features = [
 ] } # Need full feature for parsing functions
 quote = "1.0"
 proc-macro2 = "1.0"
-schemars = "0.8"
-serde_json = "1.0"

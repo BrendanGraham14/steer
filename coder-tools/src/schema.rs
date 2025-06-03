@@ -1,14 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// Re-export InputSchema from coder_tools
-pub use coder_tools::InputSchema;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tool {
-    pub name: String,
-    pub description: String,
-    pub input_schema: InputSchema,
+pub struct InputSchema {
+    pub properties: serde_json::Map<String, Value>,
+    pub required: Vec<String>,
+    #[serde(rename = "type")]
+    pub schema_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

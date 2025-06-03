@@ -38,7 +38,7 @@ impl Parse for FieldValue {
 struct ToolDefinition {
     tool_name: Ident,
     params_struct: Path,
-    description: LitStr,
+    description: syn::Expr,
     require_approval: LitBool,
     name: LitStr,
     run_function: ItemFn,
@@ -55,7 +55,7 @@ impl Parse for ToolDefinition {
             content.parse_terminated(FieldValue::parse, Token![,])?;
 
         let mut params_struct: Option<Path> = None;
-        let mut description: Option<LitStr> = None;
+        let mut description: Option<syn::Expr> = None;
         let mut name: Option<LitStr> = None;
         let mut require_approval: Option<LitBool> = None;
 
@@ -85,21 +85,7 @@ impl Parse for ToolDefinition {
                             "Duplicate \'description\' field",
                         ));
                     }
-                    if let syn::Expr::Lit(ref expr_lit) = field.value {
-                        if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                            description = Some(lit_str.clone());
-                        } else {
-                            return Err(syn::Error::new_spanned(
-                                field.value,
-                                "Expected a string literal for \'description\' (e.g., \"...\")",
-                            ));
-                        }
-                    } else {
-                        return Err(syn::Error::new_spanned(
-                            field.value,
-                            "Expected a string literal for \'description\' (e.g., \"...\")",
-                        ));
-                    }
+                    description = Some(field.value);
                 }
                 "name" => {
                     if name.is_some() {
@@ -179,8 +165,24 @@ impl Parse for ToolDefinition {
     }
 }
 
+/// Tool macro that generates the implementation differently based on whether
+/// it's used within coder-tools or in an external crate.
+///
+/// When used in coder-tools, imports will use `crate::`.
+/// When used externally, imports will use `coder_tools::`.
 #[proc_macro]
 pub fn tool(input: TokenStream) -> TokenStream {
+    tool_impl(input, false)
+}
+
+/// Alternative version of the tool macro for use in external crates.
+/// This ensures imports use `coder_tools::` instead of `crate::`.
+#[proc_macro]
+pub fn tool_external(input: TokenStream) -> TokenStream {
+    tool_impl(input, true)
+}
+
+fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
     let parsed_input = match syn::parse::<ToolDefinition>(input) {
         Ok(def) => def,
         Err(e) => return TokenStream::from(e.to_compile_error()),
@@ -188,7 +190,7 @@ pub fn tool(input: TokenStream) -> TokenStream {
 
     let tool_struct_name = parsed_input.tool_name;
     let params_struct_name = parsed_input.params_struct;
-    let description_str = parsed_input.description;
+    let description_expr = parsed_input.description;
     let require_approval = parsed_input.require_approval;
     let run_function = parsed_input.run_function;
     let tool_name_literal = parsed_input.name;
@@ -210,6 +212,23 @@ pub fn tool(input: TokenStream) -> TokenStream {
 
     let const_name = syn::Ident::new(&const_name_string, tool_struct_name.span());
 
+    // Choose import path based on whether we're in an external crate
+    let (trait_path, context_path, error_path, schema_path) = if is_external {
+        (
+            quote! { coder_tools::Tool },
+            quote! { coder_tools::ExecutionContext },
+            quote! { coder_tools::ToolError },
+            quote! { coder_tools::InputSchema },
+        )
+    } else {
+        (
+            quote! { crate::Tool },
+            quote! { crate::ExecutionContext },
+            quote! { crate::ToolError },
+            quote! { crate::InputSchema },
+        )
+    };
+
     let expanded = quote! {
         // Generate a constant for the tool name
         pub const #const_name: &str = #tool_name_literal;
@@ -217,20 +236,26 @@ pub fn tool(input: TokenStream) -> TokenStream {
         #[derive(Debug, Clone, Default)]
         pub struct #tool_struct_name;
 
+        impl #tool_struct_name {
+            pub fn name() -> &'static str {
+                #tool_name_str
+            }
+        }
+
         #run_function
 
         #[async_trait::async_trait]
-        impl crate::tools::Tool for #tool_struct_name {
+        impl #trait_path for #tool_struct_name {
             fn name(&self) -> &'static str {
-                #tool_name_str
+                #tool_struct_name::name()
             }
 
-            fn description(&self) -> &'static str {
-                #description_str
+            fn description(&self) -> String {
+                (#description_expr).into()
             }
 
-            fn input_schema(&self) -> &'static crate::api::InputSchema {
-                static SCHEMA: ::once_cell::sync::Lazy<crate::api::InputSchema> = ::once_cell::sync::Lazy::new(|| {
+            fn input_schema(&self) -> &'static #schema_path {
+                static SCHEMA: ::once_cell::sync::Lazy<#schema_path> = ::once_cell::sync::Lazy::new(|| {
                     let settings = schemars::r#gen::SchemaSettings::draft07().with(|s| {
                         s.inline_subschemas = true;
                     });
@@ -254,7 +279,7 @@ pub fn tool(input: TokenStream) -> TokenStream {
                          (k, val)
                     }).collect();
 
-                    crate::api::InputSchema {
+                    #schema_path {
                         properties: properties,
                         required: required.into_iter().collect(),
                         schema_type: "object".to_string(), // Assume top-level is always object for tool params
@@ -266,18 +291,16 @@ pub fn tool(input: TokenStream) -> TokenStream {
             async fn execute(
                 &self,
                 parameters: ::serde_json::Value,
-                token: Option<tokio_util::sync::CancellationToken>,
-            ) -> std::result::Result<String, crate::tools::ToolError> {
+                context: &#context_path,
+            ) -> std::result::Result<String, #error_path> {
                 let params: #params_struct_name = ::serde_json::from_value(parameters.clone())
-                    .map_err(|e| crate::tools::ToolError::InvalidParams(#tool_name_for_errors.to_string(), e.to_string()))?;
+                    .map_err(|e| #error_path::invalid_params(#tool_name_for_errors, e.to_string()))?;
 
-                if let Some(t) = &token {
-                    if t.is_cancelled() {
-                        return Err(crate::tools::ToolError::Cancelled(#tool_name_for_errors.to_string()));
-                    }
+                if context.is_cancelled() {
+                    return Err(#error_path::Cancelled(#tool_name_for_errors.to_string()));
                 }
 
-                run(self, params, token).await
+                run(self, params, context).await
             }
 
             fn requires_approval(&self) -> bool {

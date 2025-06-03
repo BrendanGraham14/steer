@@ -2,6 +2,7 @@
 members = [
     ".",            # The main crate
     "coder-macros", # The new macro crate
+    "coder-tools",  # The tools crate
 ]
 
 [package]
@@ -62,6 +63,7 @@ proc-macro2 = "1.0.95"
 schemars = { version = "0.8", features = ["derive"] }
 
 coder-macros = { path = "coder-macros" }
+coder-tools = { path = "coder-tools" }
 
 ignore = "0.4"
 globset = "0.4.16"

@@ -1,38 +1,46 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::api::ToolCall;
-use crate::tools::{
-    BackendMetadata, ExecutionContext, ToolBackend, ToolError, traits::Tool as ToolTrait,
-};
+use crate::api::tools::Tool as ApiTool;
+use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
+use crate::tools::{DispatchAgentTool, FetchTool};
+use coder_tools::tools::*;
+use coder_tools::{ExecutionContext as CoderExecutionContext, Tool as CoderTool, ToolError};
 
 /// Local backend that executes tools in the current process
 ///
-/// This backend uses the existing tool registry to execute tools directly
-/// in the local environment. It serves as the default/fallback backend
-/// and is equivalent to the current tool execution behavior.
+/// This backend uses the coder-tools implementations directly.
 pub struct LocalBackend {
     /// The tool registry containing all available tools
-    registry: Arc<HashMap<String, Arc<dyn ToolTrait>>>,
+    registry: HashMap<String, Box<dyn CoderTool>>,
 }
 
 impl LocalBackend {
-    /// Create a new LocalBackend with the given tool registry
-    ///
-    /// # Arguments
-    /// * `registry` - The tool registry to use for tool execution
-    pub fn new(registry: Arc<HashMap<String, Arc<dyn ToolTrait>>>) -> Self {
-        Self { registry }
-    }
+    /// Create a new LocalBackend with standard tools
+    pub fn new() -> Self {
+        let mut registry = HashMap::new();
 
-    /// Create a LocalBackend with the standard tool set
-    ///
-    /// This is a convenience method that creates a backend with all
-    /// the standard tools available in the application.
-    pub fn standard() -> Self {
-        let tool_executor = crate::app::tool_registry::ToolExecutorBuilder::standard().build();
-        Self::new(tool_executor.registry)
+        let tools: Vec<Box<dyn CoderTool>> = vec![
+            Box::new(BashTool::default()),
+            Box::new(GrepTool::default()),
+            Box::new(GlobTool::default()),
+            Box::new(LsTool::default()),
+            Box::new(ViewTool::default()),
+            Box::new(EditTool::default()),
+            Box::new(MultiEditTool::default()),
+            Box::new(ReplaceTool::default()),
+            Box::new(TodoReadTool::default()),
+            Box::new(TodoWriteTool::default()),
+            Box::new(FetchTool::default()),
+            Box::new(DispatchAgentTool::default()),
+        ];
+
+        tools.into_iter().for_each(|tool| {
+            registry.insert(tool.name().to_string(), tool);
+        });
+
+        Self { registry }
     }
 
     /// Create a LocalBackend with read-only tools
@@ -40,23 +48,29 @@ impl LocalBackend {
     /// This creates a backend with only read-only tools, useful for
     /// sandboxed or restricted execution environments.
     pub fn read_only() -> Self {
-        let tool_executor = crate::app::tool_registry::ToolExecutorBuilder::read_only().build();
-        Self::new(tool_executor.registry)
-    }
+        let mut registry = HashMap::new();
 
-    /// Get the tool registry
-    pub fn registry(&self) -> &Arc<HashMap<String, Arc<dyn ToolTrait>>> {
-        &self.registry
+        // Register only read-only tools
+        let tools: Vec<Box<dyn CoderTool>> = vec![
+            Box::new(GrepTool::default()),
+            Box::new(GlobTool::default()),
+            Box::new(LsTool::default()),
+            Box::new(ViewTool::default()),
+            Box::new(TodoReadTool::default()),
+            Box::new(TodoWriteTool::default()),
+            Box::new(FetchTool::default()),
+        ];
+
+        tools.into_iter().for_each(|tool| {
+            registry.insert(tool.name().to_string(), tool);
+        });
+
+        Self { registry }
     }
 
     /// Check if a tool is available in this backend
     pub fn has_tool(&self, tool_name: &str) -> bool {
         self.registry.contains_key(tool_name)
-    }
-
-    /// Get a specific tool by name
-    pub fn get_tool(&self, tool_name: &str) -> Option<&Arc<dyn ToolTrait>> {
-        self.registry.get(tool_name)
     }
 }
 
@@ -73,33 +87,37 @@ impl ToolBackend for LocalBackend {
             .get(&tool_call.name)
             .ok_or_else(|| ToolError::UnknownTool(tool_call.name.clone()))?;
 
-        // Execute the tool using the existing trait method
-        // Pass the cancellation token from the context
-        tool.execute(
-            tool_call.parameters.clone(),
-            Some(context.cancellation_token.clone()),
-        )
-        .await
+        // Create execution context for coder-tools
+        let coder_context = CoderExecutionContext::new(tool_call.id.clone())
+            .with_cancellation_token(context.cancellation_token.clone())
+            .with_working_directory(std::env::current_dir().unwrap_or_else(|_| "/".into()));
+
+        // Execute the tool directly
+        tool.execute(tool_call.parameters.clone(), &coder_context)
+            .await
     }
 
     fn supported_tools(&self) -> Vec<&'static str> {
-        // Return all tools in the registry
-        // Note: We need to return 'static str, so we'll list the known standard tools
-        // These are the actual tool names from the tool! macro definitions
-        vec![
-            "bash",
-            "grep",
-            "dispatch_agent",
-            "glob",
-            "ls",
-            "read_file",
-            "edit_file",
-            "multi_edit_file",
-            "write_file",
-            "web_fetch",
-            "TodoRead",
-            "TodoWrite",
-        ]
+        // Return the tools we currently have in the registry
+        // We use a static list to match the trait requirement but ensure it reflects the registry
+        let mut tool_names = Vec::new();
+
+        for tool in self.registry.values() {
+            tool_names.push(tool.name());
+        }
+
+        tool_names
+    }
+
+    fn to_api_tools(&self) -> Vec<ApiTool> {
+        self.registry
+            .iter()
+            .map(|(name, tool)| ApiTool {
+                name: name.clone(),
+                description: tool.description().to_string(),
+                input_schema: tool.input_schema().clone(),
+            })
+            .collect()
     }
 
     fn metadata(&self) -> BackendMetadata {
@@ -117,7 +135,7 @@ impl ToolBackend for LocalBackend {
 
 impl Default for LocalBackend {
     fn default() -> Self {
-        Self::standard()
+        Self::new()
     }
 }
 
@@ -130,7 +148,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_creation() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::new();
         assert!(!backend.registry.is_empty());
         assert!(backend.has_tool("bash"));
         assert!(backend.has_tool("read_file"));
@@ -147,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_metadata() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::new();
         let metadata = backend.metadata();
 
         assert_eq!(metadata.name, "Local");
@@ -159,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_supported_tools() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::new();
         let supported = backend.supported_tools();
 
         assert!(!supported.is_empty());
@@ -170,17 +188,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_health_check() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::new();
         assert!(backend.health_check().await);
-
-        // Test with empty registry
-        let empty_backend = LocalBackend::new(Arc::new(HashMap::new()));
-        assert!(!empty_backend.health_check().await);
     }
 
     #[tokio::test]
     async fn test_local_backend_execution_unknown_tool() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::new();
 
         let tool_call = ToolCall {
             name: "unknown_tool".to_string(),
