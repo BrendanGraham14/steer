@@ -418,8 +418,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
- "coder-macros",
- "coder-tools",
  "colored",
  "crossterm 0.29.0",
  "dirs 5.0.1",
@@ -427,11 +425,13 @@ dependencies = [
  "futures",
  "futures-core",
  "futures-util",
+ "gethostname",
  "glob",
  "globset",
  "hex",
  "home",
  "ignore",
+ "macros",
  "once_cell",
  "proc-macro2",
  "prost",
@@ -460,46 +460,13 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tonic-build",
+ "tools",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "tui-markdown",
  "tui-textarea",
  "uuid",
-]
-
-[[package]]
-name = "coder-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
-]
-
-[[package]]
-name = "coder-tools"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "coder-macros",
- "dirs 6.0.0",
- "glob",
- "hex",
- "ignore",
- "once_cell",
- "regex",
- "reqwest",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -1100,6 +1067,16 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "gethostname"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3655aa6818d65bc620d6911f05aa7b6aeb596291e1e9f79e52df85583d1e30"
+dependencies = [
+ "rustix 0.38.44",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -1806,6 +1783,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.2",
+]
+
+[[package]]
+name = "macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -3592,6 +3578,31 @@ dependencies = [
  "prost-types",
  "quote",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dirs 6.0.0",
+ "glob",
+ "hex",
+ "ignore",
+ "macros",
+ "once_cell",
+ "regex",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

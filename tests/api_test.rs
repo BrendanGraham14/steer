@@ -129,7 +129,13 @@ async fn test_api_with_tools() {
     // Get current directory once
     let pwd = std::env::current_dir().unwrap();
     // Get tools once
-    let tool_executor_template = coder::app::ToolExecutor::new();
+    let mut backend_registry = coder::tools::BackendRegistry::new();
+    backend_registry.register(
+        "local".to_string(),
+        std::sync::Arc::new(coder::tools::LocalBackend::standard()),
+    );
+    let tool_executor_template =
+        coder::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
     let tools = tool_executor_template.to_api_tools(); // Clone this Vec<Tool>
 
     for model in models_to_test {
@@ -201,7 +207,13 @@ async fn test_api_with_tools() {
             // );
 
             // Execute the tool using ToolExecutor with cancellation
-            let tool_executor = coder::app::ToolExecutor::new(); // Create new instance per task
+            let mut backend_registry = coder::tools::BackendRegistry::new();
+            backend_registry.register(
+                "local".to_string(),
+                std::sync::Arc::new(coder::tools::LocalBackend::standard()),
+            );
+            let tool_executor =
+                coder::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
             let result = tool_executor
                 .execute_tool_with_cancellation(
                     first_tool_call,
@@ -719,7 +731,12 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         },
     };
     // Assuming ToolExecutor provides 'ls' or similar standard tools
-    let tool_executor = coder::app::ToolExecutor::new();
+    let mut backend_registry = coder::tools::BackendRegistry::new();
+    backend_registry.register(
+        "local".to_string(),
+        std::sync::Arc::new(coder::tools::LocalBackend::standard()),
+    );
+    let tool_executor = coder::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
     let mut tools = tool_executor.to_api_tools();
     tools.push(weather_tool);
 

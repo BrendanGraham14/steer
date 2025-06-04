@@ -1,0 +1,61 @@
+syntax = "proto3";
+package coder.remote_backend.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// Agent service for remote tool execution
+service RemoteBackendService {
+  // Execute a tool call on the agent
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+
+  // Get information about the agent and available tools
+  rpc GetAgentInfo(google.protobuf.Empty) returns (AgentInfo);
+
+  // Health check
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+}
+
+message ExecuteToolRequest {
+  string tool_call_id = 1;
+  string tool_name = 2;
+  string parameters_json = 3;
+  string context_json = 4;
+  optional uint64 timeout_ms = 5;
+}
+
+message ExecuteToolResponse {
+  bool success = 1;
+  string result = 2;
+  string error = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp completed_at = 5;
+  map<string, string> metadata = 6;
+}
+
+message AgentInfo {
+  string version = 1;
+  repeated string supported_tools = 2;
+  AgentCapabilities capabilities = 3;
+  map<string, string> metadata = 4;
+}
+
+message AgentCapabilities {
+  bool supports_cancellation = 1;
+  bool supports_streaming = 2;
+  uint64 max_execution_time_ms = 3;
+  uint64 max_memory_mb = 4;
+}
+
+message HealthResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_SERVING = 1;
+  HEALTH_STATUS_NOT_SERVING = 2;
+  HEALTH_STATUS_SERVICE_UNKNOWN = 3;
+}
