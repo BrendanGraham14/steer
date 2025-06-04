@@ -1,4 +1,3 @@
-use crate::grpc::events::app_event_to_server_event;
 use crate::grpc::proto::*;
 use crate::session::manager::SessionManager;
 use std::sync::Arc;
@@ -787,7 +786,7 @@ mod tests {
         }]);
 
         let response = client.stream_session(request_stream).await.unwrap();
-        let mut stream = response.into_inner();
+        let stream = response.into_inner();
 
         // Send a test message to verify session is working
         let (msg_tx, msg_rx) = mpsc::channel(10);

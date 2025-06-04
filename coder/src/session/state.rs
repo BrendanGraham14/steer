@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::api::messages::{ContentBlock, MessageContent, MessageRole};
+use crate::api::messages::{ContentBlock, MessageContent};
 use crate::api::{Message, Model, ToolCall};
 
 /// Complete session representation
@@ -113,6 +113,7 @@ impl SessionToolConfig {
 
 /// Mutable session state that changes during execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SessionState {
     /// Conversation messages
     pub messages: Vec<Message>,
@@ -130,17 +131,6 @@ pub struct SessionState {
     pub metadata: HashMap<String, String>,
 }
 
-impl Default for SessionState {
-    fn default() -> Self {
-        Self {
-            messages: Vec::new(),
-            tool_calls: HashMap::new(),
-            approved_tools: HashSet::new(),
-            last_event_sequence: 0,
-            metadata: HashMap::new(),
-        }
-    }
-}
 
 impl SessionState {
     /// Add a message to the conversation
@@ -230,21 +220,18 @@ impl SessionState {
     fn extract_tool_calls_from_message(&self, message: &Message) -> Vec<String> {
         let mut tool_call_ids = Vec::new();
 
-        match &message.content {
-            MessageContent::StructuredContent { content } => {
-                for block in &content.0 {
-                    match block {
-                        ContentBlock::ToolUse { id, .. } => {
-                            tool_call_ids.push(id.clone());
-                        }
-                        ContentBlock::ToolResult { tool_use_id, .. } => {
-                            tool_call_ids.push(tool_use_id.clone());
-                        }
-                        _ => {}
+        if let MessageContent::StructuredContent { content } = &message.content {
+            for block in &content.0 {
+                match block {
+                    ContentBlock::ToolUse { id, .. } => {
+                        tool_call_ids.push(id.clone());
                     }
+                    ContentBlock::ToolResult { tool_use_id, .. } => {
+                        tool_call_ids.push(tool_use_id.clone());
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
         }
 
         tool_call_ids
@@ -425,12 +412,11 @@ mod tests {
         let session = Session::new("test-session".to_string(), config.clone());
 
         assert_eq!(session.id, "test-session");
-        assert_eq!(
+        assert!(
             session
                 .config
                 .tool_policy
-                .should_ask_for_approval("any_tool"),
-            true
+                .should_ask_for_approval("any_tool")
         );
         assert_eq!(session.state.message_count(), 0);
     }

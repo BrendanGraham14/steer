@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::ToolCall;
@@ -46,6 +45,12 @@ pub struct ValidatorRegistry {
     validators: HashMap<String, Box<dyn ToolValidator>>,
 }
 
+impl Default for ValidatorRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ValidatorRegistry {
     pub fn new() -> Self {
         let mut validators = HashMap::new();
@@ -76,6 +81,12 @@ pub struct BashParams {
 }
 
 pub struct BashValidator;
+
+impl Default for BashValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BashValidator {
     pub fn new() -> Self {
@@ -149,10 +160,17 @@ impl BashValidator {
     }
 
     /// Advanced command filtering using existing command_filter module
-    async fn is_command_allowed(&self, command: &str, context: &ValidationContext) -> Result<bool, ValidationError> {
-        crate::tools::command_filter::is_command_allowed(command, context.cancellation_token.clone())
-            .await
-            .map_err(|e| ValidationError::FilterError(e.to_string()))
+    async fn is_command_allowed(
+        &self,
+        command: &str,
+        context: &ValidationContext,
+    ) -> Result<bool, ValidationError> {
+        crate::tools::command_filter::is_command_allowed(
+            command,
+            context.cancellation_token.clone(),
+        )
+        .await
+        .map_err(|e| ValidationError::FilterError(e.to_string()))
     }
 }
 

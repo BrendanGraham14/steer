@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::info;
 
+use super::Command;
 use crate::api::Model;
 use crate::session::SessionManagerConfig;
-use super::Command;
 
 pub struct ServeCommand {
     pub port: u16,
@@ -20,7 +20,7 @@ impl Command for ServeCommand {
             .map_err(|e| anyhow!("Invalid bind address: {}", e))?;
 
         info!("Starting gRPC server on {}", addr);
-        
+
         // Create session store path
         let db_path = crate::utils::session::create_session_store_path()?;
 

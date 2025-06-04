@@ -53,7 +53,7 @@ tool! {
                     if context.is_cancelled() {
                         return Err(ToolError::Cancelled(GLOB_TOOL_NAME.to_string()));
                     }
-                    
+
                     match entry {
                         Ok(path) => {
                             results.push(path.display().to_string());

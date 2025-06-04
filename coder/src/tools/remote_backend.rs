@@ -6,9 +6,9 @@ use tonic::transport::{Channel, Endpoint};
 
 use crate::api::ToolCall;
 use crate::tools::backend::{BackendMetadata, ToolBackend};
-use crate::tools::execution_context::{AuthMethod, ExecutionContext, ExecutionEnvironment};
-use tools::ToolSchema as ApiTool;
+use crate::tools::execution_context::{ExecutionContext, ExecutionEnvironment};
 use tools::ToolError;
+use tools::ToolSchema as ApiTool;
 
 // Generated gRPC client from proto/remote_backend.proto
 use crate::grpc::remote_backend::{
@@ -200,8 +200,8 @@ impl ToolBackend for RemoteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    use tokio_util::sync::CancellationToken;
+    
+    
 
     #[tokio::test]
     #[ignore] // Requires a running agent server
@@ -226,16 +226,14 @@ mod tests {
     #[test]
     fn test_supported_tools() {
         // We can test the supported tools list without connecting
-        let supported_tools = vec![
-            "edit_file",
+        let supported_tools = ["edit_file",
             "multi_edit_file",
             "bash",
             "grep",
             "glob",
             "ls",
             "view",
-            "replace",
-        ];
+            "replace"];
 
         assert_eq!(supported_tools.len(), 8);
         assert!(supported_tools.contains(&"edit_file"));

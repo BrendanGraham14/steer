@@ -6,16 +6,16 @@ use tokio_util::sync::CancellationToken;
 pub struct ExecutionContext {
     /// Unique identifier for this tool call
     pub tool_call_id: String,
-    
+
     /// Cancellation token for early termination
     pub cancellation_token: CancellationToken,
-    
+
     /// Current working directory
     pub working_directory: std::path::PathBuf,
-    
+
     /// Environment variables available to the tool
     pub environment: HashMap<String, String>,
-    
+
     /// Execution metadata
     pub metadata: HashMap<String, String>,
 }

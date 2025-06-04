@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tools::{ToolCall, ToolResult, ToolSchema};
+use tools::{ToolCall, ToolResult};
 use tracing::{debug, info, warn};
 
 use crate::api::{Client as ApiClient, Model, messages::Message};

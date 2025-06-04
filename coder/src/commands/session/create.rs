@@ -1,14 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+use super::super::Command;
 use crate::api::Model;
 use crate::app::AppConfig;
 use crate::config::LlmConfig;
 use crate::events::StreamEventWithMetadata;
-use crate::session::{SessionConfig, SessionManagerConfig, SessionManager, SessionToolConfig};
-use crate::utils::session::{create_session_store, parse_tool_policy, parse_metadata};
-use super::super::Command;
+use crate::session::{SessionConfig, SessionManager, SessionManagerConfig, SessionToolConfig};
+use crate::utils::session::{create_session_store, parse_metadata, parse_tool_policy};
 
 pub struct CreateSessionCommand {
     pub tool_policy: String,

@@ -1,15 +1,17 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use tokio::sync::mpsc;
 
+use super::super::Command;
 use crate::api::Model;
 use crate::app::AppConfig;
 use crate::config::LlmConfig;
 use crate::events::StreamEventWithMetadata;
-use crate::session::{SessionFilter, SessionOrderBy, OrderDirection, SessionManagerConfig, SessionManager};
+use crate::session::{
+    OrderDirection, SessionFilter, SessionManager, SessionManagerConfig, SessionOrderBy,
+};
 use crate::utils::session::create_session_store;
-use super::super::Command;
 
 pub struct ResumeSessionCommand {
     pub session_id: String,
@@ -25,7 +27,10 @@ impl Command for ResumeSessionCommand {
     async fn execute(&self) -> Result<()> {
         // If remote is specified, handle via gRPC
         if let Some(remote_addr) = &self.remote {
-            println!("Resuming remote session: {} at {}", self.session_id, remote_addr);
+            println!(
+                "Resuming remote session: {} at {}",
+                self.session_id, remote_addr
+            );
 
             // Set panic hook for terminal cleanup
             crate::tui::setup_panic_hook();

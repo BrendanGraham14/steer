@@ -96,7 +96,7 @@ mod description_format_tests {
     #[test]
     fn test_string_literal_description() {
         use string_literal_tool::*;
-        let tool = StringLiteralTool::default();
+        let tool = StringLiteralTool;
         assert_eq!(
             tool.description(),
             "This is a simple string literal description"
@@ -106,7 +106,7 @@ mod description_format_tests {
     #[test]
     fn test_formatted_string_description() {
         use formatted_string_tool::*;
-        let tool = FormattedStringTool::default();
+        let tool = FormattedStringTool;
         let desc = tool.description();
         assert!(desc.contains("version 1.0.0"));
         assert!(desc.contains("advanced"));
@@ -116,7 +116,7 @@ mod description_format_tests {
     #[test]
     fn test_constant_description() {
         use constant_description_tool::*;
-        let tool = ConstantDescriptionTool::default();
+        let tool = ConstantDescriptionTool;
         let desc = tool.description();
         assert!(desc.contains("Tool version 2.1.0"));
         assert!(desc.contains("enhanced capabilities"));
