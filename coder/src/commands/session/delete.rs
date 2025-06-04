@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::io::{self, Write};
 use tokio::sync::mpsc;
 
+use super::super::Command;
 use crate::api::Model;
 use crate::events::StreamEventWithMetadata;
-use crate::session::{SessionManagerConfig, SessionManager};
+use crate::session::{SessionManager, SessionManagerConfig};
 use crate::utils::session::create_session_store;
-use super::super::Command;
 
 pub struct DeleteSessionCommand {
     pub session_id: String,

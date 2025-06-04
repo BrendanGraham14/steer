@@ -51,7 +51,7 @@ tool! {
         let pattern = params.pattern.clone();
         let include = params.include.clone();
         let cancellation_token = context.cancellation_token.clone();
-        
+
         let result = task::spawn_blocking(move || {
             grep_search_internal(&pattern, include.as_deref(), &base_path, &cancellation_token)
         }).await;
@@ -73,9 +73,9 @@ fn grep_search_internal(
         return Err(format!("Path does not exist: {}", base_path.display()));
     }
 
-    let regex = Regex::new(pattern)
-        .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e))?;
-    
+    let regex =
+        Regex::new(pattern).map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e))?;
+
     let files = find_files(base_path, include, cancellation_token)?;
     let mut results = Vec::new();
 
@@ -94,7 +94,7 @@ fn grep_search_internal(
                     if cancellation_token.is_cancelled() {
                         return Err("Search cancelled".to_string());
                     }
-                    
+
                     match line_result {
                         Ok(line) => {
                             if regex.is_match(&line) {
@@ -153,7 +153,7 @@ fn find_files(
                     if cancellation_token.is_cancelled() {
                         return Err("Search cancelled".to_string());
                     }
-                    
+
                     if let Ok(path) = entry {
                         if path.is_file() {
                             files.push(path);
@@ -162,7 +162,10 @@ fn find_files(
                 }
             }
             Err(e) => {
-                return Err(format!("Invalid include pattern '{}': {}", include_pattern, e));
+                return Err(format!(
+                    "Invalid include pattern '{}': {}",
+                    include_pattern, e
+                ));
             }
         }
     } else {
@@ -176,7 +179,7 @@ fn find_files(
         if cancellation_token.is_cancelled() {
             return Err("Search cancelled".to_string());
         }
-        
+
         if let Ok(metadata) = fs::metadata(&path) {
             if let Ok(modified) = metadata.modified() {
                 files_with_time.push((path, modified));
@@ -201,7 +204,7 @@ fn find_files_recursive(
     if cancellation_token.is_cancelled() {
         return Err("Search cancelled".to_string());
     }
-    
+
     if dir.is_dir() {
         match fs::read_dir(dir) {
             Ok(entries) => {
@@ -209,7 +212,7 @@ fn find_files_recursive(
                     if cancellation_token.is_cancelled() {
                         return Err("Search cancelled".to_string());
                     }
-                    
+
                     if let Ok(entry) = entry {
                         let path = entry.path();
 
@@ -253,14 +256,14 @@ fn is_likely_text_file(path: &Path) -> bool {
         Ok(m) => m,
         Err(_) => return false,
     };
-    
+
     if metadata.len() == 0 {
         return true; // Empty file is text
     }
 
     let buffer_size = std::cmp::min(1024, metadata.len() as usize);
     let mut buffer = vec![0; buffer_size];
-    
+
     match fs::File::open(path) {
         Ok(mut file) => {
             use std::io::Read;

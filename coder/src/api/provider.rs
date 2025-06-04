@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::error::ApiError;
 use crate::api::messages::Message;
-use tools::{ToolSchema, ToolCall};
+use tools::{ToolCall, ToolSchema};
 
 use super::Model;
 use super::messages::ContentBlock;

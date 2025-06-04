@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 
-use crate::session::{SessionConfig, SessionStore, SessionToolConfig, ToolApprovalPolicy};
 use crate::session::stores::sqlite::SqliteSessionStore;
+use crate::session::{SessionConfig, SessionStore, SessionToolConfig, ToolApprovalPolicy};
 
 pub fn create_session_store_path() -> Result<std::path::PathBuf> {
     let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;

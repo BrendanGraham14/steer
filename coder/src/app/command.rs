@@ -1,6 +1,5 @@
 use crate::app::Message;
 use crate::app::agent_executor::ApprovalDecision;
-use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tools::ToolCall as ApiToolCall;
 

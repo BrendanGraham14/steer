@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::api::ToolCall;
 use crate::tools::ExecutionContext;
-use tools::ToolSchema as ApiTool;
 use tools::ToolError;
+use tools::ToolSchema as ApiTool;
 
 /// Metadata about a tool backend for debugging and monitoring
 #[derive(Debug, Clone)]

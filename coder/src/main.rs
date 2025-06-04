@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,12 +8,15 @@ use tracing::info;
 use coder::api::Model;
 use coder::app::AppConfig;
 use coder::cli::{Cli, Commands};
-use coder::commands::{Command, init::InitCommand, headless::HeadlessCommand, serve::ServeCommand, session::SessionCommand};
+use coder::commands::{
+    Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
+    session::SessionCommand,
+};
 use coder::config::LlmConfig;
 use coder::events::StreamEventWithMetadata;
-use coder::session::{SessionManagerConfig, SessionManager};
-use coder::utils::session::{create_session_store, create_default_session_config};
+use coder::session::{SessionManager, SessionManagerConfig};
 use coder::utils;
+use coder::utils::session::{create_default_session_config, create_session_store};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -58,7 +61,11 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
             let command = InitCommand { force };
             command.execute().await
         }
-        Commands::Headless { model, messages_json, timeout } => {
+        Commands::Headless {
+            model,
+            messages_json,
+            timeout,
+        } => {
             let command = HeadlessCommand {
                 model,
                 messages_json,

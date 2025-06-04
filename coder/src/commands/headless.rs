@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use super::Command;
 use crate::api::{
     Model,
     messages::{Message, MessageContent, MessageRole},
 };
 use crate::config::LlmConfig;
-use super::Command;
 
 pub struct HeadlessCommand {
     pub model: Option<Model>,
@@ -50,7 +50,7 @@ impl Command for HeadlessCommand {
         };
 
         // Set up timeout if provided
-        let timeout_duration = self.timeout.map(|secs| Duration::from_secs(secs));
+        let timeout_duration = self.timeout.map(Duration::from_secs);
 
         // Use model override if provided, otherwise use the global setting
         let model_to_use = self.model.unwrap_or(self.global_model);
@@ -59,8 +59,7 @@ impl Command for HeadlessCommand {
             .expect("Failed to load LLM configuration from environment variables.");
 
         // Run the agent in one-shot mode
-        let result =
-            crate::run_once(messages, model_to_use, &llm_config, timeout_duration).await?;
+        let result = crate::run_once(messages, model_to_use, &llm_config, timeout_duration).await?;
 
         // Output the result as JSON
         let json_output = serde_json::to_string_pretty(&result)

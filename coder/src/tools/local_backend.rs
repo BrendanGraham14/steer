@@ -27,42 +27,42 @@ impl LocalBackend {
     /// Create a new LocalBackend with standard tools
     pub fn standard() -> Self {
         Self::with_tools(vec![
-            Box::new(BashTool::default()),
-            Box::new(GrepTool::default()),
-            Box::new(GlobTool::default()),
-            Box::new(LsTool::default()),
-            Box::new(ViewTool::default()),
-            Box::new(EditTool::default()),
-            Box::new(MultiEditTool::default()),
-            Box::new(ReplaceTool::default()),
-            Box::new(TodoReadTool::default()),
-            Box::new(TodoWriteTool::default()),
-            Box::new(FetchTool::default()),
-            Box::new(DispatchAgentTool::default()),
+            Box::new(BashTool),
+            Box::new(GrepTool),
+            Box::new(GlobTool),
+            Box::new(LsTool),
+            Box::new(ViewTool),
+            Box::new(EditTool),
+            Box::new(MultiEditTool),
+            Box::new(ReplaceTool),
+            Box::new(TodoReadTool),
+            Box::new(TodoWriteTool),
+            Box::new(FetchTool),
+            Box::new(DispatchAgentTool),
         ])
     }
 
     /// Create a LocalBackend with tools which execute in the workspace
     pub fn backend_only() -> Self {
         Self::with_tools(vec![
-            Box::new(BashTool::default()),
-            Box::new(GrepTool::default()),
-            Box::new(GlobTool::default()),
-            Box::new(LsTool::default()),
-            Box::new(ViewTool::default()),
-            Box::new(EditTool::default()),
-            Box::new(MultiEditTool::default()),
-            Box::new(ReplaceTool::default()),
-            Box::new(TodoReadTool::default()),
-            Box::new(TodoWriteTool::default()),
+            Box::new(BashTool),
+            Box::new(GrepTool),
+            Box::new(GlobTool),
+            Box::new(LsTool),
+            Box::new(ViewTool),
+            Box::new(EditTool),
+            Box::new(MultiEditTool),
+            Box::new(ReplaceTool),
+            Box::new(TodoReadTool),
+            Box::new(TodoWriteTool),
         ])
     }
 
     /// Create a LocalBackend with tools which execute in the client
     pub fn client_only() -> Self {
         Self::with_tools(vec![
-            Box::new(FetchTool::default()),
-            Box::new(DispatchAgentTool::default()),
+            Box::new(FetchTool),
+            Box::new(DispatchAgentTool),
         ])
     }
 
@@ -72,13 +72,13 @@ impl LocalBackend {
     /// sandboxed or restricted execution environments.
     pub fn read_only() -> Self {
         Self::with_tools(vec![
-            Box::new(GrepTool::default()),
-            Box::new(GlobTool::default()),
-            Box::new(LsTool::default()),
-            Box::new(ViewTool::default()),
-            Box::new(TodoReadTool::default()),
-            Box::new(TodoWriteTool::default()),
-            Box::new(FetchTool::default()),
+            Box::new(GrepTool),
+            Box::new(GlobTool),
+            Box::new(LsTool),
+            Box::new(ViewTool),
+            Box::new(TodoReadTool),
+            Box::new(TodoWriteTool),
+            Box::new(FetchTool),
         ])
     }
 

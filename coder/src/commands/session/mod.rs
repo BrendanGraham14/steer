@@ -1,8 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::cli::SessionCommands;
 use super::Command;
+use crate::cli::SessionCommands;
 
 mod create;
 mod delete;
@@ -13,7 +13,7 @@ mod show;
 pub use create::CreateSessionCommand;
 pub use delete::DeleteSessionCommand;
 pub use list::ListSessionCommand;
-pub use resume::{ResumeSessionCommand, LatestSessionCommand};
+pub use resume::{LatestSessionCommand, ResumeSessionCommand};
 pub use show::ShowSessionCommand;
 
 pub struct SessionCommand {
@@ -33,8 +33,12 @@ impl Command for SessionCommand {
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await
-            },
-            SessionCommands::Create { tool_policy, pre_approved_tools, metadata } => {
+            }
+            SessionCommands::Create {
+                tool_policy,
+                pre_approved_tools,
+                metadata,
+            } => {
                 let cmd = CreateSessionCommand {
                     tool_policy: tool_policy.clone(),
                     pre_approved_tools: pre_approved_tools.clone(),
@@ -42,20 +46,20 @@ impl Command for SessionCommand {
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await
-            },
+            }
             SessionCommands::Resume { session_id } => {
                 let cmd = ResumeSessionCommand {
                     session_id: session_id.clone(),
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await
-            },
+            }
             SessionCommands::Latest => {
                 let cmd = LatestSessionCommand {
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await
-            },
+            }
             SessionCommands::Delete { session_id, force } => {
                 let cmd = DeleteSessionCommand {
                     session_id: session_id.clone(),
@@ -63,14 +67,14 @@ impl Command for SessionCommand {
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await
-            },
+            }
             SessionCommands::Show { session_id } => {
                 let cmd = ShowSessionCommand {
                     session_id: session_id.clone(),
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await
-            },
+            }
         }
     }
 }

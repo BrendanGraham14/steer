@@ -345,8 +345,8 @@ fn convert_tool_approval_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{grpc::proto::tool_approval_policy::Policy, session::SessionToolConfig};
-    use std::collections::HashMap;
+    use crate::grpc::proto::tool_approval_policy::Policy;
+    
 
     #[test]
     fn test_convert_tool_approval_policy() {

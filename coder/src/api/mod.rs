@@ -23,7 +23,7 @@ use strum::IntoStaticStr;
 use strum::{EnumIter, IntoEnumIterator};
 use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
-pub use tools::{InputSchema, ToolSchema, ToolCall};
+pub use tools::{InputSchema, ToolCall, ToolSchema};
 use tracing::warn;
 
 use crate::config::LlmConfig;

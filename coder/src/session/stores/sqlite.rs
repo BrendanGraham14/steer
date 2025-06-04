@@ -12,7 +12,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::api::messages::{MessageContent, MessageRole};
-use crate::api::{Message, Model, ToolCall};
+use crate::api::{Message, ToolCall};
 use crate::events::StreamEvent;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionOrderBy, SessionState,
@@ -129,8 +129,8 @@ impl SessionStore for SqliteSessionStore {
             "#,
         )
         .bind(&id)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .bind("inactive") // New sessions start as inactive
         .bind(&metadata_json)
         .bind(&policy_type)
@@ -298,7 +298,7 @@ impl SessionStore for SqliteSessionStore {
             "#,
         )
         .bind(&session.id)
-        .bind(&Utc::now())
+        .bind(Utc::now())
         .bind(&metadata_json)
         .bind(&policy_type)
         .bind(&pre_approved_json)
@@ -371,8 +371,7 @@ impl SessionStore for SqliteSessionStore {
             SessionOrderBy::UpdatedAt => "s.updated_at",
             SessionOrderBy::MessageCount => {
                 // For message count, we'll need a subquery
-                query = format!(
-                    r#"
+                query = r#"
                     SELECT s.id, s.created_at, s.updated_at, s.status, s.metadata,
                            (SELECT e.event_data
                             FROM events e
@@ -383,8 +382,7 @@ impl SessionStore for SqliteSessionStore {
                            (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count
                     FROM sessions s
                     WHERE 1=1
-                    "#
-                );
+                    "#.to_string();
                 "message_count"
             }
         };
@@ -427,7 +425,7 @@ impl SessionStore for SqliteSessionStore {
                 row.get("message_count")
             } else {
                 sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id = ?1")
-                    .bind(&row.get::<String, _>("id"))
+                    .bind(row.get::<String, _>("id"))
                     .fetch_one(&self.pool)
                     .await
                     .map_err(|e| {
@@ -501,7 +499,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(next_seq)
         .bind(message.role.to_string())
         .bind(&content_json)
-        .bind(&Utc::now())
+        .bind(Utc::now())
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to append message: {}", e)))?;
@@ -742,7 +740,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(next_seq)
         .bind(event_type)
         .bind(&event_data)
-        .bind(&Utc::now())
+        .bind(Utc::now())
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to append event: {}", e)))?;
@@ -990,7 +988,7 @@ mod tests {
             },
             usage: None,
             metadata: std::collections::HashMap::new(),
-            model: claude_model.clone(),
+            model: claude_model,
         };
         store
             .append_event(&session.id, &message_event)
@@ -1010,7 +1008,7 @@ mod tests {
                 parameters: serde_json::json!({"param": "value"}),
             },
             metadata: std::collections::HashMap::new(),
-            model: gpt_model.clone(),
+            model: gpt_model,
         };
         store.append_event(&session.id, &tool_event).await.unwrap();
 

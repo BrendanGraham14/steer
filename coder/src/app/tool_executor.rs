@@ -5,9 +5,9 @@ use tracing::{Span, debug, error, instrument};
 
 use crate::api::ToolCall;
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
-use crate::tools::{BackendRegistry, ExecutionContext, LocalBackend, ToolBackend};
+use crate::tools::{BackendRegistry, ExecutionContext, ToolBackend};
 use tools::ToolSchema as ApiTool;
-use tools::{ToolError, ToolSchema as CoderTool};
+use tools::ToolError;
 
 /// Manages the execution of tools called by the AI model
 #[derive(Clone)]

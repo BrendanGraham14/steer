@@ -9,13 +9,13 @@ pub mod view;
 
 pub use bash::BashTool;
 pub use edit::{
-    multi_edit::{MultiEditTool, MULTI_EDIT_TOOL_NAME},
-    EditTool, EDIT_TOOL_NAME,
+    EDIT_TOOL_NAME, EditTool,
+    multi_edit::{MULTI_EDIT_TOOL_NAME, MultiEditTool},
 };
 pub use glob::GlobTool;
 pub use grep::GrepTool;
-pub use ls::{LsTool, LS_TOOL_NAME};
-pub use replace::{ReplaceTool, REPLACE_TOOL_NAME};
-pub use todo::read::{TodoReadTool, TODO_READ_TOOL_NAME};
-pub use todo::write::{TodoWriteTool, TODO_WRITE_TOOL_NAME};
-pub use view::{ViewTool, VIEW_TOOL_NAME};
+pub use ls::{LS_TOOL_NAME, LsTool};
+pub use replace::{REPLACE_TOOL_NAME, ReplaceTool};
+pub use todo::read::{TODO_READ_TOOL_NAME, TodoReadTool};
+pub use todo::write::{TODO_WRITE_TOOL_NAME, TodoWriteTool};
+pub use view::{VIEW_TOOL_NAME, ViewTool};

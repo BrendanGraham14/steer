@@ -17,9 +17,8 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use std::io::{self, Stdout};
 use std::panic;
 use std::time::{Duration, Instant};
-use tui_textarea::{Input, Key, TextArea};
+use tui_textarea::TextArea;
 
-use std::collections::VecDeque;
 use tokio::select;
 
 use crate::api::Model;

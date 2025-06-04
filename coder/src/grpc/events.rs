@@ -183,7 +183,7 @@ fn content_block_to_proto(
 
 /// Convert protobuf ServerEvent to AppEvent for TUI consumption
 pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> {
-    use crate::api::Model;
+    
 
     match server_event.event? {
         server_event::Event::MessageAdded(e) => Some(AppEvent::MessageAdded {

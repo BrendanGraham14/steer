@@ -1,4 +1,3 @@
-use tools::ToolCall as ApiToolCall;
 use crate::api::{Client as ApiClient, Model, ProviderKind};
 use crate::app::conversation::Role;
 use anyhow::Result;
@@ -6,6 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tools::ToolCall as ApiToolCall;
 use tracing::{debug, error, info, warn};
 use uuid;
 
