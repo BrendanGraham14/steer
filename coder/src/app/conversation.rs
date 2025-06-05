@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tools::ToolCall;
 use tracing::debug;
 
 use crate::api::Client as ApiClient;
@@ -16,14 +16,6 @@ pub enum Role {
     User,
     Assistant,
     Tool,
-}
-
-/// Tool call that can be attached to assistant messages
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub parameters: Value,
 }
 
 /// Represents a block of content within a single message.

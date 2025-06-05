@@ -2454,6 +2454,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
+name = "remote-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "gethostname",
+ "prost",
+ "prost-types",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "tonic-build",
+ "tools",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -16,7 +16,7 @@ pub struct ToolSchema {
     pub input_schema: InputSchema,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolCall {
     pub name: String,
     pub parameters: Value,

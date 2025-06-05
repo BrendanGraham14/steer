@@ -1,11 +1,13 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind};
 use crate::app::conversation::Role;
+use crate::app::validation::ValidatorRegistry;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tools::ToolCall as ApiToolCall;
+use tools::ToolCall;
+
 use tracing::{debug, error, info, warn};
 use uuid;
 
@@ -25,7 +27,7 @@ use crate::app::context::TaskOutcome;
 pub use cancellation::CancellationInfo;
 pub use command::AppCommand;
 pub use context::OpContext;
-pub use conversation::{Conversation, Message, MessageContentBlock, ToolCall};
+pub use conversation::{Conversation, Message, MessageContentBlock};
 pub use environment::EnvironmentInfo;
 pub use tool_executor::ToolExecutor;
 
@@ -122,14 +124,16 @@ impl App {
     ) -> Result<Self> {
         let conversation = Arc::new(Mutex::new(Conversation::new()));
 
-        // Build BackendRegistry externally
         let mut backend_registry = crate::tools::BackendRegistry::new();
         backend_registry.register(
             "local".to_string(),
-            Arc::new(crate::tools::LocalBackend::standard()),
+            Arc::new(crate::tools::LocalBackend::full()),
         );
 
-        let tool_executor = Arc::new(ToolExecutor::new(Arc::new(backend_registry)));
+        let tool_executor = Arc::new(ToolExecutor {
+            backend_registry: Arc::new(backend_registry),
+            validators: Arc::new(ValidatorRegistry::new()),
+        });
         let api_client = ApiClient::new(&config.llm_config);
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone())); // Create AgentExecutor
 
@@ -260,7 +264,7 @@ impl App {
         );
 
         // Get tools for the operation
-        let all_tools = self.tool_executor.to_api_tools();
+        let tool_schemas = self.tool_executor.get_tool_schemas().await;
 
         // Get mutable access to OpContext and its token
         let op_context = match &mut self.current_op_context {
@@ -292,7 +296,7 @@ impl App {
         let command_tx = OpContext::command_tx().clone();
 
         let tool_executor_callback =
-            move |tool_call: ApiToolCall, callback_token: CancellationToken| {
+            move |tool_call: ToolCall, callback_token: CancellationToken| {
                 // Clone items needed inside the async block
                 let executor = tool_executor_for_callback.clone();
                 let approved_tools = approved_tools_clone.clone();
@@ -302,7 +306,7 @@ impl App {
                 let tool_id = tool_call.id.clone();
 
                 async move {
-                    let requires_approval = match executor.requires_approval(&tool_name) {
+                    let requires_approval = match executor.requires_approval(&tool_name).await {
                         Ok(req) => req,
                         Err(e) => {
                             return Err(crate::tools::ToolError::InternalError(format!(
@@ -387,7 +391,7 @@ impl App {
                 model: current_model,
                 initial_messages: api_messages,
                 system_prompt: Some(system_prompt),
-                available_tools: all_tools,
+                available_tools: tool_schemas,
                 tool_executor_callback,
             };
             let operation_result = agent_executor
@@ -558,8 +562,8 @@ impl App {
 
 // Approval queue helper struct
 struct ApprovalQueue {
-    current: Option<(String, ApiToolCall, oneshot::Sender<ApprovalDecision>)>,
-    queued: std::collections::VecDeque<(String, ApiToolCall, oneshot::Sender<ApprovalDecision>)>,
+    current: Option<(String, ToolCall, oneshot::Sender<ApprovalDecision>)>,
+    queued: std::collections::VecDeque<(String, ToolCall, oneshot::Sender<ApprovalDecision>)>,
 }
 
 impl ApprovalQueue {
@@ -573,7 +577,7 @@ impl ApprovalQueue {
     fn add_request(
         &mut self,
         id: String,
-        tool_call: ApiToolCall,
+        tool_call: ToolCall,
         responder: oneshot::Sender<ApprovalDecision>,
     ) {
         self.queued.push_back((id, tool_call, responder));

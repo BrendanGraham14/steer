@@ -1,0 +1,38 @@
+[package]
+name = "remote-backend"
+version = "0.1.0"
+edition = "2024"
+description = "Remote backend for executing coder tools"
+authors = ["Brendan Graham <brendanigraham@gmail.com>"]
+
+[[bin]]
+name = "remote-backend"
+path = "src/main.rs"
+
+[dependencies]
+# Core async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+
+# CLI framework
+clap = { version = "4.4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# Utilities
+anyhow = "1.0"
+gethostname = "0.5"
+serde_json = "1.0"
+
+# Shared crates
+tools = { path = "../tools" }
+
+[build-dependencies]
+tonic-build = "0.12"

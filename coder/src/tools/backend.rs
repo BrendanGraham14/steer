@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::api::ToolCall;
 use crate::tools::ExecutionContext;
 use tools::ToolError;
-use tools::ToolSchema as ApiTool;
+use tools::ToolSchema;
 
 /// Metadata about a tool backend for debugging and monitoring
 #[derive(Debug, Clone)]
@@ -66,9 +66,9 @@ pub trait ToolBackend: Send + Sync {
 
     /// Get API tool descriptions for this backend
     ///
-    /// Returns a vector of ApiTool objects containing name, description,
+    /// Returns a vector of ToolSchema objects containing name, description,
     /// and input schema for each tool this backend supports.
-    fn to_api_tools(&self) -> Vec<ApiTool>;
+    async fn get_tool_schemas(&self) -> Vec<ToolSchema>;
 
     /// Backend metadata for debugging and monitoring
     ///
@@ -82,6 +82,22 @@ pub trait ToolBackend: Send + Sync {
     /// Default implementation returns true.
     async fn health_check(&self) -> bool {
         true
+    }
+
+    /// Check if a tool requires approval before execution
+    ///
+    /// Returns true if the tool requires user approval before it can be executed.
+    /// Default implementation returns true for safety.
+    ///
+    /// # Arguments
+    /// * `tool_name` - The name of the tool to check
+    ///
+    /// # Returns
+    /// Ok(true) if approval is required, Ok(false) if not, or an error if the tool is unknown
+    async fn requires_approval(&self, tool_name: &str) -> Result<bool, ToolError> {
+        // Default conservative implementation - require approval
+        // Backends should override this to provide accurate information
+        Ok(true)
     }
 }
 
@@ -182,11 +198,11 @@ impl BackendRegistry {
     ///
     /// Collects and returns all API tool descriptions from all registered backends.
     /// This provides a unified view of all available tools across all backends.
-    pub fn to_api_tools(&self) -> Vec<ApiTool> {
+    pub async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
         let mut all_tools = Vec::new();
 
         for (_, backend) in &self.backends {
-            all_tools.extend(backend.to_api_tools());
+            all_tools.extend(backend.get_tool_schemas().await);
         }
 
         all_tools
@@ -228,7 +244,7 @@ mod tests {
             self.tools.clone()
         }
 
-        fn to_api_tools(&self) -> Vec<ApiTool> {
+        async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
             Vec::new()
         }
 

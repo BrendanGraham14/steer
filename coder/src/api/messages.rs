@@ -337,8 +337,9 @@ mod tests {
     use super::*;
     use crate::app::{
         Conversation, Message as AppMessage, MessageContentBlock as AppMessageContentBlock,
-        ToolCall as AppToolCall, conversation,
+        conversation,
     };
+    use tools::ToolCall as AppToolCall;
 
     #[test]
     fn test_convert_conversation_basic() {

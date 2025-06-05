@@ -8,6 +8,7 @@ use tools::{ToolCall, ToolResult};
 use tracing::{debug, info, warn};
 
 use crate::api::{Client as ApiClient, Model, messages::Message};
+use crate::app::validation::ValidatorRegistry;
 use crate::app::{
     AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ToolExecutor,
 };
@@ -35,10 +36,15 @@ impl OneShotRunner {
     pub fn new(cfg: &LlmConfig) -> Self {
         let api_client = Arc::new(ApiClient::new(cfg));
 
-        let mut backend_registry = BackendRegistry::new();
-        backend_registry.register("local".to_string(), Arc::new(LocalBackend::standard()));
-
-        let tool_executor = ToolExecutor::new(Arc::new(backend_registry));
+        let mut backend_registry = crate::tools::BackendRegistry::new();
+        backend_registry.register(
+            "local".to_string(),
+            Arc::new(crate::tools::LocalBackend::full()),
+        );
+        let tool_executor = ToolExecutor {
+            backend_registry: Arc::new(backend_registry),
+            validators: Arc::new(ValidatorRegistry::new()),
+        };
 
         Self {
             api_client,
@@ -73,7 +79,7 @@ impl OneShotRunner {
         // 2. Create event channel and agent executor
         let (event_tx, mut event_rx) = mpsc::channel(100);
         let agent_executor = AgentExecutor::new(self.api_client.clone());
-        let available_tools = self.tool_executor.to_api_tools();
+        let available_tools = self.tool_executor.get_tool_schemas().await;
 
         // 3. Create tool execution callback that automatically approves every tool
         let tool_executor = self.tool_executor.clone();

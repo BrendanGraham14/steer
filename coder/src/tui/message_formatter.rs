@@ -121,7 +121,7 @@ fn format_text_block(
 
 /// Formats a ToolCall block for display.
 pub fn format_tool_call_block(
-    tool_call: &crate::app::ToolCall,
+    tool_call: &tools::ToolCall,
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();

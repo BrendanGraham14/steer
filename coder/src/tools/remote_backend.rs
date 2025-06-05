@@ -8,11 +8,13 @@ use crate::api::ToolCall;
 use crate::tools::backend::{BackendMetadata, ToolBackend};
 use crate::tools::execution_context::{ExecutionContext, ExecutionEnvironment};
 use tools::ToolError;
-use tools::ToolSchema as ApiTool;
+use tools::ToolSchema;
 
 // Generated gRPC client from proto/remote_backend.proto
 use crate::grpc::remote_backend::{
-    ExecuteToolRequest, HealthStatus, remote_backend_service_client::RemoteBackendServiceClient,
+    ExecuteToolRequest, HealthStatus,
+    ToolApprovalRequirementsRequest,
+    remote_backend_service_client::RemoteBackendServiceClient,
 };
 
 /// Serializable version of ExecutionContext for remote transmission
@@ -167,11 +169,36 @@ impl ToolBackend for RemoteBackend {
         self.supported_tools.clone()
     }
 
-    fn to_api_tools(&self) -> Vec<ApiTool> {
-        // For RemoteBackend, we would need to query the agent for its tool descriptions
-        // For now, return an empty vec since this is typically handled by the local backend
-        // that has access to the actual tool definitions
-        Vec::new()
+    async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
+        // Query the remote agent for tool schemas
+        let mut client = self.client.clone();
+        let request = Request::new(());
+
+        match client.get_tool_schemas(request).await {
+            Ok(response) => {
+                let schemas = response.into_inner();
+                schemas
+                    .tools
+                    .into_iter()
+                    .map(|schema| {
+                        // Parse the JSON input schema
+                        let input_schema = serde_json::from_str(&schema.input_schema_json)
+                            .unwrap_or_else(|_| tools::InputSchema {
+                                properties: serde_json::Map::new(),
+                                required: Vec::new(),
+                                schema_type: "object".to_string(),
+                            });
+
+                        ToolSchema {
+                            name: schema.name,
+                            description: schema.description,
+                            input_schema,
+                        }
+                    })
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        }
     }
 
     fn metadata(&self) -> BackendMetadata {
@@ -195,13 +222,42 @@ impl ToolBackend for RemoteBackend {
             Err(_) => false,
         }
     }
+
+    async fn requires_approval(&self, tool_name: &str) -> Result<bool, ToolError> {
+        // Check if this tool is supported by this backend
+        if self.supported_tools.contains(&tool_name) {
+            // Make an async RPC call to get approval requirements
+            let mut client = self.client.clone();
+            let request = Request::new(ToolApprovalRequirementsRequest {
+                tool_names: vec![tool_name.to_string()],
+            });
+
+            match client.get_tool_approval_requirements(request).await {
+                Ok(response) => {
+                    let resp = response.into_inner();
+                    resp.approval_requirements
+                        .get(tool_name)
+                        .copied()
+                        .ok_or_else(|| ToolError::UnknownTool(tool_name.to_string()))
+                }
+                Err(status) => Err(ToolError::execution(
+                    "RemoteBackend",
+                    format!(
+                        "Failed to get approval requirements: {} ({})",
+                        status.message(),
+                        status.code()
+                    ),
+                )),
+            }
+        } else {
+            Err(ToolError::UnknownTool(tool_name.to_string()))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    
 
     #[tokio::test]
     #[ignore] // Requires a running agent server
@@ -226,14 +282,16 @@ mod tests {
     #[test]
     fn test_supported_tools() {
         // We can test the supported tools list without connecting
-        let supported_tools = ["edit_file",
+        let supported_tools = [
+            "edit_file",
             "multi_edit_file",
             "bash",
             "grep",
             "glob",
             "ls",
             "view",
-            "replace"];
+            "replace",
+        ];
 
         assert_eq!(supported_tools.len(), 8);
         assert!(supported_tools.contains(&"edit_file"));

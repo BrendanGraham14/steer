@@ -1,7 +1,3 @@
 [workspace]
-members = [
-    "coder",  # The main crate
-    "macros", # The new macro crate
-    "tools",  # The tools crate
-]
+members = ["coder", "macros", "tools", "remote-backend"]
 resolver = "3"

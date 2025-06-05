@@ -1,7 +1,7 @@
 use crate::app::Message;
 use crate::app::agent_executor::ApprovalDecision;
 use tokio::sync::oneshot;
-use tools::ToolCall as ApiToolCall;
+use tools::ToolCall;
 
 /// Defines messages the TUI can send *to* the `App` actor.
 #[derive(Debug)]
@@ -22,7 +22,7 @@ pub enum AppCommand {
     Shutdown,
     /// Internal command for tool executor callback to request approval
     RequestToolApprovalInternal {
-        tool_call: ApiToolCall,
+        tool_call: ToolCall,
         responder: oneshot::Sender<ApprovalDecision>,
     },
     /// Restore a message to the conversation (used when resuming sessions)
