@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tools::{ToolCall, ToolSchema};
 
-use crate::api::{
-    Client as ApiClient, Model,
-    messages::{
-        Message as ApiMessage, MessageContent as ApiMessageContent, MessageRole as ApiMessageRole,
+use crate::{
+    api::{
+        Client as ApiClient, Model,
+        messages::{
+            Message as ApiMessage, MessageContent as ApiMessageContent,
+            MessageRole as ApiMessageRole,
+        },
     },
+    app::{ToolExecutor, validation::ValidatorRegistry},
 };
 
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
@@ -59,18 +63,20 @@ Usage notes:
         let api_client = Arc::new(ApiClient::new(&llm_config)); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
-        // Create a read-only ToolExecutor specifically for this agent run
         let mut backend_registry = crate::tools::BackendRegistry::new();
         backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only()));
-        let read_only_tool_executor = Arc::new(crate::app::ToolExecutor::new(Arc::new(backend_registry)));
+        let tool_executor = Arc::new(ToolExecutor {
+            backend_registry: Arc::new(backend_registry),
+            validators: Arc::new(ValidatorRegistry::new()),
+        });
 
         // Get available tools before moving read_only_tool_executor into the closure
-        let available_tools: Vec<ToolSchema> = read_only_tool_executor.to_api_tools();
+        let available_tools: Vec<ToolSchema> = tool_executor.get_tool_schemas().await;
 
         // Define the tool executor callback for the agent
         let tool_executor_callback =
             move |tool_call: ToolCall, callback_token: CancellationToken| {
-                let executor = read_only_tool_executor.clone();
+                let executor = tool_executor.clone();
                 async move {
                     executor
                         .execute_tool_with_cancellation(&tool_call, callback_token)

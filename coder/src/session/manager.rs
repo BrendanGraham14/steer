@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 use uuid;
 
-use crate::api::{Message as ApiMessage, Model, ToolCall as ApiToolCall};
+use crate::api::{Message as ApiMessage, Model, ToolCall};
 use crate::app::{App, AppCommand, AppConfig, AppEvent};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::{
@@ -1036,7 +1036,7 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
         }),
 
         AppEvent::ToolCallStarted { name, id, model } => {
-            let tool_call = ApiToolCall {
+            let tool_call = ToolCall {
                 id: id.clone(),
                 name: name.clone(),
                 parameters: serde_json::Value::Null, // We don't have parameters in this event
@@ -1079,7 +1079,7 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
             parameters,
             id,
         } => {
-            let tool_call = ApiToolCall {
+            let tool_call = ToolCall {
                 id: id.clone(),
                 name: name.clone(),
                 parameters,
@@ -1378,7 +1378,7 @@ mod tests {
 
         // Simulate tool call events
         let tool_call_started = StreamEvent::ToolCallStarted {
-            tool_call: ApiToolCall {
+            tool_call: ToolCall {
                 id: "tool_call_1".to_string(),
                 name: "read_file".to_string(),
                 parameters: serde_json::json!({"path": "test.txt"}),

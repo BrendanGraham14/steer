@@ -291,7 +291,7 @@ fn proto_to_content_block(block: MessageContentBlock) -> AppContentBlock {
     match block.content {
         Some(message_content_block::Content::Text(text)) => AppContentBlock::Text(text),
         Some(message_content_block::Content::ToolCall(tool_call)) => {
-            AppContentBlock::ToolCall(crate::app::conversation::ToolCall {
+            AppContentBlock::ToolCall(tools::ToolCall {
                 id: tool_call.id,
                 name: tool_call.name,
                 parameters: {

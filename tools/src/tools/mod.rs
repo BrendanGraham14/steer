@@ -1,4 +1,5 @@
 pub mod bash;
+pub mod collections;
 pub mod edit;
 pub mod glob;
 pub mod grep;
@@ -19,3 +20,5 @@ pub use replace::{REPLACE_TOOL_NAME, ReplaceTool};
 pub use todo::read::{TODO_READ_TOOL_NAME, TodoReadTool};
 pub use todo::write::{TODO_WRITE_TOOL_NAME, TodoWriteTool};
 pub use view::{VIEW_TOOL_NAME, ViewTool};
+
+pub use collections::{read_only_workspace_tools, workspace_tools};

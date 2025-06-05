@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::api::ToolCall;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};
-use tools::tools::*;
+use tools::tools::{read_only_workspace_tools, workspace_tools};
 use tools::{ExecutionContext as CoderExecutionContext, Tool, ToolError, ToolSchema};
 
 /// Local backend that executes tools in the current process
@@ -24,46 +24,23 @@ impl LocalBackend {
         Self { registry }
     }
 
-    /// Create a new LocalBackend with standard tools
-    pub fn standard() -> Self {
-        Self::with_tools(vec![
-            Box::new(BashTool),
-            Box::new(GrepTool),
-            Box::new(GlobTool),
-            Box::new(LsTool),
-            Box::new(ViewTool),
-            Box::new(EditTool),
-            Box::new(MultiEditTool),
-            Box::new(ReplaceTool),
-            Box::new(TodoReadTool),
-            Box::new(TodoWriteTool),
-            Box::new(FetchTool),
-            Box::new(DispatchAgentTool),
-        ])
+    /// Create a new LocalBackend with all tools (workspace + server tools)
+    pub fn full() -> Self {
+        let mut tools = workspace_tools();
+        // Add server-side tools
+        tools.push(Box::new(FetchTool));
+        tools.push(Box::new(DispatchAgentTool));
+        Self::with_tools(tools)
     }
 
-    /// Create a LocalBackend with tools which execute in the workspace
-    pub fn backend_only() -> Self {
-        Self::with_tools(vec![
-            Box::new(BashTool),
-            Box::new(GrepTool),
-            Box::new(GlobTool),
-            Box::new(LsTool),
-            Box::new(ViewTool),
-            Box::new(EditTool),
-            Box::new(MultiEditTool),
-            Box::new(ReplaceTool),
-            Box::new(TodoReadTool),
-            Box::new(TodoWriteTool),
-        ])
+    /// Create a LocalBackend with only workspace tools
+    pub fn workspace_only() -> Self {
+        Self::with_tools(workspace_tools())
     }
 
-    /// Create a LocalBackend with tools which execute in the client
-    pub fn client_only() -> Self {
-        Self::with_tools(vec![
-            Box::new(FetchTool),
-            Box::new(DispatchAgentTool),
-        ])
+    /// Create a LocalBackend with only server-side tools
+    pub fn server_only() -> Self {
+        Self::with_tools(vec![Box::new(FetchTool), Box::new(DispatchAgentTool)])
     }
 
     /// Create a LocalBackend with read-only tools
@@ -71,15 +48,10 @@ impl LocalBackend {
     /// This creates a backend with only read-only tools, useful for
     /// sandboxed or restricted execution environments.
     pub fn read_only() -> Self {
-        Self::with_tools(vec![
-            Box::new(GrepTool),
-            Box::new(GlobTool),
-            Box::new(LsTool),
-            Box::new(ViewTool),
-            Box::new(TodoReadTool),
-            Box::new(TodoWriteTool),
-            Box::new(FetchTool),
-        ])
+        let mut tools = read_only_workspace_tools();
+        // Add server-side tools (they're read-only too)
+        tools.push(Box::new(FetchTool));
+        Self::with_tools(tools)
     }
 
     /// Check if a tool is available in this backend
@@ -123,7 +95,7 @@ impl ToolBackend for LocalBackend {
         tool_names
     }
 
-    fn to_api_tools(&self) -> Vec<ToolSchema> {
+    async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
         self.registry
             .iter()
             .map(|(name, tool)| ToolSchema {
@@ -145,11 +117,19 @@ impl ToolBackend for LocalBackend {
         // Local backend is always healthy if we can access the registry
         !self.registry.is_empty()
     }
+
+    async fn requires_approval(&self, tool_name: &str) -> Result<bool, ToolError> {
+        // Get the tool from the registry and check its requires_approval method
+        self.registry
+            .get(tool_name)
+            .map(|tool| tool.requires_approval())
+            .ok_or_else(|| ToolError::UnknownTool(tool_name.to_string()))
+    }
 }
 
 impl Default for LocalBackend {
     fn default() -> Self {
-        Self::standard()
+        Self::full()
     }
 }
 
@@ -162,7 +142,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_creation() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::full();
         assert!(!backend.registry.is_empty());
         assert!(backend.has_tool("bash"));
         assert!(backend.has_tool("read_file"));
@@ -179,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_metadata() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::full();
         let metadata = backend.metadata();
 
         assert_eq!(metadata.name, "Local");
@@ -191,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_supported_tools() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::full();
         let supported = backend.supported_tools();
 
         assert!(!supported.is_empty());
@@ -202,13 +182,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_health_check() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::full();
         assert!(backend.health_check().await);
     }
 
     #[tokio::test]
     async fn test_local_backend_execution_unknown_tool() {
-        let backend = LocalBackend::standard();
+        let backend = LocalBackend::full();
 
         let tool_call = ToolCall {
             name: "unknown_tool".to_string(),
@@ -226,6 +206,29 @@ mod tests {
         let result = backend.execute(&tool_call, &context).await;
         assert!(result.is_err());
 
+        match result.unwrap_err() {
+            ToolError::UnknownTool(name) => assert_eq!(name, "unknown_tool"),
+            _ => panic!("Expected UnknownTool error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_backend_requires_approval() {
+        let backend = LocalBackend::full();
+
+        // Test a tool that typically requires approval (like bash)
+        let result = backend.requires_approval("bash").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // bash should require approval
+
+        // Test a tool that typically doesn't require approval (like read_file)
+        let result = backend.requires_approval("read_file").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // read_file should NOT require approval
+
+        // Test an unknown tool
+        let result = backend.requires_approval("unknown_tool").await;
+        assert!(result.is_err());
         match result.unwrap_err() {
             ToolError::UnknownTool(name) => assert_eq!(name, "unknown_tool"),
             _ => panic!("Expected UnknownTool error"),

@@ -14,6 +14,12 @@ service RemoteBackendService {
 
   // Health check
   rpc Health(google.protobuf.Empty) returns (HealthResponse);
+
+  // Get detailed tool schemas including approval requirements
+  rpc GetToolSchemas(google.protobuf.Empty) returns (ToolSchemasResponse);
+  
+  // Get tool approval requirements
+  rpc GetToolApprovalRequirements(ToolApprovalRequirementsRequest) returns (ToolApprovalRequirementsResponse);
 }
 
 message ExecuteToolRequest {
@@ -58,4 +64,27 @@ enum HealthStatus {
   HEALTH_STATUS_SERVING = 1;
   HEALTH_STATUS_NOT_SERVING = 2;
   HEALTH_STATUS_SERVICE_UNKNOWN = 3;
+}
+
+// Tool schema information
+message ToolSchema {
+  string name = 1;
+  string description = 2;
+  string input_schema_json = 3;
+}
+
+// Response containing all tool schemas
+message ToolSchemasResponse {
+  repeated ToolSchema tools = 1;
+}
+
+// Request for tool approval requirements
+message ToolApprovalRequirementsRequest {
+  repeated string tool_names = 1;
+}
+
+// Response containing tool approval requirements
+message ToolApprovalRequirementsResponse {
+  // Map from tool name to whether it requires approval
+  map<string, bool> approval_requirements = 1;
 }

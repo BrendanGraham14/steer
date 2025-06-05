@@ -5,9 +5,9 @@ use tracing::{Span, debug, error, instrument};
 
 use crate::api::ToolCall;
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
-use crate::tools::{BackendRegistry, ExecutionContext, ToolBackend};
-use tools::ToolSchema as ApiTool;
+use crate::tools::{BackendRegistry, ExecutionContext};
 use tools::ToolError;
+use tools::ToolSchema;
 
 /// Manages the execution of tools called by the AI model
 #[derive(Clone)]
@@ -17,40 +17,18 @@ pub struct ToolExecutor {
 }
 
 impl ToolExecutor {
-    pub fn new(backend_registry: Arc<BackendRegistry>) -> Self {
-        Self {
-            backend_registry,
-            validators: Arc::new(ValidatorRegistry::new()),
+    pub async fn requires_approval(&self, tool_name: &str) -> Result<bool> {
+        match self.backend_registry.get_backend_for_tool(tool_name) {
+            Some(backend) => backend
+                .requires_approval(tool_name)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to check approval requirement: {}", e)),
+            None => Err(anyhow::anyhow!("Unknown tool: {}", tool_name)),
         }
     }
 
-    pub fn with_validators(
-        backend_registry: Arc<BackendRegistry>,
-        validators: Arc<ValidatorRegistry>,
-    ) -> Self {
-        Self {
-            backend_registry,
-            validators,
-        }
-    }
-
-    pub fn requires_approval(&self, tool_name: &str) -> Result<bool> {
-        // Check if any backend supports this tool
-        if self
-            .backend_registry
-            .get_backend_for_tool(tool_name)
-            .is_some()
-        {
-            // Only bash requires approval for now
-            Ok(tool_name == "bash")
-        } else {
-            Err(anyhow::anyhow!("Unknown tool: {}", tool_name))
-        }
-    }
-
-    pub fn to_api_tools(&self) -> Vec<ApiTool> {
-        // Get tools dynamically from the backend registry
-        self.backend_registry.to_api_tools()
+    pub async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
+        self.backend_registry.get_tool_schemas().await
     }
 
     /// Get the list of supported tools from the backend registry

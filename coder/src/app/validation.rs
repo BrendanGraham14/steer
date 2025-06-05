@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
+use tools::tools::bash::BASH_TOOL_NAME;
 
 use crate::api::ToolCall;
 
@@ -57,7 +58,7 @@ impl ValidatorRegistry {
 
         // Register tool-specific validators
         validators.insert(
-            "bash".to_string(),
+            BASH_TOOL_NAME.to_string(),
             Box::new(BashValidator::new()) as Box<dyn ToolValidator>,
         );
 
@@ -177,7 +178,7 @@ impl BashValidator {
 #[async_trait]
 impl ToolValidator for BashValidator {
     fn tool_name(&self) -> &'static str {
-        "bash"
+        BASH_TOOL_NAME
     }
 
     async fn validate(
