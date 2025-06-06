@@ -46,13 +46,10 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
-    // Check if we should run in remote mode
-    if let Some(remote_addr) = cli.remote {
-        return run_remote_mode(&remote_addr, cli.model).await;
+    match cli.remote {
+        Some(remote_addr) => run_remote_mode(&remote_addr, cli.model).await,
+        None => run_local_mode(cli.model).await,
     }
-
-    // Run in local mode
-    run_local_mode(cli.model).await
 }
 
 async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
