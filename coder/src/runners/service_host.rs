@@ -8,12 +8,12 @@ use tracing::{error, info};
 
 use crate::events::StreamEventWithMetadata;
 use crate::grpc::proto::agent_service_server::AgentServiceServer;
-use crate::grpc::server::StreamingAgentService;
+use crate::grpc::server::AgentServiceImpl;
 use crate::session::{SessionManager, SessionManagerConfig, SessionStore};
 
-/// Configuration for the StreamingRunner
+/// Configuration for the ServiceHost
 #[derive(Debug, Clone)]
-pub struct StreamingConfig {
+pub struct ServiceHostConfig {
     /// Path to the session database
     pub db_path: std::path::PathBuf,
     /// Session manager configuration
@@ -22,19 +22,19 @@ pub struct StreamingConfig {
     pub bind_addr: SocketAddr,
 }
 
-/// Main orchestrator for the streaming runner system
+/// Main orchestrator for the service host system
 /// Manages the gRPC server, SessionManager, and component lifecycle
-pub struct StreamingRunner {
+pub struct ServiceHost {
     session_manager: Arc<SessionManager>,
     server_handle: Option<JoinHandle<Result<()>>>,
     cleanup_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
-    config: StreamingConfig,
+    config: ServiceHostConfig,
 }
 
-impl StreamingRunner {
-    /// Create a new StreamingRunner with the given configuration
-    pub async fn new(config: StreamingConfig) -> Result<Self> {
+impl ServiceHost {
+    /// Create a new ServiceHost with the given configuration
+    pub async fn new(config: ServiceHostConfig) -> Result<Self> {
         // Initialize session store
         let store = create_session_store(&config.db_path).await?;
 
@@ -49,7 +49,7 @@ impl StreamingRunner {
         ));
 
         info!(
-            "StreamingRunner initialized with database at {:?}",
+            "ServiceHost initialized with database at {:?}",
             config.db_path
         );
 
@@ -68,7 +68,7 @@ impl StreamingRunner {
             return Err(anyhow!("Server is already running"));
         }
 
-        let service = StreamingAgentService::new(self.session_manager.clone());
+        let service = AgentServiceImpl::new(self.session_manager.clone());
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let addr = self.config.bind_addr;
@@ -115,7 +115,7 @@ impl StreamingRunner {
 
     /// Shutdown the server gracefully
     pub async fn shutdown(mut self) -> Result<()> {
-        info!("Initiating StreamingRunner shutdown");
+        info!("Initiating ServiceHost shutdown");
 
         // Send shutdown signal to server
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
@@ -147,7 +147,7 @@ impl StreamingRunner {
             }
         }
 
-        info!("StreamingRunner shutdown complete");
+        info!("ServiceHost shutdown complete");
         Ok(())
     }
 
@@ -192,11 +192,11 @@ mod tests {
     use crate::api::Model;
     use tempfile::TempDir;
 
-    fn create_test_config() -> (StreamingConfig, TempDir) {
+    fn create_test_config() -> (ServiceHostConfig, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        let config = StreamingConfig {
+        let config = ServiceHostConfig {
             db_path,
             session_manager_config: SessionManagerConfig {
                 max_concurrent_sessions: 10,
@@ -210,32 +210,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_streaming_runner_creation() {
+    async fn test_service_host_creation() {
         let (config, _temp_dir) = create_test_config();
 
-        let runner = StreamingRunner::new(config).await.unwrap();
+        let host = ServiceHost::new(config).await.unwrap();
 
         // Verify session manager was created
-        assert_eq!(
-            runner.session_manager().get_active_sessions().await.len(),
-            0
-        );
+        assert_eq!(host.session_manager().get_active_sessions().await.len(), 0);
     }
 
     #[tokio::test]
-    async fn test_streaming_runner_lifecycle() {
+    async fn test_service_host_lifecycle() {
         let (mut config, _temp_dir) = create_test_config();
         config.bind_addr = "127.0.0.1:0".parse().unwrap(); // Use any available port
 
-        let mut runner = StreamingRunner::new(config).await.unwrap();
+        let mut host = ServiceHost::new(config).await.unwrap();
 
         // Start server
-        runner.start().await.unwrap();
+        host.start().await.unwrap();
 
         // Verify it's running
-        assert!(runner.server_handle.is_some());
+        assert!(host.server_handle.is_some());
 
         // Shutdown
-        runner.shutdown().await.unwrap();
+        host.shutdown().await.unwrap();
     }
 }

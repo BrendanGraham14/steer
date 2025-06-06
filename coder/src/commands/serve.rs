@@ -24,7 +24,7 @@ impl Command for ServeCommand {
         // Create session store path
         let db_path = crate::utils::session::create_session_store_path()?;
 
-        let config = crate::runners::StreamingConfig {
+        let config = crate::runners::ServiceHostConfig {
             db_path,
             session_manager_config: SessionManagerConfig {
                 max_concurrent_sessions: 100,
@@ -34,8 +34,8 @@ impl Command for ServeCommand {
             bind_addr: addr,
         };
 
-        let mut runner = crate::runners::StreamingRunner::new(config).await?;
-        runner.start().await?;
+        let mut host = crate::runners::ServiceHost::new(config).await?;
+        host.start().await?;
 
         info!("gRPC server started on {}", addr);
         println!("Server listening on {}", addr);
@@ -45,7 +45,7 @@ impl Command for ServeCommand {
         tokio::signal::ctrl_c().await?;
         info!("Shutdown signal received");
 
-        runner.shutdown().await?;
+        host.shutdown().await?;
         info!("Server shutdown complete");
 
         Ok(())
