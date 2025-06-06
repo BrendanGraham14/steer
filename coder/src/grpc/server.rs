@@ -6,18 +6,18 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, warn};
 
-pub struct StreamingAgentService {
+pub struct AgentServiceImpl {
     session_manager: Arc<SessionManager>,
 }
 
-impl StreamingAgentService {
+impl AgentServiceImpl {
     pub fn new(session_manager: Arc<SessionManager>) -> Self {
         Self { session_manager }
     }
 }
 
 #[tonic::async_trait]
-impl agent_service_server::AgentService for StreamingAgentService {
+impl agent_service_server::AgentService for AgentServiceImpl {
     type StreamSessionStream = ReceiverStream<Result<ServerEvent, Status>>;
 
     async fn stream_session(
@@ -594,7 +594,7 @@ mod tests {
     async fn create_test_server() -> (String, Arc<SessionManager>, TempDir) {
         let (session_manager, temp_dir) = create_test_session_manager().await;
 
-        let service = StreamingAgentService::new(session_manager.clone());
+        let service = AgentServiceImpl::new(session_manager.clone());
 
         // Start server on random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
