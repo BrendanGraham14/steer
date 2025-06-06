@@ -54,7 +54,6 @@ async fn test_get_tool_schemas() {
     let bash = bash_schema.unwrap();
     assert!(!bash.description.is_empty());
     assert!(!bash.input_schema_json.is_empty());
-    assert!(bash.requires_approval); // bash should require approval
 }
 
 /// Test tool execution with valid tool

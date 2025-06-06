@@ -22,6 +22,9 @@ mod environment;
 mod tool_executor;
 pub mod validation;
 
+#[cfg(test)]
+mod tests;
+
 use crate::app::context::TaskOutcome;
 
 pub use cancellation::CancellationInfo;
@@ -229,6 +232,9 @@ impl App {
     ) -> Result<Option<mpsc::Receiver<AgentEvent>>> {
         // Cancel any existing operations first
         self.cancel_current_processing().await;
+
+        // Check for incomplete tool calls and inject cancelled tool results
+        self.inject_cancelled_tool_results().await;
 
         // Create a new operation context
         let op_context = OpContext::new();
@@ -557,6 +563,69 @@ impl App {
             );
         }
         // Clearing the receiver is now handled in handle_app_command
+    }
+
+    /// Inject cancelled tool results for any incomplete tool calls in the conversation.
+    /// This ensures that the Anthropic API receives proper tool_result blocks for every tool_use block.
+    pub async fn inject_cancelled_tool_results(&mut self) {
+        let incomplete_tool_calls = {
+            let conversation_guard = self.conversation.lock().await;
+            self.find_incomplete_tool_calls(&conversation_guard)
+        };
+        
+        if !incomplete_tool_calls.is_empty() {
+            info!(target: "App.inject_cancelled_tool_results", 
+                  "Found {} incomplete tool calls, injecting cancellation results", 
+                  incomplete_tool_calls.len());
+            
+            for tool_call in incomplete_tool_calls {
+                let cancelled_result = Message::new_with_blocks(
+                    Role::Tool,
+                    vec![MessageContentBlock::ToolResult {
+                        tool_use_id: tool_call.id.clone(),
+                        result: format!("Tool execution was cancelled by user before completion."),
+                    }],
+                );
+                
+                // Add the message using the standard add_message method to ensure proper event emission
+                self.add_message(cancelled_result).await;
+                debug!(target: "App.inject_cancelled_tool_results", 
+                       "Injected cancellation result for tool call: {} ({})", 
+                       tool_call.name, tool_call.id);
+            }
+        }
+    }
+
+    /// Find tool calls that don't have corresponding tool results
+    fn find_incomplete_tool_calls(&self, conversation: &Conversation) -> Vec<ToolCall> {
+        let mut tool_calls = Vec::new();
+        let mut tool_results = std::collections::HashSet::new();
+
+        // First pass: collect all tool results
+        for message in &conversation.messages {
+            if message.role == Role::Tool {
+                for block in &message.content_blocks {
+                    if let MessageContentBlock::ToolResult { tool_use_id, .. } = block {
+                        tool_results.insert(tool_use_id.clone());
+                    }
+                }
+            }
+        }
+
+        // Second pass: find tool calls without results
+        for message in &conversation.messages {
+            if message.role == Role::Assistant {
+                for block in &message.content_blocks {
+                    if let MessageContentBlock::ToolCall(tool_call) = block {
+                        if !tool_results.contains(&tool_call.id) {
+                            tool_calls.push(tool_call.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        tool_calls
     }
 }
 
