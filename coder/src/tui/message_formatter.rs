@@ -1,5 +1,6 @@
 use crate::app::conversation::MessageContentBlock;
 use crate::app::conversation::Role;
+use tools::tools::bash::{BASH_TOOL_NAME, BashParams};
 use tools::tools::edit::{EDIT_TOOL_NAME, EditParams};
 use tools::tools::replace::{REPLACE_TOOL_NAME, ReplaceParams};
 
@@ -232,7 +233,47 @@ pub fn format_tool_call_block(
                 None // Deserialization failed, fallback to JSON
             }
         }
-        _ => None, // Not a tool we format as a diff
+        BASH_TOOL_NAME => {
+            if let Ok(params) = serde_json::from_value::<BashParams>(tool_call.parameters.clone()) {
+                // Format bash command as a code block
+                lines.push(Line::from(Span::styled(
+                    "-> Calling Tool: bash",
+                    Style::default().fg(Color::Cyan),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "```bash",
+                    Style::default().fg(Color::DarkGray),
+                )));
+
+                // Format the command with proper wrapping
+                for line in params.command.lines() {
+                    for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
+                        lines.push(Line::from(Span::styled(
+                            wrapped_line.to_string(),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
+                }
+
+                lines.push(Line::from(Span::styled(
+                    "```",
+                    Style::default().fg(Color::DarkGray),
+                )));
+
+                // Add timeout info if specified
+                if let Some(timeout) = params.timeout {
+                    lines.push(Line::from(Span::styled(
+                        format!("   Timeout: {}ms", timeout),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+
+                Some(()) // Indicate successful formatting
+            } else {
+                None // Deserialization failed, fallback to JSON
+            }
+        }
+        _ => None,
     };
 
     // Fallback to generic JSON formatting if diff formatting didn't happen
