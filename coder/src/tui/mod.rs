@@ -55,14 +55,6 @@ enum ScrollAmount {
     FullPage,
 }
 
-// Define a struct to hold the necessary info for a pending approval
-#[derive(Debug, Clone)]
-struct PendingApprovalInfo {
-    id: String,
-    name: String,
-    parameters: serde_json::Value, // Store parameters for display
-}
-
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     textarea: TextArea<'static>,
@@ -73,7 +65,7 @@ pub struct Tui {
     last_spinner_update: Instant,
     spinner_state: usize,
     command_tx: mpsc::Sender<AppCommand>,
-    current_tool_approval: Option<PendingApprovalInfo>,
+    current_tool_approval: Option<tools::ToolCall>,
     scroll_offset: usize,
     max_scroll: usize,
     user_scrolled_away: bool,
@@ -104,15 +96,6 @@ enum DisplayItem {
         id: String,
         content: Vec<Line<'static>>, // For errors, cancellations, info messages
     },
-}
-
-#[derive(Clone)]
-pub struct FormattedMessage {
-    content: Vec<Line<'static>>,
-    role: Role,
-    id: String,
-    full_tool_result: Option<String>,
-    is_truncated: bool,
 }
 
 #[derive(Debug)]
@@ -778,7 +761,7 @@ impl Tui {
                 id,
             } => {
                 // Store approval request state in the queue
-                let approval_info = PendingApprovalInfo {
+                let approval_info = tools::ToolCall {
                     id: id.clone(),
                     name: name.clone(),
                     parameters,
@@ -892,7 +875,7 @@ impl Tui {
         is_processing: bool,
         progress_message: Option<String>,
         spinner_char: String,
-        current_tool_approval_info: Option<&PendingApprovalInfo>,
+        current_tool_approval_info: Option<&tools::ToolCall>,
     ) -> Block<'a> {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
@@ -958,7 +941,7 @@ impl Tui {
         scroll_offset: usize,
         max_scroll: usize,
         current_model: &str,
-        current_approval_info: Option<&PendingApprovalInfo>,
+        current_approval_info: Option<&tools::ToolCall>,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -967,7 +950,10 @@ impl Tui {
 
         // Calculate potential preview height
         let preview_height = if current_approval_info.is_some() {
-            5 // Example fixed height, adjust as needed
+            // Calculate dynamic preview height based on terminal size
+            // Use up to 30% of terminal height, with min 8 and max 20 lines
+            let max_preview = (total_area.height as f32 * 0.3) as u16;
+            max_preview.clamp(1, 20)
         } else {
             0
         };
@@ -1105,22 +1091,28 @@ impl Tui {
     fn render_tool_preview_static(
         f: &mut ratatui::Frame<'_>,
         area: Rect,
-        info: &PendingApprovalInfo,
+        tool_call: &tools::ToolCall,
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" Tool Preview: {} (ID: {}) ", info.name, info.id))
+            .title(format!(
+                " Tool Preview: {} (ID: {}) ",
+                tool_call.name, tool_call.id
+            ))
             .border_style(Style::default().fg(Color::Cyan));
 
-        // Format parameters nicely (e.g., pretty JSON)
-        let params_str = serde_json::to_string_pretty(&info.parameters)
-            .unwrap_or_else(|_| format!("Error formatting parameters: {:?}", info.parameters));
+        // Use the existing tool call formatting
+        let formatted_lines = message_formatter::format_tool_call_block(
+            &tool_call,
+            area.width.saturating_sub(2), // Account for borders
+        );
 
-        let text = Paragraph::new(params_str)
-            .block(block)
-            .wrap(Wrap { trim: true });
+        // Convert formatted lines into list items for display
+        let list_items: Vec<ListItem> = formatted_lines.into_iter().map(ListItem::new).collect();
 
-        f.render_widget(text, area);
+        let list = List::new(list_items).block(block);
+
+        f.render_widget(list, area);
     }
 
     async fn handle_input(&mut self, key: KeyEvent) -> Result<Option<InputAction>> {
