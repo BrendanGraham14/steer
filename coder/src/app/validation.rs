@@ -8,8 +8,6 @@ use crate::api::ToolCall;
 #[derive(Debug)]
 pub struct ValidationContext {
     pub cancellation_token: CancellationToken,
-    pub user_id: Option<String>,
-    pub session_id: String,
 }
 
 #[derive(Debug)]

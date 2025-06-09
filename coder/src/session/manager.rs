@@ -984,49 +984,6 @@ fn convert_proto_tool_config(
     }
 }
 
-/// Event translation loop that converts AppEvents to StreamEvents
-async fn event_translation_loop(
-    session_id: String,
-    mut app_event_rx: mpsc::Receiver<AppEvent>,
-    store: Arc<dyn SessionStore>,
-    global_event_tx: mpsc::Sender<StreamEventWithMetadata>,
-) {
-    info!(session_id = %session_id, "Starting event translation loop");
-
-    while let Some(app_event) = app_event_rx.recv().await {
-        debug!(session_id = %session_id, "Translating app event: {:?}", app_event);
-
-        // Translate AppEvent to StreamEvent
-        let stream_event = match translate_app_event(app_event, &session_id) {
-            Some(event) => event,
-            None => continue, // Skip events that don't need to be streamed
-        };
-
-        // Persist event and get sequence number
-        let sequence_num = match store.append_event(&session_id, &stream_event).await {
-            Ok(seq) => seq,
-            Err(e) => {
-                error!(session_id = %session_id, error = %e, "Failed to persist event");
-                continue;
-            }
-        };
-
-        // Update session state based on the event
-        if let Err(e) = update_session_state_for_event(&store, &session_id, &stream_event).await {
-            error!(session_id = %session_id, error = %e, "Failed to update session state");
-        }
-
-        // Broadcast to subscribers
-        let event_with_metadata =
-            StreamEventWithMetadata::new(sequence_num, session_id.clone(), stream_event);
-        if let Err(e) = global_event_tx.try_send(event_with_metadata) {
-            warn!(session_id = %session_id, error = %e, "Failed to broadcast event");
-        }
-    }
-
-    info!(session_id = %session_id, "Event translation loop ended");
-}
-
 /// Convert AppEvent to StreamEvent, returning None for events that shouldn't be streamed
 fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamEvent> {
     use crate::api::messages::{MessageContent, MessageRole};
