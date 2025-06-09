@@ -1,9 +1,13 @@
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::api::messages::{ContentBlock, MessageContent};
 use crate::api::{Message, Model, ToolCall};
+use crate::tools::{BackendRegistry, LocalBackend};
+use tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 
 /// Complete session representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,33 +91,172 @@ impl ToolApprovalPolicy {
     }
 }
 
-/// Tool configuration for the session
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SessionToolConfig {
-    /// Disabled tools for this session
-    pub disabled_tools: HashSet<String>,
+/// Authentication configuration for remote backends
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RemoteAuth {
+    Bearer { token: String },
+    ApiKey { key: String },
+}
 
+/// Tool filtering configuration for backends
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolFilter {
+    /// Include all available tools
+    All,
+    /// Include only the specified tools  
+    Include(Vec<String>),
+    /// Include all tools except the specified ones
+    Exclude(Vec<String>),
+}
+
+impl Default for ToolFilter {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+/// Container runtime configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContainerRuntime {
+    Docker,
+    Podman,
+}
+
+/// Backend configuration for different tool execution environments
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BackendConfig {
+    Local {
+        /// Tool filtering configuration for the local backend
+        tool_filter: ToolFilter,
+    },
+    Remote {
+        name: String,
+        endpoint: String,
+        auth: Option<RemoteAuth>,
+        tool_filter: ToolFilter,
+    },
+    Container {
+        image: String,
+        runtime: ContainerRuntime,
+        tool_filter: ToolFilter,
+    },
+    Mcp {
+        server_name: String,
+        transport: String,
+        command: String,
+        args: Vec<String>,
+        tool_filter: ToolFilter,
+    },
+}
+
+/// Tool configuration for the session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionToolConfig {
+    /// Backend configurations for this session
+    pub backends: Vec<BackendConfig>,
     /// Additional metadata for tool configuration
     pub metadata: HashMap<String, String>,
 }
 
 impl SessionToolConfig {
-    pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
-        !self.disabled_tools.contains(tool_name)
+    /// Build a BackendRegistry from this configuration
+    pub async fn build_registry(&self) -> Result<BackendRegistry> {
+        let mut registry = BackendRegistry::new();
+
+        for (idx, backend_config) in self.backends.iter().enumerate() {
+            match backend_config {
+                BackendConfig::Local { tool_filter } => {
+                    let backend = match tool_filter {
+                        ToolFilter::All => LocalBackend::full(),
+                        ToolFilter::Include(tools) => LocalBackend::with_tools(tools.clone()),
+                        ToolFilter::Exclude(excluded) => LocalBackend::without_tools(excluded.clone()),
+                    };
+                    registry.register(format!("local_{}", idx), Arc::new(backend));
+                }
+                BackendConfig::Remote {
+                    name,
+                    endpoint,
+                    auth,
+                    tool_filter,
+                } => {
+                    let backend = crate::tools::RemoteBackend::new(
+                        endpoint.clone(),
+                        std::time::Duration::from_secs(30),
+                        auth.clone(),
+                        tool_filter.clone(),
+                    )
+                    .await;
+
+                    match backend {
+                        Ok(remote_backend) => {
+                            registry.register(name.clone(), Arc::new(remote_backend));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create remote backend '{}' at {}: {}",
+                                name,
+                                endpoint,
+                                e
+                            );
+                        }
+                    }
+                }
+                BackendConfig::Container {
+                    image,
+                    runtime: _,
+                    tool_filter: _,
+                } => {
+                    // TODO: Implement container backend creation when available
+                    tracing::warn!("Container backend with image '{}' not yet supported", image);
+                }
+                BackendConfig::Mcp {
+                    server_name,
+                    transport: _,
+                    command: _,
+                    args: _,
+                    tool_filter: _,
+                } => {
+                    // TODO: Implement MCP backend creation when available
+                    tracing::warn!("MCP backend '{}' not yet supported", server_name);
+                }
+            }
+        }
+
+        Ok(registry)
     }
 
-    pub fn disable_tool(&mut self, tool_name: String) {
-        self.disabled_tools.insert(tool_name);
+    /// Minimal read-only configuration
+    pub fn read_only() -> Self {
+        Self {
+            backends: vec![BackendConfig::Local {
+                tool_filter: ToolFilter::Include(vec![
+                    VIEW_TOOL_NAME.to_string(),
+                    LS_TOOL_NAME.to_string(),
+                    GLOB_TOOL_NAME.to_string(),
+                    GREP_TOOL_NAME.to_string(),
+                ]),
+            }],
+            metadata: HashMap::new(),
+        }
     }
+}
 
-    pub fn enable_tool(&mut self, tool_name: &str) {
-        self.disabled_tools.remove(tool_name);
+impl Default for SessionToolConfig {
+    fn default() -> Self {
+        Self {
+            backends: vec![
+                BackendConfig::Local {
+                    tool_filter: ToolFilter::All,
+                }, // All tools
+            ],
+            metadata: HashMap::new(),
+        }
     }
 }
 
 /// Mutable session state that changes during execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionState {
     /// Conversation messages
     pub messages: Vec<Message>,
@@ -130,7 +273,6 @@ pub struct SessionState {
     /// Additional runtime metadata
     pub metadata: HashMap<String, String>,
 }
-
 
 impl SessionState {
     /// Add a message to the conversation
@@ -398,15 +540,17 @@ impl From<&Session> for SessionInfo {
 mod tests {
     use super::*;
     use crate::api::messages::{MessageContent, MessageRole};
+    use tools::tools::{
+        BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
+        MULTI_EDIT_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME,
+        VIEW_TOOL_NAME,
+    };
 
     #[test]
     fn test_session_creation() {
         let config = SessionConfig {
             tool_policy: ToolApprovalPolicy::AlwaysAsk,
-            tool_config: SessionToolConfig {
-                disabled_tools: HashSet::new(),
-                metadata: HashMap::new(),
-            },
+            tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
         };
         let session = Session::new("test-session".to_string(), config.clone());
@@ -483,5 +627,183 @@ mod tests {
         let tool_state = state.tool_calls.get("tool1").unwrap();
         assert!(tool_state.completed_at.is_some());
         assert!(tool_state.is_complete());
+    }
+
+    #[test]
+    fn test_session_tool_config_default() {
+        let config = SessionToolConfig::default();
+        assert_eq!(config.backends.len(), 1);
+
+        match &config.backends[0] {
+            BackendConfig::Local { tool_filter } => {
+                assert!(matches!(tool_filter, ToolFilter::All)); // All tools enabled
+            }
+            _ => panic!("Expected Local backend config"),
+        }
+    }
+
+    #[test]
+    fn test_tool_filter_exclude() {
+        // Test that we can exclude specific tools
+        let config = SessionToolConfig {
+            backends: vec![BackendConfig::Local {
+                tool_filter: ToolFilter::Exclude(vec![
+                    BASH_TOOL_NAME.to_string(),
+                    EDIT_TOOL_NAME.to_string(),
+                ]),
+            }],
+            metadata: HashMap::new(),
+        };
+
+        match &config.backends[0] {
+            BackendConfig::Local { tool_filter } => {
+                if let ToolFilter::Exclude(excluded_tools) = tool_filter {
+                    assert_eq!(excluded_tools.len(), 2);
+                    assert!(excluded_tools.contains(&BASH_TOOL_NAME.to_string()));
+                    assert!(excluded_tools.contains(&EDIT_TOOL_NAME.to_string()));
+                } else {
+                    panic!("Expected ToolFilter::Exclude");
+                }
+            }
+            _ => panic!("Expected Local backend config"),
+        }
+    }
+
+    #[test]
+    fn test_session_tool_config_read_only() {
+        let config = SessionToolConfig::read_only();
+        assert_eq!(config.backends.len(), 1);
+
+        match &config.backends[0] {
+            BackendConfig::Local { tool_filter } => {
+                if let ToolFilter::Include(tools) = tool_filter {
+                    assert!(tools.contains(&VIEW_TOOL_NAME.to_string()));
+                    assert!(tools.contains(&LS_TOOL_NAME.to_string()));
+                    assert!(tools.contains(&GLOB_TOOL_NAME.to_string()));
+                    assert!(tools.contains(&GREP_TOOL_NAME.to_string()));
+                    assert!(!tools.contains(&BASH_TOOL_NAME.to_string()));
+                    assert!(!tools.contains(&EDIT_TOOL_NAME.to_string()));
+                } else {
+                    panic!("Expected ToolFilter::Include for read_only config");
+                }
+            }
+            _ => panic!("Expected Local backend config"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_tool_config_build_registry_exclude() {
+        // Test that exclusion filter works with registry building
+        let config = SessionToolConfig {
+            backends: vec![BackendConfig::Local {
+                tool_filter: ToolFilter::Exclude(vec![BASH_TOOL_NAME.to_string()]),
+            }],
+            metadata: HashMap::new(),
+        };
+        
+        let registry = config.build_registry().await.unwrap();
+        let schemas = registry.get_tool_schemas().await;
+        let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
+        
+        // Should NOT contain the excluded tool
+        assert!(!tool_names.contains(&BASH_TOOL_NAME.to_string()));
+        
+        // Should contain other tools
+        assert!(tool_names.contains(&VIEW_TOOL_NAME.to_string()));
+        assert!(tool_names.contains(&LS_TOOL_NAME.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_session_tool_config_build_registry() {
+        let config = SessionToolConfig::read_only();
+        let registry = config.build_registry().await.unwrap();
+
+        // Should have backends registered
+        let backend_names = registry.backends();
+        assert!(!backend_names.is_empty());
+
+        // Test that we can get tool schemas from all backends
+        let schemas = registry.get_tool_schemas().await;
+
+        // Should have the read-only tools
+        let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
+        assert!(tool_names.contains(&VIEW_TOOL_NAME.to_string()));
+        assert!(tool_names.contains(&LS_TOOL_NAME.to_string()));
+        assert!(!tool_names.contains(&BASH_TOOL_NAME.to_string()));
+    }
+
+    #[test]
+    fn test_backend_config_variants() {
+        // Test Local variant
+        let local_config = BackendConfig::Local {
+            tool_filter: ToolFilter::Include(vec![VIEW_TOOL_NAME.to_string(), LS_TOOL_NAME.to_string()]),
+        };
+
+        match local_config {
+            BackendConfig::Local { tool_filter } => {
+                if let ToolFilter::Include(tools) = tool_filter {
+                    assert_eq!(tools.len(), 2);
+                } else {
+                    panic!("Expected ToolFilter::Include");
+                }
+            }
+            _ => panic!("Expected Local variant"),
+        }
+
+        // Test Remote variant
+        let remote_config = BackendConfig::Remote {
+            name: "test-remote".to_string(),
+            endpoint: "http://localhost:8080".to_string(),
+            auth: None,
+            tool_filter: ToolFilter::All,
+        };
+
+        match remote_config {
+            BackendConfig::Remote { name, endpoint, .. } => {
+                assert_eq!(name, "test-remote");
+                assert_eq!(endpoint, "http://localhost:8080");
+            }
+            _ => panic!("Expected Remote variant"),
+        }
+
+        // Test Container variant
+        let container_config = BackendConfig::Container {
+            image: "ubuntu:latest".to_string(),
+            runtime: ContainerRuntime::Docker,
+            tool_filter: ToolFilter::All,
+        };
+
+        match container_config {
+            BackendConfig::Container { image, runtime, .. } => {
+                assert_eq!(image, "ubuntu:latest");
+                assert!(matches!(runtime, ContainerRuntime::Docker));
+            }
+            _ => panic!("Expected Container variant"),
+        }
+
+        // Test Mcp variant
+        let mcp_config = BackendConfig::Mcp {
+            server_name: "test-mcp".to_string(),
+            transport: "stdio".to_string(),
+            command: "python".to_string(),
+            args: vec!["-m".to_string(), "test_server".to_string()],
+            tool_filter: ToolFilter::All,
+        };
+
+        match mcp_config {
+            BackendConfig::Mcp {
+                server_name,
+                transport,
+                command,
+                args,
+                ..
+            } => {
+                assert_eq!(server_name, "test-mcp");
+                assert_eq!(transport, "stdio");
+                assert_eq!(command, "python");
+                assert_eq!(args.len(), 2);
+            }
+            _ => panic!("Expected Mcp variant"),
+        }
     }
 }

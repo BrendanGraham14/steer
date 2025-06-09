@@ -1,15 +1,31 @@
 use anyhow::Result;
 use coder::api::Model;
-use coder::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision};
+use coder::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
+use coder::app::validation::ValidatorRegistry;
 use coder::config::LlmConfig;
+use coder::tools::{BackendRegistry, LocalBackend};
 use coder::tools::edit::EditTool;
 use coder::tools::traits::Tool;
 use coder::tools::view::ViewTool;
 use dotenv::dotenv;
 use serde_json::json;
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
 use tracing::warn; // Added warn import
+
+fn create_test_tool_executor() -> Arc<ToolExecutor> {
+    let mut backend_registry = BackendRegistry::new();
+    backend_registry.register(
+        "local".to_string(),
+        Arc::new(LocalBackend::full()),
+    );
+    
+    Arc::new(ToolExecutor {
+        backend_registry: Arc::new(backend_registry),
+        validators: Arc::new(ValidatorRegistry::new()),
+    })
+}
 
 #[tokio::test]
 async fn test_requires_approval_tool_detection() -> Result<()> {
@@ -33,7 +49,7 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     let app_config = AppConfig { llm_config };
     let (event_tx, _event_rx) = mpsc::channel(100);
     // Changed Model::Default to a specific model
-    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219)?;
+    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219, create_test_tool_executor())?;
 
     assert!(!app.tool_executor.requires_approval("read_file").unwrap());
     assert!(!app.tool_executor.requires_approval("grep").unwrap());
@@ -67,6 +83,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
         app_config_for_actor,
         event_tx.clone(),
         Model::Claude3_7Sonnet20250219,
+        create_test_tool_executor(),
     )?;
     let actor_handle = tokio::spawn(coder::app::app_actor_loop(
         app_for_actor,

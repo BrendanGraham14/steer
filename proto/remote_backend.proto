@@ -17,7 +17,7 @@ service RemoteBackendService {
 
   // Get detailed tool schemas including approval requirements
   rpc GetToolSchemas(google.protobuf.Empty) returns (ToolSchemasResponse);
-  
+
   // Get tool approval requirements
   rpc GetToolApprovalRequirements(ToolApprovalRequirementsRequest) returns (ToolApprovalRequirementsResponse);
 }
@@ -42,16 +42,9 @@ message ExecuteToolResponse {
 message AgentInfo {
   string version = 1;
   repeated string supported_tools = 2;
-  AgentCapabilities capabilities = 3;
   map<string, string> metadata = 4;
 }
 
-message AgentCapabilities {
-  bool supports_cancellation = 1;
-  bool supports_streaming = 2;
-  uint64 max_execution_time_ms = 3;
-  uint64 max_memory_mb = 4;
-}
 
 message HealthResponse {
   HealthStatus status = 1;

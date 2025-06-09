@@ -24,6 +24,7 @@ pub enum MessageContentBlock {
     Text(String),
     ToolCall(ToolCall),
     ToolResult { tool_use_id: String, result: String },
+    // TODO: support attachments
 }
 
 /// A message in the conversation
@@ -179,13 +180,6 @@ impl Message {
             })
             .collect::<Vec<_>>()
             .join("\n") // Join different blocks with newline for basic representation
-    }
-
-    /// Placeholder method for toggling truncation state.
-    /// The actual state is managed in the TUI's FormattedMessage.
-    pub fn toggle_truncation(&mut self) {
-        // No-op here, state is in FormattedMessage
-        debug!(target: "Message.toggle_truncation", "Toggle truncation requested for message ID: {}", self.id);
     }
 }
 

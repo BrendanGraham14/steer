@@ -58,7 +58,6 @@ impl ToolExecutor {
             let validation_context = ValidationContext {
                 cancellation_token: token.clone(),
                 user_id: None,
-                session_id: "default".to_string(), // TODO: Get real session ID
             };
 
             let validation_result = validator

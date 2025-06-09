@@ -302,45 +302,65 @@ message CancellationInfo {
 
 // Tool configuration
 message SessionToolConfig {
-  repeated ToolBackendConfig backends = 1;
-  repeated string disabled_tools = 2;
+  repeated BackendConfig backends = 1;
+  map<string, string> metadata = 2;
 }
 
-message ToolBackendConfig {
-  string name = 1;
-  repeated string tools = 2;
+message BackendConfig {
   oneof backend {
-    LocalBackend local = 3;
-    RemoteBackend remote = 4;
-    McpBackend mcp = 5;
+    LocalBackendConfig local = 1;
+    RemoteBackendConfig remote = 2;
+    ContainerBackendConfig container = 3;
+    McpBackendConfig mcp = 4;
   }
 }
 
-message LocalBackend {
-  // No configuration needed for local execution
-}
-
-message RemoteBackend {
-  string agent_address = 1;
-  optional AuthMethod auth = 2;
-}
-
-message McpBackend {
-  string endpoint = 1;
-  McpTransport transport = 2;
-}
-
-message AuthMethod {
-  oneof method {
-    string api_key = 1;
-    TlsCertAuth tls_cert = 2;
+message ToolFilter {
+  oneof filter {
+    bool all = 1;
+    IncludeFilter include = 2;
+    ExcludeFilter exclude = 3;
   }
 }
 
-message TlsCertAuth {
-  string cert_path = 1;
-  string key_path = 2;
-  optional string ca_path = 3;
+message IncludeFilter {
+  repeated string tools = 1;
+}
+
+message ExcludeFilter {
+  repeated string tools = 1;
+}
+
+message LocalBackendConfig {
+  ToolFilter tool_filter = 1;
+}
+
+message RemoteBackendConfig {
+  string name = 1;
+  string endpoint = 2;
+  optional RemoteAuth auth = 3;
+  ToolFilter tool_filter = 4;
+}
+
+message ContainerBackendConfig {
+  string image = 1;
+  ContainerRuntime runtime = 2;
+  ToolFilter tool_filter = 3;
+}
+
+message McpBackendConfig {
+  string server_name = 1;
+  string transport = 2;
+  string command = 3;
+  repeated string args = 4;
+  ToolFilter tool_filter = 5;
+}
+
+message RemoteAuth {
+  oneof auth {
+    string bearer_token = 1;
+    string api_key = 2;
+  }
 }
 
 // Approval policy
@@ -415,6 +435,12 @@ enum ApprovalDecision {
   APPROVAL_DECISION_ALWAYS_APPROVE = 3;
 }
 
+
+enum ContainerRuntime {
+  CONTAINER_RUNTIME_UNSPECIFIED = 0;
+  CONTAINER_RUNTIME_DOCKER = 1;
+  CONTAINER_RUNTIME_PODMAN = 2;
+}
 
 enum McpTransport {
   MCP_TRANSPORT_UNSPECIFIED = 0;

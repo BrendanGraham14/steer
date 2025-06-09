@@ -61,13 +61,15 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
         Commands::Headless {
             model,
             messages_json,
-            timeout,
+            session,
+            tool_config,
         } => {
             let command = HeadlessCommand {
                 model,
                 messages_json,
-                timeout,
                 global_model: cli.model,
+                session,
+                tool_config,
             };
             command.execute().await
         }

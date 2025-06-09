@@ -6,8 +6,8 @@ use tools::tools::workspace_tools;
 use tools::{ExecutionContext, Tool, ToolError};
 
 use crate::proto::{
-    AgentCapabilities, AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse,
-    HealthStatus, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
+    AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus,
+    ToolSchema as GrpcToolSchema, ToolSchemasResponse,
     remote_backend_service_server::RemoteBackendService as RemoteBackendServiceServer,
 };
 
@@ -19,7 +19,6 @@ use crate::proto::{
 pub struct RemoteBackendService {
     tools: Arc<HashMap<String, Box<dyn Tool>>>,
     version: String,
-    capabilities: AgentCapabilities,
 }
 
 impl RemoteBackendService {
@@ -32,17 +31,9 @@ impl RemoteBackendService {
             tools.insert(tool.name().to_string(), tool);
         }
 
-        let capabilities = AgentCapabilities {
-            supports_cancellation: true,
-            supports_streaming: false, // For now, we don't support streaming
-            max_execution_time_ms: 300_000, // 5 minutes default
-            max_memory_mb: 0,          // No memory limit enforced
-        };
-
         Ok(Self {
             tools: Arc::new(tools),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities,
         })
     }
 
@@ -54,17 +45,9 @@ impl RemoteBackendService {
             tool_map.insert(tool.name().to_string(), tool);
         }
 
-        let capabilities = AgentCapabilities {
-            supports_cancellation: true,
-            supports_streaming: false,
-            max_execution_time_ms: 300_000,
-            max_memory_mb: 0,
-        };
-
         Self {
             tools: Arc::new(tool_map),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities,
         }
     }
 
@@ -219,7 +202,6 @@ impl RemoteBackendServiceServer for RemoteBackendService {
         let info = AgentInfo {
             version: self.version.clone(),
             supported_tools,
-            capabilities: Some(self.capabilities.clone()),
             metadata: std::collections::HashMap::from([
                 (
                     "hostname".to_string(),
@@ -269,8 +251,10 @@ impl RemoteBackendServiceServer for RemoteBackendService {
             }
         }
 
-        Ok(Response::new(crate::proto::ToolApprovalRequirementsResponse {
-            approval_requirements,
-        }))
+        Ok(Response::new(
+            crate::proto::ToolApprovalRequirementsResponse {
+                approval_requirements,
+            },
+        ))
     }
 }
