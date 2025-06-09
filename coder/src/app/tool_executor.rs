@@ -57,7 +57,6 @@ impl ToolExecutor {
         if let Some(validator) = self.validators.get_validator(tool_name) {
             let validation_context = ValidationContext {
                 cancellation_token: token.clone(),
-                user_id: None,
             };
 
             let validation_result = validator
