@@ -1,22 +1,29 @@
+use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
+use crate::tools::fetch::FETCH_TOOL_NAME;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::time::Duration;
+use tools::tools::{
+    BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
+    MULTI_EDIT_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME,
+    VIEW_TOOL_NAME,
+};
 
 use super::Command;
 use crate::api::{
     Model,
     messages::{Message, MessageContent, MessageRole},
 };
-use crate::config::LlmConfig;
+use crate::session::SessionToolConfig;
 
 pub struct HeadlessCommand {
     pub model: Option<Model>,
     pub messages_json: Option<PathBuf>,
-    pub timeout: Option<u64>,
     pub global_model: Model,
+    pub session: Option<String>,
+    pub tool_config: Option<PathBuf>,
 }
 
 #[async_trait]
@@ -49,17 +56,89 @@ impl Command for HeadlessCommand {
             }]
         };
 
-        // Set up timeout if provided
-        let timeout_duration = self.timeout.map(Duration::from_secs);
-
         // Use model override if provided, otherwise use the global setting
         let model_to_use = self.model.unwrap_or(self.global_model);
 
-        let llm_config = LlmConfig::from_env()
-            .expect("Failed to load LLM configuration from environment variables.");
+        // Load tool configuration if provided
+        let tool_config = if let Some(config_path) = &self.tool_config {
+            let config_content = fs::read_to_string(config_path)
+                .map_err(|e| anyhow!("Failed to read tool config file: {}", e))?;
 
-        // Run the agent in one-shot mode
-        let result = crate::run_once(messages, model_to_use, &llm_config, timeout_duration).await?;
+            let config: SessionToolConfig = serde_json::from_str(&config_content)
+                .map_err(|e| anyhow!("Failed to parse tool config JSON: {}", e))?;
+
+            Some(config)
+        } else {
+            None
+        };
+
+        // Create session manager
+        let session_manager = crate::create_session_manager().await?;
+
+        // Determine execution mode and run
+        let result = match &self.session {
+            Some(session_id) => {
+                // Run in existing session
+                if messages.len() != 1 {
+                    return Err(anyhow!(
+                        "When using --session, only single message input is supported (use stdin, not --messages-json)"
+                    ));
+                }
+
+                let message = match &messages[0].content {
+                    MessageContent::Text { content } => content.clone(),
+                    _ => {
+                        return Err(anyhow!(
+                            "Only text messages are supported when using --session"
+                        ));
+                    }
+                };
+
+                crate::run_once_in_session(&session_manager, session_id.clone(), message).await?
+            }
+            _ => {
+                // Run in new ephemeral session (default behavior)
+                // For headless mode, auto-approve all tools for convenience
+                let auto_approve_policy = {
+                    let all_tools = [
+                        BASH_TOOL_NAME,
+                        GREP_TOOL_NAME,
+                        GLOB_TOOL_NAME,
+                        LS_TOOL_NAME,
+                        VIEW_TOOL_NAME,
+                        EDIT_TOOL_NAME,
+                        MULTI_EDIT_TOOL_NAME,
+                        REPLACE_TOOL_NAME,
+                        TODO_READ_TOOL_NAME,
+                        TODO_WRITE_TOOL_NAME,
+                        FETCH_TOOL_NAME,
+                        DISPATCH_AGENT_TOOL_NAME,
+                    ]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<std::collections::HashSet<String>>();
+                    crate::session::ToolApprovalPolicy::PreApproved(all_tools)
+                };
+
+                // Convert API messages to app messages
+                let app_messages: Result<Vec<crate::app::Message>, _> = messages
+                    .into_iter()
+                    .map(|api_msg| crate::app::Message::try_from(api_msg))
+                    .collect();
+
+                let app_messages =
+                    app_messages.map_err(|e| anyhow!("Failed to convert messages: {}", e))?;
+
+                crate::run_once_ephemeral(
+                    &session_manager,
+                    app_messages,
+                    model_to_use,
+                    tool_config,
+                    Some(auto_approve_policy),
+                )
+                .await?
+            }
+        };
 
         // Output the result as JSON
         let json_output = serde_json::to_string_pretty(&result)

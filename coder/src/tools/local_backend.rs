@@ -16,12 +16,47 @@ pub struct LocalBackend {
 }
 
 impl LocalBackend {
-    pub fn with_tools(tools: Vec<Box<dyn Tool>>) -> Self {
+    /// Create a backend from a collection of tool instances
+    pub fn from_tools(tools: Vec<Box<dyn Tool>>) -> Self {
         let mut registry = HashMap::new();
         tools.into_iter().for_each(|tool| {
             registry.insert(tool.name().to_string(), tool);
         });
         Self { registry }
+    }
+
+    /// Create a backend with only specific tools enabled by name
+    ///
+    /// This method takes a list of tool names and creates a backend
+    /// containing only those tools from the full set of available tools.
+    pub fn with_tools(tool_names: Vec<String>) -> Self {
+        let mut all_tools = workspace_tools();
+        all_tools.push(Box::new(FetchTool));
+        all_tools.push(Box::new(DispatchAgentTool));
+
+        let filtered_tools: Vec<Box<dyn Tool>> = all_tools
+            .into_iter()
+            .filter(|tool| tool_names.contains(&tool.name().to_string()))
+            .collect();
+
+        Self::from_tools(filtered_tools)
+    }
+
+    /// Create a backend excluding specific tools by name
+    ///
+    /// This method takes a list of tool names to exclude and creates a backend
+    /// containing all other tools from the full set of available tools.
+    pub fn without_tools(excluded_tools: Vec<String>) -> Self {
+        let mut all_tools = workspace_tools();
+        all_tools.push(Box::new(FetchTool));
+        all_tools.push(Box::new(DispatchAgentTool));
+
+        let filtered_tools: Vec<Box<dyn Tool>> = all_tools
+            .into_iter()
+            .filter(|tool| !excluded_tools.contains(&tool.name().to_string()))
+            .collect();
+
+        Self::from_tools(filtered_tools)
     }
 
     /// Create a new LocalBackend with all tools (workspace + server tools)
@@ -30,17 +65,17 @@ impl LocalBackend {
         // Add server-side tools
         tools.push(Box::new(FetchTool));
         tools.push(Box::new(DispatchAgentTool));
-        Self::with_tools(tools)
+        Self::from_tools(tools)
     }
 
     /// Create a LocalBackend with only workspace tools
     pub fn workspace_only() -> Self {
-        Self::with_tools(workspace_tools())
+        Self::from_tools(workspace_tools())
     }
 
     /// Create a LocalBackend with only server-side tools
     pub fn server_only() -> Self {
-        Self::with_tools(vec![Box::new(FetchTool), Box::new(DispatchAgentTool)])
+        Self::from_tools(vec![Box::new(FetchTool), Box::new(DispatchAgentTool)])
     }
 
     /// Create a LocalBackend with read-only tools
@@ -51,7 +86,7 @@ impl LocalBackend {
         let mut tools = read_only_workspace_tools();
         // Add server-side tools (they're read-only too)
         tools.push(Box::new(FetchTool));
-        Self::with_tools(tools)
+        Self::from_tools(tools)
     }
 
     /// Check if a tool is available in this backend
@@ -83,16 +118,9 @@ impl ToolBackend for LocalBackend {
             .await
     }
 
-    fn supported_tools(&self) -> Vec<&'static str> {
+    fn supported_tools(&self) -> Vec<String> {
         // Return the tools we currently have in the registry
-        // We use a static list to match the trait requirement but ensure it reflects the registry
-        let mut tool_names = Vec::new();
-
-        for tool in self.registry.values() {
-            tool_names.push(tool.name());
-        }
-
-        tool_names
+        self.registry.keys().cloned().collect()
     }
 
     async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
@@ -139,6 +167,7 @@ mod tests {
     use crate::api::ToolCall;
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
+    use tools::tools::{EDIT_TOOL_NAME, VIEW_TOOL_NAME, bash::BASH_TOOL_NAME};
 
     #[tokio::test]
     async fn test_local_backend_creation() {
@@ -175,9 +204,9 @@ mod tests {
         let supported = backend.supported_tools();
 
         assert!(!supported.is_empty());
-        assert!(supported.contains(&"bash"));
-        assert!(supported.contains(&"read_file"));
-        assert!(supported.contains(&"edit_file"));
+        assert!(supported.contains(&BASH_TOOL_NAME.to_string()));
+        assert!(supported.contains(&VIEW_TOOL_NAME.to_string()));
+        assert!(supported.contains(&EDIT_TOOL_NAME.to_string()));
     }
 
     #[tokio::test]

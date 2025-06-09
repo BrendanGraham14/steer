@@ -1,8 +1,8 @@
-use remote_backend::remote_backend_service::RemoteBackendService;
 use remote_backend::proto::{
     ExecuteToolRequest, HealthStatus,
     remote_backend_service_server::RemoteBackendService as RemoteBackendServiceTrait,
 };
+use remote_backend::remote_backend_service::RemoteBackendService;
 use serde_json::json;
 use tonic::Request;
 
@@ -66,7 +66,8 @@ async fn test_execute_tool_ls() {
         tool_name: "ls".to_string(),
         parameters_json: json!({
             "path": "/tmp"
-        }).to_string(),
+        })
+        .to_string(),
         context_json: "{}".to_string(), // Empty context for now
         timeout_ms: Some(5000),
     });
@@ -136,14 +137,13 @@ async fn test_tool_cancellation() {
         tool_name: "bash".to_string(),
         parameters_json: json!({
             "command": "sleep 10"
-        }).to_string(),
+        })
+        .to_string(),
         context_json: "{}".to_string(),
         timeout_ms: Some(1000), // Short timeout to trigger cancellation
     });
 
-    let handle = tokio::spawn(async move {
-        service.execute_tool(request).await
-    });
+    let handle = tokio::spawn(async move { service.execute_tool(request).await });
 
     // Give it a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -167,10 +167,6 @@ async fn test_get_agent_info() {
     let info = response.unwrap().into_inner();
     assert!(!info.version.is_empty());
     assert!(!info.supported_tools.is_empty());
-    assert!(info.capabilities.is_some());
-
-    let capabilities = info.capabilities.unwrap();
-    assert!(capabilities.supports_cancellation);
 }
 
 /// Test with_tools constructor

@@ -1,10 +1,13 @@
 #[cfg(test)]
 mod tests {
-    use crate::app::{App, AppConfig, conversation::{Message, MessageContentBlock, Role}};
+    use crate::app::{App, AppConfig, conversation::{Message, MessageContentBlock, Role}, ToolExecutor};
     use crate::config::LlmConfig;
     use crate::api::Model;
+    use crate::app::validation::ValidatorRegistry;
+    use crate::tools::{BackendRegistry, LocalBackend};
     use tools::ToolCall;
     use tokio::sync::mpsc;
+    use std::sync::Arc;
 
     fn create_test_llm_config() -> LlmConfig {
         LlmConfig {
@@ -12,6 +15,19 @@ mod tests {
             openai_api_key: None,
             gemini_api_key: None,
         }
+    }
+
+    fn create_test_tool_executor() -> Arc<ToolExecutor> {
+        let mut backend_registry = BackendRegistry::new();
+        backend_registry.register(
+            "local".to_string(),
+            Arc::new(LocalBackend::full()),
+        );
+        
+        Arc::new(ToolExecutor {
+            backend_registry: Arc::new(backend_registry),
+            validators: Arc::new(ValidatorRegistry::new()),
+        })
     }
 
     /// Test that incomplete tool calls are detected and cancelled tool results are injected
@@ -23,7 +39,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
         
-        let mut app = App::new(app_config, event_tx, initial_model).unwrap();
+        let mut app = App::new(app_config, event_tx, initial_model, create_test_tool_executor()).unwrap();
 
         // Manually add an assistant message with tool calls
         let tool_call = ToolCall {
@@ -89,7 +105,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
         
-        let mut app = App::new(app_config, event_tx, initial_model).unwrap();
+        let mut app = App::new(app_config, event_tx, initial_model, create_test_tool_executor()).unwrap();
 
         // Add an assistant message with tool calls
         let tool_call = ToolCall {
@@ -143,7 +159,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
         
-        let mut app = App::new(app_config, event_tx, initial_model).unwrap();
+        let mut app = App::new(app_config, event_tx, initial_model, create_test_tool_executor()).unwrap();
 
         // Add an assistant message with multiple tool calls
         let tool_call_1 = ToolCall {

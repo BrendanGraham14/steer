@@ -1,10 +1,13 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tonic::Request;
+use tonic::service::Interceptor;
 use tonic::transport::{Channel, Endpoint};
+use tonic::{Request, Status};
+use tools::tools::workspace_tools;
 
 use crate::api::ToolCall;
+use crate::session::state::{RemoteAuth, ToolFilter};
 use crate::tools::backend::{BackendMetadata, ToolBackend};
 use crate::tools::execution_context::{ExecutionContext, ExecutionEnvironment};
 use tools::ToolError;
@@ -12,8 +15,7 @@ use tools::ToolSchema;
 
 // Generated gRPC client from proto/remote_backend.proto
 use crate::grpc::remote_backend::{
-    ExecuteToolRequest, HealthStatus,
-    ToolApprovalRequirementsRequest,
+    ExecuteToolRequest, HealthStatus, ToolApprovalRequirementsRequest,
     remote_backend_service_client::RemoteBackendServiceClient,
 };
 
@@ -39,25 +41,63 @@ impl From<&ExecutionContext> for SerializableExecutionContext {
     }
 }
 
+/// Authentication interceptor for gRPC requests
+#[derive(Clone)]
+struct AuthInterceptor {
+    auth: RemoteAuth,
+}
+
+impl Interceptor for AuthInterceptor {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        match &self.auth {
+            RemoteAuth::Bearer { token } => {
+                request.metadata_mut().insert(
+                    "authorization",
+                    format!("Bearer {}", token)
+                        .parse()
+                        .map_err(|_| Status::internal("Failed to parse authorization header"))?,
+                );
+            }
+            RemoteAuth::ApiKey { key } => {
+                request.metadata_mut().insert(
+                    "x-api-key",
+                    key.parse()
+                        .map_err(|_| Status::internal("Failed to parse API key header"))?,
+                );
+            }
+        }
+        Ok(request)
+    }
+}
+
 /// Backend that forwards tool calls to a remote agent via gRPC
 ///
 /// This backend connects to a remote agent service running on another machine,
 /// VM, or container. It serializes tool calls and forwards them to the agent,
 /// which executes the tools in its local environment.
 pub struct RemoteBackend {
-    client: RemoteBackendServiceClient<Channel>,
-    agent_address: String,
-    supported_tools: Vec<&'static str>,
+    client: RemoteBackendServiceClient<
+        tonic::service::interceptor::InterceptedService<Channel, AuthInterceptor>,
+    >,
+    address: String,
+    supported_tools: Vec<String>,
     timeout: Duration,
 }
 
 impl RemoteBackend {
-    /// Create a new RemoteBackend
+    /// Create a new RemoteBackend with tool filtering and authentication
     ///
     /// # Arguments
-    /// * `agent_address` - The gRPC address of the remote agent (e.g., "http://vm:50051")
+    /// * `address` - The gRPC address of the remote backend (e.g., "http://vm:50051")
     /// * `timeout` - Timeout for tool execution requests
-    pub async fn new(agent_address: String, timeout: Duration) -> Result<Self, ToolError> {
+    /// * `tool_filter` - Tool filtering configuration (All, Include, or Exclude)
+    /// * `auth` - Optional authentication configuration
+    pub async fn new(
+        agent_address: String,
+        timeout: Duration,
+        auth: Option<RemoteAuth>,
+        tool_filter: ToolFilter,
+    ) -> Result<Self, ToolError> {
         let endpoint = Endpoint::from_shared(agent_address.clone())
             .map_err(|e| {
                 ToolError::execution("RemoteBackend", format!("Invalid agent address: {}", e))
@@ -71,37 +111,70 @@ impl RemoteBackend {
             )
         })?;
 
-        let client = RemoteBackendServiceClient::new(channel);
+        // Create client with or without authentication interceptor
+        let client = match auth {
+            Some(auth_config) => {
+                let interceptor = AuthInterceptor { auth: auth_config };
+                RemoteBackendServiceClient::with_interceptor(channel, interceptor)
+            }
+            None => {
+                // Create a no-op interceptor for consistent client type
+                let interceptor = AuthInterceptor {
+                    auth: RemoteAuth::ApiKey { key: String::new() },
+                };
+                RemoteBackendServiceClient::with_interceptor(channel, interceptor)
+            }
+        };
 
-        // These are the tools that can be executed remotely
-        // (code-based tools that don't require special client-side resources)
-        let supported_tools = vec![
-            "edit_file",
-            "multi_edit_file",
-            "bash",
-            "grep",
-            "glob",
-            "ls",
-            "view",
-            "replace",
-        ];
+        // Fetch available tools from the remote agent
+        let mut client_clone = client.clone();
+        let all_remote_tools = match client_clone.get_tool_schemas(Request::new(())).await {
+            Ok(response) => response
+                .into_inner()
+                .tools
+                .into_iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>(),
+            Err(status) => {
+                return Err(ToolError::execution(
+                    "RemoteBackend",
+                    format!("Failed to get tool schemas from agent: {}", status),
+                ));
+            }
+        };
+
+        // Filter tools based on the tool filter configuration
+        let supported_tools = match tool_filter {
+            ToolFilter::All => all_remote_tools,
+            ToolFilter::Include(included) => {
+                let all_remote_tools_set: std::collections::HashSet<String> =
+                    all_remote_tools.into_iter().collect();
+                included
+                    .into_iter()
+                    .filter(|t| all_remote_tools_set.contains(t))
+                    .collect()
+            }
+            ToolFilter::Exclude(excluded) => {
+                let excluded_set: std::collections::HashSet<String> =
+                    excluded.into_iter().collect();
+                all_remote_tools
+                    .into_iter()
+                    .filter(|t| !excluded_set.contains(t))
+                    .collect()
+            }
+        };
 
         Ok(Self {
             client,
-            agent_address,
+            address: agent_address,
             supported_tools,
             timeout,
         })
     }
 
-    /// Create a RemoteBackend with default timeout (30 seconds)
-    pub async fn new_with_default_timeout(agent_address: String) -> Result<Self, ToolError> {
-        Self::new(agent_address, Duration::from_secs(30)).await
-    }
-
     /// Get the agent address this backend connects to
     pub fn agent_address(&self) -> &str {
-        &self.agent_address
+        &self.address
     }
 
     /// Get the configured timeout
@@ -165,7 +238,7 @@ impl ToolBackend for RemoteBackend {
         }
     }
 
-    fn supported_tools(&self) -> Vec<&'static str> {
+    fn supported_tools(&self) -> Vec<String> {
         self.supported_tools.clone()
     }
 
@@ -203,7 +276,7 @@ impl ToolBackend for RemoteBackend {
 
     fn metadata(&self) -> BackendMetadata {
         BackendMetadata::new("RemoteBackend".to_string(), "Remote".to_string())
-            .with_location(self.agent_address.clone())
+            .with_location(self.address.clone())
             .with_info(
                 "timeout_ms".to_string(),
                 self.timeout.as_millis().to_string(),
@@ -225,7 +298,7 @@ impl ToolBackend for RemoteBackend {
 
     async fn requires_approval(&self, tool_name: &str) -> Result<bool, ToolError> {
         // Check if this tool is supported by this backend
-        if self.supported_tools.contains(&tool_name) {
+        if self.supported_tools.iter().any(|s| s == tool_name) {
             // Make an async RPC call to get approval requirements
             let mut client = self.client.clone();
             let request = Request::new(ToolApprovalRequirementsRequest {
@@ -258,44 +331,150 @@ impl ToolBackend for RemoteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grpc::remote_backend::{
+        ExecuteToolResponse, HealthResponse, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
+        remote_backend_service_server::{RemoteBackendService, RemoteBackendServiceServer},
+    };
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+    use tonic::transport::Server;
 
-    #[tokio::test]
-    #[ignore] // Requires a running agent server
-    async fn test_remote_backend_creation() {
-        let result =
-            RemoteBackend::new_with_default_timeout("http://localhost:50051".to_string()).await;
+    struct MockRemoteBackend {
+        tool_names: Vec<String>,
+    }
 
-        // This test will fail if no agent is running, which is expected
-        // In a real test environment, we'd mock the gRPC client
-        match result {
-            Ok(backend) => {
-                assert_eq!(backend.agent_address(), "http://localhost:50051");
-                assert_eq!(backend.timeout(), Duration::from_secs(30));
-                assert!(!backend.supported_tools().is_empty());
-            }
-            Err(_) => {
-                // Expected when no agent is running
-            }
+    #[async_trait]
+    impl RemoteBackendService for MockRemoteBackend {
+        async fn execute_tool(
+            &self,
+            _request: Request<ExecuteToolRequest>,
+        ) -> Result<tonic::Response<ExecuteToolResponse>, Status> {
+            Ok(tonic::Response::new(ExecuteToolResponse {
+                success: true,
+                result: "mocked".to_string(),
+                ..Default::default()
+            }))
+        }
+
+        async fn get_agent_info(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<crate::grpc::remote_backend::AgentInfo>, Status> {
+            unimplemented!()
+        }
+
+        async fn health(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<HealthResponse>, Status> {
+            unimplemented!()
+        }
+
+        async fn get_tool_schemas(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<ToolSchemasResponse>, Status> {
+            let tools = self
+                .tool_names
+                .iter()
+                .map(|name| GrpcToolSchema {
+                    name: name.clone(),
+                    description: format!("Description for {}", name),
+                    input_schema_json: "{}".to_string(),
+                })
+                .collect();
+            Ok(tonic::Response::new(ToolSchemasResponse { tools }))
+        }
+
+        async fn get_tool_approval_requirements(
+            &self,
+            _request: Request<ToolApprovalRequirementsRequest>,
+        ) -> Result<
+            tonic::Response<crate::grpc::remote_backend::ToolApprovalRequirementsResponse>,
+            Status,
+        > {
+            unimplemented!()
         }
     }
 
-    #[test]
-    fn test_supported_tools() {
-        // We can test the supported tools list without connecting
-        let supported_tools = [
-            "edit_file",
-            "multi_edit_file",
-            "bash",
-            "grep",
-            "glob",
-            "ls",
-            "view",
-            "replace",
-        ];
+    async fn setup_mock_server(tool_names: Vec<String>) -> SocketAddr {
+        let service = MockRemoteBackend { tool_names };
 
-        assert_eq!(supported_tools.len(), 8);
-        assert!(supported_tools.contains(&"edit_file"));
-        assert!(supported_tools.contains(&"bash"));
-        assert!(!supported_tools.contains(&"fetch_url")); // This typically stays local
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(RemoteBackendServiceServer::new(service))
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                .await
+                .unwrap();
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_remote_backend_creation_all_tools() {
+        let addr = setup_mock_server(vec![
+            "tool1".to_string(),
+            "tool2".to_string(),
+            "bash".to_string(),
+        ])
+        .await;
+        let backend = RemoteBackend::new(
+            format!("http://{}", addr),
+            Duration::from_secs(5),
+            None,
+            ToolFilter::All,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(backend.supported_tools().len(), 3);
+        assert!(backend.supported_tools().contains(&"tool1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_remote_backend_creation_filtered_tools() {
+        let addr = setup_mock_server(vec![
+            "tool1".to_string(),
+            "tool2".to_string(),
+            "bash".to_string(),
+        ])
+        .await;
+        let backend = RemoteBackend::new(
+            format!("http://{}", addr),
+            Duration::from_secs(5),
+            None,
+            ToolFilter::Include(vec!["tool1".to_string(), "bash".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        let supported = backend.supported_tools();
+        assert_eq!(supported.len(), 2);
+        assert!(supported.contains(&"tool1".to_string()));
+        assert!(supported.contains(&"bash".to_string()));
+        assert!(!supported.contains(&"tool2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_remote_backend_with_auth() {
+        let addr = setup_mock_server(vec!["tool1".to_string()]).await;
+        let auth = RemoteAuth::Bearer {
+            token: "test-token".to_string(),
+        };
+        let backend = RemoteBackend::new(
+            format!("http://{}", addr),
+            Duration::from_secs(5),
+            Some(auth),
+            ToolFilter::All,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(backend.agent_address(), format!("http://{}", addr));
+        assert_eq!(backend.supported_tools().len(), 1);
     }
 }

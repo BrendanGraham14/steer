@@ -124,19 +124,10 @@ impl App {
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
+        tool_executor: Arc<ToolExecutor>,
     ) -> Result<Self> {
         let conversation = Arc::new(Mutex::new(Conversation::new()));
 
-        let mut backend_registry = crate::tools::BackendRegistry::new();
-        backend_registry.register(
-            "local".to_string(),
-            Arc::new(crate::tools::LocalBackend::full()),
-        );
-
-        let tool_executor = Arc::new(ToolExecutor {
-            backend_registry: Arc::new(backend_registry),
-            validators: Arc::new(ValidatorRegistry::new()),
-        });
         let api_client = ApiClient::new(&config.llm_config);
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone())); // Create AgentExecutor
 

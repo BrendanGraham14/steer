@@ -62,7 +62,7 @@ pub trait ToolBackend: Send + Sync {
     ///
     /// Returns a vector of tool names that this backend supports.
     /// The backend registry uses this to map tools to backends.
-    fn supported_tools(&self) -> Vec<&'static str>;
+    fn supported_tools(&self) -> Vec<String>;
 
     /// Get API tool descriptions for this backend
     ///
@@ -240,8 +240,8 @@ mod tests {
             ))
         }
 
-        fn supported_tools(&self) -> Vec<&'static str> {
-            self.tools.clone()
+        fn supported_tools(&self) -> Vec<String> {
+            self.tools.iter().map(|&s| s.to_string()).collect()
         }
 
         async fn get_tool_schemas(&self) -> Vec<ToolSchema> {

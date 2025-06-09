@@ -123,7 +123,7 @@ impl From<&SessionInfo> for SessionMetadata {
         Self {
             model: session_info
                 .last_model
-                .unwrap_or(crate::api::Model::Claude3_5Sonnet20241022),
+                .unwrap_or(crate::api::Model::ClaudeSonnet4_20250514),
             created_at: session_info.created_at,
             metadata: session_info.metadata.clone(),
         }
@@ -344,7 +344,7 @@ mod tests {
                 parameters: serde_json::json!({"path": "/test.txt"}),
             },
             metadata: HashMap::new(),
-            model: crate::api::Model::Claude3_5Sonnet20241022,
+            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
 
         let serialized = serde_json::to_string(&event).unwrap();
@@ -384,7 +384,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             error: "Command failed".to_string(),
             metadata: HashMap::new(),
-            model: crate::api::Model::Claude3_5Sonnet20241022,
+            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
         assert!(tool_failed.is_error());
 
@@ -395,7 +395,7 @@ mod tests {
                 parameters: serde_json::json!({}),
             },
             metadata: HashMap::new(),
-            model: crate::api::Model::Claude3_5Sonnet20241022,
+            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
         assert!(!tool_started.is_error());
     }
@@ -409,7 +409,7 @@ mod tests {
                 parameters: serde_json::json!({}),
             },
             metadata: HashMap::new(),
-            model: crate::api::Model::Claude3_5Sonnet20241022,
+            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
         assert_eq!(tool_event.tool_call_id(), Some("tool_123"));
 
@@ -427,7 +427,7 @@ mod tests {
         let session_event = StreamEvent::SessionCreated {
             session_id: "session_123".to_string(),
             metadata: SessionMetadata {
-                model: crate::api::Model::Claude3_5Sonnet20241022,
+                model: crate::api::Model::ClaudeSonnet4_20250514,
                 created_at: Utc::now(),
                 metadata: HashMap::new(),
             },
@@ -444,7 +444,7 @@ mod tests {
                 parameters: serde_json::json!({}),
             },
             metadata: HashMap::new(),
-            model: crate::api::Model::Claude3_5Sonnet20241022,
+            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
         let event_with_metadata = StreamEventWithMetadata::new(5, "session_123".to_string(), event);
 
@@ -484,7 +484,7 @@ mod tests {
             message,
             usage: None,
             metadata: HashMap::new(),
-            model: crate::api::Model::Claude3_5Sonnet20241022,
+            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
         assert_eq!(event.message_id(), Some("msg_123"));
     }

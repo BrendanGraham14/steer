@@ -10,6 +10,9 @@ use uuid;
 use crate::api::{Message as ApiMessage, Model, ToolCall};
 use crate::app::{App, AppCommand, AppConfig, AppEvent};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
+use crate::session::state::{
+    BackendConfig, ContainerRuntime, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
+};
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate, ToolResult,
@@ -67,7 +70,7 @@ pub struct ManagedSession {
 
 impl ManagedSession {
     /// Create a new managed session
-    pub fn new(
+    pub async fn new(
         session: Session,
         app_config: AppConfig,
         event_tx: mpsc::Sender<StreamEvent>,
@@ -85,8 +88,15 @@ impl ManagedSession {
         // Initialize the global command sender for tool approval requests
         crate::app::OpContext::init_command_tx(app_command_tx.clone());
 
-        // Create the App instance
-        let mut app = App::new(app_config, app_event_tx, default_model)?;
+        // Build backend registry from session tool config
+        let backend_registry = session.config.tool_config.build_registry().await?;
+        let tool_executor = Arc::new(crate::app::ToolExecutor {
+            backend_registry: Arc::new(backend_registry),
+            validators: Arc::new(crate::app::validation::ValidatorRegistry::new()),
+        });
+
+        // Create the App instance with the configured tool executor
+        let mut app = App::new(app_config, app_event_tx, default_model, tool_executor)?;
 
         // Set the initial model if specified in session metadata
         if let Some(model_str) = session.config.metadata.get("initial_model") {
@@ -116,7 +126,7 @@ impl ManagedSession {
                     if let Ok(sequence_num) =
                         store_clone.append_event(&session_id, &stream_event).await
                     {
-                        // Update session state
+                        // Update session state in store
                         if let Err(e) =
                             update_session_state_for_event(&store_clone, &session_id, &stream_event)
                                 .await
@@ -247,6 +257,7 @@ impl SessionManager {
             self.event_tx.clone(),
             self.config.default_model,
         )
+        .await
         .map_err(|e| SessionManagerError::CreationFailed {
             message: format!("Failed to create managed session: {}", e),
         })?;
@@ -369,6 +380,7 @@ impl SessionManager {
             self.event_tx.clone(),
             self.config.default_model,
         )
+        .await
         .map_err(|e| SessionManagerError::CreationFailed {
             message: format!("Failed to create managed session: {}", e),
         })?;
@@ -695,15 +707,8 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Option<crate::session::SessionState>, SessionManagerError> {
-        // First check if it's active
-        {
-            let sessions = self.active_sessions.read().await;
-            if let Some(managed_session) = sessions.get(session_id) {
-                return Ok(Some(managed_session.session.state.clone()));
-            }
-        }
-
-        // If not active, load from store
+        // Always load from store to get the most up-to-date state
+        // The in-memory state in ManagedSession may be stale
         match self.store.get_session(session_id).await {
             Ok(Some(session)) => Ok(Some(session.state)),
             Ok(None) => Ok(None),
@@ -734,7 +739,7 @@ impl SessionManager {
                         }),
                         tool_config: Some(crate::grpc::proto::SessionToolConfig {
                             backends: vec![],
-                            disabled_tools: vec![],
+                            metadata: std::collections::HashMap::new(),
                         }),
                         metadata: std::collections::HashMap::new(),
                     }),
@@ -849,9 +854,14 @@ impl SessionManager {
             })
             .unwrap_or(crate::session::ToolApprovalPolicy::AlwaysAsk);
 
+        let tool_config = config
+            .tool_config
+            .map(|proto_config| convert_proto_tool_config(proto_config))
+            .unwrap_or_default();
+
         let session_config = crate::session::SessionConfig {
             tool_policy,
-            tool_config: crate::session::SessionToolConfig::default(),
+            tool_config,
             metadata: config.metadata,
         };
 
@@ -880,6 +890,97 @@ impl SessionManager {
         };
 
         Ok((session_id, proto_info))
+    }
+}
+
+/// Convert protobuf SessionToolConfig to internal SessionToolConfig
+/// Convert from protobuf ToolFilter to internal ToolFilter
+fn convert_tool_filter(proto_filter: Option<crate::grpc::proto::ToolFilter>) -> ToolFilter {
+    match proto_filter {
+        Some(filter) => {
+            match filter.filter {
+                Some(crate::grpc::proto::tool_filter::Filter::All(_)) => ToolFilter::All,
+                Some(crate::grpc::proto::tool_filter::Filter::Include(include_filter)) => {
+                    ToolFilter::Include(include_filter.tools)
+                }
+                Some(crate::grpc::proto::tool_filter::Filter::Exclude(exclude_filter)) => {
+                    ToolFilter::Exclude(exclude_filter.tools)
+                }
+                None => ToolFilter::All, // Default to all if no filter specified
+            }
+        }
+        None => ToolFilter::All, // Default to all if no filter provided
+    }
+}
+
+fn convert_proto_tool_config(
+    proto_config: crate::grpc::proto::SessionToolConfig,
+) -> crate::session::SessionToolConfig {
+    use crate::session::{BackendConfig, ContainerRuntime, RemoteAuth, SessionToolConfig};
+
+    let backends = proto_config
+        .backends
+        .into_iter()
+        .map(|proto_backend| {
+            match proto_backend.backend {
+                Some(crate::grpc::proto::backend_config::Backend::Local(local)) => {
+                    BackendConfig::Local {
+                        tool_filter: convert_tool_filter(local.tool_filter),
+                    }
+                }
+                Some(crate::grpc::proto::backend_config::Backend::Remote(remote)) => {
+                    let auth = remote.auth.map(|proto_auth| {
+                        match proto_auth.auth {
+                            Some(crate::grpc::proto::remote_auth::Auth::BearerToken(token)) => {
+                                RemoteAuth::Bearer { token }
+                            }
+                            Some(crate::grpc::proto::remote_auth::Auth::ApiKey(key)) => {
+                                RemoteAuth::ApiKey { key }
+                            }
+                            None => RemoteAuth::ApiKey { key: String::new() }, // Default fallback
+                        }
+                    });
+
+                    BackendConfig::Remote {
+                        name: remote.name,
+                        endpoint: remote.endpoint,
+                        auth,
+                        tool_filter: convert_tool_filter(remote.tool_filter),
+                    }
+                }
+                Some(crate::grpc::proto::backend_config::Backend::Container(container)) => {
+                    let runtime = match container.runtime {
+                        1 => ContainerRuntime::Docker, // CONTAINER_RUNTIME_DOCKER
+                        2 => ContainerRuntime::Podman, // CONTAINER_RUNTIME_PODMAN
+                        _ => ContainerRuntime::Docker, // Default fallback
+                    };
+
+                    BackendConfig::Container {
+                        image: container.image,
+                        runtime,
+                        tool_filter: convert_tool_filter(container.tool_filter),
+                    }
+                }
+                Some(crate::grpc::proto::backend_config::Backend::Mcp(mcp)) => BackendConfig::Mcp {
+                    server_name: mcp.server_name,
+                    transport: mcp.transport,
+                    command: mcp.command,
+                    args: mcp.args,
+                    tool_filter: convert_tool_filter(mcp.tool_filter),
+                },
+                None => {
+                    // Default to local backend if no backend is specified
+                    BackendConfig::Local {
+                        tool_filter: ToolFilter::All,
+                    }
+                }
+            }
+        })
+        .collect();
+
+    SessionToolConfig {
+        backends,
+        metadata: proto_config.metadata,
     }
 }
 
@@ -1200,7 +1301,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
-            default_model: Model::Claude3_5Sonnet20241022,
+            default_model: Model::ClaudeSonnet4_20250514,
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config, event_tx);
@@ -1291,7 +1392,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 1, // Set to 1 for testing
-            default_model: Model::Claude3_5Sonnet20241022,
+            default_model: Model::ClaudeSonnet4_20250514,
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config, event_tx);
@@ -1473,5 +1574,84 @@ mod tests {
         // The session should be properly restored with all messages including tool results
         // If the bug were still present, trying to send a new message would fail with the
         // "tool_use ids were found without tool_result blocks" error from the API
+    }
+
+    #[tokio::test]
+    async fn test_create_session_grpc_with_tool_config() {
+        let (manager, _temp) = create_test_manager().await;
+        let app_config = create_test_app_config();
+
+        // Create a gRPC request with custom tool configuration
+        let grpc_request = crate::grpc::proto::CreateSessionRequest {
+            tool_policy: Some(crate::grpc::proto::ToolApprovalPolicy {
+                policy: Some(crate::grpc::proto::tool_approval_policy::Policy::AlwaysAsk(
+                    crate::grpc::proto::AlwaysAskPolicy {
+                        timeout_ms: None,
+                        default_decision: crate::grpc::proto::ApprovalDecision::Deny as i32,
+                    },
+                )),
+            }),
+            tool_config: Some(crate::grpc::proto::SessionToolConfig {
+                backends: vec![crate::grpc::proto::BackendConfig {
+                    backend: Some(crate::grpc::proto::backend_config::Backend::Local(
+                        crate::grpc::proto::LocalBackendConfig {
+                            tool_filter: Some(crate::grpc::proto::ToolFilter {
+                                filter: Some(crate::grpc::proto::tool_filter::Filter::Include(
+                                    crate::grpc::proto::IncludeFilter {
+                                        tools: vec!["read_file".to_string(), "ls".to_string()],
+                                    },
+                                )),
+                            }),
+                        },
+                    )),
+                }],
+                metadata: [("test_key".to_string(), "test_value".to_string())].into(),
+            }),
+            metadata: [("session_type".to_string(), "test".to_string())].into(),
+        };
+
+        // Create session using gRPC method
+        let (session_id, _session_info) = manager
+            .create_session_grpc(grpc_request, app_config)
+            .await
+            .unwrap();
+
+        // Verify the session was created with the correct tool configuration
+        let session = manager
+            .store()
+            .get_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Check that the session metadata was properly set
+        assert_eq!(
+            session.config.metadata.get("session_type"),
+            Some(&"test".to_string())
+        );
+
+        // Check that the tool config was properly converted
+        assert_eq!(session.config.tool_config.backends.len(), 1);
+        match &session.config.tool_config.backends[0] {
+            crate::session::BackendConfig::Local { tool_filter } => {
+                if let ToolFilter::Include(tools) = tool_filter {
+                    assert_eq!(tools.len(), 2);
+                    assert!(tools.contains(&"read_file".to_string()));
+                    assert!(tools.contains(&"ls".to_string()));
+                } else {
+                    panic!("Expected ToolFilter::Include");
+                }
+            }
+            _ => panic!("Expected Local backend config"),
+        }
+
+        // Check that the tool config metadata was properly set
+        assert_eq!(
+            session.config.tool_config.metadata.get("test_key"),
+            Some(&"test_value".to_string())
+        );
+
+        // The session should be active
+        assert!(manager.is_session_active(&session_id).await);
     }
 }

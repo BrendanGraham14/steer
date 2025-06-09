@@ -33,7 +33,7 @@ pub enum Commands {
     },
     /// Run in headless one-shot mode
     Headless {
-        /// Model to use (overrides global setting)
+        /// Model to use
         #[arg(long)]
         model: Option<Model>,
 
@@ -41,9 +41,13 @@ pub enum Commands {
         #[arg(long)]
         messages_json: Option<PathBuf>,
 
-        /// Timeout in seconds
+        /// Session ID to run in (if not provided, creates a new ephemeral session)
         #[arg(long)]
-        timeout: Option<u64>,
+        session: Option<String>,
+
+        /// Path to JSON file containing SessionToolConfig for new sessions
+        #[arg(long)]
+        tool_config: Option<PathBuf>,
     },
     /// Start the gRPC server for client/server mode
     Serve {
