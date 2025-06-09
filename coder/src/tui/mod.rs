@@ -369,14 +369,16 @@ impl Tui {
                                             ..
                                         } => {
                                             self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(3))?; // Scroll a few lines per mouse wheel tick
-                                            // No need to redraw here, the main loop will handle it
+                                            // Force immediate redraw to prevent scroll artifacts
+                                            continue;
                                         }
                                         MouseEvent {
                                             kind: MouseEventKind::ScrollUp,
                                             ..
                                         } => {
                                            self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(3))?; // Scroll a few lines per mouse wheel tick
-                                            // No need to redraw here, the main loop will handle it
+                                            // Force immediate redraw to prevent scroll artifacts
+                                            continue;
                                         }
                                         _ => {} // Ignore other mouse events
                                     }
@@ -1016,6 +1018,10 @@ impl Tui {
                 // Hide cursor if it would be outside the box (e.g., during scrolling)
                 f.set_cursor_position(Position { x: 0, y: 0 });
             }
+        } else {
+            // Explicitly hide cursor when not in editing mode by positioning it at (0,0)
+            // This prevents cursor artifacts during scrolling
+            f.set_cursor_position(Position { x: 0, y: 0 });
         }
 
         Ok(())
