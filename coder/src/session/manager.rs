@@ -87,7 +87,7 @@ impl ManagedSession {
         crate::app::OpContext::init_command_tx(app_command_tx.clone());
 
         // Build backend registry from session tool config
-        let backend_registry = session.config.tool_config.build_registry().await?;
+        let backend_registry = session.config.build_registry().await?;
         let tool_executor = Arc::new(crate::app::ToolExecutor {
             backend_registry: Arc::new(backend_registry),
             validators: Arc::new(crate::app::validation::ValidatorRegistry::new()),
@@ -857,7 +857,13 @@ impl SessionManager {
             .map(convert_proto_tool_config)
             .unwrap_or_default();
 
+        let workspace_config = config
+            .workspace_config
+            .map(convert_proto_workspace_config)
+            .unwrap_or_default();
+
         let session_config = crate::session::SessionConfig {
+            workspace: workspace_config,
             tool_policy,
             tool_config,
             metadata: config.metadata,
@@ -888,6 +894,44 @@ impl SessionManager {
         };
 
         Ok((session_id, proto_info))
+    }
+}
+
+/// Convert from protobuf WorkspaceConfig to internal WorkspaceConfig
+fn convert_proto_workspace_config(
+    proto_config: crate::grpc::proto::WorkspaceConfig,
+) -> crate::session::state::WorkspaceConfig {
+    use crate::session::state::{ContainerRuntime, RemoteAuth, WorkspaceConfig};
+
+    match proto_config.config {
+        Some(crate::grpc::proto::workspace_config::Config::Local(_)) => WorkspaceConfig::Local,
+        Some(crate::grpc::proto::workspace_config::Config::Remote(remote)) => {
+            let auth = remote.auth.map(|proto_auth| match proto_auth.auth {
+                Some(crate::grpc::proto::remote_auth::Auth::BearerToken(token)) => {
+                    RemoteAuth::Bearer { token }
+                }
+                Some(crate::grpc::proto::remote_auth::Auth::ApiKey(key)) => {
+                    RemoteAuth::ApiKey { key }
+                }
+                None => RemoteAuth::ApiKey { key: String::new() }, // Default fallback
+            });
+            WorkspaceConfig::Remote {
+                agent_address: remote.agent_address,
+                auth,
+            }
+        }
+        Some(crate::grpc::proto::workspace_config::Config::Container(container)) => {
+            let runtime = match container.runtime {
+                1 => ContainerRuntime::Docker, // CONTAINER_RUNTIME_DOCKER
+                2 => ContainerRuntime::Podman, // CONTAINER_RUNTIME_PODMAN
+                _ => ContainerRuntime::Docker, // Default fallback
+            };
+            WorkspaceConfig::Container {
+                image: container.image,
+                runtime,
+            }
+        }
+        None => WorkspaceConfig::Local,
     }
 }
 
@@ -1281,6 +1325,7 @@ mod tests {
 
         // Create session
         let session_config = SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::Local,
             tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
@@ -1312,6 +1357,7 @@ mod tests {
 
         // Create session
         let session_config = SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::Local,
             tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
@@ -1355,6 +1401,7 @@ mod tests {
 
         // Create first session - should succeed
         let session_config = SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::Local,
             tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
@@ -1385,6 +1432,7 @@ mod tests {
 
         // Create session
         let session_config = SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::Local,
             tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
@@ -1563,6 +1611,11 @@ mod tests {
                 metadata: [("test_key".to_string(), "test_value".to_string())].into(),
             }),
             metadata: [("session_type".to_string(), "test".to_string())].into(),
+            workspace_config: Some(crate::grpc::proto::WorkspaceConfig {
+                config: Some(crate::grpc::proto::workspace_config::Config::Local(
+                    crate::grpc::proto::LocalWorkspaceConfig {},
+                )),
+            }),
         };
 
         // Create session using gRPC method
@@ -1584,6 +1637,12 @@ mod tests {
             session.config.metadata.get("session_type"),
             Some(&"test".to_string())
         );
+
+        // Check that the workspace config was set to Local
+        assert!(matches!(
+            session.config.workspace,
+            crate::session::state::WorkspaceConfig::Local
+        ));
 
         // Check that the tool config was properly converted
         assert_eq!(session.config.tool_config.backends.len(), 1);

@@ -17,7 +17,7 @@ use crate::events::StreamEvent;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionOrderBy, SessionState,
     SessionStatus, SessionStore, SessionStoreError, ToolApprovalPolicy, ToolCallState,
-    ToolCallStatus, ToolCallUpdate, ToolResult,
+    ToolCallStatus, ToolCallUpdate, ToolResult, state::WorkspaceConfig,
 };
 
 /// SQLite implementation of SessionStore
@@ -120,12 +120,15 @@ impl SessionStore for SqliteSessionStore {
         let tool_config_json = serde_json::to_string(&config.tool_config).map_err(|e| {
             SessionStoreError::serialization(format!("Failed to serialize tool_config: {}", e))
         })?;
+        let workspace_config_json = serde_json::to_string(&config.workspace).map_err(|e| {
+            SessionStoreError::serialization(format!("Failed to serialize workspace_config: {}", e))
+        })?;
 
         sqlx::query(
             r#"
             INSERT INTO sessions (id, created_at, updated_at, status, metadata,
-                                  tool_policy_type, pre_approved_tools, tool_config)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                                  tool_policy_type, pre_approved_tools, tool_config, workspace_config)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
         )
         .bind(&id)
@@ -136,6 +139,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&policy_type)
         .bind(&pre_approved_json)
         .bind(&tool_config_json)
+        .bind(&workspace_config_json)
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to create session: {}", e)))?;
@@ -153,7 +157,7 @@ impl SessionStore for SqliteSessionStore {
         let row = sqlx::query(
             r#"
             SELECT id, created_at, updated_at, metadata,
-                   tool_policy_type, pre_approved_tools, tool_config
+                   tool_policy_type, pre_approved_tools, tool_config, workspace_config
             FROM sessions
             WHERE id = ?1
             "#,
@@ -179,8 +183,13 @@ impl SessionStore for SqliteSessionStore {
 
         let tool_config = serde_json::from_str(&row.get::<String, _>("tool_config"))
             .map_err(|e| SessionStoreError::serialization(format!("Invalid tool_config: {}", e)))?;
+        let workspace_config = serde_json::from_str(&row.get::<String, _>("workspace_config"))
+            .map_err(|e| {
+                SessionStoreError::serialization(format!("Invalid workspace_config: {}", e))
+            })?;
 
         let config = SessionConfig {
+            workspace: workspace_config,
             tool_policy,
             tool_config,
             metadata,
@@ -286,6 +295,13 @@ impl SessionStore for SqliteSessionStore {
         let tool_config_json = serde_json::to_string(&session.config.tool_config).map_err(|e| {
             SessionStoreError::serialization(format!("Failed to serialize tool_config: {}", e))
         })?;
+        let workspace_config_json =
+            serde_json::to_string(&session.config.workspace).map_err(|e| {
+                SessionStoreError::serialization(format!(
+                    "Failed to serialize workspace_config: {}",
+                    e
+                ))
+            })?;
         let (policy_type, pre_approved_json) =
             Self::serialize_tool_policy(&session.config.tool_policy);
 
@@ -293,7 +309,7 @@ impl SessionStore for SqliteSessionStore {
             r#"
             UPDATE sessions
             SET updated_at = ?2, metadata = ?3,
-                tool_policy_type = ?4, pre_approved_tools = ?5, tool_config = ?6
+                tool_policy_type = ?4, pre_approved_tools = ?5, tool_config = ?6, workspace_config = ?7
             WHERE id = ?1
             "#,
         )
@@ -303,6 +319,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&policy_type)
         .bind(&pre_approved_json)
         .bind(&tool_config_json)
+        .bind(&workspace_config_json)
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to update session: {}", e)))?;
@@ -833,6 +850,7 @@ mod tests {
 
     fn create_test_session_config() -> SessionConfig {
         SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
@@ -844,6 +862,7 @@ mod tests {
         let (store, _temp) = create_test_store().await;
 
         let config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: ToolApprovalPolicy::AlwaysAsk,
             tool_config: Default::default(),
             metadata: Default::default(),
@@ -852,15 +871,16 @@ mod tests {
         let session = store.create_session(config.clone()).await.unwrap();
         assert!(!session.id.is_empty());
 
-        let loaded = store.get_session(&session.id).await.unwrap().unwrap();
-        assert_eq!(loaded.id, session.id);
-        assert_eq!(
-            loaded
-                .config
-                .tool_policy
-                .should_ask_for_approval("test_tool"),
-            config.tool_policy.should_ask_for_approval("test_tool")
-        );
+        let fetched_session = store.get_session(&session.id).await.unwrap().unwrap();
+        assert_eq!(session.id, fetched_session.id);
+        assert!(matches!(
+            fetched_session.config.tool_policy,
+            ToolApprovalPolicy::AlwaysAsk
+        ));
+        assert!(matches!(
+            fetched_session.config.workspace,
+            WorkspaceConfig::Local
+        ));
     }
 
     #[tokio::test]

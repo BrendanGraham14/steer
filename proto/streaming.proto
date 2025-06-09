@@ -137,6 +137,7 @@ message CreateSessionRequest {
   optional ToolApprovalPolicy tool_policy = 1;
   map<string, string> metadata = 2;
   optional SessionToolConfig tool_config = 3;
+  optional WorkspaceConfig workspace_config = 4;
 }
 
 message SendMessageRequest {
@@ -447,4 +448,24 @@ enum McpTransport {
   MCP_TRANSPORT_STDIO = 1;
   MCP_TRANSPORT_HTTP = 2;
   MCP_TRANSPORT_WEBSOCKET = 3;
+}
+
+message WorkspaceConfig {
+  oneof config {
+    LocalWorkspaceConfig local = 1;
+    RemoteWorkspaceConfig remote = 2;
+    ContainerWorkspaceConfig container = 3;
+  }
+}
+
+message LocalWorkspaceConfig {}
+
+message RemoteWorkspaceConfig {
+  string agent_address = 1;
+  optional RemoteAuth auth = 2;
+}
+
+message ContainerWorkspaceConfig {
+  string image = 1;
+  ContainerRuntime runtime = 2;
 }

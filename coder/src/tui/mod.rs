@@ -169,6 +169,7 @@ impl Tui {
 
         // Create or use provided session config
         let session_config = session_config.unwrap_or_else(|| SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::default(),
             tool_policy: ToolApprovalPolicy::AlwaysAsk,
             tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),

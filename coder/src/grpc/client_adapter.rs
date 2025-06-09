@@ -52,6 +52,11 @@ impl GrpcClientAdapter {
             tool_policy: Some(tool_policy),
             metadata: config.metadata,
             tool_config: None, // TODO: Add tool config conversion if needed
+            workspace_config: Some(crate::grpc::proto::WorkspaceConfig {
+                config: Some(crate::grpc::proto::workspace_config::Config::Local(
+                    crate::grpc::proto::LocalWorkspaceConfig {},
+                )),
+            }),
         });
 
         let response = self.client.create_session(request).await?;

@@ -1,10 +1,15 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::fs;
+
 use std::sync::Arc;
 
 use crate::session::stores::sqlite::SqliteSessionStore;
-use crate::session::{SessionConfig, SessionStore, SessionToolConfig, ToolApprovalPolicy};
+use crate::session::{
+    Session,
+    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig},
+    store::SessionStore,
+};
 
 pub fn create_session_store_path() -> Result<std::path::PathBuf> {
     let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
@@ -31,6 +36,7 @@ pub async fn create_session_store() -> Result<Arc<dyn SessionStore>> {
 
 pub fn create_default_session_config() -> SessionConfig {
     SessionConfig {
+        workspace: WorkspaceConfig::default(),
         tool_policy: ToolApprovalPolicy::AlwaysAsk,
         tool_config: SessionToolConfig::default(),
         metadata: HashMap::new(),
@@ -87,4 +93,14 @@ pub fn parse_metadata(metadata_str: Option<&str>) -> Result<HashMap<String, Stri
     }
 
     Ok(metadata)
+}
+
+pub fn create_mock_session(id: &str, tool_policy: ToolApprovalPolicy) -> Session {
+    let config = SessionConfig {
+        workspace: WorkspaceConfig::default(),
+        tool_policy,
+        tool_config: SessionToolConfig::default(),
+        metadata: std::collections::HashMap::new(),
+    };
+    Session::new(id.to_string(), config)
 }

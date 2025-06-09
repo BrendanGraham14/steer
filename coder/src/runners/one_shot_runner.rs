@@ -6,7 +6,12 @@ use tracing::{error, info};
 use crate::api::Model;
 use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfig;
-use crate::session::{SessionConfig, SessionManager, SessionToolConfig, ToolApprovalPolicy};
+use crate::session::state::WorkspaceConfig;
+use crate::session::{
+    SessionStore,
+    manager::SessionManager,
+    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy},
+};
 
 /// Contains the result of a single agent run, including the final assistant message
 /// and all tool results produced during the run.
@@ -96,6 +101,7 @@ impl OneShotRunner {
     ) -> Result<RunOnceResult> {
         // 1. Create ephemeral session with specified tool policy
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: tool_policy.unwrap_or(ToolApprovalPolicy::AlwaysAsk), // Default to asking for approval
             tool_config: tool_config.unwrap_or_default(),
             metadata: [
@@ -359,6 +365,7 @@ mod tests {
 
         // Create a session with custom config
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: create_test_tool_approval_policy(),
             tool_config: SessionToolConfig::read_only(),
             metadata: [("test".to_string(), "value".to_string())].into(),
@@ -395,6 +402,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: create_test_tool_approval_policy(),
             tool_config: SessionToolConfig::read_only(),
             metadata: [("test".to_string(), "api_test".to_string())].into(),
@@ -542,6 +550,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: ToolApprovalPolicy::PreApproved(HashSet::new()),
             tool_config: SessionToolConfig::read_only(),
             metadata: [("test".to_string(), "no_timeout_test".to_string())].into(),
@@ -621,6 +630,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: ToolApprovalPolicy::PreApproved(HashSet::new()),
             tool_config: SessionToolConfig::read_only(),
             metadata: [("test".to_string(), "polling_test".to_string())].into(),
@@ -689,6 +699,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: ToolApprovalPolicy::PreApproved(HashSet::new()),
             tool_config: SessionToolConfig::read_only(),
             metadata: [("test".to_string(), "context_test".to_string())].into(),
@@ -788,6 +799,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: create_test_tool_approval_policy(),
             tool_config: SessionToolConfig::read_only(),
             metadata: [("test".to_string(), "context_test".to_string())].into(),

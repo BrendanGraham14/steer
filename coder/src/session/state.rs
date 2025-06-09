@@ -6,8 +6,29 @@ use std::sync::Arc;
 
 use crate::api::messages::{ContentBlock, MessageContent};
 use crate::api::{Message, Model, ToolCall};
-use crate::tools::{BackendRegistry, LocalBackend};
-use tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
+use crate::tools::{BackendRegistry, LocalBackend, ToolBackend};
+use tools::tools::{read_only_workspace_tools, workspace_tools};
+
+/// Defines the primary execution environment for a session's workspace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkspaceConfig {
+    Local,
+    Remote {
+        agent_address: String,
+        auth: Option<RemoteAuth>,
+    },
+    Container {
+        image: String,
+        runtime: ContainerRuntime,
+    },
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self::Local
+    }
+}
 
 /// Complete session representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,9 +66,145 @@ impl Session {
 /// Session configuration - immutable once created
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
+    pub workspace: WorkspaceConfig,
     pub tool_policy: ToolApprovalPolicy,
     pub tool_config: SessionToolConfig,
     pub metadata: HashMap<String, String>,
+}
+
+impl SessionConfig {
+    /// Build a BackendRegistry from this configuration, with workspace/server tools taking precedence.
+    pub async fn build_registry(&self) -> Result<BackendRegistry> {
+        let mut registry = BackendRegistry::new();
+
+        // 1. Register all USER-DEFINED backends first.
+        // Their tool mappings may be overwritten by the more authoritative backends below.
+        for (idx, backend_config) in self.tool_config.backends.iter().enumerate() {
+            match backend_config {
+                BackendConfig::Local { tool_filter } => {
+                    let backend = match tool_filter {
+                        ToolFilter::All => LocalBackend::full(),
+                        ToolFilter::Include(tools) => LocalBackend::with_tools(tools.clone()),
+                        ToolFilter::Exclude(excluded) => {
+                            LocalBackend::without_tools(excluded.clone())
+                        }
+                    };
+                    registry.register(format!("user_local_{}", idx), Arc::new(backend));
+                }
+                BackendConfig::Remote {
+                    name,
+                    endpoint,
+                    auth,
+                    tool_filter,
+                } => {
+                    match crate::tools::RemoteBackend::new(
+                        endpoint.clone(),
+                        std::time::Duration::from_secs(30),
+                        auth.clone(),
+                        tool_filter.clone(),
+                    )
+                    .await
+                    {
+                        Ok(remote_backend) => {
+                            registry.register(name.clone(), Arc::new(remote_backend));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create user remote backend '{}' at {}: {}",
+                                name,
+                                endpoint,
+                                e
+                            );
+                        }
+                    }
+                }
+                BackendConfig::Container {
+                    image,
+                    runtime: _,
+                    tool_filter: _,
+                } => {
+                    tracing::warn!(
+                        "User-defined Container backend with image '{}' not yet supported, skipping.",
+                        image
+                    );
+                }
+                BackendConfig::Mcp {
+                    server_name,
+                    transport: _,
+                    command: _,
+                    args: _,
+                    tool_filter: _,
+                } => {
+                    tracing::warn!(
+                        "User-defined MCP backend '{}' not yet supported, skipping.",
+                        server_name
+                    );
+                }
+            }
+        }
+
+        // 2. Register SERVER tools. This will overwrite any user-defined backend for these tools.
+        let server_backend = LocalBackend::server_only();
+        if !server_backend.supported_tools().is_empty() {
+            registry.register("server".to_string(), Arc::new(server_backend));
+        }
+
+        // 3. Register WORKSPACE tools. This will overwrite any user or server backend for these tools.
+        let workspace_tool_names: Vec<String> = workspace_tools()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+
+        let workspace_backend: Arc<dyn crate::tools::ToolBackend> = match &self.workspace {
+            WorkspaceConfig::Local => {
+                let backend = LocalBackend::with_tools(workspace_tool_names);
+                Arc::new(backend)
+            }
+            WorkspaceConfig::Remote {
+                agent_address,
+                auth,
+            } => Arc::new(
+                crate::tools::RemoteBackend::new(
+                    agent_address.clone(),
+                    std::time::Duration::from_secs(30),
+                    auth.clone(),
+                    ToolFilter::Include(workspace_tool_names),
+                )
+                .await?,
+            ),
+            WorkspaceConfig::Container { image, .. } => {
+                tracing::warn!(
+                    "Container workspace with image '{}' not yet supported, falling back to empty local backend for workspace tools.",
+                    image
+                );
+                let backend = LocalBackend::with_tools(vec![]);
+                Arc::new(backend)
+            }
+        };
+        registry.register("workspace".to_string(), workspace_backend);
+
+        Ok(registry)
+    }
+
+    /// Minimal read-only configuration
+    pub fn read_only() -> Self {
+        let read_only_tool_names: Vec<String> = read_only_workspace_tools()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+
+        Self {
+            workspace: WorkspaceConfig::Local,
+            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            tool_config: SessionToolConfig {
+                backends: vec![BackendConfig::Local {
+                    tool_filter: ToolFilter::Include(read_only_tool_names),
+                }],
+                metadata: HashMap::new(),
+            },
+            metadata: HashMap::new(),
+        }
+    }
 }
 
 /// Tool approval policy configuration
@@ -104,7 +261,7 @@ pub enum RemoteAuth {
 pub enum ToolFilter {
     /// Include all available tools
     All,
-    /// Include only the specified tools  
+    /// Include only the specified tools
     Include(Vec<String>),
     /// Include all tools except the specified ones
     Exclude(Vec<String>),
@@ -151,7 +308,7 @@ pub enum BackendConfig {
 }
 
 /// Tool configuration for the session
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionToolConfig {
     /// Backend configurations for this session
     pub backends: Vec<BackendConfig>,
@@ -160,98 +317,16 @@ pub struct SessionToolConfig {
 }
 
 impl SessionToolConfig {
-    /// Build a BackendRegistry from this configuration
-    pub async fn build_registry(&self) -> Result<BackendRegistry> {
-        let mut registry = BackendRegistry::new();
-
-        for (idx, backend_config) in self.backends.iter().enumerate() {
-            match backend_config {
-                BackendConfig::Local { tool_filter } => {
-                    let backend = match tool_filter {
-                        ToolFilter::All => LocalBackend::full(),
-                        ToolFilter::Include(tools) => LocalBackend::with_tools(tools.clone()),
-                        ToolFilter::Exclude(excluded) => {
-                            LocalBackend::without_tools(excluded.clone())
-                        }
-                    };
-                    registry.register(format!("local_{}", idx), Arc::new(backend));
-                }
-                BackendConfig::Remote {
-                    name,
-                    endpoint,
-                    auth,
-                    tool_filter,
-                } => {
-                    let backend = crate::tools::RemoteBackend::new(
-                        endpoint.clone(),
-                        std::time::Duration::from_secs(30),
-                        auth.clone(),
-                        tool_filter.clone(),
-                    )
-                    .await;
-
-                    match backend {
-                        Ok(remote_backend) => {
-                            registry.register(name.clone(), Arc::new(remote_backend));
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create remote backend '{}' at {}: {}",
-                                name,
-                                endpoint,
-                                e
-                            );
-                        }
-                    }
-                }
-                BackendConfig::Container {
-                    image,
-                    runtime: _,
-                    tool_filter: _,
-                } => {
-                    // TODO: Implement container backend creation when available
-                    tracing::warn!("Container backend with image '{}' not yet supported", image);
-                }
-                BackendConfig::Mcp {
-                    server_name,
-                    transport: _,
-                    command: _,
-                    args: _,
-                    tool_filter: _,
-                } => {
-                    // TODO: Implement MCP backend creation when available
-                    tracing::warn!("MCP backend '{}' not yet supported", server_name);
-                }
-            }
-        }
-
-        Ok(registry)
-    }
-
     /// Minimal read-only configuration
     pub fn read_only() -> Self {
+        let tool_names = read_only_workspace_tools()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
         Self {
             backends: vec![BackendConfig::Local {
-                tool_filter: ToolFilter::Include(vec![
-                    VIEW_TOOL_NAME.to_string(),
-                    LS_TOOL_NAME.to_string(),
-                    GLOB_TOOL_NAME.to_string(),
-                    GREP_TOOL_NAME.to_string(),
-                ]),
+                tool_filter: ToolFilter::Include(tool_names),
             }],
-            metadata: HashMap::new(),
-        }
-    }
-}
-
-impl Default for SessionToolConfig {
-    fn default() -> Self {
-        Self {
-            backends: vec![
-                BackendConfig::Local {
-                    tool_filter: ToolFilter::All,
-                }, // All tools
-            ],
             metadata: HashMap::new(),
         }
     }
@@ -543,13 +618,14 @@ mod tests {
     use super::*;
     use crate::api::messages::{MessageContent, MessageRole};
     use tools::tools::{
-        BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
-        VIEW_TOOL_NAME,
+        BASH_TOOL_NAME, EDIT_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME, read_only_workspace_tools,
+        workspace_tools,
     };
 
     #[test]
     fn test_session_creation() {
         let config = SessionConfig {
+            workspace: WorkspaceConfig::Local,
             tool_policy: ToolApprovalPolicy::AlwaysAsk,
             tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
@@ -633,14 +709,7 @@ mod tests {
     #[test]
     fn test_session_tool_config_default() {
         let config = SessionToolConfig::default();
-        assert_eq!(config.backends.len(), 1);
-
-        match &config.backends[0] {
-            BackendConfig::Local { tool_filter } => {
-                assert!(matches!(tool_filter, ToolFilter::All)); // All tools enabled
-            }
-            _ => panic!("Expected Local backend config"),
-        }
+        assert!(config.backends.is_empty());
     }
 
     #[test]
@@ -678,12 +747,13 @@ mod tests {
         match &config.backends[0] {
             BackendConfig::Local { tool_filter } => {
                 if let ToolFilter::Include(tools) = tool_filter {
+                    let read_only_names: Vec<String> = read_only_workspace_tools()
+                        .iter()
+                        .map(|t| t.name().to_string())
+                        .collect();
+                    assert_eq!(tools.len(), read_only_names.len());
                     assert!(tools.contains(&VIEW_TOOL_NAME.to_string()));
-                    assert!(tools.contains(&LS_TOOL_NAME.to_string()));
-                    assert!(tools.contains(&GLOB_TOOL_NAME.to_string()));
-                    assert!(tools.contains(&GREP_TOOL_NAME.to_string()));
                     assert!(!tools.contains(&BASH_TOOL_NAME.to_string()));
-                    assert!(!tools.contains(&EDIT_TOOL_NAME.to_string()));
                 } else {
                     panic!("Expected ToolFilter::Include for read_only config");
                 }
@@ -693,35 +763,80 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_session_tool_config_build_registry_exclude() {
-        // Test that exclusion filter works with registry building
-        let config = SessionToolConfig {
-            backends: vec![BackendConfig::Local {
-                tool_filter: ToolFilter::Exclude(vec![BASH_TOOL_NAME.to_string()]),
-            }],
+    async fn test_session_config_build_registry_local_workspace() {
+        let config = SessionConfig {
+            workspace: WorkspaceConfig::Local,
+            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
         };
 
         let registry = config.build_registry().await.unwrap();
         let schemas = registry.get_tool_schemas().await;
         let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
+        let workspace_tool_names: Vec<String> = workspace_tools()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
 
-        // Should NOT contain the excluded tool
-        assert!(!tool_names.contains(&BASH_TOOL_NAME.to_string()));
+        for tool_name in workspace_tool_names {
+            assert!(tool_names.contains(&tool_name));
+        }
 
-        // Should contain other tools
-        assert!(tool_names.contains(&VIEW_TOOL_NAME.to_string()));
-        assert!(tool_names.contains(&LS_TOOL_NAME.to_string()));
+        // Check that workspace backend is Local
+        let workspace_backend = registry
+            .backends()
+            .iter()
+            .find(|(name, _)| name == "workspace")
+            .unwrap();
+        assert_eq!(workspace_backend.1.metadata().backend_type, "Local");
+    }
+
+    #[tokio::test]
+    async fn test_session_config_build_registry_user_override_is_ignored() {
+        // User tries to override 'bash' to be a different (local) backend.
+        // The workspace-defined backend should take precedence.
+        let user_tool_config = SessionToolConfig {
+            backends: vec![BackendConfig::Local {
+                tool_filter: ToolFilter::Include(vec![BASH_TOOL_NAME.to_string()]),
+            }],
+            metadata: HashMap::new(),
+        };
+
+        let config = SessionConfig {
+            workspace: WorkspaceConfig::Local,
+            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            tool_config: user_tool_config,
+            metadata: HashMap::new(),
+        };
+
+        let registry = config.build_registry().await.unwrap();
+
+        // The 'bash' tool should be mapped to the 'workspace' backend, not the 'user_local_0' backend.
+        let bash_backend = registry.get_backend_for_tool(BASH_TOOL_NAME).unwrap();
+        let backend_metadata = bash_backend.metadata();
+
+        // Find the name of the backend instance
+        let backend_instance_name = registry
+            .backends()
+            .iter()
+            .find(|(_, backend)| Arc::ptr_eq(backend, &bash_backend))
+            .map(|(name, _)| name)
+            .unwrap();
+
+        assert_eq!(backend_instance_name, "workspace");
+        assert_eq!(backend_metadata.backend_type, "Local");
     }
 
     #[tokio::test]
     async fn test_session_tool_config_build_registry() {
-        let config = SessionToolConfig::read_only();
+        let config = SessionConfig::read_only();
         let registry = config.build_registry().await.unwrap();
 
         // Should have backends registered
-        let backend_names = registry.backends();
-        assert!(!backend_names.is_empty());
+        let backend_names: Vec<String> =
+            registry.backends().iter().map(|(n, _)| n.clone()).collect();
+        assert!(backend_names.contains(&"workspace".to_string()));
 
         // Test that we can get tool schemas from all backends
         let schemas = registry.get_tool_schemas().await;

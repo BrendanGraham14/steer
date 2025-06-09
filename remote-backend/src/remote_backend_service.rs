@@ -37,20 +37,6 @@ impl RemoteBackendService {
         })
     }
 
-    /// Create a RemoteBackendService with custom tools
-    pub fn with_tools(tools: Vec<Box<dyn Tool>>) -> Self {
-        let mut tool_map: HashMap<String, Box<dyn Tool>> = HashMap::new();
-
-        for tool in tools {
-            tool_map.insert(tool.name().to_string(), tool);
-        }
-
-        Self {
-            tools: Arc::new(tool_map),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        }
-    }
-
     /// Get the supported tools from the tool executor
     pub fn get_supported_tools(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()

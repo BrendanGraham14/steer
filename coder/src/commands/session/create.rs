@@ -7,7 +7,9 @@ use crate::api::Model;
 use crate::app::AppConfig;
 use crate::config::LlmConfig;
 use crate::events::StreamEventWithMetadata;
-use crate::session::{SessionConfig, SessionManager, SessionManagerConfig, SessionToolConfig};
+use crate::session::{
+    SessionConfig, SessionManager, SessionManagerConfig, SessionToolConfig, WorkspaceConfig,
+};
 use crate::utils::session::{create_session_store, parse_metadata, parse_tool_policy};
 
 pub struct CreateSessionCommand {
@@ -23,7 +25,9 @@ impl Command for CreateSessionCommand {
         let policy = parse_tool_policy(&self.tool_policy, self.pre_approved_tools.as_deref())?;
         let session_metadata = parse_metadata(self.metadata.as_deref())?;
 
+        // TODO: Allow customizing from CLI args, a file, and/or env vars
         let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
             tool_policy: policy,
             tool_config: SessionToolConfig::default(),
             metadata: session_metadata,
