@@ -4,7 +4,7 @@ use tools::ToolResult;
 use tracing::{error, info};
 
 use crate::api::Model;
-use crate::app::{AppCommand, AppConfig, AppEvent, Message};
+use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfig;
 use crate::session::{SessionConfig, SessionManager, SessionToolConfig, ToolApprovalPolicy};
 
@@ -23,6 +23,12 @@ pub struct RunOnceResult {
 /// All OneShotRunner operations now use the unified session-based architecture,
 /// providing consistent tool configuration, approval policies, and persistence.
 pub struct OneShotRunner;
+
+impl Default for OneShotRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl OneShotRunner {
     /// Creates a new OneShotRunner
@@ -47,7 +53,7 @@ impl OneShotRunner {
             .map_err(|e| anyhow!("Failed to resume session {}: {}", session_id, e))?;
 
         // 2. Take the event receiver for this session (like TUI does)
-        let mut event_rx = session_manager
+        let event_rx = session_manager
             .take_event_receiver(&session_id)
             .await
             .map_err(|e| {
@@ -655,7 +661,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
 
-            if updated_state.messages.len() >= 1 {
+            if !updated_state.messages.is_empty() {
                 // Found the message, verify it's correct
                 let first_msg = &updated_state.messages[0];
                 assert_eq!(first_msg.role, crate::api::messages::MessageRole::User);
@@ -723,7 +729,7 @@ mod tests {
             .unwrap();
 
         // Should have at least the user message
-        assert!(state_after.messages.len() >= 1);
+        assert!(!state_after.messages.is_empty());
 
         // The first message should be the user input we sent
         let first_msg = &state_after.messages[0];

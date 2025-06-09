@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tools::ToolCall;
-use tracing::debug;
 
 use crate::api::Client as ApiClient;
 use crate::api::Model;

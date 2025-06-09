@@ -796,6 +796,7 @@ mod tests {
                 message: Some(client_message::Message::SendMessage(SendMessageRequest {
                     session_id: session_id.clone(),
                     message: "Hello, test!".to_string(),
+                    attachments: vec![],
                 })),
             })
             .await

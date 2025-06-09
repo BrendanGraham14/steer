@@ -1,13 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use crate::app::{App, AppConfig, conversation::{Message, MessageContentBlock, Role}, ToolExecutor};
-    use crate::config::LlmConfig;
     use crate::api::Model;
     use crate::app::validation::ValidatorRegistry;
+    use crate::app::{
+        App, AppConfig, ToolExecutor,
+        conversation::{Message, MessageContentBlock, Role},
+    };
+    use crate::config::LlmConfig;
     use crate::tools::{BackendRegistry, LocalBackend};
-    use tools::ToolCall;
-    use tokio::sync::mpsc;
     use std::sync::Arc;
+    use tokio::sync::mpsc;
+    use tools::ToolCall;
 
     fn create_test_llm_config() -> LlmConfig {
         LlmConfig {
@@ -19,11 +22,8 @@ mod tests {
 
     fn create_test_tool_executor() -> Arc<ToolExecutor> {
         let mut backend_registry = BackendRegistry::new();
-        backend_registry.register(
-            "local".to_string(),
-            Arc::new(LocalBackend::full()),
-        );
-        
+        backend_registry.register("local".to_string(), Arc::new(LocalBackend::full()));
+
         Arc::new(ToolExecutor {
             backend_registry: Arc::new(backend_registry),
             validators: Arc::new(ValidatorRegistry::new()),
@@ -38,8 +38,14 @@ mod tests {
         let app_config = AppConfig { llm_config };
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
-        
-        let mut app = App::new(app_config, event_tx, initial_model, create_test_tool_executor()).unwrap();
+
+        let mut app = App::new(
+            app_config,
+            event_tx,
+            initial_model,
+            create_test_tool_executor(),
+        )
+        .unwrap();
 
         // Manually add an assistant message with tool calls
         let tool_call = ToolCall {
@@ -74,16 +80,20 @@ mod tests {
         {
             let conversation_guard = app.conversation.lock().await;
             let messages = &conversation_guard.messages;
-            
+
             // Should have 2 messages: the assistant message and the tool result
             assert_eq!(messages.len(), 2);
-            
+
             // Check the tool result message
             let tool_result_msg = &messages[1];
             assert_eq!(tool_result_msg.role, Role::Tool);
             assert_eq!(tool_result_msg.content_blocks.len(), 1);
-            
-            if let MessageContentBlock::ToolResult { tool_use_id, result } = &tool_result_msg.content_blocks[0] {
+
+            if let MessageContentBlock::ToolResult {
+                tool_use_id,
+                result,
+            } = &tool_result_msg.content_blocks[0]
+            {
                 assert_eq!(tool_use_id, "test_tool_123");
                 assert!(result.contains("cancelled"));
             } else {
@@ -104,8 +114,14 @@ mod tests {
         let app_config = AppConfig { llm_config };
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
-        
-        let mut app = App::new(app_config, event_tx, initial_model, create_test_tool_executor()).unwrap();
+
+        let mut app = App::new(
+            app_config,
+            event_tx,
+            initial_model,
+            create_test_tool_executor(),
+        )
+        .unwrap();
 
         // Add an assistant message with tool calls
         let tool_call = ToolCall {
@@ -158,8 +174,14 @@ mod tests {
         let app_config = AppConfig { llm_config };
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
-        
-        let mut app = App::new(app_config, event_tx, initial_model, create_test_tool_executor()).unwrap();
+
+        let mut app = App::new(
+            app_config,
+            event_tx,
+            initial_model,
+            create_test_tool_executor(),
+        )
+        .unwrap();
 
         // Add an assistant message with multiple tool calls
         let tool_call_1 = ToolCall {
@@ -167,7 +189,7 @@ mod tests {
             name: "bash".to_string(),
             parameters: serde_json::json!({"command": "ls"}),
         };
-        
+
         let tool_call_2 = ToolCall {
             id: "tool_2".to_string(),
             name: "read_file".to_string(),
@@ -192,17 +214,21 @@ mod tests {
         {
             let conversation_guard = app.conversation.lock().await;
             let messages = &conversation_guard.messages;
-            
+
             // Should have 3 messages: assistant message + 2 tool result messages
             assert_eq!(messages.len(), 3);
-            
+
             // Check that we have tool results for both tools
             let mut found_tool_1 = false;
             let mut found_tool_2 = false;
-            
+
             for message in &messages[1..] {
                 assert_eq!(message.role, Role::Tool);
-                if let MessageContentBlock::ToolResult { tool_use_id, result } = &message.content_blocks[0] {
+                if let MessageContentBlock::ToolResult {
+                    tool_use_id,
+                    result,
+                } = &message.content_blocks[0]
+                {
                     if tool_use_id == "tool_1" {
                         found_tool_1 = true;
                         assert!(result.contains("cancelled"));
@@ -212,9 +238,15 @@ mod tests {
                     }
                 }
             }
-            
-            assert!(found_tool_1, "Should have found cancelled result for tool_1");
-            assert!(found_tool_2, "Should have found cancelled result for tool_2");
+
+            assert!(
+                found_tool_1,
+                "Should have found cancelled result for tool_1"
+            );
+            assert!(
+                found_tool_2,
+                "Should have found cancelled result for tool_2"
+            );
 
             // Verify no more incomplete tool calls
             let incomplete_calls = app.find_incomplete_tool_calls(&conversation_guard);

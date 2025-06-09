@@ -1,6 +1,5 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind};
 use crate::app::conversation::Role;
-use crate::app::validation::ValidatorRegistry;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -563,25 +562,25 @@ impl App {
             let conversation_guard = self.conversation.lock().await;
             self.find_incomplete_tool_calls(&conversation_guard)
         };
-        
+
         if !incomplete_tool_calls.is_empty() {
-            info!(target: "App.inject_cancelled_tool_results", 
-                  "Found {} incomplete tool calls, injecting cancellation results", 
+            info!(target: "App.inject_cancelled_tool_results",
+                  "Found {} incomplete tool calls, injecting cancellation results",
                   incomplete_tool_calls.len());
-            
+
             for tool_call in incomplete_tool_calls {
                 let cancelled_result = Message::new_with_blocks(
                     Role::Tool,
                     vec![MessageContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
-                        result: format!("Tool execution was cancelled by user before completion."),
+                        result: "Tool execution was cancelled by user before completion.".to_string(),
                     }],
                 );
-                
+
                 // Add the message using the standard add_message method to ensure proper event emission
                 self.add_message(cancelled_result).await;
-                debug!(target: "App.inject_cancelled_tool_results", 
-                       "Injected cancellation result for tool call: {} ({})", 
+                debug!(target: "App.inject_cancelled_tool_results",
+                       "Injected cancellation result for tool call: {} ({})",
                        tool_call.name, tool_call.id);
             }
         }

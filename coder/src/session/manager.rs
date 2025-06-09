@@ -10,9 +10,7 @@ use uuid;
 use crate::api::{Message as ApiMessage, Model, ToolCall};
 use crate::app::{App, AppCommand, AppConfig, AppEvent};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
-use crate::session::state::{
-    BackendConfig, ContainerRuntime, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
-};
+use crate::session::state::ToolFilter;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate, ToolResult,
@@ -856,7 +854,7 @@ impl SessionManager {
 
         let tool_config = config
             .tool_config
-            .map(|proto_config| convert_proto_tool_config(proto_config))
+            .map(convert_proto_tool_config)
             .unwrap_or_default();
 
         let session_config = crate::session::SessionConfig {

@@ -95,9 +95,7 @@ impl Model {
 
             Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
-            | Model::Gemini2_5ProPreview0605 => {
-                ProviderKind::Google
-            }
+            | Model::Gemini2_5ProPreview0605 => ProviderKind::Google,
         }
     }
 }

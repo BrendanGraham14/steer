@@ -1109,7 +1109,7 @@ impl Tui {
 
         // Use the existing tool call formatting
         let formatted_lines = message_formatter::format_tool_call_block(
-            &tool_call,
+            tool_call,
             area.width.saturating_sub(2), // Account for borders
         );
 

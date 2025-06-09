@@ -123,7 +123,7 @@ impl Command for HeadlessCommand {
                 // Convert API messages to app messages
                 let app_messages: Result<Vec<crate::app::Message>, _> = messages
                     .into_iter()
-                    .map(|api_msg| crate::app::Message::try_from(api_msg))
+                    .map(crate::app::Message::try_from)
                     .collect();
 
                 let app_messages =

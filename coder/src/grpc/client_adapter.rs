@@ -346,7 +346,6 @@ fn convert_tool_approval_policy(
 mod tests {
     use super::*;
     use crate::grpc::proto::tool_approval_policy::Policy;
-    
 
     #[test]
     fn test_convert_tool_approval_policy() {

@@ -4,7 +4,6 @@ use std::time::Duration;
 use tonic::service::Interceptor;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Status};
-use tools::tools::workspace_tools;
 
 use crate::api::ToolCall;
 use crate::session::state::{RemoteAuth, ToolFilter};

@@ -170,7 +170,9 @@ impl SessionToolConfig {
                     let backend = match tool_filter {
                         ToolFilter::All => LocalBackend::full(),
                         ToolFilter::Include(tools) => LocalBackend::with_tools(tools.clone()),
-                        ToolFilter::Exclude(excluded) => LocalBackend::without_tools(excluded.clone()),
+                        ToolFilter::Exclude(excluded) => {
+                            LocalBackend::without_tools(excluded.clone())
+                        }
                     };
                     registry.register(format!("local_{}", idx), Arc::new(backend));
                 }
@@ -542,7 +544,6 @@ mod tests {
     use crate::api::messages::{MessageContent, MessageRole};
     use tools::tools::{
         BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
-        MULTI_EDIT_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME,
         VIEW_TOOL_NAME,
     };
 
@@ -700,14 +701,14 @@ mod tests {
             }],
             metadata: HashMap::new(),
         };
-        
+
         let registry = config.build_registry().await.unwrap();
         let schemas = registry.get_tool_schemas().await;
         let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
-        
+
         // Should NOT contain the excluded tool
         assert!(!tool_names.contains(&BASH_TOOL_NAME.to_string()));
-        
+
         // Should contain other tools
         assert!(tool_names.contains(&VIEW_TOOL_NAME.to_string()));
         assert!(tool_names.contains(&LS_TOOL_NAME.to_string()));
@@ -736,7 +737,10 @@ mod tests {
     fn test_backend_config_variants() {
         // Test Local variant
         let local_config = BackendConfig::Local {
-            tool_filter: ToolFilter::Include(vec![VIEW_TOOL_NAME.to_string(), LS_TOOL_NAME.to_string()]),
+            tool_filter: ToolFilter::Include(vec![
+                VIEW_TOOL_NAME.to_string(),
+                LS_TOOL_NAME.to_string(),
+            ]),
         };
 
         match local_config {
