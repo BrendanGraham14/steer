@@ -283,3 +283,182 @@ fn is_likely_text_file(path: &Path) -> bool {
         !buffer.iter().any(|&b| b == 0) && buffer.iter().filter(|&&b| b < 9).count() == 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ExecutionContext, Tool, ToolError};
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
+
+    fn create_test_files(dir: &Path) {
+        fs::write(dir.join("file1.txt"), "hello world\nfind me here").unwrap();
+        fs::write(
+            dir.join("file2.log"),
+            "another file\nwith some logs\nLOG-123: an error",
+        )
+        .unwrap();
+        fs::create_dir(dir.join("subdir")).unwrap();
+        fs::write(
+            dir.join("subdir/file3.txt"),
+            "nested file\nshould also be found",
+        )
+        .unwrap();
+        // A file with non-utf8 content to test robustness
+        fs::write(dir.join("binary.dat"), &[0, 159, 146, 150]).unwrap();
+    }
+
+    fn create_test_context(temp_dir: &tempfile::TempDir) -> ExecutionContext {
+        ExecutionContext::new("test-call-id".to_string())
+            .with_working_directory(temp_dir.path().to_path_buf())
+    }
+
+    #[tokio::test]
+    async fn test_grep_simple_match() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "find me".to_string(),
+            include: None,
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        assert!(result.contains("file1.txt:2: find me here"));
+        assert!(!result.contains("file2.log"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_regex_match() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: r"LOG-\d+".to_string(),
+            include: None,
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        assert!(result.contains("file2.log:3: LOG-123: an error"));
+        assert!(!result.contains("file1.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_no_matches() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "non-existent pattern".to_string(),
+            include: None,
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        assert_eq!(result, "No matches found.");
+    }
+
+    #[tokio::test]
+    async fn test_grep_with_path() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "nested".to_string(),
+            include: None,
+            path: Some("subdir".to_string()),
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        assert!(result.contains("subdir/file3.txt:1: nested file"));
+        assert!(!result.contains("file1.txt"));
+        assert!(!result.contains("file2.log"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_with_include() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "file".to_string(),
+            include: Some("*.log".to_string()),
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        assert!(result.contains("file2.log:1: another file"));
+        assert!(!result.contains("file1.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_non_existent_path() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "any".to_string(),
+            include: None,
+            path: Some("non-existent-dir".to_string()),
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await;
+
+        assert!(matches!(result, Err(ToolError::Execution { .. })));
+        if let Err(ToolError::Execution { message, .. }) = result {
+            assert!(message.contains("Path does not exist"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_grep_cancellation() {
+        let temp_dir = tempdir().unwrap();
+        create_test_files(temp_dir.path());
+
+        let token = CancellationToken::new();
+        token.cancel(); // Cancel immediately
+
+        let context = ExecutionContext::new("test-call-id".to_string())
+            .with_working_directory(temp_dir.path().to_path_buf())
+            .with_cancellation_token(token);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "hello".to_string(),
+            include: None,
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await;
+
+        assert!(matches!(result, Err(ToolError::Cancelled(_))));
+    }
+}
