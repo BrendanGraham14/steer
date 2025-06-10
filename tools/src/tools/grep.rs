@@ -1,3 +1,5 @@
+use glob;
+use ignore::WalkBuilder;
 use macros::tool;
 use regex::Regex;
 use schemars::JsonSchema;
@@ -26,6 +28,7 @@ tool! {
 - Searches file contents using regular expressions
 - Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)
 - Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
+- Automatically respects .gitignore files and other git exclusion rules
 - Returns matching file paths sorted by modification time"#,
         name: "grep",
         require_approval: false
@@ -139,38 +142,39 @@ fn find_files(
 ) -> Result<Vec<std::path::PathBuf>, String> {
     let mut files = Vec::new();
 
-    if let Some(include_pattern) = include {
-        // Use glob to find files based on include pattern
-        let glob_pattern = if base_path.to_string_lossy() == "." {
-            include_pattern.to_string()
-        } else {
-            format!("{}/{}", base_path.display(), include_pattern)
-        };
+    // Use the ignore crate's WalkBuilder which respects .gitignore files
+    let mut walker = WalkBuilder::new(base_path);
+    walker.hidden(false); // Include hidden files by default
+    walker.git_ignore(true); // Respect .gitignore files
+    walker.git_global(true); // Respect global gitignore
+    walker.git_exclude(true); // Respect .git/info/exclude
 
-        match glob::glob(&glob_pattern) {
-            Ok(paths) => {
-                for entry in paths {
-                    if cancellation_token.is_cancelled() {
-                        return Err("Search cancelled".to_string());
-                    }
+    let walk = walker.build();
 
-                    if let Ok(path) = entry {
-                        if path.is_file() {
-                            files.push(path);
+    for result in walk {
+        if cancellation_token.is_cancelled() {
+            return Err("Search cancelled".to_string());
+        }
+
+        match result {
+            Ok(entry) => {
+                let path = entry.path();
+                if path.is_file() && is_likely_text_file(path) {
+                    // If include pattern is specified, check if file matches
+                    if let Some(include_pattern) = include {
+                        if path_matches_glob(path, include_pattern)? {
+                            files.push(path.to_path_buf());
                         }
+                    } else {
+                        files.push(path.to_path_buf());
                     }
                 }
             }
-            Err(e) => {
-                return Err(format!(
-                    "Invalid include pattern '{}': {}",
-                    include_pattern, e
-                ));
+            Err(_) => {
+                // Skip entries that can't be processed
+                continue;
             }
         }
-    } else {
-        // Recursively find all regular files
-        find_files_recursive(base_path, &mut files, cancellation_token)?;
     }
 
     // Sort files by modification time (newest first)
@@ -196,44 +200,27 @@ fn find_files(
     Ok(files_with_time.into_iter().map(|(path, _)| path).collect())
 }
 
-fn find_files_recursive(
-    dir: &Path,
-    files: &mut Vec<std::path::PathBuf>,
-    cancellation_token: &tokio_util::sync::CancellationToken,
-) -> Result<(), String> {
-    if cancellation_token.is_cancelled() {
-        return Err("Search cancelled".to_string());
+fn path_matches_glob(path: &Path, pattern: &str) -> Result<bool, String> {
+    // Convert the file path to a string for glob matching
+    let path_str = path.to_string_lossy();
+
+    // Create a glob pattern
+    let glob_pattern = glob::Pattern::new(pattern)
+        .map_err(|e| format!("Invalid glob pattern '{}': {}", pattern, e))?;
+
+    // Check if the full path matches
+    if glob_pattern.matches(&path_str) {
+        return Ok(true);
     }
 
-    if dir.is_dir() {
-        match fs::read_dir(dir) {
-            Ok(entries) => {
-                for entry in entries {
-                    if cancellation_token.is_cancelled() {
-                        return Err("Search cancelled".to_string());
-                    }
-
-                    if let Ok(entry) = entry {
-                        let path = entry.path();
-
-                        if path.is_dir() {
-                            find_files_recursive(&path, files, cancellation_token)?;
-                        } else if path.is_file() {
-                            // Skip binary files
-                            if is_likely_text_file(&path) {
-                                files.push(path);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                // Skip directories that can't be read
-                return Ok(());
-            }
+    // Also check if just the filename matches (for patterns like "*.rs")
+    if let Some(filename) = path.file_name() {
+        if glob_pattern.matches(&filename.to_string_lossy()) {
+            return Ok(true);
         }
     }
-    Ok(())
+
+    Ok(false)
 }
 
 fn is_likely_text_file(path: &Path) -> bool {
@@ -460,5 +447,50 @@ mod tests {
         let result = tool.execute(params_json, &context).await;
 
         assert!(matches!(result, Err(ToolError::Cancelled(_))));
+    }
+
+    #[tokio::test]
+    async fn test_grep_respects_gitignore() {
+        let temp_dir = tempdir().unwrap();
+
+        // Initialize a git repository (required for .gitignore to work)
+        fs::create_dir(temp_dir.path().join(".git")).unwrap();
+
+        // Create test files
+        fs::write(
+            temp_dir.path().join("file1.txt"),
+            "hello world\nfind me here",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("ignored.txt"),
+            "this should be ignored\nfind me here",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("also_ignored.log"),
+            "another ignored file\nfind me here",
+        )
+        .unwrap();
+
+        // Create .gitignore file
+        fs::write(temp_dir.path().join(".gitignore"), "ignored.txt\n*.log").unwrap();
+
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "find me here".to_string(),
+            include: None,
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        // Should find the match in file1.txt but not in ignored files
+        assert!(result.contains("file1.txt:2: find me here"));
+        assert!(!result.contains("ignored.txt"));
+        assert!(!result.contains("also_ignored.log"));
     }
 }
