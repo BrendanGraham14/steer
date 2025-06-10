@@ -106,4 +106,51 @@ impl ToolExecutor {
 
         backend.execute(tool_call, &context).await
     }
+
+    /// Execute a tool directly without validation - for user-initiated bash commands
+    #[instrument(skip(self, tool_call, token), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
+    pub async fn execute_tool_direct(
+        &self,
+        tool_call: &ToolCall,
+        token: CancellationToken,
+    ) -> Result<String, ToolError> {
+        let tool_name = &tool_call.name;
+        let tool_id = &tool_call.id;
+
+        Span::current().record("tool.name", tool_name);
+        Span::current().record("tool.id", tool_id);
+
+        // Get the backend for this tool - no validation
+        let backend = {
+            self.backend_registry
+                .get_backend_for_tool(tool_name)
+                .cloned()
+                .ok_or_else(|| {
+                    error!(
+                        target: "app.tool_executor.execute_tool_direct",
+                        "No backend configured for tool: {} ({})",
+                        tool_name,
+                        tool_id
+                    );
+                    ToolError::UnknownTool(tool_name.clone())
+                })?
+        };
+
+        debug!(
+            target: "app.tool_executor.execute_tool_direct",
+            "Executing tool {} ({}) directly via backend (no validation)",
+            tool_name,
+            tool_id
+        );
+
+        // Create execution context for the backend
+        let context = ExecutionContext::new(
+            "direct".to_string(), // Mark as direct execution
+            "direct".to_string(), 
+            tool_call.id.clone(),
+            token,
+        );
+
+        backend.execute(tool_call, &context).await
+    }
 }

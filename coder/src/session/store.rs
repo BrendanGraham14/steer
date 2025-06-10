@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{Session, SessionConfig, SessionInfo};
-use crate::api::{Message, ToolCall};
+use crate::app::Message;
+use tools::ToolCall;
 use crate::events::StreamEvent;
 
 /// Database-agnostic session store trait
@@ -277,7 +278,7 @@ pub trait SessionStoreExt: SessionStore {
         let next_cursor = if has_more && !messages.is_empty() {
             Some(MessageCursor {
                 sequence_num: messages.len() as u32,
-                message_id: messages.last().and_then(|m| m.id.clone()),
+                message_id: messages.last().map(|m| m.id.clone()),
             })
         } else {
             None

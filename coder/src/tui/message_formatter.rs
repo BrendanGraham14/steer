@@ -55,6 +55,14 @@ pub fn format_message(
                 tool_use_id,
                 result,
             } => format_tool_result_block(tool_use_id, result, terminal_width), // Pass width
+            MessageContentBlock::CommandExecution {
+                command,
+                stdout,
+                stderr,
+                exit_code,
+            } => {
+                format_command_execution_block(command, stdout, stderr, *exit_code, terminal_width)
+            }
         };
         formatted_lines.extend(block_lines);
         formatted_lines.push(Line::raw(""));
@@ -385,5 +393,75 @@ pub fn format_command_response(content: &str, terminal_width: u16) -> Vec<Line<'
             }
         }
     }
+    lines
+}
+
+/// Formats a command execution block for display.
+pub fn format_command_execution_block(
+    command: &str,
+    stdout: &str,
+    stderr: &str,
+    exit_code: i32,
+    terminal_width: u16,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    // Calculate wrap width
+    let wrap_width = (terminal_width as usize).saturating_sub(8);
+    let wrap_width = wrap_width.max(40);
+
+    // Show the command with a $ prompt
+    lines.push(Line::from(vec![
+        Span::styled(
+            "$ ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(command.to_string(), Style::default().fg(Color::Cyan)),
+    ]));
+
+    // Show stdout if not empty
+    if !stdout.trim().is_empty() {
+        for line in stdout.lines() {
+            let wrapped_lines = textwrap::wrap(line, wrap_width);
+            if wrapped_lines.is_empty() {
+                lines.push(Line::raw(""));
+            } else {
+                for wrapped_line in wrapped_lines {
+                    lines.push(Line::from(Span::raw(wrapped_line.to_string())));
+                }
+            }
+        }
+    }
+
+    // Show exit code and stderr if command failed
+    if exit_code != 0 {
+        lines.push(Line::from(Span::styled(
+            format!("Exit code: {}", exit_code),
+            Style::default().fg(Color::Red),
+        )));
+
+        if !stderr.trim().is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Error output:",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )));
+            for line in stderr.lines() {
+                let wrapped_lines = textwrap::wrap(line, wrap_width);
+                if wrapped_lines.is_empty() {
+                    lines.push(Line::raw(""));
+                } else {
+                    for wrapped_line in wrapped_lines {
+                        lines.push(Line::from(Span::styled(
+                            wrapped_line.to_string(),
+                            Style::default().fg(Color::Red),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     lines
 }

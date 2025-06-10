@@ -8,7 +8,6 @@ use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfig;
 use crate::session::state::WorkspaceConfig;
 use crate::session::{
-    SessionStore,
     manager::SessionManager,
     state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy},
 };

@@ -178,6 +178,25 @@ fn content_block_to_proto(
                 metadata: std::collections::HashMap::new(),
             })),
         },
+        AppBlock::CommandExecution { command, stdout, stderr, exit_code } => {
+            // Convert CommandExecution to text for gRPC transmission
+            let mut text = format!("$ {}\n", command);
+            if !stdout.is_empty() {
+                text.push_str(&stdout);
+                if !stdout.ends_with('\n') {
+                    text.push('\n');
+                }
+            }
+            if exit_code != 0 {
+                text.push_str(&format!("Exit code: {}\n", exit_code));
+                if !stderr.is_empty() {
+                    text.push_str(&format!("Error: {}\n", stderr));
+                }
+            }
+            MessageContentBlock {
+                content: Some(message_content_block::Content::Text(text)),
+            }
+        },
     }
 }
 

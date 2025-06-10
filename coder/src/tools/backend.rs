@@ -94,7 +94,7 @@ pub trait ToolBackend: Send + Sync {
     ///
     /// # Returns
     /// Ok(true) if approval is required, Ok(false) if not, or an error if the tool is unknown
-    async fn requires_approval(&self, tool_name: &str) -> Result<bool, ToolError> {
+    async fn requires_approval(&self, _tool_name: &str) -> Result<bool, ToolError> {
         // Default conservative implementation - require approval
         // Backends should override this to provide accurate information
         Ok(true)

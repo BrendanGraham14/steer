@@ -293,6 +293,7 @@ fn convert_app_command_to_client_message(
 
         // These commands don't map to gRPC messages
         AppCommand::ExecuteCommand(_) => None,
+        AppCommand::ExecuteBashCommand { .. } => None,
         AppCommand::Shutdown => None,
         AppCommand::RequestToolApprovalInternal { .. } => None,
         AppCommand::RestoreMessage(_) => None,

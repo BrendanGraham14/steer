@@ -16,6 +16,8 @@ pub enum AppCommand {
     },
     /// Execute a slash command.
     ExecuteCommand(String),
+    /// Execute a bash command directly (bypassing AI)
+    ExecuteBashCommand { command: String },
     /// Cancel processing.
     CancelProcessing,
     /// Signal for graceful shutdown.

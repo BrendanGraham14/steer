@@ -1,11 +1,10 @@
-use crate::api::{Client as ApiClient, Model, ProviderKind};
+use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
 use crate::app::conversation::Role;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tools::ToolCall;
 
 use tracing::{debug, error, info, warn};
 use uuid;
@@ -907,6 +906,58 @@ async fn handle_app_command(
             false
         }
 
+        AppCommand::ExecuteBashCommand { command } => {
+            debug!(target: "handle_app_command", "Executing bash command: {}", command);
+            
+            // Create a tool call for the bash command
+            let tool_call = ToolCall {
+                id: format!("bash_{}", uuid::Uuid::new_v4()),
+                name: "bash".to_string(),
+                parameters: serde_json::json!({
+                    "command": command,
+                }),
+            };
+            
+            // Create a cancellation token for the execution
+            let token = CancellationToken::new();
+            
+            // Execute the bash tool directly (bypassing validation)
+            match app.tool_executor.execute_tool_direct(&tool_call, token).await {
+                Ok(output) => {
+                    // Parse the output to extract stdout/stderr/exit code
+                    // The bash tool returns output in a specific format
+                    let (stdout, stderr, exit_code) = parse_bash_output(&output);
+                    
+                    // Add the command execution as a message
+                    let message = Message::new_with_blocks(
+                        Role::User,
+                        vec![MessageContentBlock::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        }],
+                    );
+                    app.add_message(message).await;
+                }
+                Err(e) => {
+                    error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
+                    
+                    // Add error as a command execution with error output
+                    let message = Message::new_with_blocks(
+                        Role::User,
+                        vec![MessageContentBlock::CommandExecution {
+                            command,
+                            stdout: String::new(),
+                            stderr: format!("Error executing command: {}", e),
+                            exit_code: -1,
+                        }],
+                    );
+                    app.add_message(message).await;
+                }
+            }
+            false
+        }
         AppCommand::Shutdown => {
             info!(target: "handle_app_command", "Received Shutdown command.");
             app.cancel_current_processing().await;
@@ -1158,4 +1209,57 @@ fn create_system_prompt() -> Result<String> {
         env_info.as_context()
     );
     Ok(prompt)
+}
+
+/// Parse the output from the bash tool
+/// The bash tool returns stdout on success, or a formatted error message on failure
+fn parse_bash_output(output: &str) -> (String, String, i32) {
+    // Check if this is an error output from the bash tool
+    if output.starts_with("Command failed with exit code") {
+        // Parse the error format:
+        // "Command failed with exit code {}\n--- STDOUT ---\n{}\n--- STDERR ---\n{}"
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = -1;
+        
+        let lines: Vec<&str> = output.lines().collect();
+        let mut i = 0;
+        
+        // Extract exit code from first line
+        if let Some(first_line) = lines.get(0) {
+            if let Some(code_str) = first_line.strip_prefix("Command failed with exit code ") {
+                exit_code = code_str.parse().unwrap_or(-1);
+            }
+        }
+        
+        // Find stdout section
+        while i < lines.len() {
+            if lines[i] == "--- STDOUT ---" {
+                i += 1;
+                while i < lines.len() && lines[i] != "--- STDERR ---" {
+                    if !stdout.is_empty() {
+                        stdout.push('\n');
+                    }
+                    stdout.push_str(lines[i]);
+                    i += 1;
+                }
+            } else if lines[i] == "--- STDERR ---" {
+                i += 1;
+                while i < lines.len() {
+                    if !stderr.is_empty() {
+                        stderr.push('\n');
+                    }
+                    stderr.push_str(lines[i]);
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        
+        (stdout, stderr, exit_code)
+    } else {
+        // Success case - output is just stdout
+        (output.to_string(), String::new(), 0)
+    }
 }

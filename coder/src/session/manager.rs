@@ -7,8 +7,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 use uuid;
 
-use crate::api::{Message as ApiMessage, Model, ToolCall};
-use crate::app::{App, AppCommand, AppConfig, AppEvent};
+use crate::api::{Message as ApiMessage, Model};
+use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
+use tools::ToolCall;
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::state::ToolFilter;
 use crate::session::{
@@ -743,71 +744,65 @@ impl SessionManager {
                     }),
                     messages: state.messages.into_iter().map(|msg| {
                         crate::grpc::proto::Message {
-                            id: msg.id.clone().unwrap_or_default(),
+                            id: msg.id.clone(),
                             role: match msg.role {
-                                crate::api::messages::MessageRole::User => crate::grpc::proto::MessageRole::User as i32,
-                                crate::api::messages::MessageRole::Assistant => crate::grpc::proto::MessageRole::Assistant as i32,
-                                crate::api::messages::MessageRole::Tool => crate::grpc::proto::MessageRole::Tool as i32,
+                                crate::app::conversation::Role::User => crate::grpc::proto::MessageRole::User as i32,
+                                crate::app::conversation::Role::Assistant => crate::grpc::proto::MessageRole::Assistant as i32,
+                                crate::app::conversation::Role::Tool => crate::grpc::proto::MessageRole::Tool as i32,
                             },
-                            content_blocks: match msg.content {
-                                crate::api::messages::MessageContent::Text { content } => {
-                                    vec![crate::grpc::proto::MessageContentBlock {
+                            content_blocks: msg.content_blocks.into_iter().map(|block| match block {
+                                crate::app::conversation::MessageContentBlock::Text(text) => {
+                                    crate::grpc::proto::MessageContentBlock {
+                                        content: Some(crate::grpc::proto::message_content_block::Content::Text(text)),
+                                    }
+                                }
+                                crate::app::conversation::MessageContentBlock::ToolCall(tool_call) => {
+                                    crate::grpc::proto::MessageContentBlock {
+                                        content: Some(crate::grpc::proto::message_content_block::Content::ToolCall(
+                                            crate::grpc::proto::ToolCall {
+                                                id: tool_call.id,
+                                                name: tool_call.name,
+                                                parameters: match tool_call.parameters {
+                                                    serde_json::Value::Object(map) => {
+                                                        map.into_iter().map(|(k, v)| (k, v.to_string())).collect()
+                                                    }
+                                                    _ => std::collections::HashMap::new(),
+                                                },
+                                            }
+                                        )),
+                                    }
+                                }
+                                crate::app::conversation::MessageContentBlock::ToolResult { tool_use_id, result } => {
+                                    crate::grpc::proto::MessageContentBlock {
+                                        content: Some(crate::grpc::proto::message_content_block::Content::ToolResult(
+                                            crate::grpc::proto::ToolResult {
+                                                tool_call_id: tool_use_id,
+                                                success: true,
+                                                content: result,
+                                                error: None,
+                                                metadata: std::collections::HashMap::new(),
+                                            }
+                                        )),
+                                    }
+                                }
+                                crate::app::conversation::MessageContentBlock::CommandExecution { command, stdout, stderr, exit_code } => {
+                                    let mut content = format!("$ {}\n{}", command, stdout);
+                                    if exit_code != 0 {
+                                        content.push_str(&format!("\nExit code: {}", exit_code));
+                                    }
+                                    if !stderr.is_empty() {
+                                        content.push_str(&format!("\nstderr: {}", stderr));
+                                    }
+                                    crate::grpc::proto::MessageContentBlock {
                                         content: Some(crate::grpc::proto::message_content_block::Content::Text(content)),
-                                    }]
+                                    }
                                 }
-                                crate::api::messages::MessageContent::StructuredContent { content } => {
-                                    content.0.into_iter().map(|block| match block {
-                                        crate::api::messages::ContentBlock::Text { text } => {
-                                            crate::grpc::proto::MessageContentBlock {
-                                                content: Some(crate::grpc::proto::message_content_block::Content::Text(text)),
-                                            }
-                                        }
-                                        crate::api::messages::ContentBlock::ToolUse { id, name, input } => {
-                                            crate::grpc::proto::MessageContentBlock {
-                                                content: Some(crate::grpc::proto::message_content_block::Content::ToolCall(
-                                                    crate::grpc::proto::ToolCall {
-                                                        id,
-                                                        name,
-                                                        parameters: match input {
-                                                            serde_json::Value::Object(map) => {
-                                                                map.into_iter().map(|(k, v)| (k, v.to_string())).collect()
-                                                            }
-                                                            _ => std::collections::HashMap::new(),
-                                                        },
-                                                    }
-                                                )),
-                                            }
-                                        }
-                                        crate::api::messages::ContentBlock::ToolResult { tool_use_id, content, is_error } => {
-                                            let result_content = content.into_iter()
-                                                .filter_map(|block| match block {
-                                                    crate::api::messages::ContentBlock::Text { text } => Some(text),
-                                                    _ => None,
-                                                })
-                                                .collect::<Vec<_>>()
-                                                .join("\n");
-
-                                            crate::grpc::proto::MessageContentBlock {
-                                                content: Some(crate::grpc::proto::message_content_block::Content::ToolResult(
-                                                    crate::grpc::proto::ToolResult {
-                                                        tool_call_id: tool_use_id,
-                                                        success: is_error.map(|e| !e).unwrap_or(true),
-                                                        content: result_content,
-                                                        error: None,
-                                                        metadata: std::collections::HashMap::new(),
-                                                    }
-                                                )),
-                                            }
-                                        }
-                                    }).collect()
-                                }
-                            },
+                            }).collect(),
                             created_at: Some(prost_types::Timestamp::from(
                                 std::time::UNIX_EPOCH + std::time::Duration::from_secs(
-                                    msg.id.as_ref()
-                                        .and_then(|id| id.split('_').nth(1))
+                                    msg.id.split('_').nth(1)
                                         .and_then(|ts| ts.parse::<u64>().ok())
-                                        .unwrap_or(0)
+                                        .unwrap_or(msg.timestamp)
                                 )
                             )),
                             metadata: std::collections::HashMap::new(),
@@ -1028,9 +1023,6 @@ fn convert_proto_tool_config(
 
 /// Convert AppEvent to StreamEvent, returning None for events that shouldn't be streamed
 fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamEvent> {
-    use crate::api::messages::{MessageContent, MessageRole};
-    use crate::app::conversation::Role;
-
     match app_event {
         AppEvent::MessageAdded {
             role,
@@ -1038,88 +1030,14 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
             id,
             model,
         } => {
-            // Convert role
-            let api_role = match role {
-                Role::User => MessageRole::User,
-                Role::Assistant => MessageRole::Assistant,
-                Role::Tool => MessageRole::Tool,
-            };
-
-            // Convert content blocks
-            let message_content = if content_blocks.len() == 1 {
-                if let Some(block) = content_blocks.first() {
-                    match block {
-                        crate::app::MessageContentBlock::Text(content) => MessageContent::Text {
-                            content: content.clone(),
-                        },
-                        crate::app::MessageContentBlock::ToolCall(tool_call) => {
-                            MessageContent::StructuredContent {
-                                content: crate::api::messages::StructuredContent(vec![
-                                    crate::api::messages::ContentBlock::ToolUse {
-                                        id: tool_call.id.clone(),
-                                        name: tool_call.name.clone(),
-                                        input: tool_call.parameters.clone(),
-                                    },
-                                ]),
-                            }
-                        }
-                        crate::app::MessageContentBlock::ToolResult {
-                            tool_use_id,
-                            result,
-                        } => MessageContent::StructuredContent {
-                            content: crate::api::messages::StructuredContent(vec![
-                                crate::api::messages::ContentBlock::ToolResult {
-                                    tool_use_id: tool_use_id.clone(),
-                                    content: vec![crate::api::messages::ContentBlock::Text {
-                                        text: result.clone(),
-                                    }],
-                                    is_error: None,
-                                },
-                            ]),
-                        },
-                    }
-                } else {
-                    MessageContent::Text {
-                        content: String::new(),
-                    }
-                }
-            } else {
-                // Multiple content blocks - convert to structured content
-                let api_blocks: Vec<crate::api::messages::ContentBlock> = content_blocks
-                    .into_iter()
-                    .map(|block| match block {
-                        crate::app::MessageContentBlock::Text(content) => {
-                            crate::api::messages::ContentBlock::Text { text: content }
-                        }
-                        crate::app::MessageContentBlock::ToolCall(tool_call) => {
-                            crate::api::messages::ContentBlock::ToolUse {
-                                id: tool_call.id,
-                                name: tool_call.name,
-                                input: tool_call.parameters,
-                            }
-                        }
-                        crate::app::MessageContentBlock::ToolResult {
-                            tool_use_id,
-                            result,
-                        } => crate::api::messages::ContentBlock::ToolResult {
-                            tool_use_id,
-                            content: vec![crate::api::messages::ContentBlock::Text {
-                                text: result,
-                            }],
-                            is_error: None,
-                        },
-                    })
-                    .collect();
-
-                MessageContent::StructuredContent {
-                    content: crate::api::messages::StructuredContent(api_blocks),
-                }
-            };
-
-            let message = ApiMessage {
-                id: Some(id),
-                role: api_role,
-                content: message_content,
+            let message = crate::app::Message {
+                id,
+                role,
+                content_blocks,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs(),
             };
 
             Some(StreamEvent::MessageComplete {
@@ -1149,21 +1067,19 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
         }
 
         AppEvent::ToolCallCompleted {
-            name: _name,
+            name: _,
             result,
             id,
             model,
-        } => {
-            Some(StreamEvent::ToolCallCompleted {
-                tool_call_id: id,
-                result: ToolResult::success(result, 0), // TODO: Add proper timing
-                metadata: std::collections::HashMap::new(),
-                model,
-            })
-        }
+        } => Some(StreamEvent::ToolCallCompleted {
+            tool_call_id: id,
+            result: ToolResult::success(result, 0),
+            metadata: std::collections::HashMap::new(),
+            model,
+        }),
 
         AppEvent::ToolCallFailed {
-            name: _name,
+            name: _,
             error,
             id,
             model,
@@ -1174,45 +1090,10 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
             model,
         }),
 
-        AppEvent::RequestToolApproval {
-            name,
-            parameters,
-            id,
-        } => {
-            let tool_call = ToolCall {
-                id: id.clone(),
-                name: name.clone(),
-                parameters,
-            };
-            Some(StreamEvent::ToolApprovalRequired {
-                tool_call,
-                timeout_ms: None,
-                metadata: std::collections::HashMap::new(),
-            })
-        }
-
-        // These events don't need to be translated to StreamEvents
-        AppEvent::MessageUpdated { .. } => None, // Internal state update
-        AppEvent::ThinkingStarted => Some(StreamEvent::OperationStarted {
-            operation_id: format!("op_{}", uuid::Uuid::new_v4()),
-        }),
-        AppEvent::ThinkingCompleted => Some(StreamEvent::OperationCompleted {
-            operation_id: format!("op_{}", uuid::Uuid::new_v4()),
-        }),
-        AppEvent::CommandResponse { .. } => None, // System messages, not persisted
-        AppEvent::OperationCancelled { info } => Some(StreamEvent::OperationCancelled {
-            operation_id: format!("op_{}", uuid::Uuid::new_v4()),
-            reason: format!("Operation cancelled: {:?}", info),
-        }),
-        AppEvent::ModelChanged { .. } => None, // Internal configuration change
-        AppEvent::Error { message } => Some(StreamEvent::Error {
-            message,
-            error_type: crate::events::ErrorType::Internal,
-        }),
-        AppEvent::RestoredMessage { .. } => None, // Already persisted, don't double-log
+        // These events don't need to be streamed
+        _ => None,
     }
 }
-
 /// Update session state based on a StreamEvent
 async fn update_session_state_for_event(
     store: &Arc<dyn SessionStore>,
@@ -1235,20 +1116,17 @@ async fn update_session_state_for_event(
             store.update_tool_call(tool_call_id, update).await?;
 
             // Also add a Tool message with the result
-            let tool_message = ApiMessage {
-                id: Some(format!("tool_result_{}", tool_call_id)),
-                role: crate::api::messages::MessageRole::Tool,
-                content: crate::api::messages::MessageContent::StructuredContent {
-                    content: crate::api::messages::StructuredContent(vec![
-                        crate::api::messages::ContentBlock::ToolResult {
-                            tool_use_id: tool_call_id.clone(),
-                            content: vec![crate::api::messages::ContentBlock::Text {
-                                text: result.output.clone(),
-                            }],
-                            is_error: if result.success { None } else { Some(true) },
-                        },
-                    ]),
-                },
+            let tool_message = ConversationMessage {
+                id: format!("tool_result_{}", tool_call_id),
+                role: crate::app::conversation::Role::Tool,
+                content_blocks: vec![crate::app::conversation::MessageContentBlock::ToolResult {
+                    tool_use_id: tool_call_id.clone(),
+                    result: result.output.clone(),
+                }],
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs(),
             };
             store.append_message(session_id, &tool_message).await?;
         }
@@ -1261,20 +1139,17 @@ async fn update_session_state_for_event(
             store.update_tool_call(tool_call_id, update).await?;
 
             // Also add a Tool message with the error
-            let tool_message = ApiMessage {
-                id: Some(format!("tool_result_{}", tool_call_id)),
-                role: crate::api::messages::MessageRole::Tool,
-                content: crate::api::messages::MessageContent::StructuredContent {
-                    content: crate::api::messages::StructuredContent(vec![
-                        crate::api::messages::ContentBlock::ToolResult {
-                            tool_use_id: tool_call_id.clone(),
-                            content: vec![crate::api::messages::ContentBlock::Text {
-                                text: format!("Error: {}", error),
-                            }],
-                            is_error: Some(true),
-                        },
-                    ]),
-                },
+            let tool_message = ConversationMessage {
+                id: format!("tool_result_{}", tool_call_id),
+                role: crate::app::conversation::Role::Tool,
+                content_blocks: vec![crate::app::conversation::MessageContentBlock::ToolResult {
+                    tool_use_id: tool_call_id.clone(),
+                    result: format!("Error: {}", error),
+                }],
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs(),
             };
             store.append_message(session_id, &tool_message).await?;
         }

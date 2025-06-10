@@ -1,9 +1,10 @@
+use crate::api::Model;
+use crate::app::Message;
+use crate::session::{SessionInfo, ToolResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use crate::api::{Message, Model, ToolCall};
-use crate::session::{SessionInfo, ToolResult};
+use tools::ToolCall;
 
 /// Token usage information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,7 +201,7 @@ impl StreamEvent {
     pub fn message_id(&self) -> Option<&str> {
         match self {
             StreamEvent::MessagePart { message_id, .. } => Some(message_id),
-            StreamEvent::MessageComplete { message, .. } => message.id.as_deref(),
+            StreamEvent::MessageComplete { message, .. } => Some(&message.id),
             _ => None,
         }
     }
@@ -333,7 +334,8 @@ impl EventFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::messages::{MessageContent, MessageRole};
+    use crate::app::MessageContentBlock;
+    use crate::app::conversation::Role;
 
     #[test]
     fn test_stream_event_serialization() {
@@ -473,11 +475,10 @@ mod tests {
     #[test]
     fn test_message_complete_event() {
         let message = Message {
-            id: Some("msg_123".to_string()),
-            role: MessageRole::Assistant,
-            content: MessageContent::Text {
-                content: "Hello world".to_string(),
-            },
+            id: "msg_123".to_string(),
+            role: Role::Assistant,
+            content_blocks: vec![MessageContentBlock::Text("Hello world".to_string())],
+            timestamp: 0,
         };
 
         let event = StreamEvent::MessageComplete {

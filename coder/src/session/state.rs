@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::api::messages::{ContentBlock, MessageContent};
-use crate::api::{Message, Model, ToolCall};
+use crate::api::Model;
+use crate::app::{Message, MessageContentBlock};
 use crate::tools::{BackendRegistry, LocalBackend, ToolBackend};
+use tools::ToolCall;
 use tools::tools::{read_only_workspace_tools, workspace_tools};
 
 /// Defines the primary execution environment for a session's workspace
@@ -439,17 +440,15 @@ impl SessionState {
     fn extract_tool_calls_from_message(&self, message: &Message) -> Vec<String> {
         let mut tool_call_ids = Vec::new();
 
-        if let MessageContent::StructuredContent { content } = &message.content {
-            for block in &content.0 {
-                match block {
-                    ContentBlock::ToolUse { id, .. } => {
-                        tool_call_ids.push(id.clone());
-                    }
-                    ContentBlock::ToolResult { tool_use_id, .. } => {
-                        tool_call_ids.push(tool_use_id.clone());
-                    }
-                    _ => {}
+        for block in &message.content_blocks {
+            match block {
+                MessageContentBlock::ToolCall(tool_call) => {
+                    tool_call_ids.push(tool_call.id.clone());
                 }
+                MessageContentBlock::ToolResult { tool_use_id, .. } => {
+                    tool_call_ids.push(tool_use_id.clone());
+                }
+                _ => {}
             }
         }
 

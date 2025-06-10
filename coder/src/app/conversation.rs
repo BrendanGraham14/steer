@@ -22,7 +22,16 @@ pub enum Role {
 pub enum MessageContentBlock {
     Text(String),
     ToolCall(ToolCall),
-    ToolResult { tool_use_id: String, result: String },
+    ToolResult {
+        tool_use_id: String,
+        result: String,
+    },
+    CommandExecution {
+        command: String,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    },
     // TODO: support attachments
 }
 
@@ -175,6 +184,21 @@ impl Message {
                 MessageContentBlock::ToolCall(tc) => format!("[Tool Call: {}]", tc.name),
                 MessageContentBlock::ToolResult { tool_use_id, .. } => {
                     format!("[Tool Result for {}]", tool_use_id)
+                }
+                MessageContentBlock::CommandExecution {
+                    command,
+                    stdout,
+                    stderr,
+                    exit_code,
+                } => {
+                    let mut output = format!("$ {}\n{}", command, stdout);
+                    if *exit_code != 0 {
+                        output.push_str(&format!("\nExit code: {}", exit_code));
+                        if !stderr.is_empty() {
+                            output.push_str(&format!("\nError: {}", stderr));
+                        }
+                    }
+                    output
                 }
             })
             .collect::<Vec<_>>()

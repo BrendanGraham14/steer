@@ -108,12 +108,28 @@ pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Mess
                 let combined_text = app_msg
                     .content_blocks
                     .iter()
-                    .filter_map(|block| {
-                        if let crate::app::conversation::MessageContentBlock::Text(content) = block
+                    .filter_map(|block| match block {
+                        crate::app::conversation::MessageContentBlock::Text(content) => {
+                            Some(content.clone())
+                        }
+                        crate::app::conversation::MessageContentBlock::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } => {
+                            let xml_command_execution = format!(
+                                "<command_execution>\n    <command>{}</command>\n    <stdout>{}</stdout>\n    <stderr>{}</stderr>\n    <exit_code>{}</exit_code>\n</command_execution>",
+                                command,
+                                stdout,
+                                stderr,
+                                exit_code
+                            );
+                            Some(xml_command_execution)
+                        }
+                        crate::app::conversation::MessageContentBlock::ToolCall { .. } | crate::app::conversation::MessageContentBlock::ToolResult { .. } =>
                         {
-                            Some(content.as_str())
-                        } else {
-                            warn!(target: "messages.convert_conversation", "User message ID {} contained non-text block: {:?}", app_msg.id, block);
+                            error!("Unexpected tool call or result block found in User message ID: {}", app_msg.id);
                             None
                         }
                     })
@@ -154,6 +170,11 @@ pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Mess
                         crate::app::conversation::MessageContentBlock::ToolResult { .. } => {
                             // Assistant should not have ToolResult blocks
                             error!(target: "messages.convert_conversation", "Unexpected ToolResult block found in Assistant message ID: {}", app_msg.id);
+                            None // Skip this invalid block
+                        }
+                        crate::app::conversation::MessageContentBlock::CommandExecution { .. } => {
+                            // Assistant should not have CommandExecution blocks
+                            error!(target: "messages.convert_conversation", "Unexpected CommandExecution block found in Assistant message ID: {}", app_msg.id);
                             None // Skip this invalid block
                         }
                     }

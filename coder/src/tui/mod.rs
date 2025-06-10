@@ -37,6 +37,7 @@ const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 enum InputMode {
     Normal,
     Editing,
+    BashCommand,
     AwaitingApproval,
     ConfirmExit,
 }
@@ -101,6 +102,7 @@ enum DisplayItem {
 #[derive(Debug)]
 enum InputAction {
     SendMessage(String),
+    ExecuteBashCommand(String),
     ToggleMessageTruncation(String),
     ApproveToolNormal(String),
     ApproveToolAlways(String),
@@ -883,6 +885,7 @@ impl Tui {
         let input_border_style = match input_mode {
             InputMode::Editing => Style::default().fg(Color::Yellow),
             InputMode::Normal => Style::default().fg(Color::DarkGray),
+            InputMode::BashCommand => Style::default().fg(Color::Cyan),
             InputMode::AwaitingApproval => {
                 // Only style as ApprovalRequired if there *is* a current approval
                 if current_tool_approval_info.is_some() {
@@ -897,7 +900,8 @@ impl Tui {
         };
         let input_title: String = match input_mode {
             InputMode::Editing => "Input (Esc to stop editing, Enter to send)".to_string(),
-            InputMode::Normal => "Input (i to edit, Enter to send, Ctrl+C to exit)".to_string(),
+            InputMode::Normal => "Input (i to edit, ! for bash command, Enter to send, Ctrl+C to exit)".to_string(),
+            InputMode::BashCommand => "Bash Command (Enter to execute, Esc to cancel)".to_string(),
             InputMode::AwaitingApproval => {
                 // Update title based on current approval info
                 if let Some(info) = current_tool_approval_info {
@@ -1248,6 +1252,11 @@ impl Tui {
                     KeyCode::Char('i') | KeyCode::Char('s') => {
                         self.input_mode = InputMode::Editing;
                     }
+                    // Enter Bash Command Mode
+                    KeyCode::Char('!') => {
+                        self.input_mode = InputMode::BashCommand;
+                        self.clear_textarea();
+                    }
                     // Send Message
                     KeyCode::Enter => {
                         let input = self.textarea.lines().join("\n");
@@ -1352,6 +1361,41 @@ impl Tui {
                     self.input_mode = InputMode::Normal;
                 }
             }
+            InputMode::BashCommand => {
+                match key.code {
+                    // Cancel bash command
+                    KeyCode::Esc => {
+                        self.input_mode = InputMode::Normal;
+                        self.clear_textarea();
+                    }
+                    // Execute bash command
+                    KeyCode::Enter => {
+                        let command = self.textarea.lines().join("\n");
+                        if !command.trim().is_empty() {
+                            action = Some(InputAction::ExecuteBashCommand(command));
+                            self.clear_textarea();
+                            self.input_mode = InputMode::Normal;
+                        }
+                    }
+                    // Cancel Processing (Ctrl+C)
+                    KeyCode::Char('c') | KeyCode::Char('C')
+                        if key.modifiers == KeyModifiers::CONTROL =>
+                    {
+                        if self.is_processing {
+                            action = Some(InputAction::CancelProcessing);
+                        } else {
+                            // Cancel bash command and return to normal
+                            self.input_mode = InputMode::Normal;
+                            self.clear_textarea();
+                        }
+                        return Ok(action);
+                    }
+                    // Pass other keys to text area
+                    _ => {
+                        self.textarea.input(key);
+                    }
+                }
+            }
             InputMode::ConfirmExit => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     action = Some(InputAction::Exit);
@@ -1381,6 +1425,14 @@ impl Tui {
                 // Clear scroll lock when user sends a message
                 self.user_scrolled_away = false;
                 debug!(target: "tui.dispatch_input_action", "Sent UserInput command, user_scrolled_away=false");
+            }
+            InputAction::ExecuteBashCommand(command) => {
+                self.command_tx
+                    .send(AppCommand::ExecuteBashCommand { command })
+                    .await?;
+                // Clear scroll lock when user executes a command
+                self.user_scrolled_away = false;
+                debug!(target: "tui.dispatch_input_action", "Sent ExecuteBashCommand, user_scrolled_away=false");
             }
             InputAction::ToggleMessageTruncation(target_id) => {
                 let mut found_and_toggled = false;
