@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -20,11 +21,32 @@ pub struct OpenAIClient {
 
 // OpenAI-specific message format
 #[derive(Debug, Serialize, Deserialize)]
-struct OpenAIMessage {
-    role: String,
-    content: OpenAIContent,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
+#[serde(tag = "role", rename_all = "lowercase")]
+enum OpenAIMessage {
+    System {
+        content: OpenAIContent,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    User {
+        content: OpenAIContent,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    Assistant {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<OpenAIContent>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_calls: Option<Vec<OpenAIToolCall>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    Tool {
+        content: OpenAIContent,
+        tool_call_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 // OpenAI content can be a string or an array of content parts
@@ -73,6 +95,7 @@ struct OpenAIFunctionCall {
     name: String,
     arguments: String, // JSON string
 }
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ReasoningEffort {
@@ -82,21 +105,146 @@ enum ReasoningEffort {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ServiceTier {
+    Auto,
+    Default,
+    Flex,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AudioOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StopSequences {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StreamOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_usage: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ToolChoice {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "required")]
+    Required,
+    Specific {
+        #[serde(rename = "type")]
+        tool_type: String,
+        function: ToolChoiceFunction,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ToolChoiceFunction {
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ResponseFormat {
+    JsonObject {
+        #[serde(rename = "type")]
+        format_type: String, // "json_object"
+    },
+    JsonSchema {
+        #[serde(rename = "type")]
+        format_type: String, // "json_schema"
+        json_schema: serde_json::Value,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PredictionType {
+    Content,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Prediction {
+    Content {
+        #[serde(rename = "type")]
+        prediction_type: PredictionType,
+        content: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WebSearchOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_results: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct CompletionRequest {
     model: String,
     messages: Vec<OpenAIMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<OpenAITool>>,
+    audio: Option<AudioOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
+    frequency_penalty: Option<f32>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    top_p: Option<f32>,
+    logit_bias: Option<HashMap<String, i32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<bool>,
+    logprobs: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modalities: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    n: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prediction: Option<Prediction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<ReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<ResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<ServiceTier>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<StopSequences>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAITool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_logprobs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_search_options: Option<WebSearchOptions>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -180,8 +328,7 @@ impl OpenAIClient {
 
         // Add system message if provided
         if let Some(system_content) = system {
-            openai_messages.push(OpenAIMessage {
-                role: "system".to_string(),
+            openai_messages.push(OpenAIMessage::System {
                 content: OpenAIContent::String(system_content),
                 name: None,
             });
@@ -190,26 +337,178 @@ impl OpenAIClient {
         // Convert our messages to OpenAI format
         for message in messages {
             match message.role {
-                MessageRole::User | MessageRole::Assistant => {
+                MessageRole::User => {
                     // Convert message content
                     let content = match &message.content {
                         MessageContent::Text { content } => OpenAIContent::String(content.clone()),
                         MessageContent::StructuredContent { content } => {
-                            // This is more complex for OpenAI and would need proper handling
-                            // For simplicity, we're just converting to a string description
-                            OpenAIContent::String(format!("{:?}", content))
+                            // Check if this is actually tool results (shouldn't happen with fixed convert_conversation)
+                            // This is a fallback for backwards compatibility
+                            let has_tool_results = content
+                                .0
+                                .iter()
+                                .any(|block| matches!(block, ContentBlock::ToolResult { .. }));
+
+                            if has_tool_results {
+                                // Convert each ToolResult to a Tool message
+                                for block in &content.0 {
+                                    if let ContentBlock::ToolResult {
+                                        tool_use_id,
+                                        content: result_blocks,
+                                        is_error,
+                                    } = block
+                                    {
+                                        // Convert result content blocks to string
+                                        let result_text = result_blocks
+                                            .iter()
+                                            .filter_map(|block| match block {
+                                                ContentBlock::Text { text } => Some(text.clone()),
+                                                _ => None,
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+
+                                        // Add error prefix if this is an error result
+                                        let final_content = if is_error.unwrap_or(false) {
+                                            format!("Error: {}", result_text)
+                                        } else {
+                                            result_text
+                                        };
+
+                                        openai_messages.push(OpenAIMessage::Tool {
+                                            content: OpenAIContent::String(final_content),
+                                            tool_call_id: tool_use_id.clone(),
+                                            name: None,
+                                        });
+                                    }
+                                }
+                                // Skip adding a User message in this case
+                                continue;
+                            } else {
+                                // Regular structured content - convert to text for now
+                                let text_parts: Vec<String> = content
+                                    .0
+                                    .iter()
+                                    .filter_map(|block| match block {
+                                        ContentBlock::Text { text } => Some(text.clone()),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                OpenAIContent::String(text_parts.join("\n"))
+                            }
                         }
                     };
 
-                    openai_messages.push(OpenAIMessage {
-                        role: message.role.to_string(),
+                    openai_messages.push(OpenAIMessage::User {
                         content,
                         name: None,
                     });
                 }
-                // Skip other roles or handle them differently
-                _ => {
-                    warn!(target: "openai::convert_messages", "Skipping message with unsupported role: {}", message.role);
+                MessageRole::Assistant => {
+                    // Handle assistant messages which may have tool calls
+                    match &message.content {
+                        MessageContent::Text { content } => {
+                            openai_messages.push(OpenAIMessage::Assistant {
+                                content: Some(OpenAIContent::String(content.clone())),
+                                tool_calls: None,
+                                name: None,
+                            });
+                        }
+                        MessageContent::StructuredContent { content } => {
+                            let mut text_content = String::new();
+                            let mut tool_calls = Vec::new();
+
+                            for block in &content.0 {
+                                match block {
+                                    ContentBlock::Text { text } => {
+                                        if !text_content.is_empty() {
+                                            text_content.push('\n');
+                                        }
+                                        text_content.push_str(text);
+                                    }
+                                    ContentBlock::ToolUse { id, name, input } => {
+                                        tool_calls.push(OpenAIToolCall {
+                                            id: id.clone(),
+                                            tool_type: "function".to_string(),
+                                            function: OpenAIFunctionCall {
+                                                name: name.clone(),
+                                                arguments: input.to_string(),
+                                            },
+                                        });
+                                    }
+                                    _ => {
+                                        // Handle other content blocks as text for simplicity
+                                        if !text_content.is_empty() {
+                                            text_content.push('\n');
+                                        }
+                                        text_content.push_str(&format!("{:?}", block));
+                                    }
+                                }
+                            }
+
+                            let final_content = if text_content.is_empty() {
+                                None
+                            } else {
+                                Some(OpenAIContent::String(text_content))
+                            };
+
+                            let final_tool_calls = if tool_calls.is_empty() {
+                                None
+                            } else {
+                                Some(tool_calls)
+                            };
+
+                            openai_messages.push(OpenAIMessage::Assistant {
+                                content: final_content,
+                                tool_calls: final_tool_calls,
+                                name: None,
+                            });
+                        }
+                    }
+                }
+                MessageRole::Tool => {
+                    // Handle tool messages - extract tool_call_id and content from ToolResult blocks
+                    match &message.content {
+                        MessageContent::StructuredContent { content } => {
+                            // Tool messages contain ToolResult blocks
+                            for block in &content.0 {
+                                if let ContentBlock::ToolResult {
+                                    tool_use_id,
+                                    content: result_blocks,
+                                    is_error,
+                                } = block
+                                {
+                                    // Convert result content blocks to string
+                                    let result_text = result_blocks
+                                        .iter()
+                                        .filter_map(|block| match block {
+                                            ContentBlock::Text { text } => Some(text.clone()),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+
+                                    // Add error prefix if this is an error result
+                                    let final_content = if is_error.unwrap_or(false) {
+                                        format!("Error: {}", result_text)
+                                    } else {
+                                        result_text
+                                    };
+
+                                    openai_messages.push(OpenAIMessage::Tool {
+                                        content: OpenAIContent::String(final_content),
+                                        tool_call_id: tool_use_id.clone(),
+                                        name: None,
+                                    });
+                                }
+                            }
+                        }
+                        MessageContent::Text { content } => {
+                            // Fallback for tool messages with simple text content
+                            // This shouldn't normally happen but we'll handle it gracefully
+                            warn!(target: "openai::convert_messages", "Tool message has simple text content instead of structured content: {}", content);
+                        }
+                    }
                 }
             }
         }
@@ -263,23 +562,63 @@ impl Provider for OpenAIClient {
             CompletionRequest {
                 model: model.as_ref().to_string(),
                 messages: openai_messages,
-                tools: openai_tools,
-                temperature: Some(1.0),
-                top_p: None,
-                stream: None,
+                audio: None,
+                frequency_penalty: None,
+                logit_bias: None,
+                logprobs: None,
                 max_completion_tokens: Some(100_000), // May need to tweak based on context window
+                metadata: None,
+                modalities: None,
+                n: None,
+                parallel_tool_calls: None,
+                prediction: None,
+                presence_penalty: None,
                 reasoning_effort: Some(ReasoningEffort::High),
+                response_format: None,
+                seed: None,
+                service_tier: None,
+                stop: None,
+                store: None,
+                stream: None,
+                stream_options: None,
+                temperature: Some(1.0),
+                tool_choice: None,
+                tools: openai_tools,
+                top_logprobs: None,
+                top_p: None,
+                user: None,
+                web_search_options: None,
             }
         } else {
             CompletionRequest {
                 model: model.as_ref().to_string(),
                 messages: openai_messages,
-                tools: openai_tools,
-                temperature: Some(0.7),
-                top_p: None,
-                stream: None,
+                audio: None,
+                frequency_penalty: None,
+                logit_bias: None,
+                logprobs: None,
                 max_completion_tokens: Some(32_000),
+                metadata: None,
+                modalities: None,
+                n: None,
+                parallel_tool_calls: Some(true),
+                prediction: None,
+                presence_penalty: None,
                 reasoning_effort: None,
+                response_format: None,
+                seed: None,
+                service_tier: None,
+                stop: None,
+                store: None,
+                stream: None,
+                stream_options: None,
+                temperature: Some(0.7),
+                tool_choice: None,
+                tools: openai_tools,
+                top_logprobs: None,
+                top_p: None,
+                user: None,
+                web_search_options: None,
             }
         };
 

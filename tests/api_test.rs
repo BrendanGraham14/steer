@@ -301,11 +301,13 @@ async fn test_api_with_tool_response() {
                 Message {
                     role: MessageRole::Assistant,
                     content: MessageContent::StructuredContent {
-                        content: StructuredContent(vec![ContentBlock::ToolUse {
-                            id: tool_use_id.clone(),
-                            name: "ls".to_string(),
-                            input: serde_json::json!({ "path": "." }),
-                        }]),
+                        content: StructuredContent(vec![
+                            ContentBlock::ToolUse {
+                                id: tool_use_id.clone(),
+                                name: "ls".to_string(),
+                                input: serde_json::json!({ "path": "." }),
+                            }
+                        ]),
                     },
                     id: None,
                 },
@@ -756,4 +758,145 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         response.err()
     );
     println!("Gemini Multiple Tool Responses test passed successfully!");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_with_cancelled_tool_execution() {
+    dotenv().ok();
+    let config = LlmConfig::from_env().unwrap();
+    let client = Client::new(&config);
+
+    let models_to_test = vec![
+        Model::Claude3_5Haiku20241022,
+        Model::Gpt4_1Nano20250414,
+        Model::Gemini2_5FlashPreview0417,
+    ];
+    let mut tasks = Vec::new();
+
+    for model in models_to_test {
+        let client = client.clone();
+        let task = tokio::spawn(async move {
+            println!("Testing cancelled tool execution for model: {:?}", model);
+
+            // Create a unique tool call ID for this test
+            let tool_call_id = format!("cancelled_tool_{:?}", model);
+
+            // Simulate a conversation where a tool was called but then cancelled
+            let messages = vec![
+                Message {
+                    role: MessageRole::User,
+                    content: MessageContent::Text {
+                        content: "Please list the files in the current directory".to_string(),
+                    },
+                    id: None,
+                },
+                // Assistant requests a tool call
+                Message {
+                    role: MessageRole::Assistant,
+                    content: MessageContent::StructuredContent {
+                        content: StructuredContent(vec![
+                            ContentBlock::ToolUse {
+                                id: tool_call_id.clone(),
+                                name: "ls".to_string(),
+                                input: serde_json::json!({ "path": "." }),
+                            }
+                        ]),
+                    },
+                    id: None,
+                },
+                // Tool execution was cancelled - this is what inject_cancelled_tool_results would add
+                Message {
+                    role: MessageRole::Tool,
+                    content: MessageContent::StructuredContent {
+                        content: StructuredContent(vec![
+                            ContentBlock::ToolResult {
+                                tool_use_id: tool_call_id.clone(),
+                                content: vec![ContentBlock::Text {
+                                    text: "Tool execution was cancelled by user before completion.".to_string(),
+                                }],
+                                is_error: None, // Not marked as error, just cancelled
+                            }
+                        ]),
+                    },
+                    id: None,
+                },
+                // User continues the conversation
+                Message {
+                    role: MessageRole::User,
+                    content: MessageContent::Text {
+                        content: "No problem, can you tell me about Rust instead?".to_string(),
+                    },
+                    id: None,
+                },
+            ];
+
+            // Call the API - it should handle the cancelled tool result gracefully
+            let response = client
+                .complete(
+                    model.clone(),
+                    messages,
+                    None,
+                    None, // No tools needed as we're testing message handling
+                    CancellationToken::new(),
+                )
+                .await;
+
+            // Check response
+            let response = response.map_err(|e| {
+                eprintln!("API call failed for model {:?} with cancelled tool: {:?}", model, e);
+                e
+            })?;
+
+            // Extract and verify response
+            let response_text = response.extract_text();
+            assert!(
+                !response_text.is_empty(),
+                "Response should not be empty for model {:?} after cancelled tool",
+                model
+            );
+
+            // The model should acknowledge the cancellation and answer about Rust
+            assert!(
+                response_text.to_lowercase().contains("rust") ||
+                response_text.to_lowercase().contains("programming") ||
+                response_text.to_lowercase().contains("language"),
+                "Response for model {:?} should address the Rust question, got: '{}'",
+                model,
+                response_text
+            );
+
+            println!("Cancelled tool execution test for {:?} passed successfully!", model);
+            Ok::<_, ApiError>(model)
+        });
+        tasks.push(task);
+    }
+
+    // Wait for all tasks to complete
+    let results = futures::future::join_all(tasks).await;
+
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(model)) => {
+                println!("Task for {:?} finished successfully.", model);
+            }
+            Ok(Err(e)) => {
+                let msg = format!("API call failed within task: {:?}", e);
+                failures.push(msg);
+            }
+            Err(e) => {
+                let msg = format!("Task panicked: {:?}", e);
+                eprintln!("{}", msg);
+                failures.push(msg);
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "One or more cancelled tool execution test tasks failed:\n{}",
+            failures.join("\n")
+        );
+    }
 }

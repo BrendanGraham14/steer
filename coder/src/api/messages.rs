@@ -255,12 +255,10 @@ pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Mess
                 }
             }
             crate::app::conversation::Role::Tool => {
-                // Group consecutive Tool messages into a single API user message
+                // Preserve Tool role - let each provider handle the conversion
                 let mut tool_results = Vec::new();
-                // Use the ID of the first tool message in the sequence for the API message ID
-                let first_tool_msg_id = app_msg.id.clone();
 
-                // Process the first tool message's blocks
+                // Process all blocks in this Tool message
                 for block in &app_msg.content_blocks {
                     if let crate::app::conversation::MessageContentBlock::ToolResult {
                         tool_use_id,
@@ -282,53 +280,18 @@ pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Mess
                             is_error: if is_error { Some(true) } else { None },
                         });
                     } else {
-                        error!(target: "messages.convert_conversation", "Message ID {} (part of Tool group) has unexpected content block: {:?}", app_msg.id, block);
+                        error!(target: "messages.convert_conversation", "Message ID {} has unexpected content block in Tool message: {:?}", app_msg.id, block);
                     }
                 }
 
-                // Peek ahead and consume subsequent Tool messages
-                while let Some(next_msg) = app_messages_iter.peek() {
-                    if next_msg.role == crate::app::conversation::Role::Tool {
-                        // Consume the message from the iterator
-                        let consumed_msg = app_messages_iter.next().unwrap(); // Safe due to peek
-                        // Process all blocks within the consumed tool message
-                        for block in &consumed_msg.content_blocks {
-                            if let crate::app::conversation::MessageContentBlock::ToolResult {
-                                tool_use_id,
-                                result,
-                            } = block
-                            {
-                                let is_error = result.starts_with("Error:");
-                                let result_content = if result.trim().is_empty() {
-                                    "(No output)".to_string()
-                                } else {
-                                    result.clone()
-                                };
-                                tool_results.push(ContentBlock::ToolResult {
-                                    tool_use_id: tool_use_id.clone(),
-                                    content: vec![ContentBlock::Text {
-                                        text: result_content,
-                                    }],
-                                    is_error: if is_error { Some(true) } else { None },
-                                });
-                            } else {
-                                error!(target: "messages.convert_conversation", "Message ID {} (part of Tool group) has unexpected content block: {:?}", consumed_msg.id, block);
-                            }
-                        }
-                    } else {
-                        // Next message is not Role::Tool, stop grouping
-                        break;
-                    }
-                }
-
-                // Add the grouped tool results as a single API user message
+                // Only add the message if there are valid content blocks
                 if !tool_results.is_empty() {
                     api_messages.push(Message {
-                        role: MessageRole::User,
+                        role: MessageRole::Tool, // Keep as Tool role
                         content: MessageContent::StructuredContent {
                             content: StructuredContent(tool_results),
                         },
-                        id: Some(first_tool_msg_id), // Use ID of the first tool message
+                        id: Some(app_msg.id.clone()),
                     });
                 }
             }
@@ -506,7 +469,7 @@ mod tests {
         );
 
         // The tool message is converted to a user message with text content
-        assert_eq!(messages[2].role, MessageRole::User);
+        assert_eq!(messages[2].role, MessageRole::Tool);
         match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
@@ -565,7 +528,7 @@ mod tests {
         let messages = convert_conversation(&conv);
         println!("Multiple tool messages: {:?}", messages);
 
-        assert_eq!(messages.len(), 3); // Now expecting 3 messages (user, assistant, and 1 tool result)
+        assert_eq!(messages.len(), 4); // Now expecting 4 messages (user, assistant, and 2 separate tool results)
 
         assert_eq!(messages[0].role, MessageRole::User);
         assert_eq!(
@@ -575,7 +538,7 @@ mod tests {
             }
         );
 
-        // The assistant message is converted to a user message with structured content for the first tool
+        // The assistant message
         assert_eq!(messages[1].role, MessageRole::Assistant);
         assert_eq!(
             messages[1].content,
@@ -584,17 +547,17 @@ mod tests {
             }
         );
 
-        // The tool result is grouped into a single user message with StructuredContent
-        assert_eq!(messages[2].role, MessageRole::User);
+        // First tool result
+        assert_eq!(messages[2].role, MessageRole::Tool);
         match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
-                assert_eq!(array.len(), 2);
+                assert_eq!(array.len(), 1);
 
                 if let ContentBlock::ToolResult {
                     tool_use_id,
-                    content: result_blocks, // Updated field name
-                    is_error: _,            // Ignore is_error
+                    content: result_blocks,
+                    is_error: _,
                 } = &array[0]
                 {
                     assert_eq!(tool_use_id, "tool_1");
@@ -602,30 +565,40 @@ mod tests {
                     if let ContentBlock::Text { text } = &result_blocks[0] {
                         assert_eq!(text, "Result 1");
                     } else {
-                        panic!("Expected inner Text block at index 0");
+                        panic!("Expected inner Text block");
                     }
                 } else {
-                    panic!("Expected ToolResult at index 0");
+                    panic!("Expected ToolResult");
                 }
+            }
+            _ => panic!("Expected StructuredContent for first tool result"),
+        }
+
+        // Second tool result
+        assert_eq!(messages[3].role, MessageRole::Tool);
+        match &messages[3].content {
+            MessageContent::StructuredContent { content } => {
+                let array = &content.0;
+                assert_eq!(array.len(), 1);
 
                 if let ContentBlock::ToolResult {
                     tool_use_id,
-                    content: result_blocks, // Updated field name
-                    is_error: _,            // Ignore is_error
-                } = &array[1]
+                    content: result_blocks,
+                    is_error: _,
+                } = &array[0]
                 {
                     assert_eq!(tool_use_id, "tool_2");
                     assert_eq!(result_blocks.len(), 1);
                     if let ContentBlock::Text { text } = &result_blocks[0] {
                         assert_eq!(text, "Result 2");
                     } else {
-                        panic!("Expected inner Text block at index 1");
+                        panic!("Expected inner Text block");
                     }
                 } else {
-                    panic!("Expected ToolResult at index 1");
+                    panic!("Expected ToolResult");
                 }
             }
-            _ => panic!("Expected StructuredContent for grouped tool results"),
+            _ => panic!("Expected StructuredContent for second tool result"),
         }
     }
 
@@ -673,7 +646,7 @@ mod tests {
         );
 
         // Third message is the tool message converted to text
-        assert_eq!(messages[2].role, MessageRole::User);
+        assert_eq!(messages[2].role, MessageRole::Tool);
         assert_eq!(
             messages[2].content,
             MessageContent::StructuredContent {
@@ -747,8 +720,8 @@ mod tests {
             _ => panic!("Expected StructuredContent"),
         }
 
-        // Tool message is preserved as a user message with readable format
-        assert_eq!(messages[2].role, MessageRole::User);
+        // Tool message is preserved as a Tool message with structured content
+        assert_eq!(messages[2].role, MessageRole::Tool);
         match &messages[2].content {
             MessageContent::StructuredContent { content } => {
                 let array = &content.0;
