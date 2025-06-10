@@ -9,7 +9,7 @@ use crate::config::LlmConfig;
 use crate::session::state::WorkspaceConfig;
 use crate::session::{
     manager::SessionManager,
-    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy},
+    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility},
 };
 
 /// Contains the result of a single agent run, including the final assistant message
@@ -99,10 +99,15 @@ impl OneShotRunner {
         tool_policy: Option<ToolApprovalPolicy>,
     ) -> Result<RunOnceResult> {
         // 1. Create ephemeral session with specified tool policy
+        let mut final_tool_config = tool_config.unwrap_or_default();
+        // Apply the tool policy if provided
+        if let Some(policy) = tool_policy {
+            final_tool_config.approval_policy = policy;
+        }
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: tool_policy.unwrap_or(ToolApprovalPolicy::AlwaysAsk), // Default to asking for approval
-            tool_config: tool_config.unwrap_or_default(),
+            tool_config: final_tool_config,
             metadata: [
                 ("mode".to_string(), "headless".to_string()),
                 ("ephemeral".to_string(), "true".to_string()),
@@ -306,7 +311,7 @@ mod tests {
     fn create_test_tool_approval_policy() -> ToolApprovalPolicy {
         let tools = read_only_workspace_tools();
         let tool_names = tools.iter().map(|t| t.name().to_string()).collect();
-        ToolApprovalPolicy::PreApproved(tool_names)
+        ToolApprovalPolicy::PreApproved { tools: tool_names }
     }
 
     #[tokio::test]
@@ -363,10 +368,12 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         // Create a session with custom config
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.approval_policy = create_test_tool_approval_policy();
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: create_test_tool_approval_policy(),
-            tool_config: SessionToolConfig::read_only(),
+            tool_config,
             metadata: [("test".to_string(), "value".to_string())].into(),
         };
 
@@ -391,7 +398,8 @@ mod tests {
             session.config.metadata.get("test"),
             Some(&"value".to_string())
         );
-        assert_eq!(session.config.tool_config.backends.len(), 1);
+        assert_eq!(session.config.tool_config.backends.len(), 0); // read_only() uses default backends
+        assert!(matches!(session.config.tool_config.visibility, ToolVisibility::ReadOnly));
     }
 
     #[tokio::test]
@@ -400,10 +408,12 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         // Create a session
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.approval_policy = create_test_tool_approval_policy();
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: create_test_tool_approval_policy(),
-            tool_config: SessionToolConfig::read_only(),
+            tool_config,
             metadata: [("test".to_string(), "api_test".to_string())].into(),
         };
 
@@ -466,13 +476,13 @@ mod tests {
 
                 // First message should be the user input
                 let user_msg = &session_state.messages[0];
-                assert_eq!(user_msg.role, crate::api::messages::MessageRole::User);
+                assert_eq!(user_msg.role, crate::app::conversation::Role::User);
 
                 // Last message should be the assistant response
                 let assistant_msg = &session_state.messages[session_state.messages.len() - 1];
                 assert_eq!(
                     assistant_msg.role,
-                    crate::api::messages::MessageRole::Assistant
+                    crate::app::conversation::Role::Assistant
                 );
             }
             Err(e) => {
@@ -548,10 +558,12 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         // Create a session
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.approval_policy = ToolApprovalPolicy::PreApproved { tools: HashSet::new() };
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: ToolApprovalPolicy::PreApproved(HashSet::new()),
-            tool_config: SessionToolConfig::read_only(),
+            tool_config,
             metadata: [("test".to_string(), "no_timeout_test".to_string())].into(),
         };
 
@@ -628,10 +640,12 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         // Create a session
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.approval_policy = ToolApprovalPolicy::PreApproved { tools: HashSet::new() };
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: ToolApprovalPolicy::PreApproved(HashSet::new()),
-            tool_config: SessionToolConfig::read_only(),
+            tool_config,
             metadata: [("test".to_string(), "polling_test".to_string())].into(),
         };
 
@@ -673,8 +687,10 @@ mod tests {
             if !updated_state.messages.is_empty() {
                 // Found the message, verify it's correct
                 let first_msg = &updated_state.messages[0];
-                assert_eq!(first_msg.role, crate::api::messages::MessageRole::User);
-                if let crate::api::messages::MessageContent::Text { content } = &first_msg.content {
+                assert_eq!(first_msg.role, crate::app::conversation::Role::User);
+                if let crate::app::conversation::MessageContentBlock::Text(content) =
+                    &first_msg.content_blocks[0]
+                {
                     assert_eq!(content, "Test");
                 } else {
                     panic!("Expected text content");
@@ -697,10 +713,12 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         // Create a session
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.approval_policy = ToolApprovalPolicy::PreApproved { tools: HashSet::new() };
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: ToolApprovalPolicy::PreApproved(HashSet::new()),
-            tool_config: SessionToolConfig::read_only(),
+            tool_config,
             metadata: [("test".to_string(), "context_test".to_string())].into(),
         };
 
@@ -743,8 +761,10 @@ mod tests {
 
         // The first message should be the user input we sent
         let first_msg = &state_after.messages[0];
-        assert_eq!(first_msg.role, crate::api::messages::MessageRole::User);
-        if let crate::api::messages::MessageContent::Text { content } = &first_msg.content {
+        assert_eq!(first_msg.role, crate::app::conversation::Role::User);
+        if let crate::app::conversation::MessageContentBlock::Text(content) =
+            &first_msg.content_blocks[0]
+        {
             assert_eq!(content, "What is my name?");
         } else {
             panic!("Expected text content for user message");
@@ -797,10 +817,12 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         // Create a session
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.approval_policy = create_test_tool_approval_policy();
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: create_test_tool_approval_policy(),
-            tool_config: SessionToolConfig::read_only(),
+            tool_config,
             metadata: [("test".to_string(), "context_test".to_string())].into(),
         };
 
@@ -878,7 +900,7 @@ mod tests {
 
         println!("Session has {} messages", session_state.messages.len());
         for (i, msg) in session_state.messages.iter().enumerate() {
-            println!("Message {}: {:?} - {:?}", i, msg.role, msg.content);
+            println!("Message {}: {:?} - {} blocks", i, msg.role, msg.content_blocks.len());
         }
     }
 }

@@ -115,6 +115,7 @@ pub struct App {
     approved_tools: HashSet<String>, // Tracks tools approved with "Always" for the session
     current_op_context: Option<OpContext>,
     current_model: Model,
+    session_config: Option<crate::session::state::SessionConfig>, // For tool visibility filtering
 }
 
 impl App {
@@ -123,6 +124,16 @@ impl App {
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
         tool_executor: Arc<ToolExecutor>,
+    ) -> Result<Self> {
+        Self::with_session_config(config, event_tx, initial_model, tool_executor, None)
+    }
+
+    pub fn with_session_config(
+        config: AppConfig,
+        event_tx: mpsc::Sender<AppEvent>,
+        initial_model: Model,
+        tool_executor: Arc<ToolExecutor>,
+        session_config: Option<crate::session::state::SessionConfig>,
     ) -> Result<Self> {
         let conversation = Arc::new(Mutex::new(Conversation::new()));
 
@@ -139,6 +150,7 @@ impl App {
             approved_tools: HashSet::new(),
             current_op_context: None,
             current_model: initial_model,
+            session_config,
         })
     }
 
@@ -258,8 +270,12 @@ impl App {
             "Spawning agent operation task...",
         );
 
-        // Get tools for the operation
-        let tool_schemas = self.tool_executor.get_tool_schemas().await;
+        // Get tools for the operation, filtered by visibility settings
+        let tool_schemas = if let Some(session_config) = &self.session_config {
+            session_config.get_agent_tools(self.tool_executor.backend_registry()).await
+        } else {
+            self.tool_executor.get_tool_schemas().await
+        };
 
         // Get mutable access to OpContext and its token
         let op_context = match &mut self.current_op_context {

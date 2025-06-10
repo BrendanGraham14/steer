@@ -174,7 +174,7 @@ async fn test_get_agent_info() {
 fn test_with_tools_constructor() {
     use tools::tools::read_only_workspace_tools;
 
-    let service = RemoteBackendService::with_tools(read_only_workspace_tools());
+    let service = RemoteBackendService::with_tools(read_only_workspace_tools()).unwrap();
     let tools = service.get_supported_tools();
 
     // Should only have read-only tools

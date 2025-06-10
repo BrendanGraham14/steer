@@ -117,7 +117,7 @@ impl Command for HeadlessCommand {
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<std::collections::HashSet<String>>();
-                    crate::session::ToolApprovalPolicy::PreApproved(all_tools)
+                    crate::session::ToolApprovalPolicy::PreApproved { tools: all_tools }
                 };
 
                 // Convert API messages to app messages

@@ -24,10 +24,15 @@ pub struct RemoteBackendService {
 impl RemoteBackendService {
     /// Create a new RemoteBackendService with the standard tool set
     pub fn new() -> Result<Self, ToolError> {
+        Self::with_tools(workspace_tools())
+    }
+
+    /// Create a new RemoteBackendService with a custom set of tools
+    pub fn with_tools(tools_list: Vec<Box<dyn Tool>>) -> Result<Self, ToolError> {
         let mut tools: HashMap<String, Box<dyn Tool>> = HashMap::new();
 
-        // Register workspace tools using the shared function
-        for tool in workspace_tools() {
+        // Register the provided tools
+        for tool in tools_list {
             tools.insert(tool.name().to_string(), tool);
         }
 

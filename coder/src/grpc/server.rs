@@ -567,6 +567,7 @@ mod tests {
     use crate::grpc::proto::agent_service_client::AgentServiceClient;
     use crate::grpc::proto::{SendMessageRequest, SubscribeRequest};
     use crate::session::stores::sqlite::SqliteSessionStore;
+    use crate::session::state::{WorkspaceConfig, ToolVisibility};
     use crate::session::{
         SessionConfig, SessionManagerConfig, SessionToolConfig, ToolApprovalPolicy,
     };
@@ -621,7 +622,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
-            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
         };
@@ -683,7 +684,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
-            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
         };
@@ -750,7 +751,7 @@ mod tests {
 
         // Create a session first
         let session_config = SessionConfig {
-            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
         };
@@ -840,7 +841,7 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
-            tool_policy: ToolApprovalPolicy::AlwaysAsk,
+            workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
             metadata: HashMap::new(),
         };

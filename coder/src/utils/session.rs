@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::session::stores::sqlite::SqliteSessionStore;
 use crate::session::{
     Session,
-    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig},
+    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility, WorkspaceConfig},
     store::SessionStore,
 };
 
@@ -37,7 +37,6 @@ pub async fn create_session_store() -> Result<Arc<dyn SessionStore>> {
 pub fn create_default_session_config() -> SessionConfig {
     SessionConfig {
         workspace: WorkspaceConfig::default(),
-        tool_policy: ToolApprovalPolicy::AlwaysAsk,
         tool_config: SessionToolConfig::default(),
         metadata: HashMap::new(),
     }
@@ -57,7 +56,7 @@ pub fn parse_tool_policy(
                     "pre_approved_tools is required when using pre_approved policy"
                 ));
             };
-            Ok(ToolApprovalPolicy::PreApproved(tools))
+            Ok(ToolApprovalPolicy::PreApproved { tools })
         }
         "mixed" => {
             let tools = if let Some(tools_str) = pre_approved_tools {
@@ -96,10 +95,12 @@ pub fn parse_metadata(metadata_str: Option<&str>) -> Result<HashMap<String, Stri
 }
 
 pub fn create_mock_session(id: &str, tool_policy: ToolApprovalPolicy) -> Session {
+    let mut tool_config = SessionToolConfig::default();
+    tool_config.approval_policy = tool_policy;
+    
     let config = SessionConfig {
         workspace: WorkspaceConfig::default(),
-        tool_policy,
-        tool_config: SessionToolConfig::default(),
+        tool_config,
         metadata: std::collections::HashMap::new(),
     };
     Session::new(id.to_string(), config)

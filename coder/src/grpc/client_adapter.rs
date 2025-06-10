@@ -46,7 +46,7 @@ impl GrpcClientAdapter {
     pub async fn create_session(&mut self, config: SessionConfig) -> Result<String> {
         debug!("Creating new session with gRPC server");
 
-        let tool_policy = convert_tool_approval_policy(&config.tool_policy);
+        let tool_policy = convert_tool_approval_policy(&config.tool_config.approval_policy);
 
         let request = Request::new(CreateSessionRequest {
             tool_policy: Some(tool_policy),
@@ -329,7 +329,7 @@ fn convert_tool_approval_policy(
             timeout_ms: None,
             default_decision: ApprovalDecision::Deny as i32,
         }),
-        ToolApprovalPolicy::PreApproved(tools) => Policy::PreApproved(PreApprovedPolicy {
+        ToolApprovalPolicy::PreApproved { tools } => Policy::PreApproved(PreApprovedPolicy {
             tools: tools.iter().cloned().collect(),
         }),
         ToolApprovalPolicy::Mixed {
@@ -361,7 +361,7 @@ mod tests {
 
         let mut tools = std::collections::HashSet::new();
         tools.insert("bash".to_string());
-        let policy = ToolApprovalPolicy::PreApproved(tools);
+        let policy = ToolApprovalPolicy::PreApproved { tools };
         let proto_policy = convert_tool_approval_policy(&policy);
         assert!(matches!(proto_policy.policy, Some(Policy::PreApproved(_))));
     }

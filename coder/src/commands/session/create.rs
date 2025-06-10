@@ -26,10 +26,12 @@ impl Command for CreateSessionCommand {
         let session_metadata = parse_metadata(self.metadata.as_deref())?;
 
         // TODO: Allow customizing from CLI args, a file, and/or env vars
+        let mut tool_config = SessionToolConfig::default();
+        tool_config.approval_policy = policy;
+        
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: policy,
-            tool_config: SessionToolConfig::default(),
+            tool_config,
             metadata: session_metadata,
         };
 

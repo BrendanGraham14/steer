@@ -19,6 +19,7 @@ use crate::session::{
     SessionStatus, SessionStore, SessionStoreError, ToolApprovalPolicy, ToolCallState,
     ToolCallStatus, ToolCallUpdate, ToolResult,
 };
+use crate::session::state::ToolVisibility;
 
 /// SQLite implementation of SessionStore
 pub struct SqliteSessionStore {
@@ -72,9 +73,9 @@ impl SqliteSessionStore {
 
         match policy_type {
             "always_ask" => Ok(ToolApprovalPolicy::AlwaysAsk),
-            "pre_approved" => Ok(ToolApprovalPolicy::PreApproved(
-                pre_approved.into_iter().collect(),
-            )),
+            "pre_approved" => Ok(ToolApprovalPolicy::PreApproved {
+                tools: pre_approved.into_iter().collect(),
+            }),
             "mixed" => Ok(ToolApprovalPolicy::Mixed {
                 pre_approved: pre_approved.into_iter().collect(),
                 ask_for_others: true,
@@ -90,7 +91,7 @@ impl SqliteSessionStore {
     fn serialize_tool_policy(policy: &ToolApprovalPolicy) -> (String, String) {
         match policy {
             ToolApprovalPolicy::AlwaysAsk => ("always_ask".to_string(), "[]".to_string()),
-            ToolApprovalPolicy::PreApproved(tools) => {
+            ToolApprovalPolicy::PreApproved { tools } => {
                 let tools_vec: Vec<String> = tools.iter().cloned().collect();
                 (
                     "pre_approved".to_string(),
@@ -113,7 +114,7 @@ impl SessionStore for SqliteSessionStore {
     async fn create_session(&self, config: SessionConfig) -> Result<Session, SessionStoreError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
-        let (policy_type, pre_approved_json) = Self::serialize_tool_policy(&config.tool_policy);
+        let (policy_type, pre_approved_json) = Self::serialize_tool_policy(&config.tool_config.approval_policy);
         let metadata_json = serde_json::to_string(&config.metadata).map_err(|e| {
             SessionStoreError::serialization(format!("Failed to serialize metadata: {}", e))
         })?;
@@ -171,7 +172,7 @@ impl SessionStore for SqliteSessionStore {
             return Ok(None);
         };
 
-        let tool_policy = Self::parse_tool_policy(
+        let approval_policy = Self::parse_tool_policy(
             &row.get::<String, _>("tool_policy_type"),
             &row.get::<String, _>("pre_approved_tools"),
         )?;
@@ -188,9 +189,11 @@ impl SessionStore for SqliteSessionStore {
                 SessionStoreError::serialization(format!("Invalid workspace_config: {}", e))
             })?;
 
+        let mut tool_config: crate::session::SessionToolConfig = tool_config;
+        tool_config.approval_policy = approval_policy;
+        
         let config = SessionConfig {
             workspace: workspace_config,
-            tool_policy,
             tool_config,
             metadata,
         };
@@ -303,7 +306,7 @@ impl SessionStore for SqliteSessionStore {
                 ))
             })?;
         let (policy_type, pre_approved_json) =
-            Self::serialize_tool_policy(&session.config.tool_policy);
+            Self::serialize_tool_policy(&session.config.tool_config.approval_policy);
 
         sqlx::query(
             r#"
@@ -839,9 +842,10 @@ impl SessionStore for SqliteSessionStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::api::messages::{MessageContent, MessageRole};
     use crate::api::{Model, ToolCall};
     use crate::events::SessionMetadata;
+    use crate::session::state::WorkspaceConfig;
+    use crate::app::conversation::{MessageContentBlock, Role};
 
     use super::*;
     use tempfile::TempDir;
@@ -854,10 +858,13 @@ mod tests {
     }
 
     fn create_test_session_config() -> SessionConfig {
+        let mut tool_config = crate::session::SessionToolConfig::default();
+        tool_config.approval_policy = ToolApprovalPolicy::AlwaysAsk;
+        tool_config.visibility = ToolVisibility::All;
+        
         SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: ToolApprovalPolicy::AlwaysAsk,
-            tool_config: crate::session::SessionToolConfig::default(),
+            tool_config,
             metadata: std::collections::HashMap::new(),
         }
     }
@@ -866,10 +873,12 @@ mod tests {
     async fn test_create_and_get_session() {
         let (store, _temp) = create_test_store().await;
 
+        let mut tool_config = crate::session::SessionToolConfig::default();
+        tool_config.approval_policy = ToolApprovalPolicy::AlwaysAsk;
+        
         let config = SessionConfig {
             workspace: WorkspaceConfig::default(),
-            tool_policy: ToolApprovalPolicy::AlwaysAsk,
-            tool_config: Default::default(),
+            tool_config,
             metadata: Default::default(),
         };
 
@@ -879,7 +888,7 @@ mod tests {
         let fetched_session = store.get_session(&session.id).await.unwrap().unwrap();
         assert_eq!(session.id, fetched_session.id);
         assert!(matches!(
-            fetched_session.config.tool_policy,
+            fetched_session.config.tool_config.approval_policy,
             ToolApprovalPolicy::AlwaysAsk
         ));
         assert!(matches!(
@@ -896,18 +905,17 @@ mod tests {
         let session = store.create_session(config).await.unwrap();
 
         let message = Message {
-            id: Some("msg1".to_string()),
-            role: MessageRole::User,
-            content: MessageContent::Text {
-                content: "Hello".to_string(),
-            },
+            id: "msg1".to_string(),
+            role: Role::User,
+            content_blocks: vec![MessageContentBlock::Text("Hello".to_string())],
+            timestamp: 123456789,
         };
 
         store.append_message(&session.id, &message).await.unwrap();
 
         let messages = store.get_messages(&session.id, None).await.unwrap();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, MessageRole::User);
+        assert_eq!(messages[0].role, Role::User);
     }
 
     #[tokio::test]
@@ -1005,11 +1013,10 @@ mod tests {
         let claude_model = Model::Claude3_5Sonnet20241022;
         let message_event = StreamEvent::MessageComplete {
             message: Message {
-                id: Some("msg1".to_string()),
-                role: MessageRole::Assistant,
-                content: MessageContent::Text {
-                    content: "Hello from Claude".to_string(),
-                },
+                id: "msg1".to_string(),
+                role: Role::Assistant,
+                content_blocks: vec![MessageContentBlock::Text("Hello from Claude".to_string())],
+                timestamp: 123456789,
             },
             usage: None,
             metadata: std::collections::HashMap::new(),

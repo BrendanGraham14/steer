@@ -5,10 +5,9 @@ use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-use uuid;
-
-use crate::api::{Message as ApiMessage, Model};
+use crate::api::Model;
 use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
+use crate::app::conversation::{MessageContentBlock, Role};
 use tools::ToolCall;
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::state::ToolFilter;
@@ -94,8 +93,14 @@ impl ManagedSession {
             validators: Arc::new(crate::app::validation::ValidatorRegistry::new()),
         });
 
-        // Create the App instance with the configured tool executor
-        let mut app = App::new(app_config, app_event_tx, default_model, tool_executor)?;
+        // Create the App instance with the configured tool executor and session config
+        let mut app = App::with_session_config(
+            app_config,
+            app_event_tx,
+            default_model,
+            tool_executor,
+            Some(session.config.clone()),
+        )?;
 
         // Set the initial model if specified in session metadata
         if let Some(model_str) = session.config.metadata.get("initial_model") {
@@ -834,9 +839,9 @@ impl SessionManager {
                 }
                 Some(crate::grpc::proto::tool_approval_policy::Policy::PreApproved(
                     pre_approved,
-                )) => crate::session::ToolApprovalPolicy::PreApproved(
-                    pre_approved.tools.into_iter().collect(),
-                ),
+                )) => crate::session::ToolApprovalPolicy::PreApproved {
+                    tools: pre_approved.tools.into_iter().collect(),
+                },
                 Some(crate::grpc::proto::tool_approval_policy::Policy::Mixed(mixed)) => {
                     crate::session::ToolApprovalPolicy::Mixed {
                         pre_approved: mixed.pre_approved_tools.into_iter().collect(),
@@ -847,10 +852,13 @@ impl SessionManager {
             })
             .unwrap_or(crate::session::ToolApprovalPolicy::AlwaysAsk);
 
-        let tool_config = config
+        let mut tool_config = config
             .tool_config
             .map(convert_proto_tool_config)
             .unwrap_or_default();
+        
+        // Set the approval policy in the tool config
+        tool_config.approval_policy = tool_policy;
 
         let workspace_config = config
             .workspace_config
@@ -859,7 +867,6 @@ impl SessionManager {
 
         let session_config = crate::session::SessionConfig {
             workspace: workspace_config,
-            tool_policy,
             tool_config,
             metadata: config.metadata,
         };
@@ -1017,6 +1024,8 @@ fn convert_proto_tool_config(
 
     SessionToolConfig {
         backends,
+        visibility: crate::session::state::ToolVisibility::All, // Default visibility
+        approval_policy: crate::session::ToolApprovalPolicy::AlwaysAsk, // Default policy (will be overridden)
         metadata: proto_config.metadata,
     }
 }
@@ -1201,7 +1210,6 @@ mod tests {
         // Create session
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
-            tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
         };
@@ -1233,7 +1241,6 @@ mod tests {
         // Create session
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
-            tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
         };
@@ -1275,10 +1282,12 @@ mod tests {
         let app_config = create_test_app_config();
 
         // Create first session - should succeed
+        let mut tool_config = crate::session::SessionToolConfig::default();
+        tool_config.approval_policy = crate::session::ToolApprovalPolicy::AlwaysAsk;
+        
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
-            tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
-            tool_config: crate::session::SessionToolConfig::default(),
+            tool_config,
             metadata: std::collections::HashMap::new(),
         };
         let (session_id1, _command_tx) = manager
@@ -1308,7 +1317,6 @@ mod tests {
         // Create session
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
-            tool_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
             tool_config: crate::session::SessionToolConfig::default(),
             metadata: std::collections::HashMap::new(),
         };
@@ -1319,12 +1327,11 @@ mod tests {
 
         // Simulate adding messages including tool calls and results
         // First, add a user message
-        let user_message = ApiMessage {
-            id: Some("user_1".to_string()),
-            role: crate::api::messages::MessageRole::User,
-            content: crate::api::messages::MessageContent::Text {
-                content: "Read the file test.txt".to_string(),
-            },
+        let user_message = ConversationMessage {
+            id: "user_1".to_string(),
+            role: Role::User,
+            content_blocks: vec![MessageContentBlock::Text("Read the file test.txt".to_string())],
+            timestamp: 123456789,
         };
         manager
             .store
@@ -1333,21 +1340,18 @@ mod tests {
             .unwrap();
 
         // Add an assistant message with a tool call
-        let assistant_message = ApiMessage {
-            id: Some("assistant_1".to_string()),
-            role: crate::api::messages::MessageRole::Assistant,
-            content: crate::api::messages::MessageContent::StructuredContent {
-                content: crate::api::messages::StructuredContent(vec![
-                    crate::api::messages::ContentBlock::Text {
-                        text: "I'll read that file for you.".to_string(),
-                    },
-                    crate::api::messages::ContentBlock::ToolUse {
-                        id: "tool_call_1".to_string(),
-                        name: "read_file".to_string(),
-                        input: serde_json::json!({"path": "test.txt"}),
-                    },
-                ]),
-            },
+        let assistant_message = ConversationMessage {
+            id: "assistant_1".to_string(),
+            role: Role::Assistant,
+            content_blocks: vec![
+                MessageContentBlock::Text("I'll read that file for you.".to_string()),
+                MessageContentBlock::ToolCall(ToolCall {
+                    id: "tool_call_1".to_string(),
+                    name: "read_file".to_string(),
+                    parameters: serde_json::json!({"path": "test.txt"}),
+                }),
+            ],
+            timestamp: 123456790,
         };
         manager
             .store
@@ -1382,12 +1386,11 @@ mod tests {
             .unwrap();
 
         // Add a follow-up assistant message
-        let followup_message = ApiMessage {
-            id: Some("assistant_2".to_string()),
-            role: crate::api::messages::MessageRole::Assistant,
-            content: crate::api::messages::MessageContent::Text {
-                content: "The file contains: Hello, world!".to_string(),
-            },
+        let followup_message = ConversationMessage {
+            id: "assistant_2".to_string(),
+            role: Role::Assistant,
+            content_blocks: vec![MessageContentBlock::Text("The file contains: Hello, world!".to_string())],
+            timestamp: 123456791,
         };
         manager
             .store
@@ -1411,35 +1414,16 @@ mod tests {
 
         // Verify the tool result message exists and has correct content
         let tool_result_msg = &loaded_session.state.messages[2];
-        assert_eq!(
-            tool_result_msg.role,
-            crate::api::messages::MessageRole::Tool
-        );
+        assert_eq!(tool_result_msg.role, Role::Tool);
 
         // Verify the content structure
-        match &tool_result_msg.content {
-            crate::api::messages::MessageContent::StructuredContent { content } => {
-                assert_eq!(content.0.len(), 1);
-                match &content.0[0] {
-                    crate::api::messages::ContentBlock::ToolResult {
-                        tool_use_id,
-                        content,
-                        is_error,
-                    } => {
-                        assert_eq!(tool_use_id, "tool_call_1");
-                        assert_eq!(is_error, &None);
-                        assert_eq!(content.len(), 1);
-                        match &content[0] {
-                            crate::api::messages::ContentBlock::Text { text } => {
-                                assert_eq!(text, "File contents: Hello, world!");
-                            }
-                            _ => panic!("Expected Text block in tool result"),
-                        }
-                    }
-                    _ => panic!("Expected ToolResult block"),
-                }
+        assert_eq!(tool_result_msg.content_blocks.len(), 1);
+        match &tool_result_msg.content_blocks[0] {
+            MessageContentBlock::ToolResult { tool_use_id, result } => {
+                assert_eq!(tool_use_id, "tool_call_1");
+                assert!(result.contains("Hello, world!"));
             }
-            _ => panic!("Expected StructuredContent for tool result message"),
+            _ => panic!("Expected ToolResult block"),
         }
 
         // Now test resuming the session - it should work without API errors
