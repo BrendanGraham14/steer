@@ -58,9 +58,9 @@ pub enum Model {
     Claude3_7Sonnet20250219,
     #[strum(serialize = "claude-3-5-haiku-20241022")]
     Claude3_5Haiku20241022,
-    #[strum(serialize = "claude-sonnet-4-20250514")]
+    #[strum(serialize = "claude-sonnet-4-20250514", serialize = "sonnet")]
     ClaudeSonnet4_20250514,
-    #[strum(serialize = "claude-opus-4-20250514")]
+    #[strum(serialize = "claude-opus-4-20250514", serialize = "opus")]
     ClaudeOpus4_20250514,
     #[strum(serialize = "gpt-4.1-2025-04-14")]
     Gpt4_1_20250414,
@@ -68,13 +68,13 @@ pub enum Model {
     Gpt4_1Mini20250414,
     #[strum(serialize = "gpt-4.1-nano-2025-04-14")]
     Gpt4_1Nano20250414,
-    #[strum(serialize = "o3-2025-04-16")]
+    #[strum(serialize = "o3-2025-04-16", serialize = "o3")]
     O3_20250416,
     #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
     Gemini2_5FlashPreview0417,
     #[strum(serialize = "gemini-2.5-pro-preview-05-06")]
     Gemini2_5ProPreview0506,
-    #[strum(serialize = "gemini-2.5-pro-preview-06-05")]
+    #[strum(serialize = "gemini-2.5-pro-preview-06-05", serialize = "gemini")]
     Gemini2_5ProPreview0605,
 }
 
@@ -98,6 +98,16 @@ impl Model {
             | Model::Gemini2_5ProPreview0605 => ProviderKind::Google,
         }
     }
+
+    pub fn aliases(&self) -> Vec<&'static str> {
+        match self {
+            Model::ClaudeSonnet4_20250514 => vec!["sonnet"],
+            Model::ClaudeOpus4_20250514 => vec!["opus"],
+            Model::O3_20250416 => vec!["o3"],
+            Model::Gemini2_5ProPreview0605 => vec!["gemini"],
+            _ => vec![],
+        }
+    }
 }
 
 static MODEL_VARIANTS: Lazy<Vec<Model>> = Lazy::new(|| Model::iter().collect());
@@ -109,7 +119,14 @@ impl clap::ValueEnum for Model {
 
     fn to_possible_value(&self) -> Option<PossibleValue> {
         let s: &'static str = (*self).into();
-        Some(PossibleValue::new(s))
+        let pv = PossibleValue::new(s);
+        match self {
+            Model::ClaudeSonnet4_20250514 => Some(pv.alias("sonnet")),
+            Model::ClaudeOpus4_20250514 => Some(pv.alias("opus")),
+            Model::O3_20250416 => Some(pv.alias("o3")),
+            Model::Gemini2_5ProPreview0605 => Some(pv.alias("gemini")),
+            _ => Some(pv),
+        }
     }
 }
 

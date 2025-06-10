@@ -272,7 +272,9 @@ impl App {
 
         // Get tools for the operation, filtered by visibility settings
         let tool_schemas = if let Some(session_config) = &self.session_config {
-            session_config.get_agent_tools(self.tool_executor.backend_registry()).await
+            session_config
+                .get_agent_tools(self.tool_executor.backend_registry())
+                .await
         } else {
             self.tool_executor.get_tool_schemas().await
         };
@@ -488,10 +490,19 @@ impl App {
                     let available_models: Vec<String> = Model::iter()
                         .map(|m| {
                             let model_str = m.as_ref();
-                            if m == current_model {
-                                format!("* {}", model_str) // Mark current model with asterisk
+                            let aliases = m.aliases();
+                            let alias_str = if aliases.is_empty() {
+                                String::new()
+                            } else if aliases.len() == 1 {
+                                format!(" (alias: {})", aliases[0])
                             } else {
-                                format!("  {}", model_str)
+                                format!(" (aliases: {})", aliases.join(", "))
+                            };
+
+                            if m == current_model {
+                                format!("* {}{}", model_str, alias_str) // Mark current model with asterisk
+                            } else {
+                                format!("  {}{}", model_str, alias_str)
                             }
                         })
                         .collect();
@@ -588,7 +599,8 @@ impl App {
                     Role::Tool,
                     vec![MessageContentBlock::ToolResult {
                         tool_use_id: tool_call.id.clone(),
-                        result: "Tool execution was cancelled by user before completion.".to_string(),
+                        result: "Tool execution was cancelled by user before completion."
+                            .to_string(),
                     }],
                 );
 
@@ -924,7 +936,7 @@ async fn handle_app_command(
 
         AppCommand::ExecuteBashCommand { command } => {
             debug!(target: "handle_app_command", "Executing bash command: {}", command);
-            
+
             // Create a tool call for the bash command
             let tool_call = ToolCall {
                 id: format!("bash_{}", uuid::Uuid::new_v4()),
@@ -933,17 +945,21 @@ async fn handle_app_command(
                     "command": command,
                 }),
             };
-            
+
             // Create a cancellation token for the execution
             let token = CancellationToken::new();
-            
+
             // Execute the bash tool directly (bypassing validation)
-            match app.tool_executor.execute_tool_direct(&tool_call, token).await {
+            match app
+                .tool_executor
+                .execute_tool_direct(&tool_call, token)
+                .await
+            {
                 Ok(output) => {
                     // Parse the output to extract stdout/stderr/exit code
                     // The bash tool returns output in a specific format
                     let (stdout, stderr, exit_code) = parse_bash_output(&output);
-                    
+
                     // Add the command execution as a message
                     let message = Message::new_with_blocks(
                         Role::User,
@@ -958,7 +974,7 @@ async fn handle_app_command(
                 }
                 Err(e) => {
                     error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
-                    
+
                     // Add error as a command execution with error output
                     let message = Message::new_with_blocks(
                         Role::User,
@@ -1237,17 +1253,17 @@ fn parse_bash_output(output: &str) -> (String, String, i32) {
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = -1;
-        
+
         let lines: Vec<&str> = output.lines().collect();
         let mut i = 0;
-        
+
         // Extract exit code from first line
         if let Some(first_line) = lines.get(0) {
             if let Some(code_str) = first_line.strip_prefix("Command failed with exit code ") {
                 exit_code = code_str.parse().unwrap_or(-1);
             }
         }
-        
+
         // Find stdout section
         while i < lines.len() {
             if lines[i] == "--- STDOUT ---" {
@@ -1272,7 +1288,7 @@ fn parse_bash_output(output: &str) -> (String, String, i32) {
                 i += 1;
             }
         }
-        
+
         (stdout, stderr, exit_code)
     } else {
         // Success case - output is just stdout
