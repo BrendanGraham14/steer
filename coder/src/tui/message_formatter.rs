@@ -63,6 +63,9 @@ pub fn format_message(
             } => {
                 format_command_execution_block(command, stdout, stderr, *exit_code, terminal_width)
             }
+            MessageContentBlock::Thought(thought_content) => {
+                format_thought_block(&thought_content.display_text(), terminal_width)
+            }
         };
         formatted_lines.extend(block_lines);
         formatted_lines.push(Line::raw(""));
@@ -464,4 +467,94 @@ pub fn format_command_execution_block(
     }
 
     lines
+}
+
+fn format_thought_block(text: &str, terminal_width: u16) -> Vec<Line<'static>> {
+    if text.trim().is_empty() {
+        return vec![];
+    }
+
+    let thought_style = Style::default()
+        .fg(Color::Gray)
+        .add_modifier(Modifier::ITALIC);
+
+    let mut content_lines = Vec::new();
+    let prefix = "│ ";
+    let indent_width = 2;
+
+    // Calculate wrap width from terminal width
+    let wrap_width = (terminal_width as usize).saturating_sub(4 + indent_width);
+    let effective_wrap_width = wrap_width.max(20);
+
+    // Use tui-markdown to render the markdown content
+    let md_text = tui_markdown::from_str(text);
+
+    // Process and format each line of the markdown-rendered thought
+    for line in md_text.lines {
+        let processed_spans: Vec<Span> = line
+            .spans
+            .into_iter()
+            .map(|span| {
+                let new_style = span
+                    .style
+                    .fg(thought_style.fg.unwrap())
+                    .add_modifier(thought_style.add_modifier);
+                Span::styled(span.content, new_style)
+            })
+            .collect();
+
+        let line_text: String = processed_spans.iter().map(|s| s.content.as_ref()).collect();
+        let heuristic_skip_wrap = line_text.len() <= effective_wrap_width
+            || line_text.starts_with("    ")
+            || line_text.starts_with('\t');
+
+        if heuristic_skip_wrap {
+            let owned_spans: Vec<Span<'static>> = processed_spans
+                .into_iter()
+                .map(|span| Span::styled(span.content.to_string(), span.style))
+                .collect();
+            let mut indented_spans = vec![Span::styled(prefix, thought_style)];
+            indented_spans.extend(owned_spans);
+            content_lines.push(Line::from(indented_spans));
+        } else {
+            let style_to_apply = processed_spans.first().map_or(thought_style, |s| s.style);
+            let wrapped_text_lines = textwrap::wrap(&line_text, effective_wrap_width);
+
+            for wrapped_segment in &wrapped_text_lines {
+                content_lines.push(Line::from(vec![
+                    Span::styled(prefix, thought_style),
+                    Span::styled(wrapped_segment.to_string(), style_to_apply),
+                ]));
+            }
+            if line_text.is_empty() && wrapped_text_lines.is_empty() {
+                content_lines.push(Line::from(Span::styled(prefix, thought_style)));
+            }
+        }
+    }
+
+    // Determine the width for the box borders based on content
+    let header_text = " Thought ";
+    let min_width = header_text.len();
+    let max_content_width = content_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    // The width of the content lines includes the prefix ("│ "), so we subtract its width for the inner box calculation
+    let inner_box_width = max_content_width
+        .saturating_sub(indent_width)
+        .max(min_width);
+
+    // Assemble the final block with borders
+    let mut final_lines = Vec::new();
+    let header_padding = "─".repeat(inner_box_width.saturating_sub(header_text.len()));
+    final_lines.push(Line::from(Span::styled(
+        format!("┌─{}{}", header_text, header_padding),
+        thought_style,
+    )));
+
+    final_lines.extend(content_lines);
+
+    final_lines.push(Line::from(Span::styled(
+        format!("└{}", "─".repeat(inner_box_width + 1)), // +1 for the corner
+        thought_style,
+    )));
+
+    final_lines
 }

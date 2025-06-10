@@ -899,7 +899,9 @@ impl Tui {
         };
         let input_title: String = match input_mode {
             InputMode::Editing => "Input (Esc to stop editing, Enter to send)".to_string(),
-            InputMode::Normal => "Input (i to edit, ! for bash command, Enter to send, Ctrl+C to exit)".to_string(),
+            InputMode::Normal => {
+                "Input (i to edit, ! for bash command, Enter to send, Ctrl+C to exit)".to_string()
+            }
             InputMode::BashCommand => "Bash Command (Enter to execute, Esc to cancel)".to_string(),
             InputMode::AwaitingApproval => {
                 // Update title based on current approval info
@@ -1022,10 +1024,6 @@ impl Tui {
                 // Hide cursor if it would be outside the box (e.g., during scrolling)
                 f.set_cursor_position(Position { x: 0, y: 0 });
             }
-        } else {
-            // Explicitly hide cursor when not in editing mode by positioning it at (0,0)
-            // This prevents cursor artifacts during scrolling
-            f.set_cursor_position(Position { x: 0, y: 0 });
         }
 
         Ok(())

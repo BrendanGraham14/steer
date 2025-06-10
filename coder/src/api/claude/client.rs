@@ -59,6 +59,25 @@ pub struct AnthropicClient {
     http_client: reqwest::Client,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum ThinkingType {
+    Enabled,
+}
+
+impl Default for ThinkingType {
+    fn default() -> Self {
+        Self::Enabled
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Thinking {
+    #[serde(rename = "type", default)]
+    thinking_type: ThinkingType,
+    budget_tokens: u32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct CompletionRequest {
     model: String,
@@ -76,6 +95,8 @@ struct CompletionRequest {
     top_k: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<Thinking>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -134,6 +155,23 @@ pub enum ClaudeContentBlock {
         cache_control: Option<CacheControl>,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking {
+        data: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
@@ -227,42 +265,74 @@ fn convert_content(content: ApiMessageContent) -> Result<ClaudeMessageContent, A
 fn convert_structured_content(
     structured: ApiStructuredContent,
 ) -> Result<ClaudeStructuredContent, ApiError> {
-    let converted_blocks: Result<Vec<ClaudeContentBlock>, ApiError> =
-        structured.0.into_iter().map(convert_block).collect();
+    let converted_blocks: Vec<ClaudeContentBlock> = structured
+        .0
+        .into_iter()
+        .map(convert_block)
+        .collect::<Result<Vec<Option<ClaudeContentBlock>>, ApiError>>()?
+        .into_iter()
+        .filter_map(|block| block)
+        .collect();
 
-    converted_blocks.map(ClaudeStructuredContent)
+    Ok(ClaudeStructuredContent(converted_blocks))
 }
 
-fn convert_block(block: ContentBlock) -> Result<ClaudeContentBlock, ApiError> {
+fn convert_block(block: ContentBlock) -> Result<Option<ClaudeContentBlock>, ApiError> {
     match block {
-        ContentBlock::Text { text } => Ok(ClaudeContentBlock::Text {
+        ContentBlock::Text { text } => Ok(Some(ClaudeContentBlock::Text {
             text,
             cache_control: None,
             extra: Default::default(),
-        }),
-        ContentBlock::ToolUse { id, name, input } => Ok(ClaudeContentBlock::ToolUse {
+        })),
+        ContentBlock::ToolUse { id, name, input } => Ok(Some(ClaudeContentBlock::ToolUse {
             id,
             name,
             input,
             cache_control: None,
             extra: Default::default(),
-        }),
+        })),
         ContentBlock::ToolResult {
             tool_use_id,
             content,
             is_error,
         } => {
-            let claude_inner_content: Result<Vec<ClaudeContentBlock>, ApiError> =
-                content.into_iter().map(convert_block).collect();
+            let claude_inner_content: Vec<ClaudeContentBlock> = content
+                .into_iter()
+                .map(convert_block)
+                .collect::<Result<Vec<Option<ClaudeContentBlock>>, ApiError>>()?
+                .into_iter()
+                .filter_map(|block| block)
+                .collect();
 
-            claude_inner_content.map(|inner_blocks| ClaudeContentBlock::ToolResult {
+            Ok(Some(ClaudeContentBlock::ToolResult {
                 tool_use_id,
-                content: inner_blocks,
+                content: claude_inner_content,
                 is_error,
                 cache_control: None,
                 extra: Default::default(),
-            })
+            }))
         }
+        ContentBlock::Thought { content } => match content {
+            crate::api::messages::ThoughtContent::Signed { text, signature } => {
+                Ok(Some(ClaudeContentBlock::Thinking {
+                    thinking: text,
+                    signature,
+                    cache_control: None,
+                    extra: Default::default(),
+                }))
+            }
+            crate::api::messages::ThoughtContent::Redacted { data } => {
+                Ok(Some(ClaudeContentBlock::RedactedThinking {
+                    data,
+                    cache_control: None,
+                    extra: Default::default(),
+                }))
+            }
+            crate::api::messages::ThoughtContent::Simple { text } => {
+                warn!("Unexpected thought content received in Claude response content");
+                Ok(None)
+            }
+        },
     }
 }
 // Conversion functions end
@@ -280,6 +350,19 @@ fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<Content
                 warn!("Unexpected ToolResult block received in Claude response content");
                 None
             }
+            ClaudeContentBlock::Thinking {
+                thinking,
+                signature,
+                ..
+            } => Some(ContentBlock::Thought {
+                content: crate::api::messages::ThoughtContent::Signed {
+                    text: thinking,
+                    signature,
+                },
+            }),
+            ClaudeContentBlock::RedactedThinking { data, .. } => Some(ContentBlock::Thought {
+                content: crate::api::messages::ThoughtContent::Redacted { data },
+            }),
             ClaudeContentBlock::Unknown => {
                 warn!("Unknown content block received in Claude response content");
                 None
@@ -336,19 +419,44 @@ impl Provider for AnthropicClient {
             }
         }
 
-        let request = CompletionRequest {
-            model: model.as_ref().to_string(),
-            messages: claude_messages,
-            max_tokens: 4000,
-            system,
-            tools,
-            temperature: Some(0.7),
-            top_p: None,
-            top_k: None,
-            stream: None,
+        let request = if model.supports_thinking() {
+            let thinking = Some(Thinking {
+                thinking_type: ThinkingType::Enabled,
+                budget_tokens: 4000,
+            });
+            CompletionRequest {
+                model: model.as_ref().to_string(),
+                messages: claude_messages,
+                max_tokens: 32_000,
+                system,
+                tools,
+                temperature: Some(1.0),
+                top_p: None,
+                top_k: None,
+                stream: None,
+                thinking,
+            }
+        } else {
+            CompletionRequest {
+                model: model.as_ref().to_string(),
+                messages: claude_messages,
+                max_tokens: 8000,
+                system,
+                tools,
+                temperature: Some(0.7),
+                top_p: None,
+                top_k: None,
+                stream: None,
+                thinking: None,
+            }
         };
 
-        let request_builder = self.http_client.post(API_URL).json(&request);
+        let mut request_builder = self.http_client.post(API_URL).json(&request);
+
+        if model == Model::ClaudeSonnet4_20250514 || model == Model::ClaudeOpus4_20250514 {
+            request_builder =
+                request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
+        }
 
         let response = tokio::select! {
             biased;
@@ -357,7 +465,7 @@ impl Provider for AnthropicClient {
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             res = request_builder.send() => {
-                res.map_err(ApiError::Network)?
+                res?
             }
         };
 
@@ -377,7 +485,7 @@ impl Provider for AnthropicClient {
                     return Err(ApiError::Cancelled{ provider: self.name().to_string()});
                 }
                 text_res = response.text() => {
-                    text_res.map_err(ApiError::Network)?
+                    text_res?
                 }
             };
             return Err(match status.as_u16() {
@@ -413,10 +521,10 @@ impl Provider for AnthropicClient {
             biased;
             _ = token.cancelled() => {
                 debug!(target: "claude::complete", "Cancellation token triggered while reading successful response body.");
-                return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+                return Err(ApiError::Cancelled { provider: self.name().to_string() });
             }
             text_res = response.text() => {
-                text_res.map_err(ApiError::Network)?
+                text_res?
             }
         };
 

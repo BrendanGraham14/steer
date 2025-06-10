@@ -42,12 +42,12 @@ impl MessageContent {
             MessageContent::StructuredContent { content } => content
                 .0
                 .iter()
-                .filter_map(|block| {
-                    if let ContentBlock::Text { text } = block {
-                        Some(text.clone())
-                    } else {
-                        None
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    ContentBlock::Thought { content } => {
+                        Some(format!("[Thought: {}]", content.display_text()))
                     }
+                    _ => None,
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -59,6 +59,32 @@ impl MessageContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(transparent)]
 pub struct StructuredContent(pub Vec<ContentBlock>);
+
+/// Different types of thought content from AI models
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "thought_type")]
+pub enum ThoughtContent {
+    /// Simple thought content (e.g., from Gemini)
+    #[serde(rename = "simple")]
+    Simple { text: String },
+    /// Claude-style thinking with signature
+    #[serde(rename = "signed")]
+    Signed { text: String, signature: String },
+    /// Claude-style redacted thinking
+    #[serde(rename = "redacted")]
+    Redacted { data: String },
+}
+
+impl ThoughtContent {
+    /// Extract displayable text from any thought type
+    pub fn display_text(&self) -> String {
+        match self {
+            ThoughtContent::Simple { text } => text.clone(),
+            ThoughtContent::Signed { text, .. } => text.clone(),
+            ThoughtContent::Redacted { .. } => "[Redacted Thinking]".to_string(),
+        }
+    }
+}
 
 /// Different types of content blocks used in structured messages
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -92,6 +118,13 @@ pub enum ContentBlock {
     Text {
         /// Text content in this block
         text: String,
+    },
+
+    /// Thought content from the model's reasoning process
+    #[serde(rename = "thought")]
+    Thought {
+        /// The thought content with provider-specific details
+        content: ThoughtContent,
     },
 }
 
@@ -131,6 +164,9 @@ pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Mess
                         {
                             error!("Unexpected tool call or result block found in User message ID: {}", app_msg.id);
                             None
+                        }
+                        crate::app::conversation::MessageContentBlock::Thought(thought_content) => {
+                            Some(format!("[Thought: {}]", thought_content.display_text()))
                         }
                     })
                     .collect::<Vec<_>>()
@@ -176,6 +212,14 @@ pub fn convert_conversation(conversation: &crate::app::Conversation) -> Vec<Mess
                             // Assistant should not have CommandExecution blocks
                             error!(target: "messages.convert_conversation", "Unexpected CommandExecution block found in Assistant message ID: {}", app_msg.id);
                             None // Skip this invalid block
+                        }
+                        crate::app::conversation::MessageContentBlock::Thought(thought_content) => {
+                            // Include thought block only if it has content
+                            if thought_content.display_text().trim().is_empty() {
+                                None
+                            } else {
+                                Some(ContentBlock::Thought { content: thought_content.clone() })
+                            }
                         }
                     }
                 }).collect();
@@ -349,6 +393,12 @@ pub fn convert_api_content_to_message_content(
                 content,
                 is_error,
             }),
+            crate::api::ContentBlock::Thought { content, .. } => {
+                // Always include thought blocks, even if empty (they might have metadata)
+                Some(ContentBlock::Thought {
+                    content: content.clone(),
+                })
+            }
         })
         .collect()
 }
@@ -732,5 +782,54 @@ mod tests {
                 content: "What about this?".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_thought_content_block_conversion() {
+        // Test that thought blocks are properly converted
+        let api_content = vec![
+            crate::api::ContentBlock::Text {
+                text: "Regular text".to_string(),
+            },
+            crate::api::ContentBlock::Thought {
+                content: ThoughtContent::Simple {
+                    text: "This is a thought".to_string(),
+                },
+            },
+        ];
+
+        let converted = convert_api_content_to_message_content(api_content);
+        assert_eq!(converted.len(), 2);
+
+        match &converted[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "Regular text"),
+            _ => panic!("Expected Text block"),
+        }
+
+        match &converted[1] {
+            ContentBlock::Thought { content } => {
+                assert_eq!(content.display_text(), "This is a thought");
+            }
+            _ => panic!("Expected Thought block"),
+        }
+    }
+
+    #[test]
+    fn test_message_content_extract_text_with_thoughts() {
+        let content = MessageContent::StructuredContent {
+            content: StructuredContent(vec![
+                ContentBlock::Text {
+                    text: "Regular text".to_string(),
+                },
+                ContentBlock::Thought {
+                    content: ThoughtContent::Simple {
+                        text: "This is a thought".to_string(),
+                    },
+                },
+            ]),
+        };
+
+        let extracted = content.extract_text();
+        assert_eq!(extracted, "Regular text\n[Thought: This is a thought]");
     }
 }

@@ -802,6 +802,11 @@ impl SessionManager {
                                         content: Some(crate::grpc::proto::message_content_block::Content::Text(content)),
                                     }
                                 }
+                                crate::app::conversation::MessageContentBlock::Thought(thought_content) => {
+                                    crate::grpc::proto::MessageContentBlock {
+                                        content: Some(crate::grpc::proto::message_content_block::Content::Text(format!("[Thought: {}]", thought_content.display_text()))),
+                                    }
+                                }
                             }).collect(),
                             created_at: Some(prost_types::Timestamp::from(
                                 std::time::UNIX_EPOCH + std::time::Duration::from_secs(

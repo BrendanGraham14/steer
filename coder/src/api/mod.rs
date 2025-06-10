@@ -108,6 +108,19 @@ impl Model {
             _ => vec![],
         }
     }
+
+    pub fn supports_thinking(&self) -> bool {
+        match self {
+            Model::Claude3_7Sonnet20250219
+            | Model::ClaudeSonnet4_20250514
+            | Model::ClaudeOpus4_20250514
+            | Model::O3_20250416
+            | Model::Gemini2_5FlashPreview0417
+            | Model::Gemini2_5ProPreview0506
+            | Model::Gemini2_5ProPreview0605 => true,
+            _ => false,
+        }
+    }
 }
 
 static MODEL_VARIANTS: Lazy<Vec<Model>> = Lazy::new(|| Model::iter().collect());

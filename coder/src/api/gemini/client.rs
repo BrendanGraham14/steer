@@ -435,6 +435,11 @@ fn convert_content_block_to_parts(
                 vec![]
             }
         }
+        ContentBlock::Thought { content, .. } => {
+            // Gemini doesn't send thought blocks in requests, they only appear in responses
+            // Convert to regular text for now
+            vec![GeminiRequestPart::Text { text: format!("[Thought: {}]", content.display_text()) }]
+        }
     }
 }
 
@@ -623,44 +628,58 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
         .parts   // Vec<GeminiResponsePart> (struct)
         .iter()
         .filter_map(|part| { // part is &GeminiResponsePart (struct)
-            // Match on the data field of the struct
-
+            // Check if this is a thought part first
             if part.thought {
                 debug!(target: "gemini::convert_response", "Received thought part: {:?}", part);
-            }
-
-            match &part.data {
-                GeminiResponsePartData::Text { text } => Some(ContentBlock::Text {
-                    text: text.clone(),
-                }),
-                GeminiResponsePartData::InlineData { inline_data } => {
-                    warn!(target: "gemini::convert_response", "Received InlineData part (MIME type: {}). Converting to placeholder text.", inline_data.mime_type);
-                    Some(ContentBlock::Text { text: format!("[Inline Data: {}]", inline_data.mime_type) })
+                // For thought parts, extract text content and create a Thought block
+                match &part.data {
+                    GeminiResponsePartData::Text { text } => {
+                        Some(ContentBlock::Thought {
+                            content: crate::api::messages::ThoughtContent::Simple {
+                                text: text.clone(),
+                            },
+                        })
+                    }
+                    _ => {
+                        warn!(target: "gemini::convert_response", "Thought part contains non-text data: {:?}", part.data);
+                        None
+                    }
                 }
-                GeminiResponsePartData::FunctionCall { function_call } => {
-                    Some(ContentBlock::ToolUse {
-                        id: uuid::Uuid::new_v4().to_string(), // Generate a synthetic ID
-                        name: function_call.name.clone(),
-                        input: function_call.args.clone(),
-                    })
-                }
-                GeminiResponsePartData::FileData { file_data } => {
-                    warn!(target: "gemini::convert_response", "Received FileData part (URI: {}). Converting to placeholder text.", file_data.file_uri);
-                    Some(ContentBlock::Text { text: format!("[File Data: {}]", file_data.file_uri) })
-                }
-                 GeminiResponsePartData::ExecutableCode { executable_code } => {
-                     info!(target: "gemini::convert_response", "Received ExecutableCode part ({}). Converting to text.",
-                          executable_code.language);
-                     Some(ContentBlock::Text {
-                         text: format!(
-                             "```{}
+            } else {
+                // Regular (non-thought) content processing
+                match &part.data {
+                    GeminiResponsePartData::Text { text } => Some(ContentBlock::Text {
+                        text: text.clone(),
+                    }),
+                    GeminiResponsePartData::InlineData { inline_data } => {
+                        warn!(target: "gemini::convert_response", "Received InlineData part (MIME type: {}). Converting to placeholder text.", inline_data.mime_type);
+                        Some(ContentBlock::Text { text: format!("[Inline Data: {}]", inline_data.mime_type) })
+                    }
+                    GeminiResponsePartData::FunctionCall { function_call } => {
+                        Some(ContentBlock::ToolUse {
+                            id: uuid::Uuid::new_v4().to_string(), // Generate a synthetic ID
+                            name: function_call.name.clone(),
+                            input: function_call.args.clone(),
+                        })
+                    }
+                    GeminiResponsePartData::FileData { file_data } => {
+                        warn!(target: "gemini::convert_response", "Received FileData part (URI: {}). Converting to placeholder text.", file_data.file_uri);
+                        Some(ContentBlock::Text { text: format!("[File Data: {}]", file_data.file_uri) })
+                    }
+                     GeminiResponsePartData::ExecutableCode { executable_code } => {
+                         info!(target: "gemini::convert_response", "Received ExecutableCode part ({}). Converting to text.",
+                              executable_code.language);
+                         Some(ContentBlock::Text {
+                             text: format!(
+                                 "```{}
 {}
 ```",
-                             executable_code.language.to_lowercase(),
-                             executable_code.code
-                         ),
-                     })
-                 }
+                                 executable_code.language.to_lowercase(),
+                                 executable_code.code
+                             ),
+                         })
+                     }
+                }
             }
         })
         .collect();

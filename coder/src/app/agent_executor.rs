@@ -146,6 +146,9 @@ impl AgentExecutor {
                             is_error,
                         });
                     }
+                    ContentBlock::Thought { content, .. } => {
+                        content_blocks.push(crate::api::messages::ContentBlock::Thought { content });
+                    }
                 }
             }
 

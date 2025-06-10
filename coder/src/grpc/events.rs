@@ -197,6 +197,9 @@ fn content_block_to_proto(
                 content: Some(message_content_block::Content::Text(text)),
             }
         },
+        AppBlock::Thought(thought_content) => MessageContentBlock {
+            content: Some(message_content_block::Content::Text(format!("[Thought: {}]", thought_content.display_text()))),
+        },
     }
 }
 

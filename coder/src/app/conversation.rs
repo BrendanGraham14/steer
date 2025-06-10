@@ -32,6 +32,7 @@ pub enum MessageContentBlock {
         stderr: String,
         exit_code: i32,
     },
+    Thought(crate::api::messages::ThoughtContent),
     // TODO: support attachments
 }
 
@@ -103,6 +104,9 @@ impl TryFrom<crate::api::messages::Message> for Message {
                                     tool_use_id,
                                     result,
                                 })
+                            }
+                            crate::api::messages::ContentBlock::Thought { content } => {
+                                Ok(MessageContentBlock::Thought(content))
                             }
                         }
                     })
@@ -200,6 +204,9 @@ impl Message {
                     }
                     output
                 }
+                MessageContentBlock::Thought(thought_content) => {
+                    format!("[Thought: {}]", thought_content.display_text())
+                },
             })
             .collect::<Vec<_>>()
             .join("\n") // Join different blocks with newline for basic representation

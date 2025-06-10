@@ -73,6 +73,13 @@ struct OpenAIFunctionCall {
     name: String,
     arguments: String, // JSON string
 }
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CompletionRequest {
@@ -87,7 +94,9 @@ struct CompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<usize>,
+    max_completion_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -250,14 +259,28 @@ impl Provider for OpenAIClient {
         let openai_messages = self.convert_messages(messages, system);
         let openai_tools = tools.map(|t| self.convert_tools(t));
 
-        let request = CompletionRequest {
-            model: model.as_ref().to_string(),
-            messages: openai_messages,
-            tools: openai_tools,
-            temperature: Some(0.7),
-            top_p: None,
-            stream: None,
-            max_tokens: Some(4000),
+        let request = if model.supports_thinking() {
+            CompletionRequest {
+                model: model.as_ref().to_string(),
+                messages: openai_messages,
+                tools: openai_tools,
+                temperature: Some(1.0),
+                top_p: None,
+                stream: None,
+                max_completion_tokens: Some(100_000), // May need to tweak based on context window
+                reasoning_effort: Some(ReasoningEffort::High),
+            }
+        } else {
+            CompletionRequest {
+                model: model.as_ref().to_string(),
+                messages: openai_messages,
+                tools: openai_tools,
+                temperature: Some(0.7),
+                top_p: None,
+                stream: None,
+                max_completion_tokens: Some(32_000),
+                reasoning_effort: None,
+            }
         };
 
         debug!(target: "OpenAI API Request", "{:?}", request);
