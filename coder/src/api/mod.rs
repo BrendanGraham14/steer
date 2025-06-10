@@ -70,6 +70,8 @@ pub enum Model {
     Gpt4_1Nano20250414,
     #[strum(serialize = "o3-2025-04-16", serialize = "o3")]
     O3_20250416,
+    #[strum(serialize = "o4-mini-2025-04-16")]
+    O4Mini20250416,
     #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
     Gemini2_5FlashPreview0417,
     #[strum(serialize = "gemini-2.5-pro-preview-05-06")]
@@ -91,7 +93,8 @@ impl Model {
             Model::Gpt4_1_20250414
             | Model::Gpt4_1Mini20250414
             | Model::Gpt4_1Nano20250414
-            | Model::O3_20250416 => ProviderKind::OpenAI,
+            | Model::O3_20250416
+            | Model::O4Mini20250416 => ProviderKind::OpenAI,
 
             Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
@@ -104,6 +107,7 @@ impl Model {
             Model::ClaudeSonnet4_20250514 => vec!["sonnet"],
             Model::ClaudeOpus4_20250514 => vec!["opus"],
             Model::O3_20250416 => vec!["o3"],
+            Model::O4Mini20250416 => vec!["o4-mini"],
             Model::Gemini2_5ProPreview0605 => vec!["gemini"],
             _ => vec![],
         }
@@ -115,6 +119,7 @@ impl Model {
             | Model::ClaudeSonnet4_20250514
             | Model::ClaudeOpus4_20250514
             | Model::O3_20250416
+            | Model::O4Mini20250416
             | Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
             | Model::Gemini2_5ProPreview0605 => true,
