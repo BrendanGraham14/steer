@@ -47,17 +47,17 @@
 - [x] Decouple the agent loop implementation from the core app logic. The app layer should pass the agent layer context, the model to use, and the necessary cancellation token.
 
 ### Additional Features
-- [ ] Add conversation saving and loading
-- [ ] Implement command completion for the bash tool
+- [x] Add conversation saving and loading
+- [x] Implement command completion for the bash tool
 
 ### Programmatic usage
 - [x] Support running the tool in headless mode. Headless mode should accept a user prompt, then execute an agentic loop until it terminates. Maybe it should support a list of messages as an input?
-- [ ] Support a bi-directional protocol for a client and a "headless" version of the app to communicate. The client / protocol in this context should support a similar set of functionality to that which is supported by the TUI: namely, sending/receiving messages, approving / denying tool calls, cancelling operations, etc.
+- [x] Support a bi-directional protocol for a client and a "headless" version of the app to communicate. The client / protocol in this context should support a similar set of functionality to that which is supported by the TUI: namely, sending/receiving messages, approving / denying tool calls, cancelling operations, etc.
 
 ### Tools
 - [x] Save the set of allowed tools and don't require re-approval for tools which are already approved.
 - [x] Allow read-only tools by default (i.e. don't require approval)
-- [ ] Support including + executing tools via Model Context Protocol
+- [x] Support including + executing tools via Model Context Protocol
 - [x] Support a `fetch` tool which can fetch the contents of a webpage.
 - [ ] Gemini seems to like using diff patches to apply changes. Would be good to provide it with better tools.
 - [x] Tool approval when multiple are requested is broken
