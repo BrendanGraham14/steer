@@ -38,6 +38,7 @@ pub fn create_default_session_config() -> SessionConfig {
     SessionConfig {
         workspace: WorkspaceConfig::default(),
         tool_config: SessionToolConfig::default(),
+        system_prompt: None,
         metadata: HashMap::new(),
     }
 }
@@ -101,6 +102,7 @@ pub fn create_mock_session(id: &str, tool_policy: ToolApprovalPolicy) -> Session
     let config = SessionConfig {
         workspace: WorkspaceConfig::default(),
         tool_config,
+        system_prompt: None,
         metadata: std::collections::HashMap::new(),
     };
     Session::new(id.to_string(), config)

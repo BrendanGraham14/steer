@@ -17,6 +17,7 @@ pub struct CreateSessionCommand {
     pub pre_approved_tools: Option<String>,
     pub metadata: Option<String>,
     pub remote: Option<String>,
+    pub system_prompt: Option<String>,
 }
 
 #[async_trait]
@@ -32,6 +33,7 @@ impl Command for CreateSessionCommand {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: self.system_prompt.clone(),
             metadata: session_metadata,
         };
 

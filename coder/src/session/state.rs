@@ -69,6 +69,9 @@ impl Session {
 pub struct SessionConfig {
     pub workspace: WorkspaceConfig,
     pub tool_config: SessionToolConfig,
+    /// Optional custom system prompt to use for the session. If `None`, Coder will
+    /// fall back to its built-in default prompt.
+    pub system_prompt: Option<String>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -220,6 +223,7 @@ impl SessionConfig {
         Self {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::read_only(),
+            system_prompt: None,
             metadata: HashMap::new(),
         }
     }
@@ -681,6 +685,7 @@ mod tests {
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
         let session = Session::new("test-session".to_string(), config.clone());
@@ -806,6 +811,7 @@ mod tests {
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
 
@@ -846,6 +852,7 @@ mod tests {
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: user_tool_config,
+            system_prompt: None,
             metadata: HashMap::new(),
         };
 
@@ -873,6 +880,7 @@ mod tests {
         let base_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
         
@@ -886,6 +894,7 @@ mod tests {
         let read_only_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: read_only_tool_config,
+            system_prompt: None,
             metadata: HashMap::new(),
         };
         let read_only_tools = read_only_config.get_agent_tools(&registry).await;
@@ -904,6 +913,7 @@ mod tests {
         let whitelist_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: whitelist_tool_config,
+            system_prompt: None,
             metadata: HashMap::new(),
         };
         let whitelist_tools = whitelist_config.get_agent_tools(&registry).await;
@@ -919,6 +929,7 @@ mod tests {
         let blacklist_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: blacklist_tool_config,
+            system_prompt: None,
             metadata: HashMap::new(),
         };
         let blacklist_tools = blacklist_config.get_agent_tools(&registry).await;

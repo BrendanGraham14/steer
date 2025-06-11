@@ -1,4 +1,5 @@
 pub mod client_adapter;
+pub mod conversions;
 pub mod events;
 pub mod server;
 

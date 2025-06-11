@@ -203,6 +203,7 @@ message CreateSessionRequest {
   map<string, string> metadata = 2;
   optional SessionToolConfig tool_config = 3;
   optional WorkspaceConfig workspace_config = 4;
+  optional string system_prompt = 5;
 }
 
 message SendMessageRequest {
@@ -282,6 +283,8 @@ message SessionConfig {
   ToolApprovalPolicy tool_policy = 1;
   SessionToolConfig tool_config = 2;
   map<string, string> metadata = 3;
+  WorkspaceConfig workspace_config = 4;
+  optional string system_prompt = 5;
 }
 
 message SessionMetadata {

@@ -98,6 +98,7 @@ impl OneShotRunner {
         model: Model,
         tool_config: Option<SessionToolConfig>,
         tool_policy: Option<ToolApprovalPolicy>,
+        system_prompt: Option<String>,
     ) -> Result<RunOnceResult> {
         // 1. Create ephemeral session with specified tool policy
         let mut final_tool_config = tool_config.unwrap_or_default();
@@ -109,6 +110,7 @@ impl OneShotRunner {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config: final_tool_config,
+            system_prompt,
             metadata: [
                 ("mode".to_string(), "headless".to_string()),
                 ("ephemeral".to_string(), "true".to_string()),
@@ -331,6 +333,7 @@ mod tests {
             Model::ClaudeSonnet4_20250514,
             Some(SessionToolConfig::read_only()),
             Some(create_test_tool_approval_policy()),
+            None,
         );
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(10), future)
@@ -375,6 +378,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: [("test".to_string(), "value".to_string())].into(),
         };
 
@@ -415,6 +419,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: [("test".to_string(), "api_test".to_string())].into(),
         };
 
@@ -507,6 +512,7 @@ mod tests {
             Model::ClaudeSonnet4_20250514,
             None,
             None,
+            None,
         )
         .await;
 
@@ -537,6 +543,7 @@ mod tests {
             Model::ClaudeSonnet4_20250514,
             None,
             None,
+            None,
         )
         .await;
 
@@ -561,6 +568,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: [("test".to_string(), "no_timeout_test".to_string())].into(),
         };
 
@@ -633,6 +641,7 @@ mod tests {
             Model::ClaudeSonnet4_20250514,
             Some(SessionToolConfig::read_only()),
             None,
+            None,
         )
         .await;
         let content = result.unwrap().final_msg.content_string();
@@ -650,6 +659,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: [("test".to_string(), "polling_test".to_string())].into(),
         };
 
@@ -725,6 +735,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: [("test".to_string(), "context_test".to_string())].into(),
         };
 
@@ -797,6 +808,7 @@ mod tests {
             Model::ClaudeSonnet4_20250514,
             Some(SessionToolConfig::read_only()),
             Some(create_test_tool_approval_policy()),
+            None,
         )
         .await
         .expect("Ephemeral run with tools should succeed with valid API key");
@@ -833,6 +845,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: [("test".to_string(), "context_test".to_string())].into(),
         };
 

@@ -18,6 +18,10 @@ pub struct Cli {
     #[arg(long)]
     pub remote: Option<String>,
 
+    /// Custom system prompt to use instead of the default
+    #[arg(long)]
+    pub system_prompt: Option<String>,
+
     /// Subcommands
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -48,6 +52,10 @@ pub enum Commands {
         /// Path to JSON file containing SessionToolConfig for new sessions
         #[arg(long)]
         tool_config: Option<PathBuf>,
+
+        /// Custom system prompt to use instead of the default
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
     /// Start the gRPC server for client/server mode
     Serve {
@@ -88,6 +96,9 @@ pub enum SessionCommands {
         /// Session metadata (key=value pairs, comma-separated)
         #[arg(long)]
         metadata: Option<String>,
+        /// Custom system prompt to use instead of the default
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
     /// Resume an existing session
     Resume {

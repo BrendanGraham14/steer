@@ -173,6 +173,7 @@ impl Tui {
         let session_config = session_config.unwrap_or_else(|| SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::default(),
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         });
 

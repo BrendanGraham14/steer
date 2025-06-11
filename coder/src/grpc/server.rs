@@ -624,6 +624,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
 
@@ -686,6 +687,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
 
@@ -753,6 +755,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
 
@@ -843,6 +846,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
+            system_prompt: None,
             metadata: HashMap::new(),
         };
 

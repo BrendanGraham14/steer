@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub model: Option<String>,
     pub history_size: Option<usize>,
+    pub system_prompt: Option<String>,
 }
 
 impl Config {
@@ -15,6 +16,7 @@ impl Config {
         Self {
             model: Some("claude-3-7-sonnet-20250219".to_string()),
             history_size: Some(10),
+            system_prompt: None,
         }
     }
 }

@@ -7,6 +7,7 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use crate::app::{AppCommand, AppEvent};
+use crate::grpc::conversions::{session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto};
 use crate::grpc::proto::{
     ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
     DeleteSessionRequest, GetSessionRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
@@ -46,17 +47,16 @@ impl GrpcClientAdapter {
     pub async fn create_session(&mut self, config: SessionConfig) -> Result<String> {
         debug!("Creating new session with gRPC server");
 
-        let tool_policy = convert_tool_approval_policy(&config.tool_config.approval_policy);
+        let tool_policy = tool_approval_policy_to_proto(&config.tool_config.approval_policy);
+        let workspace_config = workspace_config_to_proto(&config.workspace);
+        let tool_config = session_tool_config_to_proto(&config.tool_config);
 
         let request = Request::new(CreateSessionRequest {
             tool_policy: Some(tool_policy),
             metadata: config.metadata,
-            tool_config: None, // TODO: Add tool config conversion if needed
-            workspace_config: Some(crate::grpc::proto::WorkspaceConfig {
-                config: Some(crate::grpc::proto::workspace_config::Config::Local(
-                    crate::grpc::proto::LocalWorkspaceConfig {},
-                )),
-            }),
+            tool_config: Some(tool_config),
+            workspace_config: Some(workspace_config),
+            system_prompt: config.system_prompt,
         });
 
         let response = self.client.create_session(request).await?;
@@ -315,54 +315,22 @@ fn convert_server_event_to_app_event(event: ServerEvent) -> Option<AppEvent> {
     server_event_to_app_event(event)
 }
 
-/// Convert internal ToolApprovalPolicy to protobuf
-fn convert_tool_approval_policy(
-    policy: &ToolApprovalPolicy,
-) -> crate::grpc::proto::ToolApprovalPolicy {
-    use crate::grpc::proto::{
-        AlwaysAskPolicy, MixedPolicy, PreApprovedPolicy,
-        ToolApprovalPolicy as ProtoToolApprovalPolicy, tool_approval_policy::Policy,
-    };
-
-    let policy_variant = match policy {
-        ToolApprovalPolicy::AlwaysAsk => Policy::AlwaysAsk(AlwaysAskPolicy {
-            timeout_ms: None,
-            default_decision: ApprovalDecision::Deny as i32,
-        }),
-        ToolApprovalPolicy::PreApproved { tools } => Policy::PreApproved(PreApprovedPolicy {
-            tools: tools.iter().cloned().collect(),
-        }),
-        ToolApprovalPolicy::Mixed {
-            pre_approved,
-            ask_for_others,
-        } => Policy::Mixed(MixedPolicy {
-            pre_approved_tools: pre_approved.iter().cloned().collect(),
-            ask_for_others: *ask_for_others,
-            timeout_ms: None,
-            default_decision: ApprovalDecision::Deny as i32,
-        }),
-    };
-
-    ProtoToolApprovalPolicy {
-        policy: Some(policy_variant),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grpc::conversions::tool_approval_policy_to_proto;
     use crate::grpc::proto::tool_approval_policy::Policy;
 
     #[test]
     fn test_convert_tool_approval_policy() {
         let policy = ToolApprovalPolicy::AlwaysAsk;
-        let proto_policy = convert_tool_approval_policy(&policy);
+        let proto_policy = tool_approval_policy_to_proto(&policy);
         assert!(matches!(proto_policy.policy, Some(Policy::AlwaysAsk(_))));
 
         let mut tools = std::collections::HashSet::new();
         tools.insert("bash".to_string());
         let policy = ToolApprovalPolicy::PreApproved { tools };
-        let proto_policy = convert_tool_approval_policy(&policy);
+        let proto_policy = tool_approval_policy_to_proto(&policy);
         assert!(matches!(proto_policy.policy, Some(Policy::PreApproved(_))));
     }
 

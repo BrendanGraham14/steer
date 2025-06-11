@@ -130,8 +130,8 @@ impl SessionStore for SqliteSessionStore {
         sqlx::query(
             r#"
             INSERT INTO sessions (id, created_at, updated_at, status, metadata,
-                                  tool_policy_type, pre_approved_tools, tool_config, workspace_config)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                                  tool_policy_type, pre_approved_tools, tool_config, workspace_config, system_prompt)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
         )
         .bind(&id)
@@ -143,6 +143,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&pre_approved_json)
         .bind(&tool_config_json)
         .bind(&workspace_config_json)
+        .bind(&config.system_prompt)
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to create session: {}", e)))?;
@@ -160,7 +161,7 @@ impl SessionStore for SqliteSessionStore {
         let row = sqlx::query(
             r#"
             SELECT id, created_at, updated_at, metadata,
-                   tool_policy_type, pre_approved_tools, tool_config, workspace_config
+                   tool_policy_type, pre_approved_tools, tool_config, workspace_config, system_prompt
             FROM sessions
             WHERE id = ?1
             "#,
@@ -194,9 +195,12 @@ impl SessionStore for SqliteSessionStore {
         let mut tool_config: crate::session::SessionToolConfig = tool_config;
         tool_config.approval_policy = approval_policy;
 
+        let system_prompt: Option<String> = row.get("system_prompt");
+
         let config = SessionConfig {
             workspace: workspace_config,
             tool_config,
+            system_prompt,
             metadata,
         };
 
@@ -915,6 +919,7 @@ mod tests {
         SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: std::collections::HashMap::new(),
         }
     }
@@ -929,6 +934,7 @@ mod tests {
         let config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
+            system_prompt: None,
             metadata: Default::default(),
         };
 

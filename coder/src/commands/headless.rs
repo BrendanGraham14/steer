@@ -22,6 +22,7 @@ pub struct HeadlessCommand {
     pub global_model: Model,
     pub session: Option<String>,
     pub tool_config: Option<PathBuf>,
+    pub system_prompt: Option<String>,
 }
 
 #[async_trait]
@@ -143,6 +144,7 @@ impl Command for HeadlessCommand {
                     model_to_use,
                     tool_config,
                     Some(auto_approve_policy),
+                    self.system_prompt.clone(),
                 )
                 .await?
             }

@@ -727,29 +727,22 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Option<crate::grpc::proto::SessionState>, SessionManagerError> {
-        match self.get_session_state(session_id).await? {
-            Some(state) => {
+        match self.store.get_session(session_id).await {
+            Ok(Some(session)) => {
+                // Use the shared conversion function
+                let config = crate::grpc::conversions::session_config_to_proto(&session.config);
+
                 // Convert internal SessionState to protobuf SessionState
                 let proto_state = crate::grpc::proto::SessionState {
                     id: session_id.to_string(),
-                    created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())), // TODO: Get real creation time
-                    updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
-                    config: Some(crate::grpc::proto::SessionConfig {
-                        tool_policy: Some(crate::grpc::proto::ToolApprovalPolicy {
-                            policy: Some(crate::grpc::proto::tool_approval_policy::Policy::AlwaysAsk(
-                                crate::grpc::proto::AlwaysAskPolicy {
-                                    timeout_ms: None,
-                                    default_decision: crate::grpc::proto::ApprovalDecision::Deny as i32,
-                                }
-                            )),
-                        }),
-                        tool_config: Some(crate::grpc::proto::SessionToolConfig {
-                            backends: vec![],
-                            metadata: std::collections::HashMap::new(),
-                        }),
-                        metadata: std::collections::HashMap::new(),
-                    }),
-                    messages: state.messages.into_iter().map(|msg| {
+                    created_at: Some(prost_types::Timestamp::from(
+                        std::time::SystemTime::from(session.created_at)
+                    )),
+                    updated_at: Some(prost_types::Timestamp::from(
+                        std::time::SystemTime::from(session.updated_at)
+                    )),
+                    config: Some(config),
+                    messages: session.state.messages.into_iter().map(|msg| {
                         crate::grpc::proto::Message {
                             id: msg.id().to_string(),
                             message: Some(match msg {
@@ -855,13 +848,14 @@ impl SessionManager {
                         }
                     }).collect(),
                     tool_calls: std::collections::HashMap::new(), // TODO: Convert tool calls
-                    approved_tools: state.approved_tools.into_iter().collect(),
-                    last_event_sequence: state.last_event_sequence,
-                    metadata: state.metadata,
+                    approved_tools: session.state.approved_tools.into_iter().collect(),
+                    last_event_sequence: session.state.last_event_sequence,
+                    metadata: session.state.metadata,
                 };
                 Ok(Some(proto_state))
             }
-            None => Ok(None),
+            Ok(None) => Ok(None),
+            Err(e) => Err(SessionManagerError::Storage(e)),
         }
     }
 
@@ -909,6 +903,7 @@ impl SessionManager {
         let session_config = crate::session::SessionConfig {
             workspace: workspace_config,
             tool_config,
+            system_prompt: config.system_prompt,
             metadata: config.metadata,
         };
 
@@ -1233,6 +1228,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
             tool_config: crate::session::SessionToolConfig::default(),
+            system_prompt: None,
             metadata: std::collections::HashMap::new(),
         };
         let (session_id, _command_tx) = manager
@@ -1264,6 +1260,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
             tool_config: crate::session::SessionToolConfig::default(),
+            system_prompt: None,
             metadata: std::collections::HashMap::new(),
         };
         let (session_id, _command_tx) = manager
@@ -1310,6 +1307,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
             tool_config,
+            system_prompt: None,
             metadata: std::collections::HashMap::new(),
         };
         let (session_id1, _command_tx) = manager
@@ -1340,6 +1338,7 @@ mod tests {
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
             tool_config: crate::session::SessionToolConfig::default(),
+            system_prompt: None,
             metadata: std::collections::HashMap::new(),
         };
         let (session_id, _command_tx) = manager
@@ -1513,6 +1512,7 @@ mod tests {
                     crate::grpc::proto::LocalWorkspaceConfig {},
                 )),
             }),
+            system_prompt: None,
         };
 
         // Create session using gRPC method

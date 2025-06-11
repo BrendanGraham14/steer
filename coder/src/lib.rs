@@ -44,8 +44,9 @@ pub async fn run_once_ephemeral(
     model: Model,
     tool_config: Option<SessionToolConfig>,
     tool_policy: Option<session::ToolApprovalPolicy>,
+    system_prompt: Option<String>,
 ) -> anyhow::Result<RunOnceResult> {
-    OneShotRunner::run_ephemeral(session_manager, init_msgs, model, tool_config, tool_policy).await
+    OneShotRunner::run_ephemeral(session_manager, init_msgs, model, tool_config, tool_policy, system_prompt).await
 }
 
 /// Convenience function for simple one-shot runs with default tool configuration.
@@ -56,7 +57,7 @@ pub async fn run_once_ephemeral(
 pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> anyhow::Result<RunOnceResult> {
     // Only create temporary session manager for the simple convenience function
     let session_manager = create_session_manager().await?;
-    run_once_ephemeral(&session_manager, init_msgs, model, None, None).await
+    run_once_ephemeral(&session_manager, init_msgs, model, None, None, None).await
 }
 
 /// Creates a SessionManager for use with the one-shot functions.

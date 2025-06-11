@@ -47,8 +47,8 @@ async fn main() -> Result<()> {
     }
 
     match cli.remote {
-        Some(remote_addr) => run_remote_mode(&remote_addr, cli.model).await,
-        None => run_local_mode(cli.model).await,
+        Some(remote_addr) => run_remote_mode(&remote_addr, cli.model, cli.system_prompt).await,
+        None => run_local_mode(cli.model, cli.system_prompt).await,
     }
 }
 
@@ -63,6 +63,7 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
             messages_json,
             session,
             tool_config,
+            system_prompt,
         } => {
             let command = HeadlessCommand {
                 model,
@@ -70,6 +71,7 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
                 global_model: cli.model,
                 session,
                 tool_config,
+                system_prompt,
             };
             command.execute().await
         }
@@ -91,14 +93,19 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
     }
 }
 
-async fn run_remote_mode(remote_addr: &str, model: Model) -> Result<()> {
+async fn run_remote_mode(remote_addr: &str, model: Model, system_prompt: Option<String>) -> Result<()> {
     info!("Connecting to remote server at {}", remote_addr);
 
     // Set panic hook for terminal cleanup
     coder::tui::setup_panic_hook();
 
     // Create TUI in remote mode
-    let (mut tui, event_rx) = coder::tui::Tui::new_remote(remote_addr, model, None).await?;
+    let session_config = system_prompt.map(|prompt| {
+        let mut config = create_default_session_config();
+        config.system_prompt = Some(prompt);
+        config
+    });
+    let (mut tui, event_rx) = coder::tui::Tui::new_remote(remote_addr, model, session_config).await?;
 
     println!("Connected to remote server at {}", remote_addr);
 
@@ -108,7 +115,7 @@ async fn run_remote_mode(remote_addr: &str, model: Model) -> Result<()> {
     Ok(())
 }
 
-async fn run_local_mode(model: Model) -> Result<()> {
+async fn run_local_mode(model: Model, system_prompt: Option<String>) -> Result<()> {
     let llm_config = LlmConfig::from_env()
         .expect("Failed to load LLM configuration from environment variables.");
 
@@ -126,7 +133,13 @@ async fn run_local_mode(model: Model) -> Result<()> {
         SessionManager::new(session_store, session_manager_config, global_event_tx);
 
     // Create a new interactive session
-    let session_config = create_default_session_config();
+    let mut session_config = create_default_session_config();
+    
+    // Set system prompt if provided
+    if let Some(prompt) = system_prompt {
+        session_config.system_prompt = Some(prompt);
+    }
+    
     let app_config = AppConfig { llm_config };
 
     // Add the initial model to session metadata so it can be set in the App
