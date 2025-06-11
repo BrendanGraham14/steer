@@ -1,11 +1,12 @@
 use glob;
+use grep_regex::RegexMatcherBuilder;
+use grep_searcher::sinks::UTF8;
+use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::WalkBuilder;
 use macros::tool;
-use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 use tokio::task;
 
@@ -13,9 +14,9 @@ use crate::{ExecutionContext, ToolError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GrepParams {
-    /// The regular expression pattern to search for
+    /// The search pattern (regex or literal string). If invalid regex, searches for literal text
     pub pattern: String,
-    /// Optional file pattern to include in the search (e.g., "*.rs")
+    /// Optional glob pattern to filter files by name (e.g., "*.rs", "*.{ts,tsx}")
     pub include: Option<String>,
     /// Optional directory to search in (defaults to current working directory)
     pub path: Option<String>,
@@ -24,12 +25,13 @@ pub struct GrepParams {
 tool! {
     GrepTool {
         params: GrepParams,
-        description: r#"Fast content search tool that works with any codebase size.
-- Searches file contents using regular expressions
-- Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)
-- Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
-- Automatically respects .gitignore files and other git exclusion rules
-- Returns matching file paths sorted by modification time"#,
+        description: r#"Fast content search built on ripgrep for blazing performance at any scale.
+- Searches using regular expressions or literal strings
+- Supports regex syntax like "log.*Error", "function\\s+\\w+", etc.
+- If the pattern isn't valid regex, it automatically searches for the literal text
+- Filter files by name pattern with include parameter (e.g., "*.js", "*.{ts,tsx}")
+- Automatically respects .gitignore files
+- Returns matches as "filepath:line_number: line_content""#,
         name: "grep",
         require_approval: false
     }
@@ -76,199 +78,136 @@ fn grep_search_internal(
         return Err(format!("Path does not exist: {}", base_path.display()));
     }
 
-    let regex =
-        Regex::new(pattern).map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e))?;
-
-    let files = find_files(base_path, include, cancellation_token)?;
-    let mut results = Vec::new();
-
-    for file_path in files {
-        if cancellation_token.is_cancelled() {
-            return Err("Search cancelled".to_string());
+    // Create matcher - try regex first, fall back to literal if it fails
+    let matcher = match RegexMatcherBuilder::new()
+        .line_terminator(Some(b'\n'))
+        .build(pattern)
+    {
+        Ok(m) => m,
+        Err(_) => {
+            // Fall back to literal search by escaping the pattern
+            let escaped = regex::escape(pattern);
+            RegexMatcherBuilder::new()
+                .line_terminator(Some(b'\n'))
+                .build(&escaped)
+                .map_err(|e| format!("Failed to create matcher: {}", e))?
         }
+    };
 
-        match fs::File::open(&file_path) {
-            Ok(file) => {
-                let reader = BufReader::new(file);
-                let mut matched = false;
-                let mut matches_in_file = Vec::new();
+    // Build the searcher with binary detection
+    let mut searcher = SearcherBuilder::new()
+        .binary_detection(BinaryDetection::quit(b'\x00'))
+        .line_number(true)
+        .build();
 
-                for (i, line_result) in reader.lines().enumerate() {
-                    if cancellation_token.is_cancelled() {
-                        return Err("Search cancelled".to_string());
-                    }
-
-                    match line_result {
-                        Ok(line) => {
-                            if regex.is_match(&line) {
-                                matched = true;
-                                matches_in_file.push(format!(
-                                    "{}:{}: {}",
-                                    file_path.display(),
-                                    i + 1,
-                                    line
-                                ));
-                            }
-                        }
-                        Err(_) => {
-                            // Skip lines that can't be read (e.g., binary content)
-                            continue;
-                        }
-                    }
-                }
-
-                if matched {
-                    results.push(matches_in_file.join("\n"));
-                }
-            }
-            Err(_) => {
-                // Skip files that can't be opened
-                continue;
-            }
-        }
-    }
-
-    if results.is_empty() {
-        Ok("No matches found.".to_string())
-    } else {
-        Ok(results.join("\n\n"))
-    }
-}
-
-fn find_files(
-    base_path: &Path,
-    include: Option<&str>,
-    cancellation_token: &tokio_util::sync::CancellationToken,
-) -> Result<Vec<std::path::PathBuf>, String> {
-    let mut files = Vec::new();
-
-    // Use the ignore crate's WalkBuilder which respects .gitignore files
+    // Use ignore crate's WalkBuilder for respecting .gitignore
     let mut walker = WalkBuilder::new(base_path);
     walker.hidden(false); // Include hidden files by default
     walker.git_ignore(true); // Respect .gitignore files
     walker.git_global(true); // Respect global gitignore
     walker.git_exclude(true); // Respect .git/info/exclude
 
-    let walk = walker.build();
+    let include_pattern = include
+        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid glob pattern: {}", e)))
+        .transpose()?;
 
-    for result in walk {
+    let mut results = Vec::new();
+
+    for result in walker.build() {
         if cancellation_token.is_cancelled() {
             return Err("Search cancelled".to_string());
         }
 
-        match result {
-            Ok(entry) => {
-                let path = entry.path();
-                if path.is_file() && is_likely_text_file(path) {
-                    // If include pattern is specified, check if file matches
-                    if let Some(include_pattern) = include {
-                        if path_matches_glob(path, include_pattern)? {
-                            files.push(path.to_path_buf());
-                        }
-                    } else {
-                        files.push(path.to_path_buf());
-                    }
-                }
-            }
-            Err(_) => {
-                // Skip entries that can't be processed
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        // Check include pattern if specified
+        if let Some(ref pattern) = include_pattern {
+            if !path_matches_glob(path, pattern, &base_path) {
                 continue;
             }
         }
+
+        // Search the file
+        let mut matches_in_file = Vec::new();
+        let search_result = searcher.search_path(
+            &matcher,
+            path,
+            UTF8(|line_num, line| {
+                matches_in_file.push(format!("{}:{}: {}", path.display(), line_num, line));
+                Ok(true)
+            }),
+        );
+
+        if let Err(e) = search_result {
+            // Skip files that can't be searched (e.g., binary files)
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                continue;
+            }
+        }
+
+        if !matches_in_file.is_empty() {
+            results.push((path.to_path_buf(), matches_in_file.join("\n")));
+        }
     }
 
-    // Sort files by modification time (newest first)
-    let mut files_with_time = Vec::new();
-    for path in files {
+    if results.is_empty() {
+        return Ok("No matches found.".to_string());
+    }
+
+    // Sort by modification time (newest first)
+    let mut results_with_time = Vec::new();
+    for (path, matches) in results {
         if cancellation_token.is_cancelled() {
             return Err("Search cancelled".to_string());
         }
 
-        if let Ok(metadata) = fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                files_with_time.push((path, modified));
-            } else {
-                files_with_time.push((path, std::time::SystemTime::UNIX_EPOCH));
-            }
-        } else {
-            files_with_time.push((path, std::time::SystemTime::UNIX_EPOCH));
-        }
+        let mtime = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+        results_with_time.push((path, matches, mtime));
     }
 
-    files_with_time.sort_by(|a, b| b.1.cmp(&a.1));
+    results_with_time.sort_by(|a, b| b.2.cmp(&a.2));
 
-    Ok(files_with_time.into_iter().map(|(path, _)| path).collect())
+    let output = results_with_time
+        .into_iter()
+        .map(|(_, matches, _)| matches)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    Ok(output)
 }
 
-fn path_matches_glob(path: &Path, pattern: &str) -> Result<bool, String> {
-    // Convert the file path to a string for glob matching
-    let path_str = path.to_string_lossy();
-
-    // Create a glob pattern
-    let glob_pattern = glob::Pattern::new(pattern)
-        .map_err(|e| format!("Invalid glob pattern '{}': {}", pattern, e))?;
-
+fn path_matches_glob(path: &Path, pattern: &glob::Pattern, base_path: &Path) -> bool {
     // Check if the full path matches
-    if glob_pattern.matches(&path_str) {
-        return Ok(true);
+    if pattern.matches_path(path) {
+        return true;
+    }
+
+    // Check if the relative path from base_path matches
+    if let Ok(relative_path) = path.strip_prefix(base_path) {
+        if pattern.matches_path(relative_path) {
+            return true;
+        }
     }
 
     // Also check if just the filename matches (for patterns like "*.rs")
     if let Some(filename) = path.file_name() {
-        if glob_pattern.matches(&filename.to_string_lossy()) {
-            return Ok(true);
+        if pattern.matches(&filename.to_string_lossy()) {
+            return true;
         }
     }
 
-    Ok(false)
-}
-
-fn is_likely_text_file(path: &Path) -> bool {
-    // Check extension first
-    if let Some(ext) = path.extension() {
-        let ext_str = ext.to_string_lossy().to_lowercase();
-        let binary_extensions = [
-            "exe", "dll", "so", "dylib", "bin", "jpg", "jpeg", "png", "gif", "bmp", "ico", "pdf",
-            "zip", "tar", "gz", "7z", "rar", "mp3", "mp4", "avi", "mov", "flv", "wav", "wma",
-            "ogg", "class", "pyc", "o", "a", "lib", "obj", "pdb",
-        ];
-
-        if binary_extensions.contains(&ext_str.as_str()) {
-            return false;
-        }
-    }
-
-    // Read first 1KB to check for binary content
-    let metadata = match fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => return false,
-    };
-
-    if metadata.len() == 0 {
-        return true; // Empty file is text
-    }
-
-    let buffer_size = std::cmp::min(1024, metadata.len() as usize);
-    let mut buffer = vec![0; buffer_size];
-
-    match fs::File::open(path) {
-        Ok(mut file) => {
-            use std::io::Read;
-            if file.read_exact(&mut buffer).is_err() {
-                return false;
-            }
-        }
-        Err(_) => return false,
-    }
-
-    // Check for null bytes and other binary indicators
-    if buffer.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        // UTF-8 BOM, check remaining bytes
-        !buffer[3..].iter().any(|&b| b == 0) && buffer[3..].iter().filter(|&&b| b < 9).count() == 0
-    } else {
-        // No BOM, check entire buffer
-        !buffer.iter().any(|&b| b == 0) && buffer.iter().filter(|&&b| b < 9).count() == 0
-    }
+    false
 }
 
 #[cfg(test)]
@@ -492,5 +431,123 @@ mod tests {
         assert!(result.contains("file1.txt:2: find me here"));
         assert!(!result.contains("ignored.txt"));
         assert!(!result.contains("also_ignored.log"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_literal_fallback() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create test files with patterns that would fail as regex
+        fs::write(
+            temp_dir.path().join("code.rs"),
+            "fn main() {\n    format_message(\"hello\");\n    println!(\"world\");\n}",
+        )
+        .unwrap();
+
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "format_message(".to_string(), // This would fail as regex due to unclosed (
+            include: None,
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        // Should find the literal match
+        assert!(result.contains("code.rs:2:     format_message(\"hello\");"));
+        assert!(!result.contains("println!"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_relative_path_glob_matching() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create nested directory structure similar to coder project
+        fs::create_dir_all(temp_dir.path().join("coder/src/session")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("coder/src/utils")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("other/src")).unwrap();
+
+        // Create test files
+        fs::write(
+            temp_dir.path().join("coder/src/session/state.rs"),
+            "pub struct SessionConfig {\n    pub field: String,\n}",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("coder/src/utils/session.rs"),
+            "use crate::SessionConfig;\nfn test() -> SessionConfig {\n    SessionConfig { field: \"test\".to_string() }\n}",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("other/src/main.rs"),
+            "struct SessionConfig;\nfn main() {}",
+        )
+        .unwrap();
+
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "SessionConfig \\{".to_string(),
+            include: Some("coder/src/**/*.rs".to_string()),
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        // Should find matches in coder/src files but not in other/src
+        assert!(result.contains("coder/src/session/state.rs:1: pub struct SessionConfig {"));
+        assert!(result.contains("coder/src/utils/session.rs:3:     SessionConfig { field: \"test\".to_string() }"));
+        assert!(!result.contains("other/src/main.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_complex_relative_patterns() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create complex directory structure
+        fs::create_dir_all(temp_dir.path().join("src/api/client")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("src/tools")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("tests/integration")).unwrap();
+
+        // Create test files
+        fs::write(
+            temp_dir.path().join("src/api/client/mod.rs"),
+            "pub mod client;\npub use client::ApiClient;",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("src/tools/grep.rs"),
+            "pub struct GrepTool;\nimpl Tool for GrepTool {}",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("tests/integration/api_test.rs"),
+            "use crate::api::ApiClient;\n#[test]\nfn test_api() {}",
+        )
+        .unwrap();
+
+        let context = create_test_context(&temp_dir);
+
+        // Test pattern that should match only src/**/*.rs files
+        let tool = GrepTool;
+        let params = GrepParams {
+            pattern: "pub".to_string(),
+            include: Some("src/**/*.rs".to_string()),
+            path: None,
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        // Should find matches in src/ but not in tests/
+        assert!(result.contains("src/api/client/mod.rs:1: pub mod client;"));
+        assert!(result.contains("src/api/client/mod.rs:2: pub use client::ApiClient;"));
+        assert!(result.contains("src/tools/grep.rs:1: pub struct GrepTool;"));
+        assert!(!result.contains("tests/integration/api_test.rs"));
     }
 }
