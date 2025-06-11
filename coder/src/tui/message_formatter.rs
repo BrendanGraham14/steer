@@ -1,5 +1,4 @@
-use crate::app::conversation::MessageContentBlock;
-use crate::app::conversation::Role;
+use crate::app::conversation::{AssistantContent, Message, Role, ThoughtContent, ToolResult, UserContent};
 use tools::tools::bash::{BASH_TOOL_NAME, BashParams};
 use tools::tools::edit::{EDIT_TOOL_NAME, EditParams};
 use tools::tools::replace::{REPLACE_TOOL_NAME, ReplaceParams};
@@ -11,65 +10,69 @@ use textwrap;
 use tracing::debug;
 
 pub fn format_message(
-    blocks: &[MessageContentBlock],
-    role: Role,
+    message: &Message,
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
+    let mut formatted_lines = Vec::new();
+
+    // Handle each message variant differently
+    match message {
+        Message::User { content, .. } => {
+            // Add role header
+            formatted_lines.push(Line::from(Span::styled(
+                "User:",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            // Format each content block
+            for user_content in content {
+                let block_lines = match user_content {
+                    UserContent::Text { text } => format_text_block(text, terminal_width),
+                    UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => format_command_execution_block(command, stdout, stderr, *exit_code, terminal_width),
+                };
+                formatted_lines.extend(block_lines);
+                formatted_lines.push(Line::raw(""));
+            }
+        }
+        Message::Assistant { content, .. } => {
+            // Add role header
+            formatted_lines.push(Line::from(Span::styled(
+                "Assistant:",
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            // Format each content block
+            for assistant_content in content {
+                let block_lines = match assistant_content {
+                    AssistantContent::Text { text } => format_text_block(text, terminal_width),
+                    AssistantContent::ToolCall { tool_call } => format_tool_call_block(tool_call, terminal_width),
+                    AssistantContent::Thought { thought } => format_thought_block(&thought.display_text(), terminal_width),
+                };
+                formatted_lines.extend(block_lines);
+                formatted_lines.push(Line::raw(""));
+            }
+        }
+        Message::Tool { tool_use_id, result, .. } => {
+            // Format tool result
+            formatted_lines.extend(format_tool_result_for_message(tool_use_id, result, terminal_width));
+        }
+    }
+
     // Log for debugging
     debug!(
         target: "message_formatter",
-        "Formatting message with {} blocks for role {:?}",
-            blocks.len(),
-        role
+        "Formatted message with role {:?}",
+        message.role()
     );
-    let mut formatted_lines = Vec::new();
-
-    // Add Role Header (except for Tool/System which have specific formatting)
-    let role_header = match role {
-        Role::User => Some(Line::from(Span::styled(
-            "User:",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ))),
-        Role::Assistant => Some(Line::from(Span::styled(
-            "Assistant:",
-            Style::default()
-                .fg(Color::Blue)
-                .add_modifier(Modifier::BOLD),
-        ))),
-        _ => None, // Tool and System messages have inherent headers in their formatters
-    };
-
-    if let Some(header) = role_header {
-        formatted_lines.push(header);
-    }
-
-    for block in blocks {
-        let block_lines = match block {
-            MessageContentBlock::Text(content) => format_text_block(content, role, terminal_width), // Pass width
-            MessageContentBlock::ToolCall(tool_call) => {
-                format_tool_call_block(tool_call, terminal_width)
-            } // Pass width
-            MessageContentBlock::ToolResult {
-                tool_use_id,
-                result,
-            } => format_tool_result_block(tool_use_id, result, terminal_width), // Pass width
-            MessageContentBlock::CommandExecution {
-                command,
-                stdout,
-                stderr,
-                exit_code,
-            } => {
-                format_command_execution_block(command, stdout, stderr, *exit_code, terminal_width)
-            }
-            MessageContentBlock::Thought(thought_content) => {
-                format_thought_block(&thought_content.display_text(), terminal_width)
-            }
-        };
-        formatted_lines.extend(block_lines);
-        formatted_lines.push(Line::raw(""));
-    }
 
     formatted_lines
 }
@@ -77,7 +80,6 @@ pub fn format_message(
 /// Formats a text block with markdown rendering.
 fn format_text_block(
     content: &str,
-    _role: Role, // Role no longer needed here
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
     // Calculate wrap width from terminal width (accounting for List borders + padding)
@@ -337,6 +339,34 @@ pub fn format_tool_result_block(
     )));
     // Use the existing preview formatter for the result content
     lines.extend(format_tool_preview(result, terminal_width));
+    lines
+}
+
+/// Formats a tool result message for display.
+fn format_tool_result_for_message(
+    tool_use_id: &str,
+    result: &ToolResult,
+    terminal_width: u16,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    
+    match result {
+        ToolResult::Success { output } => {
+            lines.push(Line::from(Span::styled(
+                format!("<- Tool Result for {}", tool_use_id),
+                Style::default().fg(Color::Magenta),
+            )));
+            lines.extend(format_tool_preview(output, terminal_width));
+        }
+        ToolResult::Error { error } => {
+            lines.push(Line::from(Span::styled(
+                format!("<- Tool Error for {}", tool_use_id),
+                Style::default().fg(Color::Red),
+            )));
+            lines.extend(format_tool_preview(error, terminal_width));
+        }
+    }
+    
     lines
 }
 

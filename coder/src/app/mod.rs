@@ -1,5 +1,5 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
-use crate::app::conversation::Role;
+use crate::app::conversation::{UserContent, ToolResult, AssistantContent};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ use crate::app::context::TaskOutcome;
 pub use cancellation::CancellationInfo;
 pub use command::AppCommand;
 pub use context::OpContext;
-pub use conversation::{Conversation, Message, MessageContentBlock};
+pub use conversation::{Conversation, Message};
 pub use environment::EnvironmentInfo;
 pub use tool_executor::ToolExecutor;
 
@@ -40,9 +40,7 @@ pub use agent_executor::{
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     MessageAdded {
-        role: Role,
-        content_blocks: Vec<MessageContentBlock>,
-        id: String,
+        message: Message,
         model: Model,
     },
     MessageUpdated {
@@ -93,9 +91,7 @@ pub enum AppEvent {
     },
     /// Messages that are being restored from a session (not to be persisted again)
     RestoredMessage {
-        role: Role,
-        content_blocks: Vec<MessageContentBlock>,
-        id: String,
+        message: Message,
         model: Model,
     },
 }
@@ -208,18 +204,14 @@ impl App {
     }
 
     pub async fn add_message(&self, message: Message) {
-        // The Message::try_from or Message::new_* constructors should already ensure an ID exists.
-        let msg_id = message.id.clone(); // Get ID before moving message
         let mut conversation_guard = self.conversation.lock().await;
         conversation_guard.messages.push(message.clone());
         drop(conversation_guard);
 
         // Emit event only for non-tool messages
-        if message.role != Role::Tool {
+        if !matches!(message, Message::Tool { .. }) {
             self.emit_event(AppEvent::MessageAdded {
-                role: message.role,
-                content_blocks: message.content_blocks.clone(),
-                id: msg_id, // Use the message's guaranteed ID
+                message,
                 model: self.current_model,
             });
         }
@@ -242,8 +234,12 @@ impl App {
         self.current_op_context = Some(op_context);
 
         // Add user message
-        self.add_message(Message::new_text(Role::User, message.clone()))
-            .await;
+        self.add_message(Message::User {
+            content: vec![UserContent::Text { text: message.clone() }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
+        })
+        .await;
 
         // Start thinking and spawn agent operation
         self.emit_event(AppEvent::ThinkingStarted);
@@ -293,7 +289,7 @@ impl App {
         // Get messages (snapshot)
         let api_messages = {
             let conversation_guard = self.conversation.lock().await;
-            crate::api::messages::convert_conversation(&conversation_guard)
+            conversation_guard.messages.clone()
         };
 
         let current_model = self.current_model;
@@ -595,14 +591,15 @@ impl App {
                   incomplete_tool_calls.len());
 
             for tool_call in incomplete_tool_calls {
-                let cancelled_result = Message::new_with_blocks(
-                    Role::Tool,
-                    vec![MessageContentBlock::ToolResult {
-                        tool_use_id: tool_call.id.clone(),
-                        result: "Tool execution was cancelled by user before completion."
+                let cancelled_result = Message::Tool {
+                    tool_use_id: tool_call.id.clone(),
+                    result: ToolResult::Error {
+                        error: "Tool execution was cancelled by user before completion."
                             .to_string(),
-                    }],
-                );
+                    },
+                    timestamp: Message::current_timestamp(),
+                    id: Message::generate_id("tool", Message::current_timestamp()),
+                };
 
                 // Add the message using the standard add_message method to ensure proper event emission
                 self.add_message(cancelled_result).await;
@@ -620,20 +617,16 @@ impl App {
 
         // First pass: collect all tool results
         for message in &conversation.messages {
-            if message.role == Role::Tool {
-                for block in &message.content_blocks {
-                    if let MessageContentBlock::ToolResult { tool_use_id, .. } = block {
-                        tool_results.insert(tool_use_id.clone());
-                    }
-                }
+            if let Message::Tool { tool_use_id, .. } = message {
+                tool_results.insert(tool_use_id.clone());
             }
         }
 
         // Second pass: find tool calls without results
         for message in &conversation.messages {
-            if message.role == Role::Assistant {
-                for block in &message.content_blocks {
-                    if let MessageContentBlock::ToolCall(tool_call) = block {
+            if let Message::Assistant { content, .. } = message {
+                for block in content {
+                    if let AssistantContent::ToolCall { tool_call } = block {
                         if !tool_results.contains(&tool_call.id) {
                             tool_calls.push(tool_call.clone());
                         }
@@ -961,30 +954,32 @@ async fn handle_app_command(
                     let (stdout, stderr, exit_code) = parse_bash_output(&output);
 
                     // Add the command execution as a message
-                    let message = Message::new_with_blocks(
-                        Role::User,
-                        vec![MessageContentBlock::CommandExecution {
+                    let message = Message::User {
+                        content: vec![UserContent::CommandExecution {
                             command,
                             stdout,
                             stderr,
                             exit_code,
                         }],
-                    );
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("user", Message::current_timestamp()),
+                    };
                     app.add_message(message).await;
                 }
                 Err(e) => {
                     error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
 
                     // Add error as a command execution with error output
-                    let message = Message::new_with_blocks(
-                        Role::User,
-                        vec![MessageContentBlock::CommandExecution {
+                    let message = Message::User {
+                        content: vec![UserContent::CommandExecution {
                             command,
                             stdout: String::new(),
                             stderr: format!("Error executing command: {}", e),
                             exit_code: -1,
                         }],
-                    );
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("user", Message::current_timestamp()),
+                    };
                     app.add_message(message).await;
                 }
             }
@@ -1011,9 +1006,7 @@ async fn handle_app_command(
             for message in conversation_messages {
                 // Emit RestoredMessage event which TUI will handle but session won't persist
                 app.emit_event(AppEvent::RestoredMessage {
-                    role: message.role,
-                    content_blocks: message.content_blocks.clone(),
-                    id: message.id.clone(),
+                    message,
                     model: app.current_model, // Use current model as a placeholder
                 });
             }
@@ -1077,8 +1070,8 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                     .messages
                     .iter()
                     .rev()
-                    .find(|m| m.role == Role::Assistant)
-                    .map(|m| m.id.clone())
+                    .find(|m| matches!(m, Message::Assistant { .. }))
+                    .map(|m| m.id().to_string())
             };
             if let Some(msg_id) = maybe_msg_id {
                 app.emit_event(AppEvent::MessagePart { id: msg_id, delta });
@@ -1086,53 +1079,33 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 warn!(target: "handle_agent_event", "Received MessagePart but no assistant message found to append to.");
             }
         }
-        AgentEvent::AssistantMessageFinal(api_message) => {
-            match Message::try_from(api_message) {
-                Ok(app_message) => {
-                    let msg_id = app_message.id.clone();
+        AgentEvent::AssistantMessageFinal(app_message) => {
+            let msg_id = app_message.id().to_string();
 
-                    // Add/Update message in conversation
-                    let mut conversation_guard = app.conversation.lock().await;
-                    if let Some(existing_msg) = conversation_guard
-                        .messages
-                        .iter_mut()
-                        .find(|m| m.id == msg_id)
-                    {
-                        // Update existing message content
-                        existing_msg.content_blocks = app_message.content_blocks.clone();
-                        drop(conversation_guard);
+            // Add/Update message in conversation
+            let mut conversation_guard = app.conversation.lock().await;
+            if let Some(existing_msg) = conversation_guard
+                .messages
+                .iter_mut()
+                .find(|m| m.id() == msg_id)
+            {
+                // Replace the entire message
+                *existing_msg = app_message.clone();
+                drop(conversation_guard);
 
-                        debug!(target: "handle_agent_event", "Updated existing message ID {} with final content.", msg_id);
+                debug!(target: "handle_agent_event", "Updated existing message ID {} with final content.", msg_id);
 
-                        // Extract text content for the event
-                        let content = app_message
-                            .content_blocks
-                            .iter()
-                            .filter_map(|block| match block {
-                                crate::app::conversation::MessageContentBlock::Text(text) => {
-                                    Some(text.as_str())
-                                }
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("");
+                // Extract text content for the event
+                let content = app_message.extract_text();
 
-                        app.emit_event(AppEvent::MessageUpdated {
-                            id: msg_id.clone(),
-                            content,
-                        });
-                    } else {
-                        drop(conversation_guard);
-                        app.add_message(app_message).await;
-                        debug!(target: "handle_agent_event", "Added new final message ID {}.", msg_id);
-                    }
-                }
-                Err(e) => {
-                    error!(target: "handle_agent_event", "Failed to convert final ApiMessage: {}", e);
-                    app.emit_event(AppEvent::Error {
-                        message: format!("Internal error processing final message: {}", e),
-                    });
-                }
+                app.emit_event(AppEvent::MessageUpdated {
+                    id: msg_id.clone(),
+                    content,
+                });
+            } else {
+                drop(conversation_guard);
+                app.add_message(app_message).await;
+                debug!(target: "handle_agent_event", "Added new final message ID {}.", msg_id);
             }
         }
         AgentEvent::ExecutingTool { tool_call_id, name } => {
@@ -1207,10 +1180,13 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             match result {
                 Ok(response_text) => {
                     info!(target: "handle_task_outcome", "Dispatch agent successful.");
-                    app.add_message(Message::new_text(
-                        Role::Assistant,
-                        format!("Dispatch Agent Result:\n{}", response_text),
-                    ))
+                    app.add_message(Message::Assistant {
+                        content: vec![AssistantContent::Text {
+                            text: format!("Dispatch Agent Result:\n{}", response_text),
+                        }],
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("assistant", Message::current_timestamp()),
+                    })
                     .await;
                 }
                 Err(e) => {

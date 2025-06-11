@@ -1,7 +1,5 @@
-use coder::api::{
-    Model,
-    messages::{Message, MessageContent, MessageRole},
-};
+use coder::api::Model;
+use coder::app::conversation::{AssistantContent, Message, UserContent};
 use coder::config::LlmConfig;
 use std::time::Duration;
 
@@ -13,12 +11,13 @@ async fn test_headless_mode_integration() {
     dotenv::dotenv().ok();
 
     // Create a simple test message
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: MessageContent::Text {
-            content: "What is 2+2?".to_string(),
-        },
-        id: None,
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message::User {
+        content: vec![UserContent::Text {
+            text: "What is 2+2?".to_string(),
+        }],
+        timestamp,
+        id: Message::generate_id("user", timestamp),
     }];
 
     // Load config from environment
@@ -33,29 +32,27 @@ async fn test_headless_mode_integration() {
         .expect("run_once should succeed");
 
     // Verify we got a response with the correct structure
-    assert_eq!(result.final_msg.role, MessageRole::Assistant);
+    match &result.final_msg {
+        Message::Assistant { content, .. } => {
+            // The response should contain the answer (4)
+            let text_blocks: Vec<_> = content
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::Text { text } = c {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-    // The response should contain the answer (4)
-    if let MessageContent::StructuredContent { content } = &result.final_msg.content {
-        let text_blocks: Vec<_> = content
-            .0
-            .iter()
-            .filter_map(|block| {
-                if let coder::api::messages::ContentBlock::Text { text } = block {
-                    Some(text)
-                } else {
-                    None
-                }
-            })
-            .collect();
+            // Check that we got at least one text block
+            assert!(!text_blocks.is_empty());
 
-        // Check that we got at least one text block
-        assert!(!text_blocks.is_empty());
-
-        // Check that at least one text block contains "4"
-        let contains_answer = text_blocks.iter().any(|text| text.contains("4"));
-        assert!(contains_answer, "Response should contain the answer '4'");
-    } else {
-        panic!("Expected StructuredContent in response");
+            // Check that at least one text block contains "4"
+            let contains_answer = text_blocks.iter().any(|text| text.contains("4"));
+            assert!(contains_answer, "Response should contain the answer '4'");
+        }
+        _ => panic!("Expected Assistant message in response"),
     }
 }

@@ -1,33 +1,37 @@
 #[cfg(test)]
 mod tests {
-    use coder::app::{AgentEvent, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision};
-    use coder::config::LlmConfig; // Import LlmConfig
-    use coder::tools::ToolError; // Add necessary tool imports
-    use coder::{
-        api::{
-            Client as ApiClient, InputSchema, Model,
-            messages::{ContentBlock, Message, MessageContent, MessageRole, StructuredContent},
-            tools::{Tool, ToolCall},
-        },
-        app::AgentExecutor,
-    }; // Add necessary api imports
+    use coder::app::{AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision};
+    use coder::app::conversation::{AssistantContent, Message, ToolCall, UserContent};
+    use coder::config::LlmConfig;
+    use coder::tools::ToolError;
+    use coder::api::{Client as ApiClient, Model};
     use dotenv::dotenv;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
-    use tokio_util::sync::CancellationToken; // For creating tool input
+    use tokio_util::sync::CancellationToken;
+    use tools::{InputSchema, ToolSchema as Tool};
 
     // Helper function to create a basic text message
-    fn text_message(role: MessageRole, content: &str) -> Message {
-        Message {
-            id: None,
-            role,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![ContentBlock::Text {
+    fn text_message(role: &str, content: &str) -> Message {
+        let timestamp = Message::current_timestamp();
+        match role {
+            "user" => Message::User {
+                content: vec![UserContent::Text {
                     text: content.to_string(),
-                }]),
+                }],
+                timestamp,
+                id: Message::generate_id("user", timestamp),
             },
+            "assistant" => Message::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: content.to_string(),
+                }],
+                timestamp,
+                id: Message::generate_id("assistant", timestamp),
+            },
+            _ => panic!("Invalid role: {}", role),
         }
     }
 
@@ -45,7 +49,7 @@ mod tests {
         let client = get_real_client();
         let executor = AgentExecutor::new(client.clone());
         let model = Model::Gpt4_1Nano20250414; // Use a fast model
-        let initial_messages = vec![text_message(MessageRole::User, "Hello, world!")];
+        let initial_messages = vec![text_message("user", "Hello, world!")];
         let system_prompt = Some("You are a test assistant. Respond concisely.".to_string());
         let available_tools: Vec<Tool> = vec![];
         let (event_tx, mut event_rx) = mpsc::channel(10);
@@ -181,14 +185,14 @@ mod tests {
         while let Ok(Some(event)) = timeout(Duration::from_secs(5), event_rx.recv()).await {
             match event {
                 AgentEvent::AssistantMessageFinal(msg) => {
-                    // Check if we have tool calls in the structured content
-                    if let MessageContent::StructuredContent { content } = &msg.content {
-                        if content.0.iter().any(|block| {
-                            matches!(block, coder::api::messages::ContentBlock::ToolUse { .. })
+                    // Check if we have tool calls in the assistant content
+                    if let Message::Assistant { content, .. } = &msg {
+                        if content.iter().any(|c| {
+                            matches!(c, AssistantContent::ToolCall { .. })
                         }) {
                             saw_final_with_tool_call = true;
                         } else {
-                            // If we have text in structured content without tool calls, consider it final text
+                            // If we have text without tool calls, consider it final text
                             saw_final_text = true;
                         }
                     }

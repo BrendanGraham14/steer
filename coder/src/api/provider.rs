@@ -5,16 +5,15 @@ use std::fmt::Debug;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::error::ApiError;
-use crate::api::messages::Message;
+use crate::app::conversation::{Message, AssistantContent};
 use tools::{ToolCall, ToolSchema};
 
 use super::Model;
-use super::messages::ContentBlock;
 
 /// Response from the provider's completion API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionResponse {
-    pub content: Vec<ContentBlock>,
+    pub content: Vec<AssistantContent>,
 }
 
 impl CompletionResponse {
@@ -23,7 +22,7 @@ impl CompletionResponse {
         self.content
             .iter()
             .filter_map(|block| {
-                if let ContentBlock::Text { text, .. } = block {
+                if let AssistantContent::Text { text } = block {
                     Some(text.clone())
                 } else {
                     None
@@ -37,22 +36,15 @@ impl CompletionResponse {
     pub fn has_tool_calls(&self) -> bool {
         self.content
             .iter()
-            .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+            .any(|block| matches!(block, AssistantContent::ToolCall { .. }))
     }
 
     pub fn extract_tool_calls(&self) -> Vec<ToolCall> {
         self.content
             .iter()
             .filter_map(|block| {
-                if let ContentBlock::ToolUse {
-                    id, name, input, ..
-                } = block
-                {
-                    Some(ToolCall {
-                        name: name.clone(),
-                        parameters: input.clone(),
-                        id: id.clone(),
-                    })
+                if let AssistantContent::ToolCall { tool_call } = block {
+                    Some(tool_call.clone())
                 } else {
                     None
                 }

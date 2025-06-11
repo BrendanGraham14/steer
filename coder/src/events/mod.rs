@@ -201,7 +201,7 @@ impl StreamEvent {
     pub fn message_id(&self) -> Option<&str> {
         match self {
             StreamEvent::MessagePart { message_id, .. } => Some(message_id),
-            StreamEvent::MessageComplete { message, .. } => Some(&message.id),
+            StreamEvent::MessageComplete { message, .. } => Some(message.id()),
             _ => None,
         }
     }
@@ -334,8 +334,8 @@ impl EventFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::MessageContentBlock;
-    use crate::app::conversation::Role;
+    use crate::app::Message;
+    use crate::app::conversation::{AssistantContent};
 
     #[test]
     fn test_stream_event_serialization() {
@@ -474,11 +474,10 @@ mod tests {
 
     #[test]
     fn test_message_complete_event() {
-        let message = Message {
-            id: "msg_123".to_string(),
-            role: Role::Assistant,
-            content_blocks: vec![MessageContentBlock::Text("Hello world".to_string())],
+        let message = Message::Assistant {
+            content: vec![AssistantContent::Text { text: "Hello world".to_string() }],
             timestamp: 0,
+            id: "msg_123".to_string(),
         };
 
         let event = StreamEvent::MessageComplete {

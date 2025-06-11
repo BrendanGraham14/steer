@@ -1,20 +1,22 @@
-use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
-use thiserror::Error;
-use tokio::sync::{RwLock, mpsc};
-use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
 use crate::api::Model;
+use crate::app::conversation::{
+    AssistantContent, Role, ToolResult as ConversationToolResult, UserContent,
+};
 use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
-use crate::app::conversation::{MessageContentBlock, Role};
-use tools::ToolCall;
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::state::ToolFilter;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate, ToolResult,
 };
+use anyhow::Result;
+use std::collections::HashMap;
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::sync::{RwLock, mpsc};
+use tokio::task::JoinHandle;
+use tools::ToolCall;
+use tracing::{debug, error, info, warn};
 
 /// Session manager specific errors
 #[derive(Debug, Error)]
@@ -749,71 +751,105 @@ impl SessionManager {
                     }),
                     messages: state.messages.into_iter().map(|msg| {
                         crate::grpc::proto::Message {
-                            id: msg.id.clone(),
-                            role: match msg.role {
-                                crate::app::conversation::Role::User => crate::grpc::proto::MessageRole::User as i32,
-                                crate::app::conversation::Role::Assistant => crate::grpc::proto::MessageRole::Assistant as i32,
-                                crate::app::conversation::Role::Tool => crate::grpc::proto::MessageRole::Tool as i32,
-                            },
-                            content_blocks: msg.content_blocks.into_iter().map(|block| match block {
-                                crate::app::conversation::MessageContentBlock::Text(text) => {
-                                    crate::grpc::proto::MessageContentBlock {
-                                        content: Some(crate::grpc::proto::message_content_block::Content::Text(text)),
-                                    }
+                            id: msg.id().to_string(),
+                            message: Some(match msg {
+                                ConversationMessage::User { ref content, timestamp, .. } => {
+                                    crate::grpc::proto::message::Message::User(crate::grpc::proto::UserMessage {
+                                        content: content.iter().map(|user_content| match user_content {
+                                            UserContent::Text { text } => {
+                                                crate::grpc::proto::UserContent {
+                                                    content: Some(crate::grpc::proto::user_content::Content::Text(text.clone())),
+                                                }
+                                            }
+                                            UserContent::CommandExecution { command, stdout, stderr, exit_code } => {
+                                                crate::grpc::proto::UserContent {
+                                                    content: Some(crate::grpc::proto::user_content::Content::CommandExecution(
+                                                        crate::grpc::proto::CommandExecution {
+                                                            command: command.clone(),
+                                                            stdout: stdout.clone(),
+                                                            stderr: stderr.clone(),
+                                                            exit_code: *exit_code,
+                                                        }
+                                                    )),
+                                                }
+                                            }
+                                        }).collect(),
+                                        timestamp,
+                                    })
                                 }
-                                crate::app::conversation::MessageContentBlock::ToolCall(tool_call) => {
-                                    crate::grpc::proto::MessageContentBlock {
-                                        content: Some(crate::grpc::proto::message_content_block::Content::ToolCall(
-                                            crate::grpc::proto::ToolCall {
-                                                id: tool_call.id,
-                                                name: tool_call.name,
-                                                parameters: match tool_call.parameters {
-                                                    serde_json::Value::Object(map) => {
-                                                        map.into_iter().map(|(k, v)| (k, v.to_string())).collect()
+                                ConversationMessage::Assistant { ref content, timestamp, .. } => {
+                                    crate::grpc::proto::message::Message::Assistant(crate::grpc::proto::AssistantMessage {
+                                        content: content.iter().map(|assistant_content| match assistant_content {
+                                            AssistantContent::Text { text } => {
+                                                crate::grpc::proto::AssistantContent {
+                                                    content: Some(crate::grpc::proto::assistant_content::Content::Text(text.clone())),
+                                                }
+                                            }
+                                            AssistantContent::ToolCall { tool_call } => {
+                                                crate::grpc::proto::AssistantContent {
+                                                    content: Some(crate::grpc::proto::assistant_content::Content::ToolCall(
+                                                        crate::grpc::proto::ToolCall {
+                                                            id: tool_call.id.clone(),
+                                                            name: tool_call.name.clone(),
+                                                            parameters_json: tool_call.parameters.to_string(),
+                                                        }
+                                                    )),
+                                                }
+                                            }
+                                            AssistantContent::Thought { thought } => {
+                                                let thought_content = match thought {
+                                                    crate::app::conversation::ThoughtContent::Simple { text } => {
+                                                        crate::grpc::proto::ThoughtContent {
+                                                            thought_type: Some(crate::grpc::proto::thought_content::ThoughtType::Simple(
+                                                                crate::grpc::proto::SimpleThought { text: text.clone() }
+                                                            )),
+                                                        }
                                                     }
-                                                    _ => std::collections::HashMap::new(),
-                                                },
+                                                    crate::app::conversation::ThoughtContent::Signed { text, signature } => {
+                                                        crate::grpc::proto::ThoughtContent {
+                                                            thought_type: Some(crate::grpc::proto::thought_content::ThoughtType::Signed(
+                                                                crate::grpc::proto::SignedThought { text: text.clone(), signature: signature.clone() }
+                                                            )),
+                                                        }
+                                                    }
+                                                    crate::app::conversation::ThoughtContent::Redacted { data } => {
+                                                        crate::grpc::proto::ThoughtContent {
+                                                            thought_type: Some(crate::grpc::proto::thought_content::ThoughtType::Redacted(
+                                                                crate::grpc::proto::RedactedThought { data: data.clone() }
+                                                            )),
+                                                        }
+                                                    }
+                                                };
+                                                crate::grpc::proto::AssistantContent {
+                                                    content: Some(crate::grpc::proto::assistant_content::Content::Thought(thought_content)),
+                                                }
                                             }
-                                        )),
-                                    }
+                                        }).collect(),
+                                        timestamp,
+                                    })
                                 }
-                                crate::app::conversation::MessageContentBlock::ToolResult { tool_use_id, result } => {
-                                    crate::grpc::proto::MessageContentBlock {
-                                        content: Some(crate::grpc::proto::message_content_block::Content::ToolResult(
+                                ConversationMessage::Tool { ref tool_use_id, ref result, timestamp, .. } => {
+                                    let tool_result = match result {
+                                        crate::app::conversation::ToolResult::Success { output } => {
                                             crate::grpc::proto::ToolResult {
-                                                tool_call_id: tool_use_id,
-                                                success: true,
-                                                content: result,
-                                                error: None,
-                                                metadata: std::collections::HashMap::new(),
+                                                result: Some(crate::grpc::proto::tool_result::Result::Success(output.clone())),
                                             }
-                                        )),
-                                    }
+                                        }
+                                        crate::app::conversation::ToolResult::Error { error } => {
+                                            crate::grpc::proto::ToolResult {
+                                                result: Some(crate::grpc::proto::tool_result::Result::Error(error.clone())),
+                                            }
+                                        }
+                                    };
+                                    crate::grpc::proto::message::Message::Tool(crate::grpc::proto::ToolMessage {
+                                        tool_use_id: tool_use_id.clone(),
+                                        result: Some(tool_result),
+                                        timestamp: timestamp,
+                                    })
                                 }
-                                crate::app::conversation::MessageContentBlock::CommandExecution { command, stdout, stderr, exit_code } => {
-                                    let mut content = format!("$ {}\n{}", command, stdout);
-                                    if exit_code != 0 {
-                                        content.push_str(&format!("\nExit code: {}", exit_code));
-                                    }
-                                    if !stderr.is_empty() {
-                                        content.push_str(&format!("\nstderr: {}", stderr));
-                                    }
-                                    crate::grpc::proto::MessageContentBlock {
-                                        content: Some(crate::grpc::proto::message_content_block::Content::Text(content)),
-                                    }
-                                }
-                                crate::app::conversation::MessageContentBlock::Thought(thought_content) => {
-                                    crate::grpc::proto::MessageContentBlock {
-                                        content: Some(crate::grpc::proto::message_content_block::Content::Text(format!("[Thought: {}]", thought_content.display_text()))),
-                                    }
-                                }
-                            }).collect(),
+                            }),
                             created_at: Some(prost_types::Timestamp::from(
-                                std::time::UNIX_EPOCH + std::time::Duration::from_secs(
-                                    msg.id.split('_').nth(1)
-                                        .and_then(|ts| ts.parse::<u64>().ok())
-                                        .unwrap_or(msg.timestamp)
-                                )
+                                std::time::UNIX_EPOCH + std::time::Duration::from_secs(msg.timestamp())
                             )),
                             metadata: std::collections::HashMap::new(),
                         }
@@ -861,7 +897,7 @@ impl SessionManager {
             .tool_config
             .map(convert_proto_tool_config)
             .unwrap_or_default();
-        
+
         // Set the approval policy in the tool config
         tool_config.approval_policy = tool_policy;
 
@@ -1038,29 +1074,12 @@ fn convert_proto_tool_config(
 /// Convert AppEvent to StreamEvent, returning None for events that shouldn't be streamed
 fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamEvent> {
     match app_event {
-        AppEvent::MessageAdded {
-            role,
-            content_blocks,
-            id,
+        AppEvent::MessageAdded { message, model } => Some(StreamEvent::MessageComplete {
+            message,
+            usage: None,
+            metadata: std::collections::HashMap::new(),
             model,
-        } => {
-            let message = crate::app::Message {
-                id,
-                role,
-                content_blocks,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_secs(),
-            };
-
-            Some(StreamEvent::MessageComplete {
-                message,
-                usage: None,
-                metadata: std::collections::HashMap::new(),
-                model,
-            })
-        }
+        }),
 
         AppEvent::MessagePart { id, delta } => Some(StreamEvent::MessagePart {
             content: delta,
@@ -1087,7 +1106,7 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
             model,
         } => Some(StreamEvent::ToolCallCompleted {
             tool_call_id: id,
-            result: ToolResult::success(result, 0),
+            result: crate::session::ToolResult::success(result, 0),
             metadata: std::collections::HashMap::new(),
             model,
         }),
@@ -1130,17 +1149,16 @@ async fn update_session_state_for_event(
             store.update_tool_call(tool_call_id, update).await?;
 
             // Also add a Tool message with the result
-            let tool_message = ConversationMessage {
-                id: format!("tool_result_{}", tool_call_id),
-                role: crate::app::conversation::Role::Tool,
-                content_blocks: vec![crate::app::conversation::MessageContentBlock::ToolResult {
-                    tool_use_id: tool_call_id.clone(),
-                    result: result.output.clone(),
-                }],
+            let tool_message = ConversationMessage::Tool {
+                tool_use_id: tool_call_id.clone(),
+                result: crate::app::conversation::ToolResult::Success {
+                    output: result.output.clone(),
+                },
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("Time went backwards")
                     .as_secs(),
+                id: format!("tool_result_{}", tool_call_id),
             };
             store.append_message(session_id, &tool_message).await?;
         }
@@ -1153,17 +1171,16 @@ async fn update_session_state_for_event(
             store.update_tool_call(tool_call_id, update).await?;
 
             // Also add a Tool message with the error
-            let tool_message = ConversationMessage {
-                id: format!("tool_result_{}", tool_call_id),
-                role: crate::app::conversation::Role::Tool,
-                content_blocks: vec![crate::app::conversation::MessageContentBlock::ToolResult {
-                    tool_use_id: tool_call_id.clone(),
-                    result: format!("Error: {}", error),
-                }],
+            let tool_message = ConversationMessage::Tool {
+                tool_use_id: tool_call_id.clone(),
+                result: crate::app::conversation::ToolResult::Error {
+                    error: error.clone(),
+                },
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("Time went backwards")
                     .as_secs(),
+                id: format!("tool_result_{}", tool_call_id),
             };
             store.append_message(session_id, &tool_message).await?;
         }
@@ -1289,7 +1306,7 @@ mod tests {
         // Create first session - should succeed
         let mut tool_config = crate::session::SessionToolConfig::default();
         tool_config.approval_policy = crate::session::ToolApprovalPolicy::AlwaysAsk;
-        
+
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local,
             tool_config,
@@ -1332,11 +1349,12 @@ mod tests {
 
         // Simulate adding messages including tool calls and results
         // First, add a user message
-        let user_message = ConversationMessage {
-            id: "user_1".to_string(),
-            role: Role::User,
-            content_blocks: vec![MessageContentBlock::Text("Read the file test.txt".to_string())],
+        let user_message = ConversationMessage::User {
+            content: vec![UserContent::Text {
+                text: "Read the file test.txt".to_string(),
+            }],
             timestamp: 123456789,
+            id: "user_1".to_string(),
         };
         manager
             .store
@@ -1345,18 +1363,21 @@ mod tests {
             .unwrap();
 
         // Add an assistant message with a tool call
-        let assistant_message = ConversationMessage {
-            id: "assistant_1".to_string(),
-            role: Role::Assistant,
-            content_blocks: vec![
-                MessageContentBlock::Text("I'll read that file for you.".to_string()),
-                MessageContentBlock::ToolCall(ToolCall {
-                    id: "tool_call_1".to_string(),
-                    name: "read_file".to_string(),
-                    parameters: serde_json::json!({"path": "test.txt"}),
-                }),
+        let assistant_message = ConversationMessage::Assistant {
+            content: vec![
+                AssistantContent::Text {
+                    text: "I'll read that file for you.".to_string(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: "tool_call_1".to_string(),
+                        name: "read_file".to_string(),
+                        parameters: serde_json::json!({"path": "test.txt"}),
+                    },
+                },
             ],
             timestamp: 123456790,
+            id: "assistant_1".to_string(),
         };
         manager
             .store
@@ -1377,7 +1398,10 @@ mod tests {
 
         let tool_call_completed = StreamEvent::ToolCallCompleted {
             tool_call_id: "tool_call_1".to_string(),
-            result: ToolResult::success("File contents: Hello, world!".to_string(), 100),
+            result: crate::session::ToolResult::success(
+                "File contents: Hello, world!".to_string(),
+                100,
+            ),
             metadata: std::collections::HashMap::new(),
             model: Model::Claude3_5Sonnet20241022,
         };
@@ -1391,11 +1415,12 @@ mod tests {
             .unwrap();
 
         // Add a follow-up assistant message
-        let followup_message = ConversationMessage {
-            id: "assistant_2".to_string(),
-            role: Role::Assistant,
-            content_blocks: vec![MessageContentBlock::Text("The file contains: Hello, world!".to_string())],
+        let followup_message = ConversationMessage::Assistant {
+            content: vec![AssistantContent::Text {
+                text: "The file contains: Hello, world!".to_string(),
+            }],
             timestamp: 123456791,
+            id: "assistant_2".to_string(),
         };
         manager
             .store
@@ -1419,16 +1444,24 @@ mod tests {
 
         // Verify the tool result message exists and has correct content
         let tool_result_msg = &loaded_session.state.messages[2];
-        assert_eq!(tool_result_msg.role, Role::Tool);
+        assert_eq!(tool_result_msg.role(), Role::Tool);
 
         // Verify the content structure
-        assert_eq!(tool_result_msg.content_blocks.len(), 1);
-        match &tool_result_msg.content_blocks[0] {
-            MessageContentBlock::ToolResult { tool_use_id, result } => {
+        match tool_result_msg {
+            ConversationMessage::Tool {
+                tool_use_id,
+                result,
+                ..
+            } => {
                 assert_eq!(tool_use_id, "tool_call_1");
-                assert!(result.contains("Hello, world!"));
+                match result {
+                    crate::app::conversation::ToolResult::Success { output } => {
+                        assert!(output.contains("Hello, world!"));
+                    }
+                    _ => panic!("Expected Success result"),
+                }
             }
-            _ => panic!("Expected ToolResult block"),
+            _ => panic!("Expected Tool message"),
         }
 
         // Now test resuming the session - it should work without API errors

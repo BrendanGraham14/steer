@@ -8,7 +8,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
-use crate::api::messages::{ContentBlock, Message, MessageContent, MessageRole};
+use crate::app::conversation::{
+    Message as AppMessage, UserContent, AssistantContent, ToolResult,
+    ThoughtContent,
+};
 use crate::api::provider::{CompletionResponse, Provider};
 use tools::ToolSchema;
 
@@ -356,115 +359,81 @@ struct GeminiContentResponse {
     parts: Vec<GeminiResponsePart>,
 }
 
-fn map_role(msg: &Message) -> &str {
-    match msg.role {
-        MessageRole::Assistant => "model",
-        MessageRole::User => {
-            // If a user message contains ANY ToolResult blocks, treat it as a function/tool response
-            if let MessageContent::StructuredContent { ref content } = msg.content {
-                // Check if any block is a ToolResult
-                if content
-                    .0
-                    .iter()
-                    .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
-                {
-                    return "function"; // Use "function" role for tool results
-                }
-            }
-            "user"
-        }
-        // Treat our internal "tool" role as Gemini's "function" role
-        MessageRole::Tool => "function",
-    }
-}
 
-fn convert_content_block_to_parts(
-    block: ContentBlock,
-    gemini_role: &str,
-    message_for_logging: &Message,
-) -> Vec<GeminiRequestPart> {
-    match block {
-        ContentBlock::Text { text, .. } => {
-            vec![GeminiRequestPart::Text { text }]
-        }
-        ContentBlock::ToolUse { name, input, .. } => {
-            // Assistant requests a tool call -> functionCall
-            if gemini_role == "model" {
-                vec![GeminiRequestPart::FunctionCall {
-                    function_call: GeminiFunctionCall { name, args: input },
-                }]
-            } else {
-                warn!(target: "gemini::convert_content_block_to_parts", "Unexpected ToolUse block in non-model message (role: {}): {:?}", gemini_role, message_for_logging);
-                vec![]
-            }
-        }
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-            ..
-        } => {
-            // User provides tool result -> functionResponse
-            if gemini_role == "function" {
-                // Extract the actual result content (assuming text for now, needs enhancement for complex results)
-                let result_value = content
-                    .into_iter()
-                    .find_map(|b| {
-                        if let ContentBlock::Text { text, .. } = b {
-                            // Attempt to parse text as JSON, otherwise treat as string
-                            serde_json::from_str(&text).ok().or(Some(Value::String(text)))
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(|| {
-                        // If no text or parsing fails, create a default Value (e.g., Null or error string)
-                         warn!(target: "gemini::convert_content_block_to_parts", "Could not extract text or parse JSON from ToolResult content for tool_use_id '{}'.", tool_use_id);
-                        serde_json::Value::Null // Use Null as a neutral default
-                    });
 
-                vec![GeminiRequestPart::FunctionResponse {
-                    function_response: GeminiFunctionResponse {
-                        name: tool_use_id, // Use tool_use_id for the function name as required by Gemini
-                        response: GeminiResponseContent {
-                            content: result_value,
-                        },
-                    },
-                }]
-            } else {
-                warn!(target: "gemini::convert_content_block_to_parts", "Unexpected ToolResult block in non-function message (role: {}): {:?}", gemini_role, message_for_logging);
-                vec![]
-            }
-        }
-        ContentBlock::Thought { content, .. } => {
-            // Gemini doesn't send thought blocks in requests, they only appear in responses
-            // Convert to regular text for now
-            vec![GeminiRequestPart::Text { text: format!("[Thought: {}]", content.display_text()) }]
-        }
-    }
-}
-
-fn convert_messages(messages: Vec<Message>) -> Vec<GeminiContent> {
+fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
     messages
         .into_iter()
         .map(|msg| {
-            // Determine role using helper
-            let role = map_role(&msg);
-
-            let parts: Vec<GeminiRequestPart> = match msg.content {
-                MessageContent::Text { ref content } => {
-                    // Simple text message
-                    vec![GeminiRequestPart::Text {
-                        text: content.clone(),
-                    }]
-                }
-                MessageContent::StructuredContent { ref content } => {
-                    // Convert structured content blocks to Gemini parts using helper
-                    content
-                        .0
-                        .clone()
+            let (role, parts) = match msg {
+                AppMessage::User { content, .. } => {
+                    let parts: Vec<GeminiRequestPart> = content
                         .into_iter()
-                        .flat_map(|block| convert_content_block_to_parts(block, role, &msg))
-                        .collect()
+                        .map(|user_content| match user_content {
+                            UserContent::Text { text } => GeminiRequestPart::Text { text },
+                            UserContent::CommandExecution {
+                                command,
+                                stdout,
+                                stderr,
+                                exit_code,
+                            } => GeminiRequestPart::Text {
+                                text: UserContent::format_command_execution_as_xml(
+                                    &command, &stdout, &stderr, exit_code
+                                ),
+                            },
+                        })
+                        .collect();
+                    ("user", parts)
+                }
+                AppMessage::Assistant { content, .. } => {
+                    let parts: Vec<GeminiRequestPart> = content
+                        .into_iter()
+                        .filter_map(|assistant_content| match assistant_content {
+                            AssistantContent::Text { text } => {
+                                Some(GeminiRequestPart::Text { text })
+                            }
+                            AssistantContent::ToolCall { tool_call } => {
+                                Some(GeminiRequestPart::FunctionCall {
+                                    function_call: GeminiFunctionCall {
+                                        name: tool_call.name,
+                                        args: tool_call.parameters,
+                                    },
+                                })
+                            }
+                            AssistantContent::Thought { thought } => {
+                                // Gemini doesn't send thought blocks in requests
+                                // Convert to regular text for now
+                                Some(GeminiRequestPart::Text {
+                                    text: format!("[Thought: {}]", thought.display_text()),
+                                })
+                            }
+                        })
+                        .collect();
+                    ("model", parts)
+                }
+                AppMessage::Tool { tool_use_id, result, .. } => {
+                    // Convert tool result to function response
+                    let result_value = match result {
+                        ToolResult::Success { output } => {
+                            // Try to parse as JSON, otherwise use as string
+                            serde_json::from_str(&output)
+                                .ok()
+                                .unwrap_or_else(|| Value::String(output))
+                        }
+                        ToolResult::Error { error } => {
+                            Value::String(format!("Error: {}", error))
+                        }
+                    };
+
+                    let parts = vec![GeminiRequestPart::FunctionResponse {
+                        function_response: GeminiFunctionResponse {
+                            name: tool_use_id, // Use tool_use_id as function name
+                            response: GeminiResponseContent {
+                                content: result_value,
+                            },
+                        },
+                    }];
+                    ("function", parts)
                 }
             };
 
@@ -623,7 +592,7 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
                usage.prompt_token_count, usage.candidates_token_count, usage.total_token_count);
     }
 
-    let content: Vec<ContentBlock> = candidate
+    let content: Vec<AssistantContent> = candidate
         .content // GeminiContentResponse
         .parts   // Vec<GeminiResponsePart> (struct)
         .iter()
@@ -634,8 +603,8 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
                 // For thought parts, extract text content and create a Thought block
                 match &part.data {
                     GeminiResponsePartData::Text { text } => {
-                        Some(ContentBlock::Thought {
-                            content: crate::api::messages::ThoughtContent::Simple {
+                        Some(AssistantContent::Thought {
+                            thought: ThoughtContent::Simple {
                                 text: text.clone(),
                             },
                         })
@@ -648,28 +617,30 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
             } else {
                 // Regular (non-thought) content processing
                 match &part.data {
-                    GeminiResponsePartData::Text { text } => Some(ContentBlock::Text {
+                    GeminiResponsePartData::Text { text } => Some(AssistantContent::Text {
                         text: text.clone(),
                     }),
                     GeminiResponsePartData::InlineData { inline_data } => {
                         warn!(target: "gemini::convert_response", "Received InlineData part (MIME type: {}). Converting to placeholder text.", inline_data.mime_type);
-                        Some(ContentBlock::Text { text: format!("[Inline Data: {}]", inline_data.mime_type) })
+                        Some(AssistantContent::Text { text: format!("[Inline Data: {}]", inline_data.mime_type) })
                     }
                     GeminiResponsePartData::FunctionCall { function_call } => {
-                        Some(ContentBlock::ToolUse {
-                            id: uuid::Uuid::new_v4().to_string(), // Generate a synthetic ID
-                            name: function_call.name.clone(),
-                            input: function_call.args.clone(),
+                        Some(AssistantContent::ToolCall {
+                            tool_call: tools::ToolCall {
+                                id: uuid::Uuid::new_v4().to_string(), // Generate a synthetic ID
+                                name: function_call.name.clone(),
+                                parameters: function_call.args.clone(),
+                            },
                         })
                     }
                     GeminiResponsePartData::FileData { file_data } => {
                         warn!(target: "gemini::convert_response", "Received FileData part (URI: {}). Converting to placeholder text.", file_data.file_uri);
-                        Some(ContentBlock::Text { text: format!("[File Data: {}]", file_data.file_uri) })
+                        Some(AssistantContent::Text { text: format!("[File Data: {}]", file_data.file_uri) })
                     }
                      GeminiResponsePartData::ExecutableCode { executable_code } => {
                          info!(target: "gemini::convert_response", "Received ExecutableCode part ({}). Converting to text.",
                               executable_code.language);
-                         Some(ContentBlock::Text {
+                         Some(AssistantContent::Text {
                              text: format!(
                                  "```{}
 {}
@@ -696,7 +667,7 @@ impl Provider for GeminiClient {
     async fn complete(
         &self,
         model: Model,
-        messages: Vec<Message>,
+        messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,

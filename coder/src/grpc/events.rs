@@ -1,7 +1,8 @@
 use crate::app::{
-    AppEvent, cancellation::ActiveTool, conversation::MessageContentBlock as AppContentBlock,
-    conversation::Role,
+    AppEvent, cancellation::ActiveTool,
+    conversation::{Message, Role, AssistantContent, UserContent, ToolResult as ConversationToolResult},
 };
+use tools::ToolCall;
 use crate::grpc::proto::*;
 use prost_types::Timestamp;
 use uuid;
@@ -11,121 +12,228 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
     let timestamp = Some(Timestamp::from(std::time::SystemTime::now()));
 
     let event = match app_event {
-        AppEvent::MessageAdded {
-            role,
-            content_blocks,
-            id,
-            model,
-        } => Some(server_event::Event::MessageAdded(MessageAddedEvent {
-            role: role_to_proto(role) as i32,
-            content_blocks: content_blocks
-                .into_iter()
-                .map(content_block_to_proto)
-                .collect(),
-            id,
-            model: model.as_ref().to_string(),
+        AppEvent::MessageAdded { message, model } => {
+            let proto_message = match &message {
+                Message::User { content, timestamp, id: _ } => {
+                    message_added_event::Message::User(UserMessage {
+                        content: content.iter().map(|user_content| match user_content {
+                            UserContent::Text { text } => crate::grpc::proto::UserContent {
+                                content: Some(user_content::Content::Text(text.clone())),
+                            },
+                            UserContent::CommandExecution { command, stdout, stderr, exit_code } => {
+                                crate::grpc::proto::UserContent {
+                                    content: Some(user_content::Content::CommandExecution(CommandExecution {
+                                        command: command.clone(),
+                                        stdout: stdout.clone(),
+                                        stderr: stderr.clone(),
+                                        exit_code: *exit_code,
+                                    })),
+                                }
+                            }
+                        }).collect(),
+                        timestamp: *timestamp,
+                    })
+                }
+                Message::Assistant { content, timestamp, id: _ } => {
+                    message_added_event::Message::Assistant(AssistantMessage {
+                        content: content.iter().map(|assistant_content| match assistant_content {
+                            AssistantContent::Text { text } => crate::grpc::proto::AssistantContent {
+                                content: Some(assistant_content::Content::Text(text.clone())),
+                            },
+                            AssistantContent::ToolCall { tool_call } => {
+                                crate::grpc::proto::AssistantContent {
+                                    content: Some(assistant_content::Content::ToolCall(crate::grpc::proto::ToolCall {
+                                        id: tool_call.id.clone(),
+                                        name: tool_call.name.clone(),
+                                        parameters_json: serde_json::to_string(&tool_call.parameters).unwrap_or_default(),
+                                    })),
+                                }
+                            }
+                            AssistantContent::Thought { thought } => {
+                                // For now, convert thoughts to text
+                                crate::grpc::proto::AssistantContent {
+                                    content: Some(assistant_content::Content::Text(format!("<thinking>\n{}\n</thinking>", thought.display_text()))),
+                                }
+                            }
+                        }).collect(),
+                        timestamp: *timestamp,
+                    })
+                }
+                Message::Tool { tool_use_id, result, timestamp, id: _ } => {
+                    let proto_result = match result {
+                        ConversationToolResult::Success { output } => {
+                            tool_result::Result::Success(output.clone())
+                        }
+                        ConversationToolResult::Error { error } => {
+                            tool_result::Result::Error(error.clone())
+                        }
+                    };
+                    message_added_event::Message::Tool(ToolMessage {
+                        tool_use_id: tool_use_id.clone(),
+                        result: Some(crate::grpc::proto::ToolResult {
+                            result: Some(proto_result),
+                        }),
+                        timestamp: *timestamp,
+                    })
+                }
+            };
+
+            Some(server_event::Event::MessageAdded(MessageAddedEvent {
+                message: Some(proto_message),
+                id: message.id().to_string(),
+                model: model.to_string(),
+            }))
+        }
+        AppEvent::MessageUpdated { 
+            id, 
+            content 
+        } => Some(server_event::Event::MessageUpdated(MessageUpdatedEvent { 
+            id, 
+            content 
         })),
-        AppEvent::MessageUpdated { id, content } => {
-            Some(server_event::Event::MessageUpdated(MessageUpdatedEvent {
-                id,
-                content,
-            }))
-        }
-        AppEvent::MessagePart { id, delta } => {
-            Some(server_event::Event::MessagePart(MessagePartEvent {
-                id,
-                delta,
-            }))
-        }
-        AppEvent::ToolCallStarted { name, id, model } => {
-            Some(server_event::Event::ToolCallStarted(ToolCallStartedEvent {
-                name,
-                id,
-                model: model.as_ref().to_string(),
-            }))
-        }
-        AppEvent::ToolCallCompleted {
-            name,
-            result,
-            id,
-            model,
-        } => Some(server_event::Event::ToolCallCompleted(
-            ToolCallCompletedEvent {
-                name,
-                result,
-                id,
-                model: model.as_ref().to_string(),
-            },
-        )),
-        AppEvent::ToolCallFailed {
-            name,
-            error,
-            id,
-            model,
-        } => Some(server_event::Event::ToolCallFailed(ToolCallFailedEvent {
-            name,
-            error,
-            id,
-            model: model.as_ref().to_string(),
+        AppEvent::MessagePart { 
+            id, 
+            delta 
+        } => Some(server_event::Event::MessagePart(MessagePartEvent { 
+            id, 
+            delta 
         })),
-        AppEvent::ThinkingStarted => Some(server_event::Event::ThinkingStarted(
-            ThinkingStartedEvent {},
-        )),
-        AppEvent::ThinkingCompleted => Some(server_event::Event::ThinkingCompleted(
-            ThinkingCompletedEvent {},
-        )),
-        AppEvent::CommandResponse { content, id } => {
-            Some(server_event::Event::CommandResponse(CommandResponseEvent {
-                content,
-                id,
-            }))
-        }
-        AppEvent::RequestToolApproval {
-            name,
-            parameters,
-            id,
-        } => Some(server_event::Event::RequestToolApproval(
-            RequestToolApprovalEvent {
-                name,
-                parameters_json: parameters.to_string(),
-                id,
-            },
-        )),
-        AppEvent::OperationCancelled { info } => Some(server_event::Event::OperationCancelled(
-            OperationCancelledEvent {
-                info: Some(CancellationInfo {
-                    api_call_in_progress: info.api_call_in_progress,
-                    active_tools: info
-                        .active_tools
-                        .into_iter()
-                        .map(|tool| tool.name)
-                        .collect(),
-                    pending_tool_approvals: info.pending_tool_approvals,
-                }),
-            },
-        )),
-        AppEvent::ModelChanged { model } => {
-            Some(server_event::Event::ModelChanged(ModelChangedEvent {
-                model: model.as_ref().to_string(),
-            }))
-        }
-        AppEvent::Error { message } => Some(server_event::Event::Error(ErrorEvent { message })),
-        AppEvent::RestoredMessage {
-            role,
-            content_blocks,
+        AppEvent::ThinkingStarted => Some(server_event::Event::ThinkingStarted(ThinkingStartedEvent {})),
+        AppEvent::ThinkingCompleted => Some(server_event::Event::ThinkingCompleted(ThinkingCompletedEvent {})),
+        AppEvent::ToolCallStarted { 
+            name, 
             id,
             model,
-        } => {
-            // Convert RestoredMessage to RestoredMessageEvent for gRPC transmission
-            // This allows remote TUIs to display conversation history without duplication
+        } => Some(server_event::Event::ToolCallStarted(ToolCallStartedEvent { 
+            name, 
+            id,
+            model: model.to_string(),
+        })),
+        AppEvent::ToolCallCompleted { 
+            name, 
+            result, 
+            id,
+            model,
+        } => Some(server_event::Event::ToolCallCompleted(ToolCallCompletedEvent { 
+            name, 
+            result, 
+            id,
+            model: model.to_string(),
+        })),
+        AppEvent::ToolCallFailed { 
+            name, 
+            error, 
+            id,
+            model,
+        } => Some(server_event::Event::ToolCallFailed(ToolCallFailedEvent { 
+            name, 
+            error, 
+            id,
+            model: model.to_string(),
+        })),
+        AppEvent::RequestToolApproval { 
+            name, 
+            parameters, 
+            id 
+        } => Some(server_event::Event::RequestToolApproval(RequestToolApprovalEvent { 
+            name, 
+            parameters_json: serde_json::to_string(&parameters).unwrap_or_default(), 
+            id 
+        })),
+        AppEvent::CommandResponse { 
+            content, 
+            id 
+        } => Some(server_event::Event::CommandResponse(CommandResponseEvent { 
+            content, 
+            id 
+        })),
+        AppEvent::ModelChanged { 
+            model 
+        } => Some(server_event::Event::ModelChanged(ModelChangedEvent { 
+            model: model.to_string(),
+        })),
+        AppEvent::Error { 
+            message 
+        } => Some(server_event::Event::Error(ErrorEvent { 
+            message 
+        })),
+        AppEvent::OperationCancelled { info } => Some(server_event::Event::OperationCancelled(OperationCancelledEvent {
+            info: Some(CancellationInfo {
+                api_call_in_progress: info.api_call_in_progress,
+                active_tools: info.active_tools.into_iter().map(|tool| tool.name).collect(),
+                pending_tool_approvals: info.pending_tool_approvals,
+            }),
+        })),
+        AppEvent::RestoredMessage { message, model } => {
+            let proto_message = match &message {
+                Message::User { content, timestamp, id: _ } => {
+                    restored_message_event::Message::User(UserMessage {
+                        content: content.iter().map(|user_content| match user_content {
+                            UserContent::Text { text } => crate::grpc::proto::UserContent {
+                                content: Some(user_content::Content::Text(text.clone())),
+                            },
+                            UserContent::CommandExecution { command, stdout, stderr, exit_code } => {
+                                crate::grpc::proto::UserContent {
+                                    content: Some(user_content::Content::CommandExecution(CommandExecution {
+                                        command: command.clone(),
+                                        stdout: stdout.clone(),
+                                        stderr: stderr.clone(),
+                                        exit_code: *exit_code,
+                                    })),
+                                }
+                            }
+                        }).collect(),
+                        timestamp: *timestamp,
+                    })
+                }
+                Message::Assistant { content, timestamp, id: _ } => {
+                    restored_message_event::Message::Assistant(AssistantMessage {
+                        content: content.iter().map(|assistant_content| match assistant_content {
+                            AssistantContent::Text { text } => crate::grpc::proto::AssistantContent {
+                                content: Some(assistant_content::Content::Text(text.clone())),
+                            },
+                            AssistantContent::ToolCall { tool_call } => {
+                                crate::grpc::proto::AssistantContent {
+                                    content: Some(assistant_content::Content::ToolCall(crate::grpc::proto::ToolCall {
+                                        id: tool_call.id.clone(),
+                                        name: tool_call.name.clone(),
+                                        parameters_json: serde_json::to_string(&tool_call.parameters).unwrap_or_default(),
+                                    })),
+                                }
+                            }
+                            AssistantContent::Thought { thought } => {
+                                // For now, convert thoughts to text
+                                crate::grpc::proto::AssistantContent {
+                                    content: Some(assistant_content::Content::Text(format!("<thinking>\n{}\n</thinking>", thought.display_text()))),
+                                }
+                            }
+                        }).collect(),
+                        timestamp: *timestamp,
+                    })
+                }
+                Message::Tool { tool_use_id, result, timestamp, id: _ } => {
+                    let proto_result = match result {
+                        ConversationToolResult::Success { output } => {
+                            tool_result::Result::Success(output.clone())
+                        }
+                        ConversationToolResult::Error { error } => {
+                            tool_result::Result::Error(error.clone())
+                        }
+                    };
+                    restored_message_event::Message::Tool(ToolMessage {
+                        tool_use_id: tool_use_id.clone(),
+                        result: Some(crate::grpc::proto::ToolResult {
+                            result: Some(proto_result),
+                        }),
+                        timestamp: *timestamp,
+                    })
+                }
+            };
+
             Some(server_event::Event::RestoredMessage(RestoredMessageEvent {
-                role: role_to_proto(role) as i32,
-                content_blocks: content_blocks
-                    .into_iter()
-                    .map(content_block_to_proto)
-                    .collect(),
-                id,
-                model: model.as_ref().to_string(),
+                message: Some(proto_message),
+                id: message.id().to_string(),
+                model: model.to_string(),
             }))
         }
     };
@@ -137,6 +245,250 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
     }
 }
 
+/// Convert protobuf ServerEvent to AppEvent
+pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> {
+    match server_event.event? {
+        server_event::Event::MessageAdded(e) => {
+            let message = match e.message? {
+                message_added_event::Message::User(user_msg) => {
+                    let content = user_msg.content.into_iter().filter_map(|user_content| {
+                        match user_content.content? {
+                            user_content::Content::Text(text) => {
+                                Some(UserContent::Text { text })
+                            }
+                            user_content::Content::CommandExecution(cmd) => {
+                                Some(UserContent::CommandExecution {
+                                    command: cmd.command,
+                                    stdout: cmd.stdout,
+                                    stderr: cmd.stderr,
+                                    exit_code: cmd.exit_code,
+                                })
+                            }
+                        }
+                    }).collect();
+                    Message::User { 
+                        content, 
+                        timestamp: user_msg.timestamp, 
+                        id: e.id.clone(),
+                    }
+                }
+                message_added_event::Message::Assistant(assistant_msg) => {
+                    let content = assistant_msg.content.into_iter().filter_map(|assistant_content| {
+                        match assistant_content.content? {
+                            assistant_content::Content::Text(text) => {
+                                Some(AssistantContent::Text { text })
+                            }
+                            assistant_content::Content::ToolCall(tool_call) => {
+                                let params = serde_json::from_str(&tool_call.parameters_json)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                
+                                Some(AssistantContent::ToolCall { 
+                                    tool_call: ToolCall {
+                                        id: tool_call.id,
+                                        name: tool_call.name,
+                                        parameters: params,
+                                    }
+                                })
+                            }
+                            assistant_content::Content::Thought(_) => {
+                                // TODO: Handle thoughts properly when we implement them
+                                None
+                            }
+                        }
+                    }).collect();
+                    Message::Assistant { 
+                        content, 
+                        timestamp: assistant_msg.timestamp, 
+                        id: e.id.clone(),
+                    }
+                }
+                message_added_event::Message::Tool(tool_msg) => {
+                    if let Some(result) = tool_msg.result {
+                        let tool_result = match result.result? {
+                            tool_result::Result::Success(output) => {
+                                ConversationToolResult::Success { output }
+                            }
+                            tool_result::Result::Error(error) => {
+                                ConversationToolResult::Error { error }
+                            }
+                        };
+                        Message::Tool {
+                            tool_use_id: tool_msg.tool_use_id,
+                            result: tool_result,
+                            timestamp: tool_msg.timestamp,
+                            id: e.id.clone(),
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+            };
+
+            let model = { use std::str::FromStr; crate::api::Model::from_str(&e.model).unwrap_or(crate::api::Model::Claude3_7Sonnet20250219) };
+
+            Some(AppEvent::MessageAdded { 
+                message,
+                model,
+            })
+        }
+        server_event::Event::MessageUpdated(e) => Some(AppEvent::MessageUpdated { 
+            id: e.id, 
+            content: e.content 
+        }),
+        server_event::Event::MessagePart(e) => Some(AppEvent::MessagePart { 
+            id: e.id, 
+            delta: e.delta 
+        }),
+        server_event::Event::ToolCallStarted(e) => {
+            let model = { use std::str::FromStr; crate::api::Model::from_str(&e.model).unwrap_or(crate::api::Model::Claude3_7Sonnet20250219) };
+            Some(AppEvent::ToolCallStarted { 
+                name: e.name, 
+                id: e.id,
+                model,
+            })
+        },
+        server_event::Event::ToolCallCompleted(e) => {
+            let model = { use std::str::FromStr; crate::api::Model::from_str(&e.model).unwrap_or(crate::api::Model::Claude3_7Sonnet20250219) };
+            Some(AppEvent::ToolCallCompleted { 
+                name: e.name, 
+                result: e.result, 
+                id: e.id,
+                model,
+            })
+        },
+        server_event::Event::ToolCallFailed(e) => {
+            let model = { use std::str::FromStr; crate::api::Model::from_str(&e.model).unwrap_or(crate::api::Model::Claude3_7Sonnet20250219) };
+            Some(AppEvent::ToolCallFailed { 
+                name: e.name, 
+                error: e.error, 
+                id: e.id,
+                model,
+            })
+        },
+        server_event::Event::ThinkingStarted(_) => Some(AppEvent::ThinkingStarted),
+        server_event::Event::ThinkingCompleted(_) => Some(AppEvent::ThinkingCompleted),
+        server_event::Event::RequestToolApproval(e) => {
+            let parameters = serde_json::from_str(&e.parameters_json)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            Some(AppEvent::RequestToolApproval { 
+                name: e.name, 
+                parameters, 
+                id: e.id 
+            })
+        },
+        server_event::Event::OperationCancelled(e) => {
+            if let Some(info) = e.info {
+                Some(AppEvent::OperationCancelled {
+                    info: crate::app::cancellation::CancellationInfo {
+                        api_call_in_progress: info.api_call_in_progress,
+                        active_tools: info.active_tools.into_iter().map(|name| ActiveTool { 
+                            name: name.clone(), 
+                            id: format!("tool_{}", uuid::Uuid::new_v4()) 
+                        }).collect(),
+                        pending_tool_approvals: info.pending_tool_approvals,
+                    }
+                })
+            } else {
+                None
+            }
+        }
+        server_event::Event::CommandResponse(e) => Some(AppEvent::CommandResponse { 
+            content: e.content, 
+            id: e.id 
+        }),
+        server_event::Event::ModelChanged(e) => {
+            let model = { use std::str::FromStr; crate::api::Model::from_str(&e.model).unwrap_or(crate::api::Model::Claude3_7Sonnet20250219) };
+            Some(AppEvent::ModelChanged { model })
+        },
+        server_event::Event::Error(e) => Some(AppEvent::Error { 
+            message: e.message 
+        }),
+        server_event::Event::RestoredMessage(e) => {
+            let message = match e.message? {
+                restored_message_event::Message::User(user_msg) => {
+                    let content = user_msg.content.into_iter().filter_map(|user_content| {
+                        match user_content.content? {
+                            user_content::Content::Text(text) => {
+                                Some(UserContent::Text { text })
+                            }
+                            user_content::Content::CommandExecution(cmd) => {
+                                Some(UserContent::CommandExecution {
+                                    command: cmd.command,
+                                    stdout: cmd.stdout,
+                                    stderr: cmd.stderr,
+                                    exit_code: cmd.exit_code,
+                                })
+                            }
+                        }
+                    }).collect();
+                    Message::User { 
+                        content, 
+                        timestamp: user_msg.timestamp, 
+                        id: e.id.clone(),
+                    }
+                }
+                restored_message_event::Message::Assistant(assistant_msg) => {
+                    let content = assistant_msg.content.into_iter().filter_map(|assistant_content| {
+                        match assistant_content.content? {
+                            assistant_content::Content::Text(text) => {
+                                Some(AssistantContent::Text { text })
+                            }
+                            assistant_content::Content::ToolCall(tool_call) => {
+                                let params = serde_json::from_str(&tool_call.parameters_json)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                
+                                Some(AssistantContent::ToolCall { 
+                                    tool_call: ToolCall {
+                                        id: tool_call.id,
+                                        name: tool_call.name,
+                                        parameters: params,
+                                    }
+                                })
+                            }
+                            assistant_content::Content::Thought(_) => {
+                                // TODO: Handle thoughts properly when we implement them
+                                None
+                            }
+                        }
+                    }).collect();
+                    Message::Assistant { 
+                        content, 
+                        timestamp: assistant_msg.timestamp, 
+                        id: e.id.clone(),
+                    }
+                }
+                restored_message_event::Message::Tool(tool_msg) => {
+                    if let Some(result) = tool_msg.result {
+                        let tool_result = match result.result? {
+                            tool_result::Result::Success(output) => {
+                                ConversationToolResult::Success { output }
+                            }
+                            tool_result::Result::Error(error) => {
+                                ConversationToolResult::Error { error }
+                            }
+                        };
+                        Message::Tool {
+                            tool_use_id: tool_msg.tool_use_id,
+                            result: tool_result,
+                            timestamp: tool_msg.timestamp,
+                            id: e.id.clone(),
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+            };
+
+            let model = { use std::str::FromStr; crate::api::Model::from_str(&e.model).unwrap_or(crate::api::Model::Claude3_7Sonnet20250219) };
+
+            Some(AppEvent::RestoredMessage { 
+                message,
+                model,
+            })
+        }
+    }
+}
+
 fn role_to_proto(role: Role) -> MessageRole {
     match role {
         Role::User => MessageRole::User,
@@ -145,198 +497,11 @@ fn role_to_proto(role: Role) -> MessageRole {
     }
 }
 
-fn content_block_to_proto(
-    block: crate::app::conversation::MessageContentBlock,
-) -> MessageContentBlock {
-    use crate::app::conversation::MessageContentBlock as AppBlock;
-
-    match block {
-        AppBlock::Text(text) => MessageContentBlock {
-            content: Some(message_content_block::Content::Text(text)),
-        },
-        AppBlock::ToolCall(tool_call) => MessageContentBlock {
-            content: Some(message_content_block::Content::ToolCall(ToolCall {
-                id: tool_call.id,
-                name: tool_call.name,
-                parameters: match tool_call.parameters {
-                    serde_json::Value::Object(map) => {
-                        map.into_iter().map(|(k, v)| (k, v.to_string())).collect()
-                    }
-                    _ => std::collections::HashMap::new(),
-                },
-            })),
-        },
-        AppBlock::ToolResult {
-            tool_use_id,
-            result,
-        } => MessageContentBlock {
-            content: Some(message_content_block::Content::ToolResult(ToolResult {
-                tool_call_id: tool_use_id,
-                success: true, // In this context, we assume success (errors would be in ToolCallFailed events)
-                content: result,
-                error: None,
-                metadata: std::collections::HashMap::new(),
-            })),
-        },
-        AppBlock::CommandExecution { command, stdout, stderr, exit_code } => {
-            // Convert CommandExecution to text for gRPC transmission
-            let mut text = format!("$ {}\n", command);
-            if !stdout.is_empty() {
-                text.push_str(&stdout);
-                if !stdout.ends_with('\n') {
-                    text.push('\n');
-                }
-            }
-            if exit_code != 0 {
-                text.push_str(&format!("Exit code: {}\n", exit_code));
-                if !stderr.is_empty() {
-                    text.push_str(&format!("Error: {}\n", stderr));
-                }
-            }
-            MessageContentBlock {
-                content: Some(message_content_block::Content::Text(text)),
-            }
-        },
-        AppBlock::Thought(thought_content) => MessageContentBlock {
-            content: Some(message_content_block::Content::Text(format!("[Thought: {}]", thought_content.display_text()))),
-        },
-    }
-}
-
-/// Convert protobuf ServerEvent to AppEvent for TUI consumption
-pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> {
-    match server_event.event? {
-        server_event::Event::MessageAdded(e) => Some(AppEvent::MessageAdded {
-            role: proto_to_role(MessageRole::try_from(e.role).ok()?),
-            content_blocks: e
-                .content_blocks
-                .into_iter()
-                .map(proto_to_content_block)
-                .collect(),
-            id: e.id,
-            model: e.model.parse().ok()?,
-        }),
-        server_event::Event::MessageUpdated(e) => Some(AppEvent::MessageUpdated {
-            id: e.id,
-            content: e.content,
-        }),
-        server_event::Event::MessagePart(e) => Some(AppEvent::MessagePart {
-            id: e.id,
-            delta: e.delta,
-        }),
-        server_event::Event::ToolCallStarted(e) => Some(AppEvent::ToolCallStarted {
-            name: e.name,
-            id: e.id,
-            model: e.model.parse().ok()?,
-        }),
-        server_event::Event::ToolCallCompleted(e) => Some(AppEvent::ToolCallCompleted {
-            name: e.name,
-            result: e.result,
-            id: e.id,
-            model: e.model.parse().ok()?,
-        }),
-        server_event::Event::ToolCallFailed(e) => Some(AppEvent::ToolCallFailed {
-            name: e.name,
-            error: e.error,
-            id: e.id,
-            model: e.model.parse().ok()?,
-        }),
-        server_event::Event::ThinkingStarted(_) => Some(AppEvent::ThinkingStarted),
-        server_event::Event::ThinkingCompleted(_) => Some(AppEvent::ThinkingCompleted),
-        server_event::Event::CommandResponse(e) => Some(AppEvent::CommandResponse {
-            content: e.content,
-            id: e.id,
-        }),
-        server_event::Event::RequestToolApproval(e) => {
-            let parameters =
-                serde_json::from_str(&e.parameters_json).unwrap_or(serde_json::Value::Null);
-            Some(AppEvent::RequestToolApproval {
-                name: e.name,
-                parameters,
-                id: e.id,
-            })
-        }
-        server_event::Event::OperationCancelled(e) => {
-            let info = if let Some(cancellation_info) = e.info {
-                crate::app::cancellation::CancellationInfo {
-                    api_call_in_progress: cancellation_info.api_call_in_progress,
-                    active_tools: cancellation_info
-                        .active_tools
-                        .into_iter()
-                        .map(|name| ActiveTool {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            name,
-                        })
-                        .collect(),
-                    pending_tool_approvals: cancellation_info.pending_tool_approvals,
-                }
-            } else {
-                crate::app::cancellation::CancellationInfo {
-                    api_call_in_progress: false,
-                    active_tools: vec![],
-                    pending_tool_approvals: false,
-                }
-            };
-
-            Some(AppEvent::OperationCancelled { info })
-        }
-        server_event::Event::ModelChanged(e) => Some(AppEvent::ModelChanged {
-            model: e.model.parse().ok()?,
-        }),
-        server_event::Event::Error(e) => Some(AppEvent::Error { message: e.message }),
-        server_event::Event::RestoredMessage(e) => Some(AppEvent::RestoredMessage {
-            role: proto_to_role(MessageRole::try_from(e.role).ok()?),
-            content_blocks: e
-                .content_blocks
-                .into_iter()
-                .map(proto_to_content_block)
-                .collect(),
-            id: e.id,
-            model: e.model.parse().ok()?,
-        }),
-    }
-}
-
 fn proto_to_role(role: MessageRole) -> Role {
     match role {
         MessageRole::User => Role::User,
         MessageRole::Assistant => Role::Assistant,
         MessageRole::Tool => Role::Tool,
-        MessageRole::System => Role::User, // Map system to user for now
-        MessageRole::Unspecified => Role::User, // Default fallback
-    }
-}
-
-fn proto_to_content_block(block: MessageContentBlock) -> AppContentBlock {
-    match block.content {
-        Some(message_content_block::Content::Text(text)) => AppContentBlock::Text(text),
-        Some(message_content_block::Content::ToolCall(tool_call)) => {
-            AppContentBlock::ToolCall(tools::ToolCall {
-                id: tool_call.id,
-                name: tool_call.name,
-                parameters: {
-                    // Convert string parameters back to JSON
-                    let mut params = serde_json::Map::new();
-                    for (k, v) in tool_call.parameters {
-                        // Try to parse as JSON, fall back to string
-                        let value =
-                            serde_json::from_str(&v).unwrap_or(serde_json::Value::String(v));
-                        params.insert(k, value);
-                    }
-                    serde_json::Value::Object(params)
-                },
-            })
-        }
-        Some(message_content_block::Content::ToolResult(tool_result)) => {
-            AppContentBlock::ToolResult {
-                tool_use_id: tool_result.tool_call_id,
-                result: tool_result.content,
-            }
-        }
-        Some(message_content_block::Content::Attachment(_)) => {
-            // TODO: Handle attachments - for now, convert to text
-            AppContentBlock::Text("[Attachment]".to_string())
-        }
-        None => AppContentBlock::Text(String::new()),
+        _ => Role::User, // Default for unknown roles
     }
 }

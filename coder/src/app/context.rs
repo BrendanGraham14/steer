@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::api::messages::Message as ApiMessage;
+use crate::app::conversation::Message;
 use crate::app::agent_executor::AgentExecutorError;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::AppCommand;
@@ -18,7 +18,7 @@ static COMMAND_TX: OnceCell<Arc<mpsc::Sender<AppCommand>>> = OnceCell::new();
 #[derive(Debug)]
 pub enum TaskOutcome {
     AgentOperationComplete {
-        result: Result<ApiMessage, AgentExecutorError>,
+        result: Result<Message, AgentExecutorError>,
     },
     DispatchAgentResult {
         result: Result<String, ToolError>,

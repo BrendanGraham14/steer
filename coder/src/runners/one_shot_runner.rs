@@ -5,6 +5,7 @@ use tracing::{error, info};
 
 use crate::api::Model;
 use crate::app::{AppCommand, AppConfig, Message};
+use crate::app::conversation::UserContent;
 use crate::config::LlmConfig;
 use crate::session::state::WorkspaceConfig;
 use crate::session::{
@@ -130,15 +131,19 @@ impl OneShotRunner {
         // 3. Process the final user message (this triggers the actual processing)
         let user_content = match init_msgs.last() {
             Some(message) => {
-                // Extract text content from the message's content blocks
-                let text_content = message.content_blocks.iter().find_map(|block| match block {
-                    crate::app::MessageContentBlock::Text(text) => Some(text.clone()),
-                    _ => None,
-                });
-
-                match text_content {
-                    Some(content) => content,
-                    None => return Err(anyhow!("Last message must contain text content")),
+                // Extract text content from the message
+                match message {
+                    Message::User { content, .. } => {
+                        let text_content = content.iter().find_map(|c| match c {
+                            UserContent::Text { text } => Some(text.clone()),
+                            _ => None,
+                        });
+                        match text_content {
+                            Some(content) => content,
+                            None => return Err(anyhow!("Last message must contain text content")),
+                        }
+                    }
+                    _ => return Err(anyhow!("Last message must be from User")),
                 }
             }
             None => return Err(anyhow!("No user message to process")),
@@ -167,17 +172,12 @@ impl OneShotRunner {
 
         while let Some(event) = event_rx.recv().await {
             match event {
-                AppEvent::MessageAdded {
-                    role,
-                    content_blocks,
-                    id,
-                    model: _,
-                } => {
-                    info!(session_id = %session_id, role = ?role, id = %id, "MessageAdded event");
+                AppEvent::MessageAdded { message, model: _ } => {
+                    info!(session_id = %session_id, role = ?message.role(), id = %message.id(), "MessageAdded event");
 
-                    if matches!(role, crate::app::conversation::Role::Assistant) {
-                        assistant_message = Some(Message::new_with_blocks(role, content_blocks));
-                        _current_assistant_id = Some(id);
+                    if matches!(message.role(), crate::app::conversation::Role::Assistant) {
+                        _current_assistant_id = Some(message.id().to_string());
+                        assistant_message = Some(message);
 
                         // Don't break yet - assistant might make tool calls
                     }
@@ -265,7 +265,7 @@ impl OneShotRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{MessageContentBlock, Role};
+    use crate::app::conversation::{Message, Role, AssistantContent, UserContent, ToolResult};
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
     use dotenv::dotenv;
@@ -320,7 +320,11 @@ mod tests {
         dotenv().ok();
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let messages = vec![Message::new_text(Role::User, "What is 2 + 2?".to_string())];
+        let messages = vec![Message::User {
+            content: vec![UserContent::Text { text: "What is 2 + 2?".to_string() }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
+        }];
         let future = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
@@ -334,32 +338,29 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(!result.final_msg.id.is_empty());
+        assert!(!result.final_msg.id().is_empty());
         println!("Ephemeral run succeeded: {:?}", result.final_msg);
 
         // Verify the response contains something reasonable
-        let text_content = result
-            .final_msg
-            .content_blocks
-            .iter()
-            .find_map(|block| match block {
-                MessageContentBlock::Text(text) => Some(text),
+        if let Message::Assistant { content, .. } = &result.final_msg {
+            let text_content = content.iter().find_map(|c| match c {
+                AssistantContent::Text { text } => Some(text),
                 _ => None,
             });
 
-        if let Some(content) = text_content {
-            assert!(!content.is_empty(), "Response should not be empty");
-            // For "What is 2 + 2?", we expect the answer to contain "4"
-            assert!(
-                content.contains("4"),
-                "Expected response to contain '4', got: {}",
-                content
-            );
+            if let Some(content) = text_content {
+                assert!(!content.is_empty(), "Response should not be empty");
+                // For "What is 2 + 2?", we expect the answer to contain "4"
+                assert!(
+                    content.contains("4"),
+                    "Expected response to contain '4', got: {}",
+                    content
+                );
+            } else {
+                panic!("No text content found in assistant message");
+            }
         } else {
-            panic!(
-                "Expected text response, got: {:?}",
-                result.final_msg.content_blocks
-            );
+            panic!("Expected assistant message");
         }
     }
 
@@ -437,28 +438,25 @@ mod tests {
                 println!("Session run succeeded: {:?}", run_result.final_msg);
 
                 // Verify we got a reasonable response
-                let text_content = run_result
-                    .final_msg
-                    .content_blocks
-                    .iter()
-                    .find_map(|block| match block {
-                        MessageContentBlock::Text(text) => Some(text),
+                if let Message::Assistant { content, .. } = &run_result.final_msg {
+                    let text_content = content.iter().find_map(|c| match c {
+                        AssistantContent::Text { text } => Some(text),
                         _ => None,
                     });
 
-                if let Some(content) = text_content {
-                    assert!(!content.is_empty(), "Response should not be empty");
-                    // The answer should mention Paris
-                    assert!(
-                        content.to_lowercase().contains("paris"),
-                        "Expected response to contain 'Paris', got: {}",
-                        content
-                    );
+                    if let Some(content) = text_content {
+                        assert!(!content.is_empty(), "Response should not be empty");
+                        // The answer should mention Paris
+                        assert!(
+                            content.to_lowercase().contains("paris"),
+                            "Expected response to contain 'Paris', got: {}",
+                            content
+                        );
+                    } else {
+                        panic!("Expected text response");
+                    }
                 } else {
-                    panic!(
-                        "Expected text response, got: {:?}",
-                        run_result.final_msg.content_blocks
-                    );
+                    panic!("Expected assistant message");
                 }
 
                 // Verify the session was updated
@@ -476,12 +474,12 @@ mod tests {
 
                 // First message should be the user input
                 let user_msg = &session_state.messages[0];
-                assert_eq!(user_msg.role, crate::app::conversation::Role::User);
+                assert_eq!(user_msg.role(), crate::app::conversation::Role::User);
 
                 // Last message should be the assistant response
                 let assistant_msg = &session_state.messages[session_state.messages.len() - 1];
                 assert_eq!(
-                    assistant_msg.role,
+                    assistant_msg.role(),
                     crate::app::conversation::Role::Assistant
                 );
             }
@@ -526,13 +524,12 @@ mod tests {
     async fn test_run_ephemeral_non_text_message() {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let messages = vec![Message::new_with_blocks(
-            Role::User,
-            vec![MessageContentBlock::ToolResult {
-                tool_use_id: "test".to_string(),
-                result: "test".to_string(),
-            }],
-        )];
+        let messages = vec![Message::Tool {
+            tool_use_id: "test".to_string(),
+            result: ToolResult::Success { output: "test".to_string() },
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("tool", Message::current_timestamp()),
+        }];
 
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
@@ -549,7 +546,7 @@ mod tests {
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("Last message must contain text content")
+                .contains("Last message must be from User")
         );
     }
 
@@ -612,15 +609,22 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         let messages = vec![
-            Message::new_text(
-                Role::User,
-                "What is 2+2? Don't give me the answer yet.".to_string(),
-            ),
-            Message::new_text(
-                Role::Assistant,
-                "Ok, I'll give you the answer once you're ready.".to_string(),
-            ),
-            Message::new_text(Role::User, "I'm ready. What is the answer?".to_string()),
+            Message::User {
+                content: vec![UserContent::Text { text: "What is 2+2? Don't give me the answer yet.".to_string() }],
+                timestamp: Message::current_timestamp(),
+                id: Message::generate_id("user", Message::current_timestamp()),
+            },
+            Message::Assistant {
+                content: vec![AssistantContent::Text { text:
+                "Ok, I'll give you the answer once you're ready.".to_string() }],
+                timestamp: Message::current_timestamp(),
+                id: Message::generate_id("assistant", Message::current_timestamp()),
+            },
+            Message::User {
+                content: vec![UserContent::Text { text: "I'm ready. What is the answer?".to_string() }],
+                timestamp: Message::current_timestamp(),
+                id: Message::generate_id("user", Message::current_timestamp()),
+            },
         ];
 
         let result = OneShotRunner::run_ephemeral(
@@ -687,13 +691,15 @@ mod tests {
             if !updated_state.messages.is_empty() {
                 // Found the message, verify it's correct
                 let first_msg = &updated_state.messages[0];
-                assert_eq!(first_msg.role, crate::app::conversation::Role::User);
-                if let crate::app::conversation::MessageContentBlock::Text(content) =
-                    &first_msg.content_blocks[0]
-                {
-                    assert_eq!(content, "Test");
+                assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
+                if let Message::User { content, .. } = first_msg {
+                    if let Some(UserContent::Text { text }) = content.get(0) {
+                        assert_eq!(text, "Test");
+                    } else {
+                        panic!("Expected text content");
+                    }
                 } else {
-                    panic!("Expected text content");
+                    panic!("Expected user message");
                 }
                 return; // Test passed
             }
@@ -761,13 +767,15 @@ mod tests {
 
         // The first message should be the user input we sent
         let first_msg = &state_after.messages[0];
-        assert_eq!(first_msg.role, crate::app::conversation::Role::User);
-        if let crate::app::conversation::MessageContentBlock::Text(content) =
-            &first_msg.content_blocks[0]
-        {
-            assert_eq!(content, "What is my name?");
+        assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
+        if let Message::User { content, .. } = first_msg {
+            if let Some(UserContent::Text { text }) = content.get(0) {
+                assert_eq!(text, "What is my name?");
+            } else {
+                panic!("Expected text content for user message");
+            }
         } else {
-            panic!("Expected text content for user message");
+            panic!("Expected user message");
         }
     }
 
@@ -777,10 +785,11 @@ mod tests {
         dotenv().ok();
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let messages = vec![Message::new_text(
-            Role::User,
-            "List the files in the current directory".to_string(),
-        )];
+        let messages = vec![Message::User {
+            content: vec![UserContent::Text { text: "List the files in the current directory".to_string() }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
+        }];
 
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
@@ -792,18 +801,19 @@ mod tests {
         .await
         .expect("Ephemeral run with tools should succeed with valid API key");
 
-        assert!(!result.final_msg.id.is_empty());
+        assert!(!result.final_msg.id().is_empty());
         println!("Ephemeral run with tools succeeded: {:?}", result.final_msg);
 
         // The response might be structured content with tool calls, which is expected
-        let has_content = result
-            .final_msg
-            .content_blocks
-            .iter()
-            .any(|block| match block {
-                MessageContentBlock::Text(text) => !text.is_empty(),
-                _ => true, // Non-text blocks are also valid content
-            });
+        let has_content = match &result.final_msg {
+            Message::Assistant { content, .. } => {
+                content.iter().any(|c| match c {
+                    AssistantContent::Text { text } => !text.is_empty(),
+                    _ => true, // Non-text blocks are also valid content
+                })
+            }
+            _ => false,
+        };
         assert!(has_content, "Response should have some content");
 
         // Should have some tool results since we asked to list files
@@ -856,31 +866,28 @@ mod tests {
         println!("Second interaction: {:?}", result2.final_msg);
 
         // Verify the second response uses the context from the first
-        let text_content = result2
-            .final_msg
-            .content_blocks
-            .iter()
-            .find_map(|block| match block {
-                MessageContentBlock::Text(text) => Some(text),
+        if let Message::Assistant { content, .. } = &result2.final_msg {
+            let text_content = content.iter().find_map(|c| match c {
+                AssistantContent::Text { text } => Some(text),
                 _ => None,
             });
 
-        if let Some(content) = text_content {
-            assert!(!content.is_empty(), "Response should not be empty");
-            let content_lower = content.to_lowercase();
+            if let Some(content) = text_content {
+                assert!(!content.is_empty(), "Response should not be empty");
+                let content_lower = content.to_lowercase();
 
-            // The AI should acknowledge the name Alice from the context
-            // If it doesn't remember perfectly, it should at least acknowledge the user
-            assert!(
-                content_lower.contains("alice") || content_lower.contains("name"),
-                "Expected response to reference the name or context, got: {}",
-                content
-            );
+                // The AI should acknowledge the name Alice from the context
+                // If it doesn't remember perfectly, it should at least acknowledge the user
+                assert!(
+                    content_lower.contains("alice") || content_lower.contains("name"),
+                    "Expected response to reference the name or context, got: {}",
+                    content
+                );
+            } else {
+                panic!("Expected text response in assistant message");
+            }
         } else {
-            panic!(
-                "Expected text response, got: {:?}",
-                result2.final_msg.content_blocks
-            );
+            panic!("Expected assistant message");
         }
 
         // Verify the session has all the messages
@@ -900,7 +907,7 @@ mod tests {
 
         println!("Session has {} messages", session_state.messages.len());
         for (i, msg) in session_state.messages.iter().enumerate() {
-            println!("Message {}: {:?} - {} blocks", i, msg.role, msg.content_blocks.len());
+            println!("Message {}: {:?}", i, msg.role());
         }
     }
 }

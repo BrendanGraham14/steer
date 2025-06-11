@@ -126,12 +126,10 @@ Provide a concise response based only on the content above.
         content, prompt
     );
 
-    let messages = vec![crate::api::Message {
-        role: crate::api::messages::MessageRole::User,
-        content: crate::api::messages::MessageContent::Text {
-            content: user_message,
-        },
-        id: None,
+    let messages = vec![crate::app::conversation::Message::User {
+        content: vec![crate::app::conversation::UserContent::Text { text: user_message }],
+        timestamp: crate::app::conversation::Message::current_timestamp(),
+        id: crate::app::conversation::Message::generate_id("user", crate::app::conversation::Message::current_timestamp()),
     }];
 
     let token = if let Some(ref token) = token {

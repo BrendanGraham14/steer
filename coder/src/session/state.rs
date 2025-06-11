@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::api::Model;
-use crate::app::{Message, MessageContentBlock};
+use crate::app::Message;
 use crate::tools::{BackendRegistry, LocalBackend, ToolBackend};
 use tools::ToolCall;
 use tools::tools::{read_only_workspace_tools, workspace_tools};
@@ -493,16 +493,18 @@ impl SessionState {
     fn extract_tool_calls_from_message(&self, message: &Message) -> Vec<String> {
         let mut tool_call_ids = Vec::new();
 
-        for block in &message.content_blocks {
-            match block {
-                MessageContentBlock::ToolCall(tool_call) => {
-                    tool_call_ids.push(tool_call.id.clone());
+        match message {
+            Message::Assistant { content, .. } => {
+                for c in content {
+                    if let crate::app::conversation::AssistantContent::ToolCall { tool_call } = c {
+                        tool_call_ids.push(tool_call.id.clone());
+                    }
                 }
-                MessageContentBlock::ToolResult { tool_use_id, .. } => {
-                    tool_call_ids.push(tool_use_id.clone());
-                }
-                _ => {}
             }
+            Message::Tool { tool_use_id, .. } => {
+                tool_call_ids.push(tool_use_id.clone());
+            }
+            _ => {}
         }
 
         tool_call_ids
@@ -668,7 +670,7 @@ impl From<&Session> for SessionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{MessageContentBlock, Role};
+    use crate::app::conversation::{Message, Role, UserContent};
     use tools::tools::{
         BASH_TOOL_NAME, EDIT_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME, read_only_workspace_tools,
         workspace_tools,
@@ -717,11 +719,10 @@ mod tests {
         assert!(state.validate().is_ok());
 
         // Add a message
-        let message = Message {
-            id: "msg1".to_string(),
-            role: Role::User,
-            content_blocks: vec![MessageContentBlock::Text("Hello".to_string())],
+        let message = Message::User {
+            content: vec![UserContent::Text { text: "Hello".to_string() }],
             timestamp: 123456789,
+            id: "msg1".to_string(),
         };
         state.add_message(message);
 

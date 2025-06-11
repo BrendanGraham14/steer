@@ -5,14 +5,11 @@ use std::sync::Arc;
 use tools::{ToolCall, ToolSchema};
 
 use crate::{
-    api::{
-        Client as ApiClient, Model,
-        messages::{
-            Message as ApiMessage, MessageContent as ApiMessageContent,
-            MessageRole as ApiMessageRole,
-        },
+    api::{Client as ApiClient, Model},
+    app::{
+        conversation::{Message, UserContent},
+        ToolExecutor, validation::ValidatorRegistry
     },
-    app::{ToolExecutor, validation::ValidatorRegistry},
 };
 
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
@@ -85,10 +82,10 @@ Usage notes:
             };
 
         // --- Prepare for AgentExecutor ---
-        let initial_messages = vec![ApiMessage {
-            id: None,
-            role: ApiMessageRole::User,
-            content: ApiMessageContent::Text { content: params.prompt },
+        let initial_messages = vec![Message::User {
+            content: vec![UserContent::Text { text: params.prompt }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
         }];
 
         let system_prompt = create_dispatch_agent_system_prompt()
@@ -126,7 +123,7 @@ Usage notes:
                  AgentEvent::AssistantMessageFinal(msg) => {
                      // Extract text if we haven't gotten it from parts
                      if final_text.is_empty() {
-                         final_text = msg.content.extract_text();
+                         final_text = msg.extract_text();
                      }
                     // final_message_content = Some(msg)
                  },
@@ -140,7 +137,7 @@ Usage notes:
             Ok(message) => {
                  // If we still don't have text, extract from final message object
                  if final_text.is_empty() {
-                     final_text = message.content.extract_text();
+                     final_text = message.extract_text();
                  }
                  Ok(final_text)
             }

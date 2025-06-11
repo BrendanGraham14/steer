@@ -4,7 +4,7 @@ mod tests {
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
         App, AppConfig, ToolExecutor,
-        conversation::{Message, MessageContentBlock, Role},
+        conversation::{Message, ToolResult, AssistantContent},
     };
     use crate::config::LlmConfig;
     use crate::tools::{BackendRegistry, LocalBackend};
@@ -54,13 +54,14 @@ mod tests {
             parameters: serde_json::json!({"param": "value"}),
         };
 
-        let assistant_msg = Message::new_with_blocks(
-            Role::Assistant,
-            vec![
-                MessageContentBlock::Text("I'll use a tool to help with that.".to_string()),
-                MessageContentBlock::ToolCall(tool_call.clone()),
+        let assistant_msg = Message::Assistant {
+            content: vec![
+                AssistantContent::Text { text: "I'll use a tool to help with that.".to_string() },
+                AssistantContent::ToolCall { tool_call: tool_call.clone() },
             ],
-        );
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("assistant", Message::current_timestamp()),
+        };
 
         app.add_message(assistant_msg).await;
 
@@ -86,18 +87,18 @@ mod tests {
 
             // Check the tool result message
             let tool_result_msg = &messages[1];
-            assert_eq!(tool_result_msg.role, Role::Tool);
-            assert_eq!(tool_result_msg.content_blocks.len(), 1);
-
-            if let MessageContentBlock::ToolResult {
-                tool_use_id,
-                result,
-            } = &tool_result_msg.content_blocks[0]
-            {
+            if let Message::Tool { tool_use_id, result, .. } = tool_result_msg {
                 assert_eq!(tool_use_id, "test_tool_123");
-                assert!(result.contains("cancelled"));
+                match result {
+                    ToolResult::Success { output } => {
+                        assert!(output.contains("cancelled"));
+                    }
+                    ToolResult::Error { error } => {
+                        assert!(error.contains("cancelled"));
+                    }
+                }
             } else {
-                panic!("Expected ToolResult content block");
+                panic!("Expected Tool message");
             }
 
             // Verify no more incomplete tool calls
@@ -130,21 +131,21 @@ mod tests {
             parameters: serde_json::json!({"param": "value"}),
         };
 
-        let assistant_msg = Message::new_with_blocks(
-            Role::Assistant,
-            vec![MessageContentBlock::ToolCall(tool_call.clone())],
-        );
+        let assistant_msg = Message::Assistant {
+            content: vec![AssistantContent::ToolCall { tool_call: tool_call.clone() }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("assistant", Message::current_timestamp()),
+        };
 
         app.add_message(assistant_msg).await;
 
         // Add a tool result for this tool call
-        let tool_result_msg = Message::new_with_blocks(
-            Role::Tool,
-            vec![MessageContentBlock::ToolResult {
-                tool_use_id: "complete_tool_456".to_string(),
-                result: "Tool completed successfully".to_string(),
-            }],
-        );
+        let tool_result_msg = Message::Tool {
+            tool_use_id: "complete_tool_456".to_string(),
+            result: ToolResult::Success { output: "Tool completed successfully".to_string() },
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("tool", Message::current_timestamp()),
+        };
 
         app.add_message(tool_result_msg).await;
 
@@ -196,14 +197,15 @@ mod tests {
             parameters: serde_json::json!({"path": "/some/file"}),
         };
 
-        let assistant_msg = Message::new_with_blocks(
-            Role::Assistant,
-            vec![
-                MessageContentBlock::Text("I'll use multiple tools.".to_string()),
-                MessageContentBlock::ToolCall(tool_call_1.clone()),
-                MessageContentBlock::ToolCall(tool_call_2.clone()),
+        let assistant_msg = Message::Assistant {
+            content: vec![
+                AssistantContent::Text { text: "I'll use multiple tools.".to_string() },
+                AssistantContent::ToolCall { tool_call: tool_call_1.clone() },
+                AssistantContent::ToolCall { tool_call: tool_call_2.clone() },
             ],
-        );
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("assistant", Message::current_timestamp()),
+        };
 
         app.add_message(assistant_msg).await;
 
@@ -223,19 +225,30 @@ mod tests {
             let mut found_tool_2 = false;
 
             for message in &messages[1..] {
-                assert_eq!(message.role, Role::Tool);
-                if let MessageContentBlock::ToolResult {
-                    tool_use_id,
-                    result,
-                } = &message.content_blocks[0]
-                {
+                if let Message::Tool { tool_use_id, result, .. } = message {
                     if tool_use_id == "tool_1" {
                         found_tool_1 = true;
-                        assert!(result.contains("cancelled"));
+                        match result {
+                            ToolResult::Success { output } => {
+                                assert!(output.contains("cancelled"));
+                            }
+                            ToolResult::Error { error } => {
+                                assert!(error.contains("cancelled"));
+                            }
+                        }
                     } else if tool_use_id == "tool_2" {
                         found_tool_2 = true;
-                        assert!(result.contains("cancelled"));
+                        match result {
+                            ToolResult::Success { output } => {
+                                assert!(output.contains("cancelled"));
+                            }
+                            ToolResult::Error { error } => {
+                                assert!(error.contains("cancelled"));
+                            }
+                        }
                     }
+                } else {
+                    panic!("Expected Tool message");
                 }
             }
 

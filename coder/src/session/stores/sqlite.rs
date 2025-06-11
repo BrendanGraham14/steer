@@ -12,14 +12,15 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::app::Message;
-use tools::ToolCall;
+use crate::app::conversation::{AssistantContent, UserContent};
 use crate::events::StreamEvent;
+use crate::session::state::ToolVisibility;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionOrderBy, SessionState,
     SessionStatus, SessionStore, SessionStoreError, ToolApprovalPolicy, ToolCallState,
     ToolCallStatus, ToolCallUpdate, ToolResult,
 };
-use crate::session::state::ToolVisibility;
+use tools::ToolCall;
 
 /// SQLite implementation of SessionStore
 pub struct SqliteSessionStore {
@@ -114,7 +115,8 @@ impl SessionStore for SqliteSessionStore {
     async fn create_session(&self, config: SessionConfig) -> Result<Session, SessionStoreError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
-        let (policy_type, pre_approved_json) = Self::serialize_tool_policy(&config.tool_config.approval_policy);
+        let (policy_type, pre_approved_json) =
+            Self::serialize_tool_policy(&config.tool_config.approval_policy);
         let metadata_json = serde_json::to_string(&config.metadata).map_err(|e| {
             SessionStoreError::serialization(format!("Failed to serialize metadata: {}", e))
         })?;
@@ -191,7 +193,7 @@ impl SessionStore for SqliteSessionStore {
 
         let mut tool_config: crate::session::SessionToolConfig = tool_config;
         tool_config.approval_policy = approval_policy;
-        
+
         let config = SessionConfig {
             workspace: workspace_config,
             tool_config,
@@ -489,7 +491,7 @@ impl SessionStore for SqliteSessionStore {
         session_id: &str,
         message: &Message,
     ) -> Result<(), SessionStoreError> {
-        let id = &message.id;
+        let id = message.id();
 
         // Get the next sequence number
         let next_seq: i64 = sqlx::query_scalar(
@@ -500,10 +502,37 @@ impl SessionStore for SqliteSessionStore {
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to get next sequence: {}", e)))?;
 
-        // Serialize the conversation message content blocks directly
-        let content_json = serde_json::to_string(&message.content_blocks).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize message content: {}", e))
-        })?;
+        // Serialize the message based on its variant
+        let (role, content_json) = match message {
+            Message::User { content, .. } => {
+                let json = serde_json::to_string(&content).map_err(|e| {
+                    SessionStoreError::serialization(format!("Failed to serialize user content: {}", e))
+                })?;
+                ("user", json)
+            }
+            Message::Assistant { content, .. } => {
+                let json = serde_json::to_string(&content).map_err(|e| {
+                    SessionStoreError::serialization(format!("Failed to serialize assistant content: {}", e))
+                })?;
+                ("assistant", json)
+            }
+            Message::Tool { tool_use_id, result, .. } => {
+                // Convert tool result to a format that can be stored
+                #[derive(serde::Serialize)]
+                struct StoredToolMessage {
+                    tool_use_id: String,
+                    result: crate::app::conversation::ToolResult,
+                }
+                let stored = StoredToolMessage {
+                    tool_use_id: tool_use_id.clone(),
+                    result: result.clone(),
+                };
+                let json = serde_json::to_string(&stored).map_err(|e| {
+                    SessionStoreError::serialization(format!("Failed to serialize tool message: {}", e))
+                })?;
+                ("tool", json)
+            }
+        };
 
         sqlx::query(
             r#"
@@ -511,14 +540,10 @@ impl SessionStore for SqliteSessionStore {
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             "#,
         )
-        .bind(&id)
+        .bind(id)
         .bind(session_id)
         .bind(next_seq)
-        .bind(match message.role {
-            crate::app::conversation::Role::User => "user",
-            crate::app::conversation::Role::Assistant => "assistant", 
-            crate::app::conversation::Role::Tool => "tool",
-        })
+        .bind(role)
         .bind(&content_json)
         .bind(Utc::now())
         .execute(&self.pool)
@@ -563,29 +588,54 @@ impl SessionStore for SqliteSessionStore {
 
         let mut messages = Vec::new();
         for row in rows {
-            let content_blocks: Vec<crate::app::conversation::MessageContentBlock> = 
-                serde_json::from_str(&row.get::<String, _>("content"))
-                    .map_err(|e| {
-                        SessionStoreError::serialization(format!("Invalid message content: {}", e))
-                    })?;
+            let role = row.get::<String, _>("role");
+            let content = row.get::<String, _>("content");
+            let id: String = row.get("id");
+            let created_at = row.get::<chrono::DateTime<chrono::Utc>, _>("created_at");
 
-            let message = Message {
-                id: row.get("id"),
-                role: match row.get::<String, _>("role").as_str() {
-                    "user" => crate::app::conversation::Role::User,
-                    "assistant" => crate::app::conversation::Role::Assistant,
-                    "tool" => crate::app::conversation::Role::Tool,
-                    role => {
-                        return Err(SessionStoreError::validation(format!(
-                            "Invalid role: {}",
-                            role
-                        )));
+            // Deserialize based on role
+            let message = match role.as_str() {
+                "user" => {
+                    let content: Vec<UserContent> = serde_json::from_str(&content).map_err(|e| {
+                        SessionStoreError::serialization(format!("Failed to deserialize user content: {}", e))
+                    })?;
+                    Message::User {
+                        content,
+                        timestamp: created_at.timestamp() as u64,
+                        id: id.clone(),
                     }
-                },
-                content_blocks,
-                timestamp: row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").timestamp() as u64,
+                }
+                "assistant" => {
+                    let content: Vec<AssistantContent> = serde_json::from_str(&content).map_err(|e| {
+                        SessionStoreError::serialization(format!("Failed to deserialize assistant content: {}", e))
+                    })?;
+                    Message::Assistant {
+                        content,
+                        timestamp: created_at.timestamp() as u64,
+                        id: id.clone(),
+                    }
+                }
+                "tool" => {
+                    #[derive(serde::Deserialize)]
+                    struct StoredToolMessage {
+                        tool_use_id: String,
+                        result: crate::app::conversation::ToolResult,
+                    }
+                    let stored: StoredToolMessage = serde_json::from_str(&content).map_err(|e| {
+                        SessionStoreError::serialization(format!("Failed to deserialize tool message: {}", e))
+                    })?;
+                    Message::Tool {
+                        tool_use_id: stored.tool_use_id,
+                        result: stored.result,
+                        timestamp: created_at.timestamp() as u64,
+                        id: id.clone(),
+                    }
+                }
+                _ => {
+                    return Err(SessionStoreError::serialization(format!("Unknown message role: {}", role)));
+                }
             };
-            
+
             messages.push(message);
         }
 
@@ -843,9 +893,9 @@ impl SessionStore for SqliteSessionStore {
 #[cfg(test)]
 mod tests {
     use crate::api::{Model, ToolCall};
+    use crate::app::conversation::{Message, Role, AssistantContent, UserContent, ToolResult};
     use crate::events::SessionMetadata;
     use crate::session::state::WorkspaceConfig;
-    use crate::app::conversation::{MessageContentBlock, Role};
 
     use super::*;
     use tempfile::TempDir;
@@ -861,7 +911,7 @@ mod tests {
         let mut tool_config = crate::session::SessionToolConfig::default();
         tool_config.approval_policy = ToolApprovalPolicy::AlwaysAsk;
         tool_config.visibility = ToolVisibility::All;
-        
+
         SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -875,7 +925,7 @@ mod tests {
 
         let mut tool_config = crate::session::SessionToolConfig::default();
         tool_config.approval_policy = ToolApprovalPolicy::AlwaysAsk;
-        
+
         let config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -904,18 +954,17 @@ mod tests {
         let config = create_test_session_config();
         let session = store.create_session(config).await.unwrap();
 
-        let message = Message {
-            id: "msg1".to_string(),
-            role: Role::User,
-            content_blocks: vec![MessageContentBlock::Text("Hello".to_string())],
+        let message = Message::User {
+            content: vec![UserContent::Text { text: "Hello".to_string() }],
             timestamp: 123456789,
+            id: "msg1".to_string(),
         };
 
         store.append_message(&session.id, &message).await.unwrap();
 
         let messages = store.get_messages(&session.id, None).await.unwrap();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].role(), Role::User);
     }
 
     #[tokio::test]
@@ -1012,11 +1061,10 @@ mod tests {
         // Add a MessageComplete event with Claude model
         let claude_model = Model::Claude3_5Sonnet20241022;
         let message_event = StreamEvent::MessageComplete {
-            message: Message {
-                id: "msg1".to_string(),
-                role: Role::Assistant,
-                content_blocks: vec![MessageContentBlock::Text("Hello from Claude".to_string())],
+            message: Message::Assistant {
+                content: vec![AssistantContent::Text { text: "Hello from Claude".to_string() }],
                 timestamp: 123456789,
+                id: "msg1".to_string(),
             },
             usage: None,
             metadata: std::collections::HashMap::new(),

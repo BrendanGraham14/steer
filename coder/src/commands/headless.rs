@@ -12,10 +12,8 @@ use tools::tools::{
 };
 
 use super::Command;
-use crate::api::{
-    Model,
-    messages::{Message, MessageContent, MessageRole},
-};
+use crate::api::Model;
+use crate::app::conversation::{Message, UserContent};
 use crate::session::SessionToolConfig;
 
 pub struct HeadlessCommand {
@@ -49,10 +47,10 @@ impl Command for HeadlessCommand {
                 Err(e) => return Err(anyhow!("Failed to read from stdin: {}", e)),
             }
             // Create a single user message from stdin content
-            vec![Message {
-                role: MessageRole::User,
-                content: MessageContent::Text { content: buffer },
-                id: None,
+            vec![Message::User {
+                content: vec![UserContent::Text { text: buffer }],
+                timestamp: Message::current_timestamp(),
+                id: Message::generate_id("user", Message::current_timestamp()),
             }]
         };
 
@@ -85,11 +83,21 @@ impl Command for HeadlessCommand {
                     ));
                 }
 
-                let message = match &messages[0].content {
-                    MessageContent::Text { content } => content.clone(),
+                let message = match &messages[0] {
+                    Message::User { content, .. } => {
+                        // Extract text from the first UserContent block
+                        match content.first() {
+                            Some(UserContent::Text { text }) => text.clone(),
+                            _ => {
+                                return Err(anyhow!(
+                                    "Only text messages are supported when using --session"
+                                ));
+                            }
+                        }
+                    }
                     _ => {
                         return Err(anyhow!(
-                            "Only text messages are supported when using --session"
+                            "Only user messages are supported when using --session"
                         ));
                     }
                 };

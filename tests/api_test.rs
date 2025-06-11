@@ -1,11 +1,11 @@
 use coder::api::ApiError;
-use coder::api::messages::{ContentBlock, MessageContent, MessageRole, StructuredContent};
-use coder::api::tools::{InputSchema, Tool};
-use coder::api::{Client, Message, Model};
+use coder::api::{Client, Model};
+use coder::app::conversation::{AssistantContent, Message, ToolCall, ToolResult, UserContent};
 use coder::config::LlmConfig;
 use dotenv::dotenv;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
+use tools::{InputSchema, ToolSchema as Tool};
 
 #[tokio::test]
 #[ignore]
@@ -24,12 +24,13 @@ async fn test_api_basic() {
     let mut tasks = Vec::new();
 
     // Create the simple message once
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: MessageContent::Text {
-            content: "What is 2+2?".to_string(),
-        },
-        id: None,
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message::User {
+        content: vec![UserContent::Text {
+            text: "What is 2+2?".to_string(),
+        }],
+        timestamp,
+        id: Message::generate_id("user", timestamp),
     }];
 
     for model in models_to_test {
@@ -147,15 +148,16 @@ async fn test_api_with_tools() {
             println!("Testing API with tools for model: {:?}", model);
 
             // Create a message that will use a tool
-            let messages = vec![Message {
-                role: MessageRole::User,
-                content: MessageContent::Text {
-                    content: format!(
+            let timestamp = Message::current_timestamp();
+            let messages = vec![Message::User {
+                content: vec![UserContent::Text {
+                    text: format!(
                         "Please list the files in {} using the LS tool",
                         pwd_display // Use cloned path string
                     ),
-                },
-                id: None,
+                }],
+                timestamp,
+                id: Message::generate_id("user", timestamp),
             }];
 
             let response = client
@@ -289,45 +291,43 @@ async fn test_api_with_tool_response() {
 
             // Construct messages specific to this model's task
             let tool_use_id = format!("tool-use-id-{:?}", model); // Unique ID per model test
+            let ts1 = Message::current_timestamp();
+            let ts2 = ts1 + 1;
+            let ts3 = ts2 + 1;
             let messages = vec![
-                Message {
-                    role: MessageRole::User,
-                    content: MessageContent::Text {
-                        content: "Please list the files in the current directory using the LS tool"
+                Message::User {
+                    content: vec![UserContent::Text {
+                        text: "Please list the files in the current directory using the LS tool"
                             .to_string(),
-                    },
-                    id: None,
+                    }],
+                    timestamp: ts1,
+                    id: Message::generate_id("user", ts1),
                 },
-                Message {
-                    role: MessageRole::Assistant,
-                    content: MessageContent::StructuredContent {
-                        content: StructuredContent(vec![
-                            ContentBlock::ToolUse {
-                                id: tool_use_id.clone(),
-                                name: "ls".to_string(),
-                                input: serde_json::json!({ "path": "." }),
-                            }
-                        ]),
-                    },
-                    id: None,
+                Message::Assistant {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            id: tool_use_id.clone(),
+                            name: "ls".to_string(),
+                            parameters: serde_json::json!({ "path": "." }),
+                        },
+                    }],
+                    timestamp: ts2,
+                    id: Message::generate_id("assistant", ts2),
                 },
-                Message {
-                    role: MessageRole::User,
-                    content: MessageContent::StructuredContent {
-                        content: StructuredContent(vec![
-                            ContentBlock::ToolResult {
-                                tool_use_id: tool_use_id.clone(), // Match the tool use ID
-                                content: vec![ContentBlock::Text {
-                                    text: "foo.txt, bar.rs".to_string(), // Example result
-                                }],
-                                is_error: None,
-                            },
-                            ContentBlock::Text {
-                                text: "What was the name of the rust file?".to_string(),
-                            },
-                        ]),
+                Message::Tool {
+                    tool_use_id: tool_use_id.clone(),
+                    result: ToolResult::Success {
+                        output: "foo.txt, bar.rs".to_string(),
                     },
-                    id: None,
+                    timestamp: ts3,
+                    id: Message::generate_id("tool", ts3),
+                },
+                Message::User {
+                    content: vec![UserContent::Text {
+                        text: "What was the name of the rust file?".to_string(),
+                    }],
+                    timestamp: ts3 + 1,
+                    id: Message::generate_id("user", ts3 + 1),
                 },
             ];
 
@@ -405,12 +405,13 @@ async fn test_gemini_system_instructions() {
     let config = LlmConfig::from_env().unwrap();
     let client = Client::new(&config);
 
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: MessageContent::Text {
-            content: "What's your name?".to_string(),
-        },
-        id: None,
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message::User {
+        content: vec![UserContent::Text {
+            text: "What's your name?".to_string(),
+        }],
+        timestamp,
+        id: Message::generate_id("user", timestamp),
     }];
 
     let system =
@@ -449,44 +450,43 @@ async fn test_gemini_api_tool_result_error() {
     let config = LlmConfig::from_env().unwrap();
     let client = Client::new(&config);
 
+    let ts1 = Message::current_timestamp();
+    let ts2 = ts1 + 1;
+    let ts3 = ts2 + 1;
     let messages = vec![
-        Message {
-            role: MessageRole::User,
-            content: MessageContent::Text {
-                content: "Please list the files in the current directory using the LS tool"
+        Message::User {
+            content: vec![UserContent::Text {
+                text: "Please list the files in the current directory using the LS tool"
                     .to_string(),
-            },
-            id: None,
+            }],
+            timestamp: ts1,
+            id: Message::generate_id("user", ts1),
         },
-        Message {
-            role: MessageRole::Assistant,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![ContentBlock::ToolUse {
+        Message::Assistant {
+            content: vec![AssistantContent::ToolCall {
+                tool_call: ToolCall {
                     id: "tool-use-id-error".to_string(),
                     name: "ls".to_string(),
-                    input: serde_json::json!({ "path": "." }),
-                }]),
-            },
-            id: None,
+                    parameters: serde_json::json!({ "path": "." }),
+                },
+            }],
+            timestamp: ts2,
+            id: Message::generate_id("assistant", ts2),
         },
-        Message {
-            role: MessageRole::User,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![
-                    ContentBlock::ToolResult {
-                        tool_use_id: "tool-use-id-error".to_string(),
-                        content: vec![ContentBlock::Text {
-                            text: "Error executing command".to_string(),
-                        }],
-                        // Mark this result as an error
-                        is_error: Some(true),
-                    },
-                    ContentBlock::Text {
-                        text: "Okay, thank you.".to_string(), // Provide some follow-up text
-                    },
-                ]),
+        Message::Tool {
+            tool_use_id: "tool-use-id-error".to_string(),
+            result: ToolResult::Error {
+                error: "Error executing command".to_string(),
             },
-            id: None,
+            timestamp: ts3,
+            id: Message::generate_id("tool", ts3),
+        },
+        Message::User {
+            content: vec![UserContent::Text {
+                text: "Okay, thank you.".to_string(),
+            }],
+            timestamp: ts3 + 1,
+            id: Message::generate_id("user", ts3 + 1),
         },
     ];
 
@@ -553,12 +553,13 @@ async fn test_gemini_api_complex_tool_schema() {
         },
     };
 
-    let messages = vec![Message {
-        role: MessageRole::User,
-        content: MessageContent::Text {
-            content: "What is the weather today?".to_string(), // A simple message, doesn't need to invoke the tool
-        },
-        id: None,
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message::User {
+        content: vec![UserContent::Text {
+            text: "What is the weather today?".to_string(), // A simple message, doesn't need to invoke the tool
+        }],
+        timestamp,
+        id: Message::generate_id("user", timestamp),
     }];
 
     let response = client
@@ -598,43 +599,42 @@ async fn test_gemini_api_tool_result_json() {
     let json_result_string =
         serde_json::json!({ "status": "success", "files": ["file1.txt", "file2.log"] }).to_string();
 
+    let ts1 = Message::current_timestamp();
+    let ts2 = ts1 + 1;
+    let ts3 = ts2 + 1;
     let messages = vec![
-        Message {
-            role: MessageRole::User,
-            content: MessageContent::Text {
-                content: "Run the file listing tool.".to_string(),
-            },
-            id: None,
+        Message::User {
+            content: vec![UserContent::Text {
+                text: "Run the file listing tool.".to_string(),
+            }],
+            timestamp: ts1,
+            id: Message::generate_id("user", ts1),
         },
-        Message {
-            role: MessageRole::Assistant,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![ContentBlock::ToolUse {
+        Message::Assistant {
+            content: vec![AssistantContent::ToolCall {
+                tool_call: ToolCall {
                     id: "tool-use-id-json".to_string(),
                     name: "list_files".to_string(),
-                    input: serde_json::json!({}), // Empty input for simplicity
-                }]),
-            },
-            id: None,
+                    parameters: serde_json::json!({}), // Empty input for simplicity
+                },
+            }],
+            timestamp: ts2,
+            id: Message::generate_id("assistant", ts2),
         },
-        Message {
-            role: MessageRole::User,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![
-                    ContentBlock::ToolResult {
-                        tool_use_id: "tool-use-id-json".to_string(),
-                        content: vec![ContentBlock::Text {
-                            // Use the JSON string as the text content
-                            text: json_result_string,
-                        }],
-                        is_error: None,
-                    },
-                    ContentBlock::Text {
-                        text: "Thanks for the list.".to_string(),
-                    },
-                ]),
+        Message::Tool {
+            tool_use_id: "tool-use-id-json".to_string(),
+            result: ToolResult::Success {
+                output: json_result_string,
             },
-            id: None,
+            timestamp: ts3,
+            id: Message::generate_id("tool", ts3),
+        },
+        Message::User {
+            content: vec![UserContent::Text {
+                text: "Thanks for the list.".to_string(),
+            }],
+            timestamp: ts3 + 1,
+            id: Message::generate_id("user", ts3 + 1),
         },
     ];
 
@@ -663,59 +663,62 @@ async fn test_gemini_api_with_multiple_tool_responses() {
     let config = LlmConfig::from_env().unwrap();
     let client = Client::new(&config);
 
+    let ts1 = Message::current_timestamp();
+    let ts2 = ts1 + 1;
+    let ts3 = ts2 + 1;
+    let ts4 = ts3 + 1;
     let messages = vec![
-        Message {
-            role: MessageRole::User,
-            content: MessageContent::Text {
-                content: "Please list files in '.' and check the weather in 'SF'".to_string(),
-            },
-            id: None,
+        Message::User {
+            content: vec![UserContent::Text {
+                text: "Please list files in '.' and check the weather in 'SF'".to_string(),
+            }],
+            timestamp: ts1,
+            id: Message::generate_id("user", ts1),
         },
         // Assistant makes two tool calls
-        Message {
-            role: MessageRole::Assistant,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![
-                    ContentBlock::ToolUse {
+        Message::Assistant {
+            content: vec![
+                AssistantContent::ToolCall {
+                    tool_call: ToolCall {
                         id: "tool-use-id-1".to_string(),
                         name: "ls".to_string(),
-                        input: serde_json::json!({ "path": "." }),
+                        parameters: serde_json::json!({ "path": "." }),
                     },
-                    ContentBlock::ToolUse {
+                },
+                AssistantContent::ToolCall {
+                    tool_call: ToolCall {
                         id: "tool-use-id-2".to_string(),
                         name: "get_weather".to_string(),
-                        input: serde_json::json!({ "location": "SF" }),
+                        parameters: serde_json::json!({ "location": "SF" }),
                     },
-                ]),
-            },
-            id: None,
+                },
+            ],
+            timestamp: ts2,
+            id: Message::generate_id("assistant", ts2),
         },
-        // User provides results for both tool calls in one message
-        Message {
-            role: MessageRole::User,
-            content: MessageContent::StructuredContent {
-                content: StructuredContent(vec![
-                    ContentBlock::ToolResult {
-                        tool_use_id: "tool-use-id-1".to_string(),
-                        content: vec![ContentBlock::Text {
-                            text: "file1.rs, file2.toml".to_string(),
-                        }],
-                        is_error: None,
-                    },
-                    ContentBlock::ToolResult {
-                        tool_use_id: "tool-use-id-2".to_string(),
-                        content: vec![ContentBlock::Text {
-                            text: "Sunny, 20C".to_string(),
-                        }],
-                        is_error: None,
-                    },
-                    // Optional: Add text after results
-                    ContentBlock::Text {
-                        text: "Got it, thanks!".to_string(),
-                    },
-                ]),
+        // Provide results for both tool calls
+        Message::Tool {
+            tool_use_id: "tool-use-id-1".to_string(),
+            result: ToolResult::Success {
+                output: "file1.rs, file2.toml".to_string(),
             },
-            id: None,
+            timestamp: ts3,
+            id: Message::generate_id("tool", ts3),
+        },
+        Message::Tool {
+            tool_use_id: "tool-use-id-2".to_string(),
+            result: ToolResult::Success {
+                output: "Sunny, 20C".to_string(),
+            },
+            timestamp: ts4,
+            id: Message::generate_id("tool", ts4),
+        },
+        Message::User {
+            content: vec![UserContent::Text {
+                text: "Got it, thanks!".to_string(),
+            }],
+            timestamp: ts4 + 1,
+            id: Message::generate_id("user", ts4 + 1),
         },
     ];
 
@@ -783,51 +786,46 @@ async fn test_api_with_cancelled_tool_execution() {
             let tool_call_id = format!("cancelled_tool_{:?}", model);
 
             // Simulate a conversation where a tool was called but then cancelled
+            let ts1 = Message::current_timestamp();
+            let ts2 = ts1 + 1;
+            let ts3 = ts2 + 1;
+            let ts4 = ts3 + 1;
             let messages = vec![
-                Message {
-                    role: MessageRole::User,
-                    content: MessageContent::Text {
-                        content: "Please list the files in the current directory".to_string(),
-                    },
-                    id: None,
+                Message::User {
+                    content: vec![UserContent::Text {
+                        text: "Please list the files in the current directory".to_string(),
+                    }],
+                    timestamp: ts1,
+                    id: Message::generate_id("user", ts1),
                 },
                 // Assistant requests a tool call
-                Message {
-                    role: MessageRole::Assistant,
-                    content: MessageContent::StructuredContent {
-                        content: StructuredContent(vec![
-                            ContentBlock::ToolUse {
-                                id: tool_call_id.clone(),
-                                name: "ls".to_string(),
-                                input: serde_json::json!({ "path": "." }),
-                            }
-                        ]),
-                    },
-                    id: None,
+                Message::Assistant {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            id: tool_call_id.clone(),
+                            name: "ls".to_string(),
+                            parameters: serde_json::json!({ "path": "." }),
+                        },
+                    }],
+                    timestamp: ts2,
+                    id: Message::generate_id("assistant", ts2),
                 },
                 // Tool execution was cancelled - this is what inject_cancelled_tool_results would add
-                Message {
-                    role: MessageRole::Tool,
-                    content: MessageContent::StructuredContent {
-                        content: StructuredContent(vec![
-                            ContentBlock::ToolResult {
-                                tool_use_id: tool_call_id.clone(),
-                                content: vec![ContentBlock::Text {
-                                    text: "Tool execution was cancelled by user before completion.".to_string(),
-                                }],
-                                is_error: None, // Not marked as error, just cancelled
-                            }
-                        ]),
+                Message::Tool {
+                    tool_use_id: tool_call_id.clone(),
+                    result: ToolResult::Success {
+                        output: "Tool execution was cancelled by user before completion.".to_string(),
                     },
-                    id: None,
+                    timestamp: ts3,
+                    id: Message::generate_id("tool", ts3),
                 },
                 // User continues the conversation
-                Message {
-                    role: MessageRole::User,
-                    content: MessageContent::Text {
-                        content: "No problem, can you tell me about Rust instead?".to_string(),
-                    },
-                    id: None,
+                Message::User {
+                    content: vec![UserContent::Text {
+                        text: "No problem, can you tell me about Rust instead?".to_string(),
+                    }],
+                    timestamp: ts4,
+                    id: Message::generate_id("user", ts4),
                 },
             ];
 

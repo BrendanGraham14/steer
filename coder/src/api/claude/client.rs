@@ -8,9 +8,9 @@ use tracing::{debug, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
-use crate::api::messages::{
-    ContentBlock, Message as ApiMessage, MessageContent as ApiMessageContent,
-    MessageRole as ApiMessageRole, StructuredContent as ApiStructuredContent,
+use crate::app::conversation::{
+    Message as AppMessage, UserContent, AssistantContent, ToolResult,
+    ThoughtContent,
 };
 use crate::api::provider::{CompletionResponse, Provider};
 use tools::ToolSchema;
@@ -214,138 +214,176 @@ impl AnthropicClient {
 }
 
 // Conversion functions start
-fn convert_messages(messages: Vec<ApiMessage>) -> Result<Vec<ClaudeMessage>, ApiError> {
+fn convert_messages(messages: Vec<AppMessage>) -> Result<Vec<ClaudeMessage>, ApiError> {
     messages.into_iter().map(convert_single_message).collect()
 }
 
-fn convert_single_message(msg: ApiMessage) -> Result<ClaudeMessage, ApiError> {
-    let claude_role = convert_role(msg.role).map_err(|e| ApiError::InvalidRequest {
-        provider: "anthropic".to_string(),
-        details: format!(
-            "Failed to convert role for message with id {:?}: {}",
-            msg.id, e
-        ),
-    })?;
-    let claude_content = convert_content(msg.content).map_err(|e| ApiError::InvalidRequest {
-        provider: "anthropic".to_string(),
-        details: format!(
-            "Failed to convert content for message with id {:?}: {}",
-            msg.id, e
-        ),
-    })?;
+fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
+    match msg {
+        AppMessage::User { content, id, .. } => {
+            // Convert UserContent to Claude format
+            let combined_text = content
+                .iter()
+                .map(|user_content| match user_content {
+                    UserContent::Text { text } => text.clone(),
+                    UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => UserContent::format_command_execution_as_xml(
+                        command, stdout, stderr, *exit_code
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-    Ok(ClaudeMessage {
-        role: claude_role,
-        content: claude_content,
-        id: msg.id,
-    })
-}
-
-fn convert_role(role: ApiMessageRole) -> Result<ClaudeMessageRole, ApiError> {
-    match role {
-        ApiMessageRole::User => Ok(ClaudeMessageRole::User),
-        ApiMessageRole::Assistant => Ok(ClaudeMessageRole::Assistant),
-        ApiMessageRole::Tool => Ok(ClaudeMessageRole::User),
-    }
-}
-
-fn convert_content(content: ApiMessageContent) -> Result<ClaudeMessageContent, ApiError> {
-    match content {
-        ApiMessageContent::Text { content } => Ok(ClaudeMessageContent::Text { content }),
-        ApiMessageContent::StructuredContent {
-            content: structured,
-        } => convert_structured_content(structured).map(|claude_structured| {
-            ClaudeMessageContent::StructuredContent {
-                content: claude_structured,
-            }
-        }),
-    }
-}
-
-fn convert_structured_content(
-    structured: ApiStructuredContent,
-) -> Result<ClaudeStructuredContent, ApiError> {
-    let converted_blocks: Vec<ClaudeContentBlock> = structured
-        .0
-        .into_iter()
-        .map(convert_block)
-        .collect::<Result<Vec<Option<ClaudeContentBlock>>, ApiError>>()?
-        .into_iter()
-        .filter_map(|block| block)
-        .collect();
-
-    Ok(ClaudeStructuredContent(converted_blocks))
-}
-
-fn convert_block(block: ContentBlock) -> Result<Option<ClaudeContentBlock>, ApiError> {
-    match block {
-        ContentBlock::Text { text } => Ok(Some(ClaudeContentBlock::Text {
-            text,
-            cache_control: None,
-            extra: Default::default(),
-        })),
-        ContentBlock::ToolUse { id, name, input } => Ok(Some(ClaudeContentBlock::ToolUse {
-            id,
-            name,
-            input,
-            cache_control: None,
-            extra: Default::default(),
-        })),
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-            is_error,
-        } => {
-            let claude_inner_content: Vec<ClaudeContentBlock> = content
-                .into_iter()
-                .map(convert_block)
-                .collect::<Result<Vec<Option<ClaudeContentBlock>>, ApiError>>()?
-                .into_iter()
-                .filter_map(|block| block)
+            Ok(ClaudeMessage {
+                role: ClaudeMessageRole::User,
+                content: ClaudeMessageContent::Text { content: combined_text },
+                id: Some(id),
+            })
+        }
+        AppMessage::Assistant { content, id, .. } => {
+            // Convert AssistantContent to Claude blocks
+            let claude_blocks: Vec<ClaudeContentBlock> = content
+                .iter()
+                .filter_map(|assistant_content| match assistant_content {
+                    AssistantContent::Text { text } => {
+                        if text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(ClaudeContentBlock::Text {
+                                text: text.clone(),
+                                cache_control: None,
+                                extra: Default::default(),
+                            })
+                        }
+                    }
+                    AssistantContent::ToolCall { tool_call } => {
+                        Some(ClaudeContentBlock::ToolUse {
+                            id: tool_call.id.clone(),
+                            name: tool_call.name.clone(),
+                            input: tool_call.parameters.clone(),
+                            cache_control: None,
+                            extra: Default::default(),
+                        })
+                    }
+                    AssistantContent::Thought { thought } => {
+                        match thought {
+                            ThoughtContent::Signed { text, signature } => {
+                                Some(ClaudeContentBlock::Thinking {
+                                    thinking: text.clone(),
+                                    signature: signature.clone(),
+                                    cache_control: None,
+                                    extra: Default::default(),
+                                })
+                            }
+                            ThoughtContent::Redacted { data } => {
+                                Some(ClaudeContentBlock::RedactedThinking {
+                                    data: data.clone(),
+                                    cache_control: None,
+                                    extra: Default::default(),
+                                })
+                            }
+                            ThoughtContent::Simple { text } => {
+                                // Claude doesn't have a simple thought type, convert to text
+                                Some(ClaudeContentBlock::Text {
+                                    text: format!("[Thought: {}]", text),
+                                    cache_control: None,
+                                    extra: Default::default(),
+                                })
+                            }
+                        }
+                    }
+                })
                 .collect();
 
-            Ok(Some(ClaudeContentBlock::ToolResult {
+            if !claude_blocks.is_empty() {
+                let claude_content = if claude_blocks.len() == 1 {
+                    if let Some(ClaudeContentBlock::Text { text, .. }) = claude_blocks.first() {
+                        ClaudeMessageContent::Text {
+                            content: text.clone(),
+                        }
+                    } else {
+                        ClaudeMessageContent::StructuredContent {
+                            content: ClaudeStructuredContent(claude_blocks),
+                        }
+                    }
+                } else {
+                    ClaudeMessageContent::StructuredContent {
+                        content: ClaudeStructuredContent(claude_blocks),
+                    }
+                };
+
+                Ok(ClaudeMessage {
+                    role: ClaudeMessageRole::Assistant,
+                    content: claude_content,
+                    id: Some(id),
+                })
+            } else {
+                Err(ApiError::InvalidRequest {
+                    provider: "anthropic".to_string(),
+                    details: format!("Assistant message ID {} resulted in no valid content blocks", id),
+                })
+            }
+        }
+        AppMessage::Tool { tool_use_id, result, id, .. } => {
+            // Convert ToolResult to Claude format
+            // Claude expects tool results as User messages
+            let (result_text, is_error) = match result {
+                ToolResult::Success { output } => {
+                    let text = if output.trim().is_empty() {
+                        "(No output)".to_string()
+                    } else {
+                        output
+                    };
+                    (text, None)
+                }
+                ToolResult::Error { error } => {
+                    (error, Some(true))
+                }
+            };
+
+            let claude_blocks = vec![ClaudeContentBlock::ToolResult {
                 tool_use_id,
-                content: claude_inner_content,
+                content: vec![ClaudeContentBlock::Text {
+                    text: result_text,
+                    cache_control: None,
+                    extra: Default::default(),
+                }],
                 is_error,
                 cache_control: None,
                 extra: Default::default(),
-            }))
+            }];
+
+            Ok(ClaudeMessage {
+                role: ClaudeMessageRole::User, // Tool results are sent as User messages in Claude
+                content: ClaudeMessageContent::StructuredContent {
+                    content: ClaudeStructuredContent(claude_blocks),
+                },
+                id: Some(id),
+            })
         }
-        ContentBlock::Thought { content } => match content {
-            crate::api::messages::ThoughtContent::Signed { text, signature } => {
-                Ok(Some(ClaudeContentBlock::Thinking {
-                    thinking: text,
-                    signature,
-                    cache_control: None,
-                    extra: Default::default(),
-                }))
-            }
-            crate::api::messages::ThoughtContent::Redacted { data } => {
-                Ok(Some(ClaudeContentBlock::RedactedThinking {
-                    data,
-                    cache_control: None,
-                    extra: Default::default(),
-                }))
-            }
-            crate::api::messages::ThoughtContent::Simple { text } => {
-                warn!("Unexpected thought content received in Claude response content");
-                Ok(None)
-            }
-        },
     }
 }
 // Conversion functions end
 
 // Convert Claude's content blocks to our provider-agnostic format
-fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<ContentBlock> {
+fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<AssistantContent> {
     claude_blocks
         .into_iter()
         .filter_map(|block| match block {
-            ClaudeContentBlock::Text { text, .. } => Some(ContentBlock::Text { text }),
+            ClaudeContentBlock::Text { text, .. } => Some(AssistantContent::Text { text }),
             ClaudeContentBlock::ToolUse {
                 id, name, input, ..
-            } => Some(ContentBlock::ToolUse { id, name, input }),
+            } => Some(AssistantContent::ToolCall {
+                tool_call: tools::ToolCall {
+                    id,
+                    name,
+                    parameters: input,
+                }
+            }),
             ClaudeContentBlock::ToolResult { .. } => {
                 warn!("Unexpected ToolResult block received in Claude response content");
                 None
@@ -354,14 +392,14 @@ fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<Content
                 thinking,
                 signature,
                 ..
-            } => Some(ContentBlock::Thought {
-                content: crate::api::messages::ThoughtContent::Signed {
+            } => Some(AssistantContent::Thought {
+                thought: ThoughtContent::Signed {
                     text: thinking,
                     signature,
                 },
             }),
-            ClaudeContentBlock::RedactedThinking { data, .. } => Some(ContentBlock::Thought {
-                content: crate::api::messages::ThoughtContent::Redacted { data },
+            ClaudeContentBlock::RedactedThinking { data, .. } => Some(AssistantContent::Thought {
+                thought: ThoughtContent::Redacted { data },
             }),
             ClaudeContentBlock::Unknown => {
                 warn!("Unknown content block received in Claude response content");
@@ -380,7 +418,7 @@ impl Provider for AnthropicClient {
     async fn complete(
         &self,
         model: Model,
-        messages: Vec<ApiMessage>,
+        messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,

@@ -1,14 +1,14 @@
-use crate::api::{
-    ApiError, Client as ApiClient, Model,
-    messages::{ContentBlock, Message, MessageContent, MessageRole, StructuredContent},
-};
+use crate::api::{ApiError, Client as ApiClient, Model};
+use crate::app::conversation::Message;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 use tracing::{debug, error, info, instrument, warn};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalDecision {
@@ -108,56 +108,14 @@ impl AgentExecutor {
                     3,
                 )
                 .await?;
-
-            // Create structured content to collect all blocks
-            let mut content_blocks = Vec::new();
-            let mut tool_calls: Vec<ToolCall> = Vec::new();
-
-            for block in completion_response.content {
-                match block {
-                    ContentBlock::Text { text, .. } => {
-                        content_blocks.push(crate::api::messages::ContentBlock::Text { text });
-                    }
-                    ContentBlock::ToolUse {
-                        id, name, input, ..
-                    } => {
-                        let tool_call = ToolCall {
-                            id: id.clone(),
-                            name: name.clone(),
-                            parameters: input.clone(),
-                        };
-                        debug!(tool_id=%id, tool_name=%name, "Complete tool call received");
-                        content_blocks.push(crate::api::messages::ContentBlock::ToolUse {
-                            id,
-                            name,
-                            input,
-                        });
-                        tool_calls.push(tool_call);
-                        // We need to reconstruct the ToolCalls content block later if tools were used
-                    }
-                    ContentBlock::ToolResult {
-                        tool_use_id,
-                        content,
-                        is_error,
-                    } => {
-                        content_blocks.push(crate::api::messages::ContentBlock::ToolResult {
-                            tool_use_id: tool_use_id.clone(),
-                            content,
-                            is_error,
-                        });
-                    }
-                    ContentBlock::Thought { content, .. } => {
-                        content_blocks.push(crate::api::messages::ContentBlock::Thought { content });
-                    }
-                }
-            }
-
-            let full_assistant_message = Message {
-                id: None,
-                role: MessageRole::Assistant,
-                content: MessageContent::StructuredContent {
-                    content: StructuredContent(content_blocks),
-                },
+            let tool_calls = completion_response.extract_tool_calls();
+            let full_assistant_message = Message::Assistant {
+                content: completion_response.content,
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                id: Uuid::new_v4().to_string(),
             };
 
             messages.push(full_assistant_message.clone());
@@ -183,7 +141,7 @@ impl AgentExecutor {
 
                 let tool_results = self
                     .handle_tool_calls(
-                        tool_calls,
+                        &tool_calls,
                         &request.tool_executor_callback,
                         &event_sender,
                         &token,
@@ -195,26 +153,28 @@ impl AgentExecutor {
                     return Err(AgentExecutorError::Cancelled);
                 }
 
-                // Convert tool results to content blocks
-                let tool_result_blocks = tool_results
-                    .iter()
-                    .map(|tr| crate::api::messages::ContentBlock::ToolResult {
-                        tool_use_id: tr.tool_call_id.clone(),
-                        content: vec![crate::api::messages::ContentBlock::Text {
-                            text: tr.output.clone(),
-                        }],
-                        is_error: if tr.is_error { Some(true) } else { None },
-                    })
-                    .collect::<Vec<_>>();
+                // Add tool results to messages - one message per tool result
+                for tool_result in &tool_results {
+                    let conversation_result = if tool_result.is_error {
+                        crate::app::conversation::ToolResult::Error {
+                            error: tool_result.output.clone(),
+                        }
+                    } else {
+                        crate::app::conversation::ToolResult::Success {
+                            output: tool_result.output.clone(),
+                        }
+                    };
 
-                // Add tool results to messages
-                messages.push(Message {
-                    id: None,
-                    role: MessageRole::Tool,
-                    content: MessageContent::StructuredContent {
-                        content: StructuredContent(tool_result_blocks),
-                    },
-                });
+                    messages.push(Message::Tool {
+                        tool_use_id: tool_result.tool_call_id.clone(),
+                        result: conversation_result,
+                        timestamp: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        id: Uuid::new_v4().to_string(),
+                    });
+                }
 
                 debug!("Looping back to LLM with tool results.");
             }
@@ -227,7 +187,7 @@ impl AgentExecutor {
     )]
     async fn handle_tool_calls<F, Fut>(
         &self,
-        tool_calls: Vec<ToolCall>,
+        tool_calls: &Vec<ToolCall>,
         tool_executor_callback: &F,
         event_sender: &mpsc::Sender<AgentEvent>,
         token: &CancellationToken,

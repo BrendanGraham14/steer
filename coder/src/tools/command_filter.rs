@@ -1,4 +1,3 @@
-// use crate::api::{Client, Model};
 use crate::api::Model;
 use crate::config::LlmConfig;
 use anyhow::Result;
@@ -83,12 +82,11 @@ pub async fn get_command_prefix(command: &str, token: CancellationToken) -> Resu
     let client = crate::api::Client::new(&config);
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
-    let messages = vec![crate::api::Message {
-        role: crate::api::messages::MessageRole::User,
-        content: crate::api::messages::MessageContent::Text {
-            content: user_message,
-        },
-        id: None,
+    // Create a user message with the new structure
+    let messages = vec![crate::app::conversation::Message::User {
+        content: vec![crate::app::conversation::UserContent::Text { text: user_message }],
+        timestamp: crate::app::conversation::Message::current_timestamp(),
+        id: crate::app::conversation::Message::generate_id("user", crate::app::conversation::Message::current_timestamp()),
     }];
 
     let system_content = SYSTEM_MESSAGE;

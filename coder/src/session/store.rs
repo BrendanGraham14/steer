@@ -278,7 +278,7 @@ pub trait SessionStoreExt: SessionStore {
         let next_cursor = if has_more && !messages.is_empty() {
             Some(MessageCursor {
                 sequence_num: messages.len() as u32,
-                message_id: messages.last().map(|m| m.id.clone()),
+                message_id: messages.last().map(|m| m.id().to_string()),
             })
         } else {
             None

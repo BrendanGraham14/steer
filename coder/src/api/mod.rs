@@ -1,7 +1,6 @@
 pub mod claude;
 pub mod error;
 pub mod gemini;
-pub mod messages;
 pub mod openai;
 pub mod provider;
 
@@ -10,8 +9,6 @@ use clap::builder::PossibleValue;
 pub use claude::AnthropicClient;
 pub use error::ApiError;
 pub use gemini::GeminiClient;
-pub use messages::ContentBlock;
-pub use messages::Message;
 use once_cell::sync::Lazy;
 pub use openai::OpenAIClient;
 pub use provider::{CompletionResponse, Provider};
@@ -26,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 pub use tools::{InputSchema, ToolCall, ToolSchema};
 use tracing::warn;
 
+use crate::app::conversation::Message;
 use crate::config::LlmConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,7 +184,7 @@ impl Client {
         })?;
         let provider_instance: Arc<dyn Provider> = match provider_kind {
             ProviderKind::Anthropic => Arc::new(AnthropicClient::new(key)),
-            ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key)),
+            ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key.to_string())),
             ProviderKind::Google => Arc::new(GeminiClient::new(key)),
         };
         map.insert(model, provider_instance.clone());
@@ -196,7 +194,7 @@ impl Client {
     pub async fn complete(
         &self,
         model: Model,
-        messages: Vec<messages::Message>,
+        messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,

@@ -28,7 +28,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 mod message_formatter;
 
-use message_formatter::{format_command_response, format_message, format_tool_preview};
+use message_formatter::{format_message, format_tool_result_block};
 
 const MAX_INPUT_HEIGHT: u16 = 10;
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -459,16 +459,15 @@ impl Tui {
                 debug!(target:"tui.handle_app_event", "Tool call started: {} ({:?})", name, id);
 
                 // Find the corresponding raw message
-                let raw_msg = self.raw_messages.iter().find(|m| m.id == id).cloned();
+                let raw_msg = self.raw_messages.iter().find(|m| m.id() == id).cloned();
 
                 if let Some(raw_msg) = raw_msg {
                     // Add the raw message to the TUI's internal list
                     // self.raw_messages.push(raw_msg.clone()); // Already added by MessageAdded
 
-                    // Format using the actual blocks
+                    // Format using the message
                     let formatted = format_message(
-                        &raw_msg.content_blocks,
-                        Role::Tool,
+                        &raw_msg,
                         self.terminal.size().map(|r| r.width).unwrap_or(100),
                     );
 
@@ -499,92 +498,80 @@ impl Tui {
                 }
             }
             AppEvent::MessageAdded {
-                role,
-                content_blocks,
-                id,
+                message,
                 ..
             } => {
-                // MessageAdded now carries the blocks directly
                 // Add the raw message first
-                let raw_msg = crate::app::Message::new_with_blocks(role, content_blocks.clone());
-                self.raw_messages.push(raw_msg.clone());
+                self.raw_messages.push(message.clone());
 
-                // Format using the actual blocks
+                // Format using the message
                 let formatted = format_message(
-                    &content_blocks,
-                    role,
+                    &message,
                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                 );
 
                 // Check if ID already exists in the TUI's formatted list
                 // (Should ideally not happen with unique IDs, but good safety check)
                 if self.display_items.iter().any(|di| match di {
-                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                    DisplayItem::Message { id: item_id, .. } => *item_id == message.id(),
                     _ => false,
                 }) {
                     info!(
                         target: "tui.handle_app_event",
-                        "MessageAdded: ID {} already exists. Content blocks: {}. Skipping.",
-                        id,
-                        content_blocks.len()
+                        "MessageAdded: ID {} already exists. Skipping.",
+                        message.id()
                     );
                 } else {
                     let display_item = DisplayItem::Message {
-                        id: id.clone(),
-                        role,
+                        id: message.id().to_string(),
+                        role: message.role(),
                         content: formatted,
                     };
                     self.display_items.push(display_item);
                     display_items_updated = true;
                     debug!(
                         target: "tui.handle_app_event",
-                        "Added message ID: {} with {} content blocks",
-                        id,
-                        content_blocks.len()
+                        "Added message ID: {}",
+                        message.id()
                     );
                 }
             }
             AppEvent::RestoredMessage {
-                role,
-                content_blocks,
-                id,
+                message,
                 model: _,
             } => {
                 // Handle restored messages the same as new messages for display purposes
                 // Add the raw message first
-                let raw_msg = crate::app::Message::new_with_blocks(role, content_blocks.clone());
-                self.raw_messages.push(raw_msg.clone());
+                self.raw_messages.push(message.clone());
 
-                // Format using the actual blocks
+                // Format using the message
                 let formatted = format_message(
-                    &content_blocks,
-                    role,
+                    &message,
                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                 );
 
                 // Check if ID already exists in the TUI's formatted list
                 if self.display_items.iter().any(|di| match di {
-                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
+                    DisplayItem::Message { id: item_id, .. } => *item_id == message.id(),
                     _ => false,
                 }) {
                     debug!(
                         target: "tui.handle_app_event",
                         "RestoredMessage: ID {} already exists. Skipping.",
-                        id,
+                        message.id(),
                     );
                 } else {
                     let display_item = DisplayItem::Message {
-                        id: id.clone(),
-                        role,
+                        id: message.id().to_string(),
+                        role: message.role(),
                         content: formatted,
                     };
                     self.display_items.push(display_item);
                     display_items_updated = true;
                     debug!(
                         target: "tui.handle_app_event",
-                        "Restored message ID: {} with {} content blocks",
-                        id,
-                        content_blocks.len()
+                        "Restored message ID: {}",
+                        message.id()
                     );
                 }
             }
@@ -598,21 +585,20 @@ impl Tui {
                         "Updating message ID: {}", id,
                     );
                     // Now use the blocks from the raw message
-                    if let Some(raw_msg) = self.raw_messages.iter().find(|m| m.id == id) {
+                    if let Some(raw_msg) = self.raw_messages.iter().find(|m| m.id() == id) {
                         // Find the existing DisplayItem::Message and update its content
                         if let Some(item) = self.display_items.iter_mut().find(|di| match di {
                             DisplayItem::Message { id: item_id, .. } => *item_id == id,
                             _ => false,
                         }) {
                             if let DisplayItem::Message {
-                                role: item_role,
+                                role: _item_role,
                                 content: item_content,
                                 ..
                             } = item
                             {
                                 *item_content = format_message(
-                                    &raw_msg.content_blocks,
-                                    *item_role, // Use the existing role from the item
+                                    &raw_msg,
                                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                                 );
                                 display_items_updated = true; // Mark that message content changed
@@ -635,16 +621,19 @@ impl Tui {
                             _ => false,
                         }) {
                             if let DisplayItem::Message {
-                                role: item_role,
+                                role: _item_role,
                                 content: item_content,
                                 ..
                             } = item
                             {
-                                let block =
-                                    crate::app::conversation::MessageContentBlock::Text(content);
+                                // Create a temporary message with just the text content
+                                let temp_message = crate::app::conversation::Message::Assistant {
+                                    content: vec![crate::app::conversation::AssistantContent::Text { text: content }],
+                                    timestamp: crate::app::conversation::Message::current_timestamp(),
+                                    id: id.clone(),
+                                };
                                 *item_content = format_message(
-                                    &[block],
-                                    *item_role,
+                                    &temp_message,
                                     self.terminal.size().map(|r| r.width).unwrap_or(100),
                                 );
                                 display_items_updated = true; // Mark that message content changed
@@ -709,14 +698,14 @@ impl Tui {
                             .join("\n"),
                         lines.len() - MAX_PREVIEW_LINES
                     );
-                    format_tool_preview(
+                    format_tool_result_block(
+                        &id,
                         &preview_content,
                         self.terminal.size().map(|r| r.width).unwrap_or(100),
                     )
                 } else {
-                    // Use original formatting if not truncated
-                    format_tool_preview(
-                        // Use preview formatter for consistency
+                    format_tool_result_block(
+                        &id,
                         &result,
                         self.terminal.size().map(|r| r.width).unwrap_or(100),
                     )
@@ -776,11 +765,8 @@ impl Tui {
             }
             AppEvent::CommandResponse { content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                // Use the new formatter
-                let formatted = format_command_response(
-                    &content,
-                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                );
+                // Use standard text formatting for command responses
+                let formatted = vec![ratatui::text::Line::from(content.clone())];
                 // Add the raw message (optional, maybe remove raw_messages later?)
                 // self.raw_messages
                 //     .push(crate::app::Message::new_text(Role::System, content.clone())); // Keep for raw log
@@ -801,10 +787,7 @@ impl Tui {
                 let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
                 self.display_items.push(DisplayItem::SystemInfo {
                     id: display_id,
-                    content: format_command_response(
-                        &cancellation_text,
-                        self.terminal.size().map(|r| r.width).unwrap_or(100),
-                    ),
+                    content: vec![ratatui::text::Line::from(cancellation_text.clone())],
                 });
                 display_items_updated = true;
             }
@@ -1443,7 +1426,8 @@ impl Tui {
                         content,
                         full_result,
                         is_truncated,
-                        .. // Ignore tool_use_id
+                        tool_use_id, // Capture tool_use_id
+                        ..
                     } = item
                     {
                         let old_line_count = content.len();
@@ -1464,13 +1448,14 @@ impl Tui {
                                     .join("\n"),
                                 lines.len().saturating_sub(MAX_PREVIEW_LINES)
                             );
-                            format_tool_preview(
+                            format_tool_result_block(
+                                tool_use_id,
                                 &preview_content,
                                 self.terminal.size().map(|r| r.width).unwrap_or(100),
                             )
                         } else {
-                            // Expand to full result
-                            format_tool_preview(
+                            format_tool_result_block(
+                                tool_use_id,
                                 full_result,
                                 self.terminal.size().map(|r| r.width).unwrap_or(100),
                             )

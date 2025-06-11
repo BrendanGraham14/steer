@@ -58,10 +58,72 @@ message ServerEvent {
 
 // Event message definitions
 message MessageAddedEvent {
-  MessageRole role = 1;
-  repeated MessageContentBlock content_blocks = 2;
-  string id = 3;
-  string model = 4;
+  oneof message {
+    UserMessage user = 1;
+    AssistantMessage assistant = 2;
+    ToolMessage tool = 3;
+  }
+  string id = 4;
+  string model = 5;
+}
+
+message UserMessage {
+  repeated UserContent content = 1;
+  uint64 timestamp = 2;
+}
+
+message UserContent {
+  oneof content {
+    string text = 1;
+    CommandExecution command_execution = 2;
+  }
+}
+
+message CommandExecution {
+  string command = 1;
+  string stdout = 2;
+  string stderr = 3;
+  int32 exit_code = 4;
+}
+
+message AssistantMessage {
+  repeated AssistantContent content = 1;
+  uint64 timestamp = 2;
+}
+
+message AssistantContent {
+  oneof content {
+    string text = 1;
+    ToolCall tool_call = 2;
+    ThoughtContent thought = 3;
+  }
+}
+
+message ThoughtContent {
+  oneof thought_type {
+    SimpleThought simple = 1;
+    SignedThought signed = 2;
+    RedactedThought redacted = 3;
+  }
+}
+
+message SimpleThought {
+  string text = 1;
+}
+
+message SignedThought {
+  string text = 1;
+  string signature = 2;
+}
+
+message RedactedThought {
+  string data = 1;
+}
+
+message ToolMessage {
+  string tool_use_id = 1;
+  ToolResult result = 2;
+  uint64 timestamp = 3;
 }
 
 message MessageUpdatedEvent {
@@ -122,10 +184,13 @@ message ErrorEvent {
 }
 
 message RestoredMessageEvent {
-  MessageRole role = 1;
-  repeated MessageContentBlock content_blocks = 2;
-  string id = 3;
-  string model = 4;
+  oneof message {
+    UserMessage user = 1;
+    AssistantMessage assistant = 2;
+    ToolMessage tool = 3;
+  }
+  string id = 4;
+  string model = 5;
 }
 
 message OperationCancelledEvent {
@@ -244,33 +309,28 @@ message Operation {
 
 message Message {
   string id = 1;
-  MessageRole role = 2;
-  repeated MessageContentBlock content_blocks = 3;
-  google.protobuf.Timestamp created_at = 4;
-  map<string, string> metadata = 5;
+  oneof message {
+    UserMessage user = 2;
+    AssistantMessage assistant = 3;
+    ToolMessage tool = 4;
+  }
+  google.protobuf.Timestamp created_at = 5;
+  map<string, string> metadata = 6;
 }
 
-message MessageContentBlock {
-  oneof content {
-    string text = 1;
-    ToolCall tool_call = 2;
-    ToolResult tool_result = 3;
-    Attachment attachment = 4;
-  }
-}
+
 
 message ToolCall {
   string id = 1;
   string name = 2;
-  map<string, string> parameters = 3;
+  string parameters_json = 3; // JSON-encoded parameters
 }
 
 message ToolResult {
-  string tool_call_id = 1;
-  bool success = 2;
-  string content = 3;
-  optional string error = 4;
-  map<string, string> metadata = 5;
+  oneof result {
+    string success = 1;
+    string error = 2;
+  }
 }
 
 message ToolCallState {
