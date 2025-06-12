@@ -10,10 +10,10 @@ use ratatui::crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use std::io::{self, Stdout};
 use std::panic;
 use std::time::{Duration, Instant};
@@ -22,13 +22,19 @@ use tui_textarea::TextArea;
 use tokio::select;
 
 use crate::api::Model;
+use crate::app::AppEvent;
 use crate::app::command::AppCommand;
-use crate::app::{AppEvent, conversation::Role};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, info, warn};
-mod message_formatter;
+pub mod events;
+pub mod state;
+pub mod widgets;
 
-use message_formatter::{format_message, format_tool_result_block};
+use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
+use crate::tui::events::{EventPipeline, processors::*};
+use crate::tui::state::view_model::MessageViewModel;
+use widgets::styles;
+use widgets::{MessageList, MessageListState, ViewMode, message_list::MessageContent};
 
 const MAX_INPUT_HEIGHT: u16 = 10;
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -42,61 +48,19 @@ enum InputMode {
     ConfirmExit,
 }
 
-// Define scroll direction and amount
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ScrollDirection {
-    Up,
-    Down,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ScrollAmount {
-    Line(usize),
-    HalfPage,
-    FullPage,
-}
-
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     textarea: TextArea<'static>,
     input_mode: InputMode,
-    display_items: Vec<DisplayItem>,
+    view_model: crate::tui::state::view_model::MessageViewModel,
     is_processing: bool,
     progress_message: Option<String>,
     last_spinner_update: Instant,
     spinner_state: usize,
     command_tx: mpsc::Sender<AppCommand>,
     current_tool_approval: Option<tools::ToolCall>,
-    scroll_offset: usize,
-    max_scroll: usize,
-    user_scrolled_away: bool,
-    raw_messages: Vec<crate::app::Message>,
     current_model: Model,
-}
-
-// Represents different types of items displayed in the TUI conversation list.
-#[derive(Clone, Debug)]
-enum DisplayItem {
-    Message {
-        id: String,
-        role: Role, // Keep Role for User/Assistant/Tool messages
-        content: Vec<Line<'static>>,
-    },
-    ToolResult {
-        id: String,                  // Unique ID for this display item (e.g., "result_tool_abc")
-        tool_use_id: String,         // ID of the original tool call
-        content: Vec<Line<'static>>, // Formatted lines (potentially truncated)
-        full_result: String,         // Unformatted, full result
-        is_truncated: bool,
-    },
-    CommandResponse {
-        id: String,
-        content: Vec<Line<'static>>,
-    },
-    SystemInfo {
-        id: String,
-        content: Vec<Line<'static>>, // For errors, cancellations, info messages
-    },
+    event_pipeline: EventPipeline,
 }
 
 #[derive(Debug)]
@@ -139,18 +103,15 @@ impl Tui {
             terminal,
             textarea,
             input_mode: InputMode::Normal,
-            display_items: Vec::new(),
+            view_model: MessageViewModel::new(),
             is_processing: false,
             progress_message: None,
             last_spinner_update: Instant::now(),
             spinner_state: 0,
             command_tx,
             current_tool_approval: None,
-            scroll_offset: 0,
-            max_scroll: 0,
-            user_scrolled_away: false,
-            raw_messages: Vec::new(),
             current_model: initial_model,
+            event_pipeline: Self::create_event_pipeline(),
         })
     }
 
@@ -161,7 +122,7 @@ impl Tui {
         session_config: Option<crate::session::SessionConfig>,
     ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
         use crate::grpc::GrpcClientAdapter;
-        use crate::session::{SessionConfig, SessionToolConfig, ToolApprovalPolicy};
+        use crate::session::{SessionConfig, SessionToolConfig};
         use std::collections::HashMap;
 
         info!("Creating TUI in remote mode, connecting to {}", addr);
@@ -303,16 +264,14 @@ impl Tui {
 
             self.terminal.draw(|f| {
                 let textarea_ref = &self.textarea;
-                let display_items_ref = &self.display_items;
                 let current_approval_ref = self.current_tool_approval.as_ref();
 
                 if let Err(e) = Tui::render_ui_static(
                     f,
                     textarea_ref,
-                    display_items_ref,
+                    self.view_model.messages.as_slice(),
+                    &mut self.view_model.message_list_state,
                     input_mode,
-                    self.scroll_offset,
-                    self.max_scroll,
                     &current_model_owned,
                     current_approval_ref,
                 ) {
@@ -330,16 +289,7 @@ impl Tui {
                             match event {
                                 Event::Resize(_, _) => {
                                     debug!(target:"tui.run", "Terminal resized");
-                                    // Recalculate max_scroll based on new size and adjust offset
-                                    self.recalculate_max_scroll();
-                                    // Check if we should still be considered scrolled away after resize
-                                    if self.scroll_offset < self.max_scroll {
-                                        // User might still be scrolled away, keep the flag
-                                        // (Unless they were at the bottom before resize)
-                                        // This logic could be refined, but for now, let's assume they remain scrolled away if not at the new bottom.
-                                    } else {
-                                        self.user_scrolled_away = false; // At the new bottom
-                                    }
+                                    // The widget will handle recalculating sizes internally
                                 }
                                 Event::Paste(data) => {
                                     if matches!(self.input_mode, InputMode::Editing) {
@@ -371,7 +321,9 @@ impl Tui {
                                             kind: MouseEventKind::ScrollDown,
                                             ..
                                         } => {
-                                            self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(3))?; // Scroll a few lines per mouse wheel tick
+                                            let current_offset = self.view_model.message_list_state.scroll_state.offset();
+                                            let new_offset = current_offset.y.saturating_add(3);
+                                            self.view_model.message_list_state.set_scroll_offset(new_offset as usize);
                                             // Force immediate redraw to prevent scroll artifacts
                                             continue;
                                         }
@@ -379,7 +331,9 @@ impl Tui {
                                             kind: MouseEventKind::ScrollUp,
                                             ..
                                         } => {
-                                           self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(3))?; // Scroll a few lines per mouse wheel tick
+                                            let current_offset = self.view_model.message_list_state.scroll_state.offset();
+                                            let new_offset = current_offset.y.saturating_sub(3);
+                                            self.view_model.message_list_state.set_scroll_offset(new_offset as usize);
                                             // Force immediate redraw to prevent scroll artifacts
                                             continue;
                                         }
@@ -422,427 +376,124 @@ impl Tui {
         Ok(())
     }
 
+    /// Create the event processing pipeline with all processors
+    fn create_event_pipeline() -> EventPipeline {
+        EventPipeline::new()
+            .add_processor(Box::new(ProcessingStateProcessor::new()))
+            .add_processor(Box::new(MessageEventProcessor::new()))
+            .add_processor(Box::new(ToolEventProcessor::new()))
+            .add_processor(Box::new(SystemEventProcessor::new()))
+    }
+
     async fn handle_app_event(&mut self, event: AppEvent) {
-        let mut display_items_updated = false;
-        match event {
-            AppEvent::ThinkingStarted => {
-                debug!(target:"tui.handle_app_event", "Setting is_processing = true");
-                self.is_processing = true;
-                self.spinner_state = 0;
-                self.progress_message = None;
-            }
-            AppEvent::MessagePart { id, delta } => {
-                debug!(target:"tui.handle_app_event", "MessagePart: {}", id);
-                // Find and update the message with the given ID
-                if let Some(item) = self.display_items.iter_mut().find(|di| match di {
-                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
-                    _ => false,
-                }) {
-                    // Ensure it's the Message variant before accessing content
-                    if let DisplayItem::Message { content, .. } = item {
-                        let new_line = Line::from(delta.clone());
-                        content.push(new_line);
-                        display_items_updated = true;
-                    } else {
-                        warn!(target:"tui.handle_app_event", "Found DisplayItem for ID {}, but it's not a Message variant.", id);
-                    }
-                } else {
-                    warn!(target:"tui.handle_app_event", "MessagePart received for unknown ID: {}", id);
-                }
-            }
-            AppEvent::ModelChanged { model } => {
-                debug!(target:"tui.handle_app_event", "Model changed to: {}", model);
-                self.current_model = model;
-            }
-            AppEvent::ToolCallStarted { name, id, .. } => {
-                self.spinner_state = 0;
-                self.progress_message = Some(format!("Executing tool: {}", name));
-                debug!(target:"tui.handle_app_event", "Tool call started: {} ({:?})", name, id);
+        let mut messages_updated = false;
 
-                // Find the corresponding raw message
-                let raw_msg = self.raw_messages.iter().find(|m| m.id() == id).cloned();
+        // Create processing context
+        let mut ctx = crate::tui::events::processor::ProcessingContext {
+            messages: &mut self.view_model.messages,
+            message_list_state: &mut self.view_model.message_list_state,
+            tool_registry: &mut self.view_model.tool_registry,
+            command_tx: &self.command_tx,
+            is_processing: &mut self.is_processing,
+            progress_message: &mut self.progress_message,
+            spinner_state: &mut self.spinner_state,
+            current_tool_approval: &mut self.current_tool_approval,
+            current_model: &mut self.current_model,
+            messages_updated: &mut messages_updated,
+        };
 
-                if let Some(raw_msg) = raw_msg {
-                    // Add the raw message to the TUI's internal list
-                    // self.raw_messages.push(raw_msg.clone()); // Already added by MessageAdded
+        // Process the event through the pipeline
+        if let Err(e) = self.event_pipeline.process_event(event, &mut ctx) {
+            tracing::error!(target: "tui.handle_app_event", "Event processing failed: {}", e);
+        }
 
-                    // Format using the message
-                    let formatted = format_message(
-                        &raw_msg,
-                        self.terminal.size().map(|r| r.width).unwrap_or(100),
-                    );
+        // Handle special input mode changes for tool approval
+        if self.current_tool_approval.is_some() && self.input_mode != InputMode::AwaitingApproval {
+            self.input_mode = InputMode::AwaitingApproval;
+        } else if self.current_tool_approval.is_none()
+            && self.input_mode == InputMode::AwaitingApproval
+        {
+            self.input_mode = InputMode::Normal;
+        }
 
-                    // Check if ID already exists in the TUI's formatted list
-                    if self.display_items.iter().any(|di| match di {
-                        DisplayItem::Message { id: item_id, .. } => *item_id == id,
-                        _ => false,
-                    }) {
-                        // Tool call might start before MessageAdded event completes streaming,
-                        // so just update the progress message if the message already exists.
-                        // warn!(target:
-                        //     "tui.handle_app_event",
-                        //     "ToolCallStarted: Message ID {} already exists. Content blocks: {}",
-                        //     id,
-                        //     raw_msg.content_blocks.len()
-                        // );
-                    } else {
-                        self.display_items.push(DisplayItem::Message {
-                            id: id.clone(),
-                            role: Role::Tool,
-                            content: formatted,
-                        });
-                        debug!(target: "tui.handle_app_event", "Added message ID (ToolCallStarted): {}", id);
-                        display_items_updated = true;
-                    }
-                } else {
-                    warn!(target: "tui.handle_app_event", "ToolCallStarted event received for ID {}, but corresponding raw message not found yet.", id);
-                }
-            }
-            AppEvent::MessageAdded {
-                message,
-                ..
+        // Auto-scroll to bottom if messages were updated and user hasn't manually scrolled
+        if messages_updated && !self.view_model.message_list_state.user_scrolled {
+            // Auto-scroll to bottom
+            self.view_model.message_list_state.scroll_to_bottom();
+        }
+    }
+
+    fn convert_message(
+        message: crate::app::Message,
+        tool_registry: &crate::tui::state::tool_registry::ToolCallRegistry,
+    ) -> MessageContent {
+        match message {
+            crate::app::Message::User {
+                content,
+                timestamp,
+                id,
+            } => MessageContent::User {
+                id,
+                blocks: content,
+                timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| timestamp.to_string()),
+            },
+            crate::app::Message::Assistant {
+                content,
+                timestamp,
+                id,
             } => {
-                // Add the raw message first
-                self.raw_messages.push(message.clone());
-
-                // Format using the message
-                let formatted = format_message(
-                    &message,
-                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                );
-
-                // Check if ID already exists in the TUI's formatted list
-                // (Should ideally not happen with unique IDs, but good safety check)
-                if self.display_items.iter().any(|di| match di {
-                    DisplayItem::Message { id: item_id, .. } => *item_id == message.id(),
-                    _ => false,
-                }) {
-                    info!(
-                        target: "tui.handle_app_event",
-                        "MessageAdded: ID {} already exists. Skipping.",
-                        message.id()
-                    );
-                } else {
-                    let display_item = DisplayItem::Message {
-                        id: message.id().to_string(),
-                        role: message.role(),
-                        content: formatted,
-                    };
-                    self.display_items.push(display_item);
-                    display_items_updated = true;
-                    debug!(
-                        target: "tui.handle_app_event",
-                        "Added message ID: {}",
-                        message.id()
-                    );
-                }
-            }
-            AppEvent::RestoredMessage {
-                message,
-                model: _,
-            } => {
-                // Handle restored messages the same as new messages for display purposes
-                // Add the raw message first
-                self.raw_messages.push(message.clone());
-
-                // Format using the message
-                let formatted = format_message(
-                    &message,
-                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                );
-
-                // Check if ID already exists in the TUI's formatted list
-                if self.display_items.iter().any(|di| match di {
-                    DisplayItem::Message { id: item_id, .. } => *item_id == message.id(),
-                    _ => false,
-                }) {
-                    debug!(
-                        target: "tui.handle_app_event",
-                        "RestoredMessage: ID {} already exists. Skipping.",
-                        message.id(),
-                    );
-                } else {
-                    let display_item = DisplayItem::Message {
-                        id: message.id().to_string(),
-                        role: message.role(),
-                        content: formatted,
-                    };
-                    self.display_items.push(display_item);
-                    display_items_updated = true;
-                    debug!(
-                        target: "tui.handle_app_event",
-                        "Restored message ID: {}",
-                        message.id()
-                    );
-                }
-            }
-            AppEvent::MessageUpdated { id, content } => {
-                if self.display_items.iter().any(|di| match di {
-                    DisplayItem::Message { id: item_id, .. } => *item_id == id,
-                    _ => false,
-                }) {
-                    debug!(
-                        target: "tui.handle_app_event",
-                        "Updating message ID: {}", id,
-                    );
-                    // Now use the blocks from the raw message
-                    if let Some(raw_msg) = self.raw_messages.iter().find(|m| m.id() == id) {
-                        // Find the existing DisplayItem::Message and update its content
-                        if let Some(item) = self.display_items.iter_mut().find(|di| match di {
-                            DisplayItem::Message { id: item_id, .. } => *item_id == id,
-                            _ => false,
-                        }) {
-                            if let DisplayItem::Message {
-                                role: _item_role,
-                                content: item_content,
-                                ..
-                            } = item
-                            {
-                                *item_content = format_message(
-                                    &raw_msg,
-                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                                );
-                                display_items_updated = true; // Mark that message content changed
-                                debug!(
-                                    target: "tui.handle_app_event",
-                                    "Updated message ID: {} with new blocks", id,
-                                );
-                            } else {
-                                warn!(target: "tui.handle_app_event", "Found DisplayItem for ID {}, but it's not a Message variant.", id);
-                            }
-                        } else {
-                            warn!(target: "tui.handle_app_event", "MessageUpdated: DisplayItem ID {} not found for raw message.", id);
-                            // Optionally create a new DisplayItem if not found
-                        }
-                    } else {
-                        warn!(target: "tui.handle_app_event", "MessageUpdated: Raw message ID {} not found.", id);
-                        // Fallback: Update based on string content if raw message is missing
-                        if let Some(item) = self.display_items.iter_mut().find(|di| match di {
-                            DisplayItem::Message { id: item_id, .. } => *item_id == id,
-                            _ => false,
-                        }) {
-                            if let DisplayItem::Message {
-                                role: _item_role,
-                                content: item_content,
-                                ..
-                            } = item
-                            {
-                                // Create a temporary message with just the text content
-                                let temp_message = crate::app::conversation::Message::Assistant {
-                                    content: vec![crate::app::conversation::AssistantContent::Text { text: content }],
-                                    timestamp: crate::app::conversation::Message::current_timestamp(),
-                                    id: id.clone(),
-                                };
-                                *item_content = format_message(
-                                    &temp_message,
-                                    self.terminal.size().map(|r| r.width).unwrap_or(100),
-                                );
-                                display_items_updated = true; // Mark that message content changed
-                            } else {
-                                warn!(target: "tui.handle_app_event", "Found DisplayItem for ID {} (fallback), but it's not a Message variant.", id);
-                            }
-                        } else {
-                            warn!(target: "tui.handle_app_event", "MessageUpdated: DisplayItem ID {} not found (fallback).", id);
-                        }
+                // If it is a single tool call, convert directly to Tool message
+                if content.len() == 1 {
+                    if let AssistantContent::ToolCall { tool_call } = &content[0] {
+                        return MessageContent::Tool {
+                            id: tool_call.id.clone(),
+                            call: tool_call.clone(),
+                            result: None,
+                            timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
+                                .map(|dt| dt.to_rfc3339())
+                                .unwrap_or_else(|| timestamp.to_string()),
+                        };
                     }
-                } else {
-                    warn!(target: "tui.handle_app_event", "MessageUpdated: ID {} not found.", id);
+                }
+
+                MessageContent::Assistant {
+                    id,
+                    blocks: content,
+                    timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| timestamp.to_string()),
                 }
             }
-            AppEvent::ToolCallCompleted {
-                name: _,
+            crate::app::Message::Tool {
+                tool_use_id,
                 result,
-                id,
-                ..
+                timestamp,
+                id: _,
             } => {
-                // If the completed tool matches the *currently* displayed approval,
-                // clear the current approval state and activate the next one.
-                // This handles cases where a tool might execute automatically (e.g., always approved)
-                // while another was pending user input.
-                if let Some(current_approval) = &self.current_tool_approval {
-                    if current_approval.id == id {
-                        // Compare with original tool call ID
-                        debug!(target: "tui.handle_app_event", "Tool {} (which was pending approval) completed.", id);
-                        self.current_tool_approval = None; // Clear current explicitly
-                    // If a tool completes that was the one being approved,
-                    // we might want to revert to normal input mode if nothing else is processing.
-                    // However, App will send a new RequestToolApproval if there's another,
-                    // or ThinkingCompleted if the sequence is done.
-                    // For now, just clearing current_tool_approval is safest.
-                    // The input mode will be managed by RequestToolApproval or user's response.
-                    } else {
-                        // A different tool completed, progress message was likely set by ToolCallStarted
-                        self.progress_message = None;
-                    }
-                } else {
-                    // No tool was awaiting approval, just clear progress
-                    self.progress_message = None;
+                // Try to find the corresponding ToolCall that we cached earlier
+                let tool_call = tool_registry
+                    .get_tool_call(&tool_use_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        warn!(target:"tui.convert_message", "Tool message {} has no associated tool call info", tool_use_id);
+                        tools::ToolCall {
+                            id: tool_use_id.clone(),
+                            name: "unknown".to_string(),
+                            parameters: serde_json::Value::Null,
+                        }
+                    });
+
+                MessageContent::Tool {
+                    id: tool_use_id,
+                    call: tool_call,
+                    result: Some(result),
+                    timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| timestamp.to_string()),
                 }
-
-                debug!(target: "tui.handle_app_event", "Adding Tool Result display item for original call ID: {}", id);
-
-                // Check if result should be truncated
-                const MAX_PREVIEW_LINES: usize = 5;
-                let lines: Vec<&str> = result.lines().collect();
-                let should_truncate = lines.len() > MAX_PREVIEW_LINES;
-
-                let formatted_content = if should_truncate {
-                    // Create truncated preview content
-                    let preview_content = format!(
-                        "{}
-... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
-                        lines
-                            .iter()
-                            .take(MAX_PREVIEW_LINES)
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        lines.len() - MAX_PREVIEW_LINES
-                    );
-                    format_tool_result_block(
-                        &id,
-                        &preview_content,
-                        self.terminal.size().map(|r| r.width).unwrap_or(100),
-                    )
-                } else {
-                    format_tool_result_block(
-                        &id,
-                        &result,
-                        self.terminal.size().map(|r| r.width).unwrap_or(100),
-                    )
-                };
-
-                // Generate a unique ID for this display item
-                let display_id = format!("result_{}", id);
-
-                let display_item = DisplayItem::ToolResult {
-                    id: display_id,
-                    tool_use_id: id.clone(), // Store the original tool call ID
-                    content: formatted_content,
-                    full_result: result.clone(), // Store the full, unformatted result
-                    is_truncated: should_truncate,
-                };
-                self.display_items.push(display_item);
-                display_items_updated = true;
             }
-            AppEvent::ToolCallFailed {
-                name, error, id, ..
-            } => {
-                self.progress_message = None; // Clear progress on failure
-
-                debug!(target: "tui.handle_app_event", "Adding Tool Failure System Info for ID: {}, Error: {}", id, error);
-
-                // Create a NEW SystemInfo item to display the tool failure
-                let failure_content = format!("Tool '{}' failed: {}. (ID: {})", name, error, id);
-                let formatted_failure_lines = vec![Line::from(Span::styled(
-                    failure_content,
-                    Style::default().fg(Color::Red),
-                ))];
-
-                // Generate a unique ID for this display item
-                let display_id = format!("failed_{}", id);
-
-                let display_item = DisplayItem::SystemInfo {
-                    id: display_id,
-                    content: formatted_failure_lines,
-                };
-                self.display_items.push(display_item);
-                display_items_updated = true;
-            }
-            AppEvent::RequestToolApproval {
-                name,
-                parameters,
-                id,
-            } => {
-                // Store approval request state in the queue
-                let approval_info = tools::ToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    parameters,
-                };
-                self.current_tool_approval = Some(approval_info);
-                self.input_mode = InputMode::AwaitingApproval;
-                debug!(target: "tui.handle_app_event", "Set current tool approval for {} ({}). Mode: AwaitingApproval.", name, id);
-            }
-            AppEvent::CommandResponse { content, id: _ } => {
-                let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                // Use standard text formatting for command responses
-                let formatted = vec![ratatui::text::Line::from(content.clone())];
-                // Add the raw message (optional, maybe remove raw_messages later?)
-                // self.raw_messages
-                //     .push(crate::app::Message::new_text(Role::System, content.clone())); // Keep for raw log
-                // Create CommandResponse display item
-                self.display_items.push(DisplayItem::CommandResponse {
-                    id: response_id,
-                    content: formatted,
-                });
-                display_items_updated = true;
-            }
-            AppEvent::OperationCancelled { info } => {
-                self.is_processing = false;
-                self.progress_message = None;
-                self.current_tool_approval = None;
-                self.input_mode = InputMode::Normal;
-                self.spinner_state = 0;
-                let cancellation_text = format!("Operation cancelled: {}", info);
-                let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
-                self.display_items.push(DisplayItem::SystemInfo {
-                    id: display_id,
-                    content: vec![ratatui::text::Line::from(cancellation_text.clone())],
-                });
-                display_items_updated = true;
-            }
-            AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
-                debug!(target:"tui.handle_app_event", "Setting is_processing = false (ThinkingCompleted/Error)");
-                self.is_processing = false;
-                self.progress_message = None;
-            }
-        }
-
-        // --- Handle Scrolling After Display Items Updates ---
-        if display_items_updated {
-            // Recalculate max scroll based on the *potentially updated* display items list
-            self.recalculate_max_scroll(); // This needs to be called first
-
-            // --- Auto-scroll logic ---
-            if !self.user_scrolled_away {
-                let new_max_scroll = self.get_max_scroll(); // Get the updated max scroll
-                self.set_scroll_offset(new_max_scroll);
-                debug!(target: "tui.handle_app_event", "Auto-scrolled to bottom (offset={})", new_max_scroll);
-            } else {
-                debug!(target: "tui.handle_app_event", "Display updated, but user scrolled away (offset={}, max_scroll={}). Skipping auto-scroll.", self.scroll_offset, self.max_scroll);
-            }
-            // --- End Auto-scroll logic ---
-        }
-    }
-
-    fn get_scroll_offset(&self) -> usize {
-        self.scroll_offset
-    }
-
-    fn set_scroll_offset(&mut self, offset: usize) {
-        let clamped_offset = offset.min(self.max_scroll);
-        // Only update if the offset actually changes
-        if clamped_offset != self.scroll_offset {
-            self.scroll_offset = clamped_offset;
-            debug!(target: "tui.set_scroll_offset", "Set scroll_offset={}, max_scroll={}", self.scroll_offset, self.max_scroll);
-            // Update user_scrolled_away based on the *new* offset
-            self.user_scrolled_away = self.scroll_offset < self.max_scroll;
-            debug!(target: "tui.set_scroll_offset", "user_scrolled_away={}", self.user_scrolled_away);
-        }
-    }
-
-    fn get_max_scroll(&self) -> usize {
-        self.max_scroll
-    }
-
-    fn set_max_scroll(&mut self, max: usize) {
-        self.max_scroll = max;
-        // Clamp current offset if it's now beyond the new max
-        if self.scroll_offset > self.max_scroll {
-            let old_offset = self.scroll_offset;
-            self.scroll_offset = self.max_scroll;
-            debug!(target: "tui.set_max_scroll", "Clamped scroll_offset from {} to {} due to new max_scroll={}", old_offset, self.scroll_offset, self.max_scroll);
         }
     }
 
@@ -858,6 +509,37 @@ impl Tui {
         }
     }
 
+    /// Ensure there is exactly one MessageContent::Tool for the given id.
+    /// Returns the index into self.view_model.messages for that message. If it does not
+    /// exist yet, a placeholder is created (optionally with a provided name).
+    fn get_or_create_tool_index(&mut self, id: &str, name_hint: Option<String>) -> usize {
+        if let Some(idx) = self.view_model.tool_registry.get_message_index(id) {
+            return idx;
+        }
+
+        // Build placeholder ToolCall
+        let placeholder_call = tools::ToolCall {
+            id: id.to_string(),
+            name: name_hint.unwrap_or_else(|| "unknown".to_string()),
+            parameters: serde_json::Value::Null,
+        };
+
+        self.view_model.messages.push(MessageContent::Tool {
+            id: id.to_string(),
+            call: placeholder_call.clone(),
+            result: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        let idx = self.view_model.messages.len() - 1;
+        self.view_model.tool_registry.set_message_index(id, idx);
+        self.view_model
+            .tool_registry
+            .register_call(placeholder_call);
+
+        idx
+    }
+
     fn create_input_block_static<'a>(
         input_mode: InputMode,
         is_processing: bool,
@@ -866,25 +548,23 @@ impl Tui {
         current_tool_approval_info: Option<&tools::ToolCall>,
     ) -> Block<'a> {
         let input_border_style = match input_mode {
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-            InputMode::Normal => Style::default().fg(Color::DarkGray),
-            InputMode::BashCommand => Style::default().fg(Color::Cyan),
+            InputMode::Editing => styles::INPUT_BORDER_ACTIVE,
+            InputMode::Normal => styles::INPUT_BORDER_NORMAL,
+            InputMode::BashCommand => styles::INPUT_BORDER_COMMAND,
             InputMode::AwaitingApproval => {
                 // Only style as ApprovalRequired if there *is* a current approval
                 if current_tool_approval_info.is_some() {
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    styles::INPUT_BORDER_APPROVAL
                 } else {
-                    Style::default().fg(Color::DarkGray) // Or Normal style if somehow in mode without approval
+                    styles::INPUT_BORDER_NORMAL
                 }
             }
-            InputMode::ConfirmExit => Style::default()
-                .fg(Color::LightRed)
-                .add_modifier(Modifier::BOLD),
+            InputMode::ConfirmExit => styles::INPUT_BORDER_EXIT,
         };
         let input_title: String = match input_mode {
             InputMode::Editing => "Input (Esc to stop editing, Enter to send)".to_string(),
             InputMode::Normal => {
-                "Input (i to edit, ! for bash command, Enter to send, Ctrl+C to exit)".to_string()
+                "Normal (i=edit, j/k=scroll, d/u=½page, G/End=bottom, v=view mode, Shift+D/C=detail/compact, Ctrl+C=exit)".to_string()
             }
             InputMode::BashCommand => "Bash Command (Enter to execute, Esc to cancel)".to_string(),
             InputMode::AwaitingApproval => {
@@ -928,10 +608,9 @@ impl Tui {
     fn render_ui_static(
         f: &mut ratatui::Frame<'_>,
         textarea: &TextArea<'_>,
-        display_items: &[DisplayItem],
+        messages: &[MessageContent],
+        view_state: &mut MessageListState,
         input_mode: InputMode,
-        scroll_offset: usize,
-        max_scroll: usize,
         current_model: &str,
         current_approval_info: Option<&tools::ToolCall>,
     ) -> Result<()> {
@@ -966,14 +645,21 @@ impl Tui {
         let input_area = chunks[2];
         let model_info_area = chunks[3];
 
-        // Render Messages
-        Self::render_display_items_static(
-            f,
-            messages_area,
-            display_items,
-            scroll_offset,
-            max_scroll,
-        );
+        // Render Messages using the new widget with StatefulWidget pattern
+        let scroll_offset = view_state.scroll_state.offset().y;
+        let message_block = if scroll_offset > 0 {
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Line::from(Span::styled(
+                    format!("(↑ {} lines above)", scroll_offset),
+                    Style::default().white(),
+                )))
+        } else {
+            Block::default().borders(Borders::ALL)
+        };
+
+        let message_widget = MessageList::new(messages).block(message_block);
+        f.render_stateful_widget(message_widget, messages_area, view_state);
 
         // Render Tool Preview (conditionally)
         if let Some(info) = current_approval_info {
@@ -984,11 +670,9 @@ impl Tui {
         f.render_widget(textarea, input_area);
 
         // Render model info at the bottom
-        let model_info: Paragraph<'_> = Paragraph::new(Line::from(Span::styled(
-            current_model,
-            Style::default().fg(Color::LightMagenta),
-        )))
-        .alignment(ratatui::layout::Alignment::Right);
+        let model_info: Paragraph<'_> =
+            Paragraph::new(Line::from(Span::styled(current_model, styles::MODEL_INFO)))
+                .alignment(ratatui::layout::Alignment::Right);
         f.render_widget(model_info, model_info_area);
 
         // Set cursor visibility and position
@@ -1013,98 +697,24 @@ impl Tui {
         Ok(())
     }
 
-    fn render_display_items_static(
-        f: &mut ratatui::Frame<'_>,
-        area: Rect,
-        display_items: &[DisplayItem],
-        scroll_offset: usize,
-        max_scroll: usize,
-    ) {
-        if display_items.is_empty() {
-            let placeholder = Paragraph::new("No messages yet...")
-                .style(Style::default().fg(Color::DarkGray))
-                .wrap(Wrap { trim: false });
-            f.render_widget(placeholder, area);
-            return;
-        }
-
-        // Flatten display item content lines for calculating total height and rendering
-        let all_lines: Vec<Line> = display_items
-            .iter()
-            .flat_map(|di| match di {
-                // Extract content based on the variant using named fields
-                DisplayItem::Message { content, .. }
-                | DisplayItem::ToolResult { content, .. }
-                | DisplayItem::CommandResponse { content, .. }
-                | DisplayItem::SystemInfo { content, .. } => content.clone(),
-            })
-            .collect();
-        let total_lines_count = all_lines.len();
-
-        let area_height = area.height.saturating_sub(2) as usize;
-
-        // Create list items from the flattened lines, applying scroll offset manually via slicing
-        let start = scroll_offset.min(total_lines_count.saturating_sub(1));
-        let end = (scroll_offset + area_height).min(total_lines_count);
-        let visible_items: Vec<ListItem> = if start < end {
-            all_lines[start..end]
-                .iter()
-                .cloned()
-                .map(ListItem::new)
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let messages_list = List::new(visible_items)
-            .block(Block::default().borders(Borders::ALL).title("Conversation"));
-
-        f.render_widget(messages_list, area);
-
-        // Render Scrollbar
-        if max_scroll > 0 {
-            let scrollbar = ratatui::widgets::Scrollbar::new(
-                ratatui::widgets::ScrollbarOrientation::VerticalRight,
-            );
-            // Adjust scrollbar area to be inside the message block borders
-            let scrollbar_area = area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            });
-
-            let mut scrollbar_state =
-                ratatui::widgets::ScrollbarState::new(total_lines_count).position(scroll_offset);
-
-            f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
-        }
-    }
-
-    // New static function to render the tool preview
+    // Static function to render the tool preview
     fn render_tool_preview_static(
         f: &mut ratatui::Frame<'_>,
         area: Rect,
         tool_call: &tools::ToolCall,
     ) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(
-                " Tool Preview: {} (ID: {}) ",
-                tool_call.name, tool_call.id
-            ))
-            .border_style(Style::default().fg(Color::Cyan));
+        use crate::tui::widgets::content_renderer::{ContentRenderer, DefaultContentRenderer};
 
-        // Use the existing tool call formatting
-        let formatted_lines = message_formatter::format_tool_call_block(
-            tool_call,
-            area.width.saturating_sub(2), // Account for borders
-        );
+        // Create a temporary Tool message to render
+        let temp_message = MessageContent::Tool {
+            id: tool_call.id.clone(),
+            call: tool_call.clone(),
+            result: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
 
-        // Convert formatted lines into list items for display
-        let list_items: Vec<ListItem> = formatted_lines.into_iter().map(ListItem::new).collect();
-
-        let list = List::new(list_items).block(block);
-
-        f.render_widget(list, area);
+        let renderer = DefaultContentRenderer;
+        renderer.render(&temp_message, ViewMode::Detailed, area, f.buffer_mut());
     }
 
     async fn handle_input(&mut self, key: KeyEvent) -> Result<Option<InputAction>> {
@@ -1121,98 +731,175 @@ impl Tui {
             }
         }
 
-        // --- Scrolling and other non-mode-specific keys ---
-        // Check if we are *not* in editing mode for scroll keys etc.
+        // --- View mode and navigation keys ---
         if self.input_mode != InputMode::Editing {
-            match key.code {
-                // Full Page Scroll Up
-                KeyCode::PageUp => {
-                    self.perform_scroll(ScrollDirection::Up, ScrollAmount::FullPage)?;
-                    return Ok(None); // Just scroll
-                }
-                // Full Page Scroll Down
-                KeyCode::PageDown => {
-                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::FullPage)?;
-                    return Ok(None); // Just scroll
-                }
-
-                // Line Scroll Up (Arrows)
-                KeyCode::Up => {
-                    self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(1))?;
-                    return Ok(None); // Just scroll
-                }
-                // Line Scroll Down (Arrows)
-                KeyCode::Down => {
-                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(1))?;
-                    return Ok(None); // Just scroll
-                }
-
-                // Line Scroll Up (k in Normal Mode only)
-                KeyCode::Char('k') if self.input_mode == InputMode::Normal => {
-                    self.perform_scroll(ScrollDirection::Up, ScrollAmount::Line(1))?;
-                    return Ok(None); // Just scroll
-                }
-                // Line Scroll Down (j in Normal Mode only)
-                KeyCode::Char('j') if self.input_mode == InputMode::Normal => {
-                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::Line(1))?;
-                    return Ok(None); // Just scroll
-                }
-
-                // Half Page Scroll Up (u/Ctrl+u in Normal Mode only)
-                KeyCode::Char('u') if self.input_mode == InputMode::Normal => {
-                    if key.modifiers == KeyModifiers::CONTROL || key.modifiers == KeyModifiers::NONE
+            match (key.code, key.modifiers) {
+                // View mode toggles
+                // v - cycle through view modes
+                // Shift+D - force Detailed view
+                // Shift+C - force Compact view
+                (KeyCode::Char('v'), KeyModifiers::NONE) => {
+                    self.view_model
+                        .message_list_state
+                        .view_prefs
+                        .global_override = match self
+                        .view_model
+                        .message_list_state
+                        .view_prefs
+                        .global_override
                     {
-                        self.perform_scroll(ScrollDirection::Up, ScrollAmount::HalfPage)?;
-                        return Ok(None); // Just scroll
-                    }
+                        None => Some(ViewMode::Compact),
+                        Some(ViewMode::Compact) => Some(ViewMode::Detailed),
+                        Some(ViewMode::Detailed) => None,
+                    };
+                    return Ok(None);
                 }
-                // Half Page Scroll Down (d in Normal Mode only)
-                KeyCode::Char('d')
-                    if (self.input_mode == InputMode::Normal
-                        && key.modifiers == KeyModifiers::NONE) =>
+                (KeyCode::Char('D'), KeyModifiers::SHIFT)
+                    if self.input_mode == InputMode::Normal =>
                 {
-                    self.perform_scroll(ScrollDirection::Down, ScrollAmount::HalfPage)?;
-                    return Ok(None); // Just scroll
+                    self.view_model
+                        .message_list_state
+                        .view_prefs
+                        .global_override = Some(ViewMode::Detailed);
+                    return Ok(None);
+                }
+                (KeyCode::Char('C'), KeyModifiers::SHIFT)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    self.view_model
+                        .message_list_state
+                        .view_prefs
+                        .global_override = Some(ViewMode::Compact);
+                    return Ok(None);
                 }
 
-                // Toggle Tool Result Truncation (Ctrl+R)
-                KeyCode::Char('r') | KeyCode::Char('R')
-                    if key.modifiers == KeyModifiers::CONTROL =>
-                {
-                    let scroll_offset = self.get_scroll_offset();
-                    // Find the message corresponding to the current view port top
-                    let mut current_line_index = 0;
-                    let mut target_display_item_id = None;
-
-                    for item in &self.display_items {
-                        let item_line_count = match item {
-                            DisplayItem::Message { content, .. } => content.len(),
-                            DisplayItem::ToolResult { content, .. } => content.len(),
-                            DisplayItem::CommandResponse { content, .. } => content.len(),
-                            DisplayItem::SystemInfo { content, .. } => content.len(),
-                        };
-
-                        if scroll_offset >= current_line_index
-                            && scroll_offset < current_line_index + item_line_count
-                        {
-                            // We found the item at the top of the viewport
-                            if let DisplayItem::ToolResult { id, .. } = item {
-                                target_display_item_id = Some(id.clone());
-                            }
-                            break;
-                        }
-                        current_line_index += item_line_count;
-                    }
-
-                    if let Some(target_id) = target_display_item_id {
-                        action = Some(InputAction::ToggleMessageTruncation(target_id));
+                // Navigation
+                (KeyCode::PageUp, _) => {
+                    self.view_model.message_list_state.scroll_state.scroll_page_up();
+                    self.view_model.message_list_state.user_scrolled = true;
+                    return Ok(None);
+                }
+                (KeyCode::PageDown, _) => {
+                    self.view_model.message_list_state.scroll_state.scroll_page_down();
+                    self.view_model.message_list_state.user_scrolled = true;
+                    return Ok(None);
+                }
+                (KeyCode::Home, _) => {
+                    // Scroll to top
+                    self.view_model.message_list_state.set_scroll_offset(999999); // Will be clamped to max
+                    return Ok(None);
+                }
+                (KeyCode::End, _) => {
+                    // Scroll to bottom
+                    self.view_model.message_list_state.scroll_to_bottom();
+                    return Ok(None);
+                }
+                (KeyCode::Up, modifiers) => {
+                    if modifiers == KeyModifiers::SHIFT {
+                        // Select previous message
+                        self.view_model.message_list_state.select_previous();
                     } else {
-                        debug!(target: "tui.handle_input", "Ctrl+R: No tool result found at scroll offset {}", scroll_offset);
+                        // Scroll up
+                        self.view_model.message_list_state.scroll_state.scroll_up();
+                        self.view_model.message_list_state.user_scrolled = true;
                     }
-                    return Ok(action);
+                    return Ok(None);
+                }
+                (KeyCode::Down, modifiers) => {
+                    if modifiers == KeyModifiers::SHIFT {
+                        // Select next message
+                        self.view_model
+                            .message_list_state
+                            .select_next(self.view_model.messages.len());
+                    } else {
+                        // Scroll down
+                        self.view_model.message_list_state.scroll_state.scroll_down();
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
+                    return Ok(None);
                 }
 
-                // Add a wildcard arm to make the match exhaustive for non-editing mode keys handled here
+                // Vim-style navigation (only in Normal mode)
+                // j/k - scroll down/up one line
+                // d/u - scroll down/up half page
+                // G - go to bottom, g - go to top
+                (KeyCode::Char('g'), KeyModifiers::NONE)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    self.view_model.message_list_state.set_scroll_offset(999999); // Will be clamped to max
+                    return Ok(None);
+                }
+                (KeyCode::Char('G'), KeyModifiers::SHIFT)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    self.view_model.message_list_state.scroll_to_bottom();
+                    return Ok(None);
+                }
+                (KeyCode::Char('k'), KeyModifiers::NONE)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    self.view_model.message_list_state.scroll_state.scroll_up();
+                    self.view_model.message_list_state.user_scrolled = true;
+                    return Ok(None);
+                }
+                (KeyCode::Char('j'), KeyModifiers::NONE)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    self.view_model.message_list_state.scroll_state.scroll_down();
+                    self.view_model.message_list_state.user_scrolled = true;
+                    return Ok(None);
+                }
+                (KeyCode::Char('u'), KeyModifiers::NONE)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    // Scroll up half page
+                    for _ in 0..10 {
+                        self.view_model.message_list_state.scroll_state.scroll_up();
+                    }
+                    self.view_model.message_list_state.user_scrolled = true;
+                    return Ok(None);
+                }
+                (KeyCode::Char('d'), KeyModifiers::NONE)
+                    if self.input_mode == InputMode::Normal =>
+                {
+                    // Scroll down half page
+                    for _ in 0..10 {
+                        self.view_model.message_list_state.scroll_state.scroll_down();
+                    }
+                    self.view_model.message_list_state.user_scrolled = true;
+                    return Ok(None);
+                }
+
+                // Toggle expansion of selected message
+                (KeyCode::Enter, _) if self.input_mode == InputMode::Normal => {
+                    if let Some(idx) = self.view_model.message_list_state.selected {
+                        if idx < self.view_model.messages.len() {
+                            let msg_id = self.view_model.messages[idx].id().to_string();
+                            self.view_model.message_list_state.toggle_expanded(msg_id);
+                            return Ok(None);
+                        }
+                    }
+                    // If no selection, send the message
+                    let input = self.textarea.lines().join("\n");
+                    if !input.trim().is_empty() {
+                        self.clear_textarea();
+                        action = Some(InputAction::SendMessage(input));
+                        return Ok(action);
+                    }
+                }
+
+                // Toggle message detail (Ctrl+R)
+                (KeyCode::Char('r'), KeyModifiers::CONTROL)
+                | (KeyCode::Char('R'), KeyModifiers::CONTROL) => {
+                    if let Some(idx) = self.view_model.message_list_state.selected {
+                        if idx < self.view_model.messages.len() {
+                            let msg_id = self.view_model.messages[idx].id().to_string();
+                            self.view_model.message_list_state.toggle_expanded(msg_id);
+                        }
+                    }
+                    return Ok(None);
+                }
+
                 _ => {}
             }
         }
@@ -1238,16 +925,6 @@ impl Tui {
                         self.input_mode = InputMode::BashCommand;
                         self.clear_textarea();
                     }
-                    // Send Message
-                    KeyCode::Enter => {
-                        let input = self.textarea.lines().join("\n");
-                        if input.trim().is_empty() {
-                            return Ok(action);
-                        }
-                        self.clear_textarea();
-                        action = Some(InputAction::SendMessage(input));
-                        return Ok(action);
-                    }
                     // Cancel Processing (Ctrl+C)
                     KeyCode::Char('c') | KeyCode::Char('C')
                         if key.modifiers == KeyModifiers::CONTROL =>
@@ -1260,7 +937,7 @@ impl Tui {
                         }
                         return Ok(action);
                     }
-                    _ => {} // Ignore other keys in Normal mode (covered by global/scroll)
+                    _ => {} // Other keys handled above
                 }
             }
             InputMode::Editing => {
@@ -1403,90 +1080,23 @@ impl Tui {
                 self.command_tx
                     .send(AppCommand::ProcessUserInput(input))
                     .await?;
-                // Clear scroll lock when user sends a message
-                self.user_scrolled_away = false;
-                debug!(target: "tui.dispatch_input_action", "Sent UserInput command, user_scrolled_away=false");
+                // Clear any selection and reset manual scroll when user sends a message
+                self.view_model.message_list_state.selected = None;
+                self.view_model.message_list_state.user_scrolled = false;
+                debug!(target: "tui.dispatch_input_action", "Sent UserInput command, reset user_scrolled");
             }
             InputAction::ExecuteBashCommand(command) => {
                 self.command_tx
                     .send(AppCommand::ExecuteBashCommand { command })
                     .await?;
-                // Clear scroll lock when user executes a command
-                self.user_scrolled_away = false;
-                debug!(target: "tui.dispatch_input_action", "Sent ExecuteBashCommand, user_scrolled_away=false");
+                // Clear any selection and reset manual scroll when user executes a command
+                self.view_model.message_list_state.selected = None;
+                self.view_model.message_list_state.user_scrolled = false;
+                debug!(target: "tui.dispatch_input_action", "Sent ExecuteBashCommand, reset user_scrolled");
             }
-            InputAction::ToggleMessageTruncation(target_id) => {
-                let mut found_and_toggled = false;
-                let mut scroll_adjustment = 0; // Track line count difference
-
-                if let Some(item) = self.display_items.iter_mut().find(|di| match di {
-                    DisplayItem::ToolResult { id, .. } => *id == target_id,
-                    _ => false,
-                }) {
-                    if let DisplayItem::ToolResult {
-                        content,
-                        full_result,
-                        is_truncated,
-                        tool_use_id, // Capture tool_use_id
-                        ..
-                    } = item
-                    {
-                        let old_line_count = content.len();
-                        *is_truncated = !*is_truncated;
-
-                        let new_content = if *is_truncated {
-                            // Re-truncate
-                            const MAX_PREVIEW_LINES: usize = 5;
-                            let lines: Vec<&str> = full_result.lines().collect();
-                            let preview_content = format!(
-                                "{}
-... ({} more lines, press 'Ctrl+r' (in normal mode) to toggle full view)",
-                                lines
-                                    .iter()
-                                    .take(MAX_PREVIEW_LINES)
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                                    .join("\n"),
-                                lines.len().saturating_sub(MAX_PREVIEW_LINES)
-                            );
-                            format_tool_result_block(
-                                tool_use_id,
-                                &preview_content,
-                                self.terminal.size().map(|r| r.width).unwrap_or(100),
-                            )
-                        } else {
-                            format_tool_result_block(
-                                tool_use_id,
-                                full_result,
-                                self.terminal.size().map(|r| r.width).unwrap_or(100),
-                            )
-                        };
-
-                        *content = new_content;
-                        found_and_toggled = true;
-                        let new_line_count = content.len();
-                        scroll_adjustment = new_line_count as isize - old_line_count as isize;
-                        debug!(target: "tui.dispatch_input_action", "Toggled truncation for ToolResult {}, is_truncated={}, line diff={}", target_id, *is_truncated, scroll_adjustment);
-                    }
-                }
-
-                if found_and_toggled {
-                    // Recalculate max scroll due to content change
-                    self.recalculate_max_scroll();
-                    // Attempt to adjust scroll offset to keep the toggled item roughly in view
-                    // This is imperfect but better than jumping abruptly.
-                    let current_offset = self.get_scroll_offset();
-                    if scroll_adjustment > 0 {
-                        // Content grew, increase offset by the difference
-                        self.set_scroll_offset(current_offset + scroll_adjustment as usize);
-                    } else {
-                        // Content shrank, decrease offset, ensuring it doesn't go below zero
-                        self.set_scroll_offset(
-                            current_offset.saturating_sub((-scroll_adjustment) as usize),
-                        );
-                    }
-                    debug!(target: "tui.dispatch_input_action", "Adjusted scroll offset after toggle: {}", self.scroll_offset);
-                }
+            InputAction::ToggleMessageTruncation(_target_id) => {
+                // This is now handled by expanding/collapsing messages
+                // The widget system handles this internally
             }
             InputAction::ApproveToolNormal(id) => {
                 self.command_tx
@@ -1496,8 +1106,7 @@ impl Tui {
                         always: false,
                     })
                     .await?;
-                // Let activate_next_approval handle the current_tool_approval state
-                self.activate_next_approval(); // Activate next
+                self.activate_next_approval();
             }
             InputAction::ApproveToolAlways(id) => {
                 self.command_tx
@@ -1507,8 +1116,7 @@ impl Tui {
                         always: true,
                     })
                     .await?;
-                // Let activate_next_approval handle the current_tool_approval state
-                self.activate_next_approval(); // Activate next
+                self.activate_next_approval();
             }
             InputAction::DenyTool(id) => {
                 self.command_tx
@@ -1518,8 +1126,7 @@ impl Tui {
                         always: false,
                     })
                     .await?;
-                // Let activate_next_approval handle the current_tool_approval state
-                self.activate_next_approval(); // Activate next
+                self.activate_next_approval();
             }
             InputAction::CancelProcessing => {
                 self.command_tx.send(AppCommand::CancelProcessing).await?;
@@ -1531,95 +1138,13 @@ impl Tui {
         Ok(should_exit)
     }
 
-    // New function to activate the next pending approval
     fn activate_next_approval(&mut self) {
-        if let Some(next_approval) = self.current_tool_approval.take() {
-            debug!(target: "tui.activate_next_approval", "Activating next tool approval: {} ({})", next_approval.name, next_approval.id);
-            self.current_tool_approval = Some(next_approval);
-            self.input_mode = InputMode::AwaitingApproval;
-        } else {
-            debug!(target: "tui.activate_next_approval", "No more pending approvals. Returning to Normal mode.");
-            self.current_tool_approval = None;
-            // Always return to Normal mode when the queue is empty after an approval action.
-            // The is_processing flag will handle the spinner display separately.
-            self.input_mode = InputMode::Normal;
-        }
+        // Since we clear current_tool_approval after handling, we just return to normal mode
+        debug!(target: "tui.activate_next_approval", "Clearing approval state, returning to Normal mode.");
+        self.current_tool_approval = None;
+        self.input_mode = InputMode::Normal;
     }
 
-    // Recalculates max scroll based on current display items and terminal size
-    fn recalculate_max_scroll(&mut self) {
-        let all_lines: Vec<Line> = self
-            .display_items
-            .iter()
-            .flat_map(|di| match di {
-                DisplayItem::Message { content, .. } => content.clone(),
-                DisplayItem::ToolResult { content, .. } => content.clone(),
-                DisplayItem::CommandResponse { content, .. } => content.clone(),
-                DisplayItem::SystemInfo { content, .. } => content.clone(),
-            })
-            .collect();
-        let total_lines_count = all_lines.len();
-
-        if let Ok(term_size) = self.terminal.size() {
-            let input_height = (self.textarea.lines().len() as u16 + 2)
-                .min(MAX_INPUT_HEIGHT)
-                .min(term_size.height);
-            let messages_area_height = term_size
-                .height
-                .saturating_sub(input_height)
-                .saturating_sub(2); // Account for borders
-
-            let new_max_scroll = if total_lines_count > messages_area_height as usize {
-                total_lines_count.saturating_sub(messages_area_height as usize)
-            } else {
-                0
-            };
-            self.set_max_scroll(new_max_scroll);
-            debug!(target: "tui.recalculate_max_scroll", "Recalculated max_scroll={}, total_lines={}, area_height={}", new_max_scroll, total_lines_count, messages_area_height);
-        } else {
-            warn!(target: "tui.recalculate_max_scroll", "Failed to get terminal size for scroll update.");
-        }
-    }
-
-    // --- Scrolling Helpers ---
-
-    fn get_page_height(&self) -> Result<usize> {
-        let term_size = self.terminal.size()?;
-        let input_height = (self.textarea.lines().len() as u16 + 2)
-            .min(MAX_INPUT_HEIGHT)
-            .min(term_size.height);
-        let messages_area_height = term_size
-            .height
-            .saturating_sub(input_height)
-            .saturating_sub(2); // Account for borders
-        Ok(messages_area_height as usize)
-    }
-
-    fn perform_scroll(&mut self, direction: ScrollDirection, amount: ScrollAmount) -> Result<()> {
-        let current_offset = self.get_scroll_offset();
-        let max_scroll = self.get_max_scroll();
-        let page_height = self.get_page_height()?;
-
-        let scroll_lines = match amount {
-            ScrollAmount::Line(lines) => lines,
-            ScrollAmount::HalfPage => page_height / 2,
-            ScrollAmount::FullPage => page_height,
-        };
-
-        let new_offset = match direction {
-            ScrollDirection::Up => current_offset.saturating_sub(scroll_lines),
-            ScrollDirection::Down => (current_offset + scroll_lines).min(max_scroll),
-        };
-
-        // Update offset using the setter which handles clamping and user_scrolled_away
-        self.set_scroll_offset(new_offset);
-
-        Ok(())
-    }
-
-    // --- End Scrolling Helpers ---
-
-    // New function to clear the textarea and reset cursor
     fn clear_textarea(&mut self) {
         self.textarea.delete_line_by_end();
         self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);

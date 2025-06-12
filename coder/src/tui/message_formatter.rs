@@ -1,17 +1,40 @@
-use crate::app::conversation::{AssistantContent, Message, Role, ThoughtContent, ToolResult, UserContent};
-use tools::tools::bash::{BASH_TOOL_NAME, BashParams};
-use tools::tools::edit::{EDIT_TOOL_NAME, EditParams};
-use tools::tools::replace::{REPLACE_TOOL_NAME, ReplaceParams};
+use crate::app::conversation::{
+    AssistantContent, Message, Role, ThoughtContent, ToolResult, UserContent,
+};
+use tools::tools::bash::BashParams;
+use tools::tools::edit::EditParams;
+use tools::tools::replace::ReplaceParams;
 
+use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
+use crate::tools::fetch::FETCH_TOOL_NAME;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use similar::{ChangeTag, TextDiff};
 use textwrap;
+use tools::tools::{
+    BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
+    REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, VIEW_TOOL_NAME,
+};
 use tracing::debug;
+
+fn get_tool_icon(tool_name: &str) -> &'static str {
+    match tool_name {
+        BASH_TOOL_NAME => "💻",
+        EDIT_TOOL_NAME => "✏️",
+        REPLACE_TOOL_NAME => "📝",
+        VIEW_TOOL_NAME => "📖",
+        LS_TOOL_NAME | GLOB_TOOL_NAME | GREP_TOOL_NAME => "📁",
+        TODO_WRITE_TOOL_NAME | TODO_READ_TOOL_NAME => "📋",
+        DISPATCH_AGENT_TOOL_NAME => "🤖",
+        FETCH_TOOL_NAME => "🌐",
+        _ => "🔧",
+    }
+}
 
 pub fn format_message(
     message: &Message,
     terminal_width: u16,
+    tool_result: Option<&(String, bool)>,
 ) -> Vec<Line<'static>> {
     let mut formatted_lines = Vec::new();
 
@@ -35,13 +58,34 @@ pub fn format_message(
                         stdout,
                         stderr,
                         exit_code,
-                    } => format_command_execution_block(command, stdout, stderr, *exit_code, terminal_width),
+                    } => format_command_execution_block(
+                        command,
+                        stdout,
+                        stderr,
+                        *exit_code,
+                        terminal_width,
+                    ),
                 };
                 formatted_lines.extend(block_lines);
                 formatted_lines.push(Line::raw(""));
             }
         }
         Message::Assistant { content, .. } => {
+            // Special handling for tool calls with results
+            if content.len() == 1 {
+                if let AssistantContent::ToolCall { tool_call } = &content[0] {
+                    if let Some((result, is_truncated)) = tool_result {
+                        // Use the combined formatter
+                        return format_tool_call_with_result(
+                            tool_call,
+                            result,
+                            *is_truncated,
+                            terminal_width,
+                        );
+                    }
+                }
+            }
+
             // Add role header
             formatted_lines.push(Line::from(Span::styled(
                 "Assistant:",
@@ -54,16 +98,28 @@ pub fn format_message(
             for assistant_content in content {
                 let block_lines = match assistant_content {
                     AssistantContent::Text { text } => format_text_block(text, terminal_width),
-                    AssistantContent::ToolCall { tool_call } => format_tool_call_block(tool_call, terminal_width),
-                    AssistantContent::Thought { thought } => format_thought_block(&thought.display_text(), terminal_width),
+                    AssistantContent::ToolCall { tool_call } => {
+                        format_tool_call_block(tool_call, terminal_width)
+                    }
+                    AssistantContent::Thought { thought } => {
+                        format_thought_block(&thought.display_text(), terminal_width)
+                    }
                 };
                 formatted_lines.extend(block_lines);
                 formatted_lines.push(Line::raw(""));
             }
         }
-        Message::Tool { tool_use_id, result, .. } => {
+        Message::Tool {
+            tool_use_id,
+            result,
+            ..
+        } => {
             // Format tool result
-            formatted_lines.extend(format_tool_result_for_message(tool_use_id, result, terminal_width));
+            formatted_lines.extend(format_tool_result_for_message(
+                tool_use_id,
+                result,
+                terminal_width,
+            ));
         }
     }
 
@@ -78,10 +134,7 @@ pub fn format_message(
 }
 
 /// Formats a text block with markdown rendering.
-fn format_text_block(
-    content: &str,
-    terminal_width: u16,
-) -> Vec<Line<'static>> {
+fn format_text_block(content: &str, terminal_width: u16) -> Vec<Line<'static>> {
     // Calculate wrap width from terminal width (accounting for List borders + padding)
     let wrap_width = (terminal_width as usize).saturating_sub(4);
     // Use a minimum width if terminal is very narrow
@@ -147,23 +200,28 @@ pub fn format_tool_call_block(
 
     let tool_name = tool_call.name.as_str();
 
+    // Create content lines first
+    let mut content_lines = Vec::new();
+
     // Try to format specific tools as diffs
     let formatted_as_diff = match tool_name {
         EDIT_TOOL_NAME => {
             if let Ok(params) = serde_json::from_value::<EditParams>(tool_call.parameters.clone()) {
                 if params.old_string.is_empty() {
                     // Format as file creation
-                    lines.push(Line::from(Span::styled(
-                        format!("-> Calling Tool: edit (Creating {})", params.file_path),
-                        Style::default().fg(Color::Cyan),
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Creating {}", params.file_path),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
                     )));
-                    lines.push(Line::from(Span::styled(
+                    content_lines.push(Line::from(Span::styled(
                         format!("+++ {}", params.file_path),
                         Style::default().fg(Color::Green),
                     )));
                     for line in params.new_string.lines() {
                         for wrapped_line in textwrap::wrap(line, wrap_width) {
-                            lines.push(Line::from(Span::styled(
+                            content_lines.push(Line::from(Span::styled(
                                 format!("+ {}", wrapped_line),
                                 Style::default().fg(Color::Green),
                             )));
@@ -171,12 +229,11 @@ pub fn format_tool_call_block(
                     }
                 } else {
                     // Format as replacement using diff
-                    lines.push(Line::from(Span::styled(
-                        format!(
-                            "-> Calling Tool: edit (Applying diff to {})",
-                            params.file_path
-                        ),
-                        Style::default().fg(Color::Cyan),
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Applying diff to {}", params.file_path),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     )));
 
                     let diff = TextDiff::from_lines(&params.old_string, &params.new_string);
@@ -195,14 +252,14 @@ pub fn format_tool_call_block(
                                 textwrap::wrap(line_part, wrap_width.saturating_sub(2))
                             // Subtract 2 for "+ " / "- "
                             {
-                                lines.push(Line::from(Span::styled(
+                                content_lines.push(Line::from(Span::styled(
                                     format!("{} {}", sign, wrapped_line),
                                     style,
                                 )));
                             }
                             // Handle empty lines within the change
                             if line_part.is_empty() {
-                                lines.push(Line::from(Span::styled(
+                                content_lines.push(Line::from(Span::styled(
                                     sign.to_string(), // Show just the sign for empty lines
                                     style,
                                 )));
@@ -211,7 +268,7 @@ pub fn format_tool_call_block(
                         // Ensure we handle the case where the original line was empty but wrapped_line might skip it
                         if content.is_empty() && change.tag() != ChangeTag::Equal {
                             // Only show sign for empty add/delete
-                            lines.push(Line::from(Span::styled(sign.to_string(), style)));
+                            content_lines.push(Line::from(Span::styled(sign.to_string(), style)));
                         }
                     }
                 }
@@ -225,17 +282,19 @@ pub fn format_tool_call_block(
                 serde_json::from_value::<ReplaceParams>(tool_call.parameters.clone())
             {
                 // Format as file replacement (showing new content)
-                lines.push(Line::from(Span::styled(
-                    format!("-> Calling Tool: replace ({})", params.file_path),
-                    Style::default().fg(Color::Cyan),
+                content_lines.push(Line::from(Span::styled(
+                    format!("Replacing {}", params.file_path),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 )));
-                lines.push(Line::from(Span::styled(
+                content_lines.push(Line::from(Span::styled(
                     format!("+++ {} (Full New Content)", params.file_path), // Clarify it's the full content
                     Style::default().fg(Color::Green),
                 )));
                 for line in params.content.lines() {
                     for wrapped_line in textwrap::wrap(line, wrap_width) {
-                        lines.push(Line::from(Span::styled(
+                        content_lines.push(Line::from(Span::styled(
                             format!("+ {}", wrapped_line),
                             Style::default().fg(Color::Green),
                         )));
@@ -248,35 +307,19 @@ pub fn format_tool_call_block(
         }
         BASH_TOOL_NAME => {
             if let Ok(params) = serde_json::from_value::<BashParams>(tool_call.parameters.clone()) {
-                // Format bash command as a code block
-                lines.push(Line::from(Span::styled(
-                    "-> Calling Tool: bash",
-                    Style::default().fg(Color::Cyan),
-                )));
-                lines.push(Line::from(Span::styled(
-                    "```bash",
-                    Style::default().fg(Color::DarkGray),
-                )));
-
                 // Format the command with proper wrapping
                 for line in params.command.lines() {
                     for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
-                        lines.push(Line::from(Span::styled(
+                        content_lines.push(Line::from(Span::styled(
                             wrapped_line.to_string(),
                             Style::default().fg(Color::White),
                         )));
                     }
                 }
-
-                lines.push(Line::from(Span::styled(
-                    "```",
-                    Style::default().fg(Color::DarkGray),
-                )));
-
                 // Add timeout info if specified
                 if let Some(timeout) = params.timeout {
-                    lines.push(Line::from(Span::styled(
-                        format!("   Timeout: {}ms", timeout),
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Timeout: {}ms", timeout),
                         Style::default().fg(Color::DarkGray),
                     )));
                 }
@@ -291,17 +334,12 @@ pub fn format_tool_call_block(
 
     // Fallback to generic JSON formatting if diff formatting didn't happen
     if formatted_as_diff.is_none() {
-        lines.push(Line::from(Span::styled(
-            format!("-> Calling Tool: {}", tool_call.name),
-            Style::default().fg(Color::Cyan),
-        )));
         match serde_json::to_string_pretty(&tool_call.parameters) {
             Ok(params_str) => {
                 for line in params_str.lines() {
-                    let indented_line = format!("   {}", line);
-                    let wrapped_lines = textwrap::wrap(&indented_line, wrap_width);
+                    let wrapped_lines = textwrap::wrap(line, wrap_width);
                     for wrapped_line in wrapped_lines {
-                        lines.push(Line::from(Span::styled(
+                        content_lines.push(Line::from(Span::styled(
                             wrapped_line.to_string(),
                             Style::default().fg(Color::DarkGray),
                         )));
@@ -309,18 +347,44 @@ pub fn format_tool_call_block(
                 }
             }
             Err(_) => {
-                lines.push(Line::from(Span::styled(
-                    "   Parameters: (Failed to format JSON)".to_string(),
+                content_lines.push(Line::from(Span::styled(
+                    "Parameters: (Failed to format JSON)".to_string(),
                     Style::default().fg(Color::Red),
                 )));
             }
         }
     }
 
-    // Always add the Tool ID at the end
+    let box_style = Style::default().fg(Color::Cyan);
+    let icon = get_tool_icon(tool_name);
+
+    let header_text = format!(" {} {} ", icon, tool_call.name);
+    let id_text = format!("[{}]", tool_call.id);
+    let max_content_width = content_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    let box_width = max_content_width.max(header_text.len() + id_text.len() + 3);
+
+    // Top border with tool name and ID
+    let total_header_len = header_text.len() + id_text.len() + 1; // +1 for space between
+    let header_padding = "─".repeat(box_width.saturating_sub(total_header_len));
+
+    lines.push(Line::from(vec![
+        Span::styled("┌", box_style),
+        Span::styled(header_text, box_style),
+        Span::styled(id_text, Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" {}", header_padding), box_style),
+    ]));
+
+    // Add content with borders
+    for content_line in content_lines {
+        let mut line_spans = vec![Span::styled("│ ", box_style)];
+        line_spans.extend(content_line.spans);
+        lines.push(Line::from(line_spans));
+    }
+
+    // Bottom border
     lines.push(Line::from(Span::styled(
-        format!("   (ID: {})", tool_call.id),
-        Style::default().fg(Color::DarkGray),
+        format!("└{}", "─".repeat(box_width)),
+        box_style,
     )));
 
     lines
@@ -332,13 +396,70 @@ pub fn format_tool_result_block(
     result: &str,
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
+    format_tool_result_block_with_status(tool_use_id, result, terminal_width, false)
+}
+
+/// Formats a ToolResult block for display with error/success status.
+pub fn format_tool_result_block_with_status(
+    tool_use_id: &str,
+    result: &str,
+    terminal_width: u16,
+    is_error: bool,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+
+    // Create content lines first
+    let mut content_lines = Vec::new();
+
+    // Check if result is empty
+    if result.trim().is_empty() {
+        content_lines.push(Line::from(Span::styled(
+            "(Tool completed with no output)".to_string(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    } else {
+        // Use the existing preview formatter for the result content
+        content_lines.extend(format_tool_preview(result, terminal_width));
+    }
+
+    // Create the box with appropriate styling
+    let (box_style, icon, header_text) = if is_error {
+        (Style::default().fg(Color::Red), "✗", " Error ")
+    } else {
+        (Style::default().fg(Color::Magenta), "✓", " Result ")
+    };
+
+    let header_text = format!(" {} {} ", icon, header_text.trim());
+    let id_text = format!("[{}]", tool_use_id);
+    let max_content_width = content_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    let box_width = max_content_width.max(header_text.len() + id_text.len() + 3);
+
+    // Top border with header and ID
+    let total_header_len = header_text.len() + id_text.len() + 1; // +1 for space between
+    let header_padding = "─".repeat(box_width.saturating_sub(total_header_len));
+
+    lines.push(Line::from(vec![
+        Span::styled("┌", box_style),
+        Span::styled(header_text, box_style),
+        Span::styled(id_text, Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" {}", header_padding), box_style),
+    ]));
+
+    // Add content with borders
+    for content_line in content_lines {
+        let mut line_spans = vec![Span::styled("│ ", box_style)];
+        line_spans.extend(content_line.spans);
+        lines.push(Line::from(line_spans));
+    }
+
+    // Bottom border
     lines.push(Line::from(Span::styled(
-        format!("<- Tool Result for {}", tool_use_id),
-        Style::default().fg(Color::Magenta), // Style for tool result indication
+        format!("└{}", "─".repeat(box_width)),
+        box_style,
     )));
-    // Use the existing preview formatter for the result content
-    lines.extend(format_tool_preview(result, terminal_width));
+
     lines
 }
 
@@ -348,26 +469,14 @@ fn format_tool_result_for_message(
     result: &ToolResult,
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    
     match result {
         ToolResult::Success { output } => {
-            lines.push(Line::from(Span::styled(
-                format!("<- Tool Result for {}", tool_use_id),
-                Style::default().fg(Color::Magenta),
-            )));
-            lines.extend(format_tool_preview(output, terminal_width));
+            format_tool_result_block_with_status(tool_use_id, output, terminal_width, false)
         }
         ToolResult::Error { error } => {
-            lines.push(Line::from(Span::styled(
-                format!("<- Tool Error for {}", tool_use_id),
-                Style::default().fg(Color::Red),
-            )));
-            lines.extend(format_tool_preview(error, terminal_width));
+            format_tool_result_block_with_status(tool_use_id, error, terminal_width, true)
         }
     }
-    
-    lines
 }
 
 /// Format a tool result preview for display, potentially wrapping long lines
@@ -397,35 +506,53 @@ pub fn format_tool_preview(content: &str, terminal_width: u16) -> Vec<Line<'stat
 /// Formats a command response for display.
 pub fn format_command_response(content: &str, terminal_width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    let mut content_lines = Vec::new();
 
     // Calculate wrap width from terminal width (accounting for margins)
-    // Use a slightly different wrap width or style if desired for command responses
     let wrap_width = (terminal_width as usize).saturating_sub(6);
     let wrap_width = wrap_width.max(30);
-
-    // Add a header or identifier
-    lines.push(Line::from(Span::styled(
-        "System/Command:",
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD), // Distinct style
-    )));
 
     for line in content.lines() {
         let wrapped_lines = textwrap::wrap(line, wrap_width);
         if wrapped_lines.is_empty() {
             // Preserve empty lines from the input
-            lines.push(Line::raw("  ".to_string())); // Add indentation
+            content_lines.push(Line::raw(""));
         } else {
             for wrapped_line in wrapped_lines {
-                // Indent the content and apply style
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", wrapped_line),      // Add indentation
-                    Style::default().fg(Color::Yellow), // Consistent style for content
+                content_lines.push(Line::from(Span::styled(
+                    wrapped_line.to_string(),
+                    Style::default().fg(Color::White),
                 )));
             }
         }
     }
+
+    // Create the box
+    let box_style = Style::default().fg(Color::Yellow);
+    let header_text = " ℹ System Message ";
+    let max_content_width = content_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    let box_width = max_content_width.max(header_text.len() + 2);
+
+    // Top border
+    let header_padding = "─".repeat(box_width.saturating_sub(header_text.len()));
+    lines.push(Line::from(Span::styled(
+        format!("┌{}{}", header_text, header_padding),
+        box_style,
+    )));
+
+    // Add content with borders
+    for content_line in content_lines {
+        let mut line_spans = vec![Span::styled("│ ", box_style)];
+        line_spans.extend(content_line.spans);
+        lines.push(Line::from(line_spans));
+    }
+
+    // Bottom border
+    lines.push(Line::from(Span::styled(
+        format!("└{}", "─".repeat(box_width)),
+        box_style,
+    )));
+
     lines
 }
 
@@ -438,13 +565,17 @@ pub fn format_command_execution_block(
     terminal_width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    let mut content_lines = Vec::new();
 
     // Calculate wrap width
     let wrap_width = (terminal_width as usize).saturating_sub(8);
     let wrap_width = wrap_width.max(40);
 
+    // Maximum lines to show for output before truncation
+    const MAX_OUTPUT_LINES: usize = 20;
+
     // Show the command with a $ prompt
-    lines.push(Line::from(vec![
+    content_lines.push(Line::from(vec![
         Span::styled(
             "$ ",
             Style::default()
@@ -454,15 +585,51 @@ pub fn format_command_execution_block(
         Span::styled(command.to_string(), Style::default().fg(Color::Cyan)),
     ]));
 
+    // Add a separator line
+    content_lines.push(Line::from(Span::styled(
+        "─".repeat(wrap_width.min(command.len() + 2)),
+        Style::default().fg(Color::DarkGray),
+    )));
+
     // Show stdout if not empty
     if !stdout.trim().is_empty() {
-        for line in stdout.lines() {
+        let stdout_lines: Vec<&str> = stdout.lines().collect();
+        let mut line_count = 0;
+        let mut truncated = false;
+
+        for (idx, line) in stdout_lines.iter().enumerate() {
+            if line_count >= MAX_OUTPUT_LINES {
+                truncated = true;
+                content_lines.push(Line::from(Span::styled(
+                    format!("... ({} more lines)", stdout_lines.len() - idx),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+                break;
+            }
+
             let wrapped_lines = textwrap::wrap(line, wrap_width);
             if wrapped_lines.is_empty() {
-                lines.push(Line::raw(""));
+                content_lines.push(Line::raw(""));
+                line_count += 1;
             } else {
                 for wrapped_line in wrapped_lines {
-                    lines.push(Line::from(Span::raw(wrapped_line.to_string())));
+                    if line_count >= MAX_OUTPUT_LINES {
+                        truncated = true;
+                        content_lines.push(Line::from(Span::styled(
+                            format!("... ({} more lines)", stdout_lines.len() - idx),
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                        break;
+                    }
+                    content_lines.push(Line::from(Span::raw(wrapped_line.to_string())));
+                    line_count += 1;
+                }
+                if truncated {
+                    break;
                 }
             }
         }
@@ -470,31 +637,96 @@ pub fn format_command_execution_block(
 
     // Show exit code and stderr if command failed
     if exit_code != 0 {
-        lines.push(Line::from(Span::styled(
+        content_lines.push(Line::from(Span::styled(
             format!("Exit code: {}", exit_code),
             Style::default().fg(Color::Red),
         )));
 
         if !stderr.trim().is_empty() {
-            lines.push(Line::from(Span::styled(
+            content_lines.push(Line::from(Span::styled(
                 "Error output:",
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             )));
-            for line in stderr.lines() {
+
+            let stderr_lines: Vec<&str> = stderr.lines().collect();
+            let mut error_line_count = 0;
+
+            for (idx, line) in stderr_lines.iter().enumerate() {
+                if error_line_count >= MAX_OUTPUT_LINES {
+                    content_lines.push(Line::from(Span::styled(
+                        format!("... ({} more error lines)", stderr_lines.len() - idx),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                    break;
+                }
+
                 let wrapped_lines = textwrap::wrap(line, wrap_width);
                 if wrapped_lines.is_empty() {
-                    lines.push(Line::raw(""));
+                    content_lines.push(Line::raw(""));
+                    error_line_count += 1;
                 } else {
                     for wrapped_line in wrapped_lines {
-                        lines.push(Line::from(Span::styled(
+                        if error_line_count >= MAX_OUTPUT_LINES {
+                            content_lines.push(Line::from(Span::styled(
+                                format!("... ({} more error lines)", stderr_lines.len() - idx),
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::ITALIC),
+                            )));
+                            break;
+                        }
+                        content_lines.push(Line::from(Span::styled(
                             wrapped_line.to_string(),
                             Style::default().fg(Color::Red),
                         )));
+                        error_line_count += 1;
                     }
                 }
             }
         }
+    } else if stdout.trim().is_empty() {
+        // If successful but no output, show a success indicator
+        content_lines.push(Line::from(Span::styled(
+            "(Command completed successfully with no output)",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )));
     }
+
+    // Create the box
+    let box_style = if exit_code == 0 {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+
+    let icon = if exit_code == 0 { "✓" } else { "✗" };
+    let header_text = format!(" {} Command Execution ", icon);
+    let max_content_width = content_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    let box_width = max_content_width.max(header_text.len() + 2);
+
+    // Top border
+    let header_padding = "─".repeat(box_width.saturating_sub(header_text.len()));
+    lines.push(Line::from(Span::styled(
+        format!("┌{}{}", header_text, header_padding),
+        box_style,
+    )));
+
+    // Add content with borders
+    for content_line in content_lines {
+        let mut line_spans = vec![Span::styled("│ ", box_style)];
+        line_spans.extend(content_line.spans);
+        lines.push(Line::from(line_spans));
+    }
+
+    // Bottom border
+    lines.push(Line::from(Span::styled(
+        format!("└{}", "─".repeat(box_width)),
+        box_style,
+    )));
 
     lines
 }
@@ -504,9 +736,14 @@ fn format_thought_block(text: &str, terminal_width: u16) -> Vec<Line<'static>> {
         return vec![];
     }
 
-    let thought_style = Style::default()
-        .fg(Color::Gray)
+    // Separate styles for header and content
+    let header_style = Style::default().fg(Color::Gray);
+
+    let content_style = Style::default()
+        .fg(Color::DarkGray)
         .add_modifier(Modifier::ITALIC);
+
+    let box_style = Style::default().fg(Color::DarkGray);
 
     let mut content_lines = Vec::new();
     let prefix = "│ ";
@@ -527,8 +764,8 @@ fn format_thought_block(text: &str, terminal_width: u16) -> Vec<Line<'static>> {
             .map(|span| {
                 let new_style = span
                     .style
-                    .fg(thought_style.fg.unwrap())
-                    .add_modifier(thought_style.add_modifier);
+                    .fg(content_style.fg.unwrap())
+                    .add_modifier(content_style.add_modifier);
                 Span::styled(span.content, new_style)
             })
             .collect();
@@ -543,21 +780,21 @@ fn format_thought_block(text: &str, terminal_width: u16) -> Vec<Line<'static>> {
                 .into_iter()
                 .map(|span| Span::styled(span.content.to_string(), span.style))
                 .collect();
-            let mut indented_spans = vec![Span::styled(prefix, thought_style)];
+            let mut indented_spans = vec![Span::styled(prefix, box_style)];
             indented_spans.extend(owned_spans);
             content_lines.push(Line::from(indented_spans));
         } else {
-            let style_to_apply = processed_spans.first().map_or(thought_style, |s| s.style);
+            let style_to_apply = processed_spans.first().map_or(content_style, |s| s.style);
             let wrapped_text_lines = textwrap::wrap(&line_text, effective_wrap_width);
 
             for wrapped_segment in &wrapped_text_lines {
                 content_lines.push(Line::from(vec![
-                    Span::styled(prefix, thought_style),
+                    Span::styled(prefix, box_style),
                     Span::styled(wrapped_segment.to_string(), style_to_apply),
                 ]));
             }
             if line_text.is_empty() && wrapped_text_lines.is_empty() {
-                content_lines.push(Line::from(Span::styled(prefix, thought_style)));
+                content_lines.push(Line::from(Span::styled(prefix, box_style)));
             }
         }
     }
@@ -574,17 +811,242 @@ fn format_thought_block(text: &str, terminal_width: u16) -> Vec<Line<'static>> {
     // Assemble the final block with borders
     let mut final_lines = Vec::new();
     let header_padding = "─".repeat(inner_box_width.saturating_sub(header_text.len()));
-    final_lines.push(Line::from(Span::styled(
-        format!("┌─{}{}", header_text, header_padding),
-        thought_style,
-    )));
+    final_lines.push(Line::from(vec![
+        Span::styled("┌─", box_style),
+        Span::styled(header_text, header_style),
+        Span::styled(header_padding, box_style),
+    ]));
 
     final_lines.extend(content_lines);
 
     final_lines.push(Line::from(Span::styled(
         format!("└{}", "─".repeat(inner_box_width + 1)), // +1 for the corner
-        thought_style,
+        box_style,
     )));
 
     final_lines
+}
+
+/// Formats a tool call block together with its result in a single box
+pub fn format_tool_call_with_result(
+    tool_call: &tools::ToolCall,
+    result: &str,
+    is_truncated: bool,
+    terminal_width: u16,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut content_lines = Vec::new();
+
+    // Calculate wrap width from terminal width (accounting for margins and borders)
+    let wrap_width = (terminal_width as usize).saturating_sub(10);
+    let wrap_width = wrap_width.max(40);
+
+    let tool_name = tool_call.name.as_str();
+
+    // First, format the tool call part
+    let formatted_as_diff = match tool_name {
+        EDIT_TOOL_NAME => {
+            if let Ok(params) = serde_json::from_value::<EditParams>(tool_call.parameters.clone()) {
+                if params.old_string.is_empty() {
+                    // Format as file creation
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Creating {}", params.file_path),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                    content_lines.push(Line::from(Span::styled(
+                        format!("+++ {}", params.file_path),
+                        Style::default().fg(Color::Green),
+                    )));
+                    for line in params.new_string.lines() {
+                        for wrapped_line in textwrap::wrap(line, wrap_width) {
+                            content_lines.push(Line::from(Span::styled(
+                                format!("+ {}", wrapped_line),
+                                Style::default().fg(Color::Green),
+                            )));
+                        }
+                    }
+                } else {
+                    // Format as replacement using diff
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Applying diff to {}", params.file_path),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+
+                    let diff = TextDiff::from_lines(&params.old_string, &params.new_string);
+
+                    for change in diff.iter_all_changes() {
+                        let (sign, style) = match change.tag() {
+                            ChangeTag::Delete => ("-", Style::default().fg(Color::Red)),
+                            ChangeTag::Insert => ("+", Style::default().fg(Color::Green)),
+                            ChangeTag::Equal => (" ", Style::default().fg(Color::DarkGray)),
+                        };
+
+                        let content = change.value_ref().trim_end_matches('\n');
+                        for line_part in content.lines() {
+                            for wrapped_line in
+                                textwrap::wrap(line_part, wrap_width.saturating_sub(2))
+                            {
+                                content_lines.push(Line::from(Span::styled(
+                                    format!("{} {}", sign, wrapped_line),
+                                    style,
+                                )));
+                            }
+                            if line_part.is_empty() {
+                                content_lines
+                                    .push(Line::from(Span::styled(sign.to_string(), style)));
+                            }
+                        }
+                        if content.is_empty() && change.tag() != ChangeTag::Equal {
+                            content_lines.push(Line::from(Span::styled(sign.to_string(), style)));
+                        }
+                    }
+                }
+                Some(())
+            } else {
+                None
+            }
+        }
+        REPLACE_TOOL_NAME => {
+            if let Ok(params) =
+                serde_json::from_value::<ReplaceParams>(tool_call.parameters.clone())
+            {
+                content_lines.push(Line::from(Span::styled(
+                    format!("Replacing {}", params.file_path),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                content_lines.push(Line::from(Span::styled(
+                    format!("+++ {} (Full New Content)", params.file_path),
+                    Style::default().fg(Color::Green),
+                )));
+                for line in params.content.lines() {
+                    for wrapped_line in textwrap::wrap(line, wrap_width) {
+                        content_lines.push(Line::from(Span::styled(
+                            format!("+ {}", wrapped_line),
+                            Style::default().fg(Color::Green),
+                        )));
+                    }
+                }
+                Some(())
+            } else {
+                None
+            }
+        }
+        BASH_TOOL_NAME => {
+            if let Ok(params) = serde_json::from_value::<BashParams>(tool_call.parameters.clone()) {
+                for line in params.command.lines() {
+                    for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
+                        content_lines.push(Line::from(Span::styled(
+                            wrapped_line.to_string(),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
+                }
+                if let Some(timeout) = params.timeout {
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Timeout: {}ms", timeout),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+                Some(())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    // Fallback to generic JSON formatting if specific formatting didn't happen
+    if formatted_as_diff.is_none() {
+        match serde_json::to_string_pretty(&tool_call.parameters) {
+            Ok(params_str) => {
+                for line in params_str.lines() {
+                    let wrapped_lines = textwrap::wrap(line, wrap_width);
+                    for wrapped_line in wrapped_lines {
+                        content_lines.push(Line::from(Span::styled(
+                            wrapped_line.to_string(),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                }
+            }
+            Err(_) => {
+                content_lines.push(Line::from(Span::styled(
+                    "Parameters: (Failed to format JSON)".to_string(),
+                    Style::default().fg(Color::Red),
+                )));
+            }
+        }
+    }
+
+    // Add a separator between call and result
+    content_lines.push(Line::from(Span::styled(
+        "─".repeat(wrap_width.min(40)),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    // Format the result part
+    if is_truncated {
+        const MAX_PREVIEW_LINES: usize = 5;
+        let lines: Vec<&str> = result.lines().collect();
+        let preview_content = format!(
+            "{}
+... ({} more lines, press 'Ctrl+r' to toggle full view)",
+            lines
+                .iter()
+                .take(MAX_PREVIEW_LINES)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n"),
+            lines.len() - MAX_PREVIEW_LINES
+        );
+        content_lines.extend(format_tool_preview(&preview_content, terminal_width));
+    } else {
+        content_lines.extend(format_tool_preview(result, terminal_width));
+    }
+
+    // Create the combined box
+    let box_style = Style::default().fg(Color::Cyan);
+
+    // Choose icon based on tool type (same logic as format_tool_call_block)
+    let icon = get_tool_icon(tool_name);
+
+    let header_text = format!(" {} {} ", icon, tool_call.name);
+    let id_text = format!("[{}]", tool_call.id);
+    let result_indicator = " → ✓";
+    let max_content_width = content_lines.iter().map(|l| l.width()).max().unwrap_or(0);
+    let box_width =
+        max_content_width.max(header_text.len() + id_text.len() + result_indicator.len() + 3);
+
+    // Top border with tool name, ID, and result indicator
+    let total_header_len = header_text.len() + id_text.len() + result_indicator.len() + 2; // +2 for spaces
+    let header_padding = "─".repeat(box_width.saturating_sub(total_header_len));
+
+    lines.push(Line::from(vec![
+        Span::styled("┌", box_style),
+        Span::styled(header_text, box_style),
+        Span::styled(id_text, Style::default().fg(Color::DarkGray)),
+        Span::styled(result_indicator, Style::default().fg(Color::Green)),
+        Span::styled(format!(" {}", header_padding), box_style),
+    ]));
+
+    // Add content with borders
+    for content_line in content_lines {
+        let mut line_spans = vec![Span::styled("│ ", box_style)];
+        line_spans.extend(content_line.spans);
+        lines.push(Line::from(line_spans));
+    }
+
+    // Bottom border
+    lines.push(Line::from(Span::styled(
+        format!("└{}", "─".repeat(box_width)),
+        box_style,
+    )));
+
+    lines
 }
