@@ -6,11 +6,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, JsonSchema)]
-struct FetchParams {
+pub struct FetchParams {
     /// The URL to fetch content from
-    url: String,
+    pub url: String,
     /// The prompt to process the content with
-    prompt: String,
+    pub prompt: String,
 }
 
 tool! {
