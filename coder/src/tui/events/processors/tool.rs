@@ -36,7 +36,6 @@ impl EventProcessor for ToolEventProcessor {
             AppEvent::ToolCallStarted { name, id, .. } => {
                 *ctx.spinner_state = 0;
                 *ctx.progress_message = Some(format!("Executing tool: {}", name));
-                tracing::debug!(target: "tui.tool", "Tool call started: {} ({:?})", name, id);
 
                 let idx = ctx.get_or_create_tool_index(&id, Some(name.clone()));
 

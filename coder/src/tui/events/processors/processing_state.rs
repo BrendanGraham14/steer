@@ -33,13 +33,11 @@ impl EventProcessor for ProcessingStateProcessor {
     fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::ThinkingStarted => {
-                tracing::debug!(target: "tui.processing_state", "Setting is_processing = true");
                 *ctx.is_processing = true;
                 *ctx.spinner_state = 0;
                 ProcessingResult::Handled
             }
             AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
-                tracing::debug!(target: "tui.processing_state", "Setting is_processing = false (ThinkingCompleted/Error)");
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
                 ProcessingResult::Handled
