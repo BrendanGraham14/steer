@@ -1,5 +1,5 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
-use crate::app::conversation::{UserContent, ToolResult, AssistantContent};
+use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -235,7 +235,9 @@ impl App {
 
         // Add user message
         self.add_message(Message::User {
-            content: vec![UserContent::Text { text: message.clone() }],
+            content: vec![UserContent::Text {
+                text: message.clone(),
+            }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
         })
@@ -294,7 +296,7 @@ impl App {
 
         let current_model = self.current_model;
         let agent_executor = self.agent_executor.clone();
-        let system_prompt = create_system_prompt()?;
+        let system_prompt = create_system_prompt(Some(current_model))?;
 
         // --- Updated Tool Executor Callback with Approval Logic ---
         let tool_executor_for_callback = self.tool_executor.clone();
@@ -1205,10 +1207,16 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
     }
 }
 
-fn create_system_prompt() -> Result<String> {
+fn create_system_prompt(model: Option<Model>) -> Result<String> {
     let env_info = EnvironmentInfo::collect()?;
 
-    let system_prompt_body = include_str!("../../../prompts/system_prompt.md");
+    // Use model-specific prompt if available, otherwise use default
+    let system_prompt_body = if let Some(model) = model {
+        get_model_system_prompt(model)
+    } else {
+        include_str!("../../../prompts/system_prompt.md")
+    };
+
     let prompt = format!(
         r#"{}
 
@@ -1217,6 +1225,13 @@ fn create_system_prompt() -> Result<String> {
         env_info.as_context()
     );
     Ok(prompt)
+}
+
+fn get_model_system_prompt(model: Model) -> &'static str {
+    match model {
+        Model::O3_20250416 => include_str!("../../../prompts/models/o3.md"),
+        _ => include_str!("../../../prompts/system_prompt.md"),
+    }
 }
 
 /// Parse the output from the bash tool

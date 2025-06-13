@@ -124,6 +124,14 @@ impl Model {
             _ => false,
         }
     }
+
+    pub fn default_system_prompt_file(&self) -> Option<&'static str> {
+        match self {
+            Model::O3_20250416 => Some("models/o3.md"),
+            Model::O4Mini20250416 => Some("models/o3.md"),
+            _ => None,
+        }
+    }
 }
 
 static MODEL_VARIANTS: Lazy<Vec<Model>> = Lazy::new(|| Model::iter().collect());
