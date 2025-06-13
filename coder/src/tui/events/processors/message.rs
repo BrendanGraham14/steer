@@ -60,7 +60,6 @@ impl EventProcessor for MessageEventProcessor {
                 ProcessingResult::Handled
             }
             AppEvent::MessagePart { id, delta } => {
-                tracing::debug!(target: "tui.message", "MessagePart: {}", id);
                 // For streaming messages, append to existing text blocks
                 if let Some(msg) = ctx.messages.iter_mut().find(|m| m.id() == id) {
                     match msg {

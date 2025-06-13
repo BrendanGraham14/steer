@@ -31,7 +31,6 @@ impl EventProcessor for SystemEventProcessor {
     fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::ModelChanged { model } => {
-                tracing::debug!(target: "tui.system", "Model changed to: {}", model);
                 *ctx.current_model = model;
                 ProcessingResult::Handled
             }

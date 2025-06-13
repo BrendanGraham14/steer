@@ -18,8 +18,12 @@ pub fn init_tracing() -> io::Result<()> {
     let now = Local::now();
     let timestamp = now.format("%Y%m%d_%H%M%S");
 
-    // Configure the filter based on RUST_LOG env var
-    let filter = EnvFilter::from_default_env();
+    // Configure the filter based on RUST_LOG env var, with sensible defaults
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            // Default: info for all crates, debug for coder crate only, silence noisy crates
+            EnvFilter::new("info,coder=debug,tui_markdown=warn")
+        });
 
     if let Some(home_dir) = dirs::home_dir() {
         // Normal operation - log to file

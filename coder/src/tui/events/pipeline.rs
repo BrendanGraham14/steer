@@ -32,22 +32,16 @@ impl EventPipeline {
 
     /// Process an event through the pipeline
     pub fn process_event(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> Result<()> {
-        debug!(target: "tui.pipeline", "Processing event: {:?}", std::mem::discriminant(&event));
-
         for processor in &mut self.processors {
             if !processor.can_handle(&event) {
                 continue;
             }
-
-            debug!(target: "tui.pipeline", "Processor {} handling event", processor.name());
             
             match processor.process(event.clone(), ctx) {
                 ProcessingResult::Handled => {
-                    debug!(target: "tui.pipeline", "Event handled by {}", processor.name());
                     continue; // Try next processor
                 }
                 ProcessingResult::HandledAndComplete => {
-                    debug!(target: "tui.pipeline", "Event completed by {}", processor.name());
                     return Ok(()); // Stop processing
                 }
                 ProcessingResult::NotHandled => {
@@ -60,7 +54,6 @@ impl EventPipeline {
             }
         }
 
-        debug!(target: "tui.pipeline", "Event processing completed");
         Ok(())
     }
 
