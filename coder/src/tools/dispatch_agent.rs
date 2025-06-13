@@ -19,9 +19,9 @@ use macros::tool_external as tool;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Deserialize, Debug, JsonSchema, Serialize)]
-struct DispatchAgentParams {
+pub struct DispatchAgentParams {
     /// The task for the agent to perform
-    prompt: String,
+    pub prompt: String,
 }
 
 tool! {

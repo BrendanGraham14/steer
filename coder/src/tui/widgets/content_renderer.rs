@@ -9,11 +9,15 @@ use similar::{ChangeTag, TextDiff};
 use textwrap;
 
 use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
-use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
-use crate::tools::fetch::FETCH_TOOL_NAME;
+use crate::tools::dispatch_agent::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams};
+use crate::tools::fetch::{FETCH_TOOL_NAME, FetchParams};
 use tools::tools::bash::BashParams;
 use tools::tools::edit::EditParams;
 use tools::tools::replace::ReplaceParams;
+use tools::tools::grep::GrepParams;
+use tools::tools::ls::LsParams;
+use tools::tools::glob::GlobParams;
+use tools::tools::todo::write::TodoWriteParams;
 use tools::tools::{
     BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
     REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, VIEW_TOOL_NAME,
@@ -33,20 +37,6 @@ pub trait ContentRenderer {
 pub struct DefaultContentRenderer;
 
 impl DefaultContentRenderer {
-    fn get_tool_icon(tool_name: &str) -> &'static str {
-        match tool_name {
-            BASH_TOOL_NAME => "💻",
-            EDIT_TOOL_NAME => "✏️",
-            REPLACE_TOOL_NAME => "📝",
-            VIEW_TOOL_NAME => "📖",
-            LS_TOOL_NAME | GLOB_TOOL_NAME | GREP_TOOL_NAME => "📁",
-            TODO_WRITE_TOOL_NAME | TODO_READ_TOOL_NAME => "📋",
-            DISPATCH_AGENT_TOOL_NAME => "🤖",
-            FETCH_TOOL_NAME => "🌐",
-            _ => "🔧",
-        }
-    }
-
     fn render_user_message(&self, blocks: &[UserContent], area: Rect, buf: &mut Buffer) {
         let mut content = Text::default();
 
@@ -193,92 +183,125 @@ impl DefaultContentRenderer {
         area: Rect,
         buf: &mut Buffer,
     ) {
-        let mut all_lines = Vec::new();
         let wrap_width = area.width.saturating_sub(4) as usize; // Account for borders and padding
 
-        // Format the tool call part
-        let tool_lines = self.format_tool_call_lines(call, wrap_width, mode);
-        all_lines.extend(tool_lines);
-
-        // Add result if available
-        if let Some(result) = result {
-            // Add separator
-            all_lines.push(Line::from(Span::styled(
-                "─".repeat(wrap_width.min(40)),
-                styles::DIM_TEXT,
-            )));
-
-            // Format result
-            let result_lines = match result {
-                ToolResult::Success { output } => {
-                    self.format_tool_result_lines(output, wrap_width, false, mode)
-                }
-                ToolResult::Error { error } => {
-                    self.format_tool_result_lines(error, wrap_width, true, mode)
-                }
-            };
-            all_lines.extend(result_lines);
-        }
+        // Format the tool with integrated call/result handling
+        let all_lines = self.format_tool_with_result(call, result, wrap_width, mode);
 
         // Draw the box with all content
         self.draw_tool_box(call, result, all_lines, area, buf);
     }
 
-    fn format_tool_call_lines(
+    fn format_tool_with_result(
         &self,
         call: &ToolCall,
+        result: &Option<ToolResult>,
         wrap_width: usize,
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
         match call.name.as_str() {
             EDIT_TOOL_NAME => {
                 if let Ok(params) = serde_json::from_value::<EditParams>(call.parameters.clone()) {
-                    lines = self.format_edit_tool_lines(&params, wrap_width, mode);
+                    self.format_edit_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
                 }
             }
             REPLACE_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<ReplaceParams>(call.parameters.clone())
-                {
-                    lines = self.format_replace_tool_lines(&params, wrap_width, mode);
+                if let Ok(params) = serde_json::from_value::<ReplaceParams>(call.parameters.clone()) {
+                    self.format_replace_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
                 }
             }
             BASH_TOOL_NAME => {
                 if let Ok(params) = serde_json::from_value::<BashParams>(call.parameters.clone()) {
-                    lines = self.format_bash_tool_lines(&params, wrap_width, mode);
+                    self.format_bash_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
                 }
             }
             VIEW_TOOL_NAME => {
                 if let Ok(params) = serde_json::from_value::<ViewParams>(call.parameters.clone()) {
-                    lines = self.format_view_tool_lines(&params, wrap_width, mode);
+                    self.format_view_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
                 }
             }
-            _ => {
-                lines = self.format_default_tool_lines(call, wrap_width, mode);
+            GREP_TOOL_NAME => {
+                if let Ok(params) = serde_json::from_value::<GrepParams>(call.parameters.clone()) {
+                    self.format_grep_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
+                }
             }
+            LS_TOOL_NAME => {
+                if let Ok(params) = serde_json::from_value::<LsParams>(call.parameters.clone()) {
+                    self.format_ls_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
+                }
+            }
+            GLOB_TOOL_NAME => {
+                if let Ok(params) = serde_json::from_value::<GlobParams>(call.parameters.clone()) {
+                    self.format_glob_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
+                }
+            }
+            TODO_READ_TOOL_NAME => {
+                self.format_todo_read_tool(result, wrap_width, mode)
+            }
+            TODO_WRITE_TOOL_NAME => {
+                if let Ok(params) = serde_json::from_value::<TodoWriteParams>(call.parameters.clone()) {
+                    self.format_todo_write_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
+                }
+            }
+            DISPATCH_AGENT_TOOL_NAME => {
+                if let Ok(params) = serde_json::from_value::<DispatchAgentParams>(call.parameters.clone()) {
+                    self.format_dispatch_agent_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
+                }
+            }
+            FETCH_TOOL_NAME => {
+                if let Ok(params) = serde_json::from_value::<FetchParams>(call.parameters.clone()) {
+                    self.format_fetch_tool(&params, result, wrap_width, mode)
+                } else {
+                    self.format_default_tool(call, result, wrap_width, mode)
+                }
+            }
+            _ => self.format_default_tool(call, result, wrap_width, mode),
         }
-
-        lines
     }
 
-    fn format_edit_tool_lines(
+
+    fn format_edit_tool(
         &self,
         params: &EditParams,
+        result: &Option<ToolResult>,
         wrap_width: usize,
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         if mode == ViewMode::Compact {
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "Edit {}: {} lines changed",
-                    params.file_path,
-                    params.new_string.lines().count()
-                ),
-                Style::default().fg(Color::Yellow),
-            )));
+            let action = if params.old_string.is_empty() { "Create" } else { "Edit" };
+            let line_change = params.new_string.lines().count();
+            
+            if result.is_some() {
+                lines.push(Line::from(Span::styled(
+                    format!("{} {}: {} lines changed", action, params.file_path, line_change),
+                    Style::default().fg(Color::Yellow),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("{} {}", action, params.file_path),
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
         } else {
             // Detailed mode
             if params.old_string.is_empty() {
@@ -288,15 +311,25 @@ impl DefaultContentRenderer {
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 )));
-                lines.push(Line::from(Span::styled(
-                    format!("+++ {}", params.file_path),
-                    styles::TOOL_SUCCESS,
-                )));
-                for line in params.new_string.lines() {
-                    for wrapped_line in textwrap::wrap(line, wrap_width) {
+                
+                if result.is_none() {
+                    // Show preview of what will be created
+                    lines.push(Line::from(Span::styled(
+                        format!("+++ {}", params.file_path),
+                        styles::TOOL_SUCCESS,
+                    )));
+                    for line in params.new_string.lines().take(10) {
+                        for wrapped_line in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::styled(
+                                format!("+ {}", wrapped_line),
+                                styles::TOOL_SUCCESS,
+                            )));
+                        }
+                    }
+                    if params.new_string.lines().count() > 10 {
                         lines.push(Line::from(Span::styled(
-                            format!("+ {}", wrapped_line),
-                            styles::TOOL_SUCCESS,
+                            format!("... ({} more lines)", params.new_string.lines().count() - 10),
+                            styles::ITALIC_GRAY,
                         )));
                     }
                 }
@@ -308,77 +341,75 @@ impl DefaultContentRenderer {
                         .add_modifier(Modifier::BOLD),
                 )));
 
-                let diff = TextDiff::from_lines(&params.old_string, &params.new_string);
-                for change in diff.iter_all_changes() {
-                    let (sign, style) = match change.tag() {
-                        ChangeTag::Delete => ("-", styles::ERROR_TEXT),
-                        ChangeTag::Insert => ("+", styles::TOOL_SUCCESS),
-                        ChangeTag::Equal => (" ", styles::DIM_TEXT),
-                    };
-
-                    let content = change.value().trim_end_matches('\n');
-                    for line_part in content.lines() {
-                        for wrapped_line in textwrap::wrap(line_part, wrap_width.saturating_sub(2))
-                        {
+                if result.is_none() {
+                    // Show diff preview
+                    let diff = TextDiff::from_lines(&params.old_string, &params.new_string);
+                    let mut shown_lines = 0;
+                    const MAX_DIFF_LINES: usize = 20;
+                    
+                    for change in diff.iter_all_changes() {
+                        if shown_lines >= MAX_DIFF_LINES {
                             lines.push(Line::from(Span::styled(
-                                format!("{} {}", sign, wrapped_line),
-                                style,
+                                "... (diff truncated)",
+                                styles::ITALIC_GRAY,
                             )));
+                            break;
                         }
-                        if line_part.is_empty() {
+                        
+                        let (sign, style) = match change.tag() {
+                            ChangeTag::Delete => ("-", styles::ERROR_TEXT),
+                            ChangeTag::Insert => ("+", styles::TOOL_SUCCESS),
+                            ChangeTag::Equal => (" ", styles::DIM_TEXT),
+                        };
+
+                        let content = change.value().trim_end_matches('\n');
+                        for line_part in content.lines() {
+                            for wrapped_line in textwrap::wrap(line_part, wrap_width.saturating_sub(2)) {
+                                lines.push(Line::from(Span::styled(
+                                    format!("{} {}", sign, wrapped_line),
+                                    style,
+                                )));
+                                shown_lines += 1;
+                                if shown_lines >= MAX_DIFF_LINES {
+                                    break;
+                                }
+                            }
+                            if line_part.is_empty() {
+                                lines.push(Line::from(Span::styled(sign.to_string(), style)));
+                                shown_lines += 1;
+                            }
+                            if shown_lines >= MAX_DIFF_LINES {
+                                break;
+                            }
+                        }
+                        if content.is_empty() && change.tag() != ChangeTag::Equal {
                             lines.push(Line::from(Span::styled(sign.to_string(), style)));
+                            shown_lines += 1;
                         }
                     }
-                    if content.is_empty() && change.tag() != ChangeTag::Equal {
-                        lines.push(Line::from(Span::styled(sign.to_string(), style)));
-                    }
                 }
+            }
+
+            // Show error if result is an error
+            if let Some(ToolResult::Error { error }) = result {
+                lines.push(Line::from(Span::styled(
+                    "─".repeat(wrap_width.min(40)),
+                    styles::DIM_TEXT,
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("Error: {}", error),
+                    styles::ERROR_TEXT,
+                )));
             }
         }
 
         lines
     }
 
-    fn format_replace_tool_lines(
-        &self,
-        params: &ReplaceParams,
-        wrap_width: usize,
-        mode: ViewMode,
-    ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
-        if mode == ViewMode::Compact {
-            lines.push(Line::from(Span::styled(
-                format!("Replace {}", params.file_path),
-                Style::default().fg(Color::Yellow),
-            )));
-        } else {
-            lines.push(Line::from(Span::styled(
-                format!("Replacing {}", params.file_path),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(Span::styled(
-                format!("+++ {} (Full New Content)", params.file_path),
-                styles::TOOL_SUCCESS,
-            )));
-            for line in params.content.lines() {
-                for wrapped_line in textwrap::wrap(line, wrap_width) {
-                    lines.push(Line::from(Span::styled(
-                        format!("+ {}", wrapped_line),
-                        styles::TOOL_SUCCESS,
-                    )));
-                }
-            }
-        }
-
-        lines
-    }
-
-    fn format_bash_tool_lines(
+    fn format_bash_tool(
         &self,
         params: &BashParams,
+        result: &Option<ToolResult>,
         wrap_width: usize,
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
@@ -390,11 +421,35 @@ impl DefaultContentRenderer {
             } else {
                 params.command.clone()
             };
-            lines.push(Line::from(Span::styled(
-                format!("$ {}", cmd_preview),
-                styles::COMMAND_TEXT,
-            )));
+            
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("$ {}", cmd_preview),
+                            styles::COMMAND_TEXT,
+                        )));
+                    }
+                    ToolResult::Error { error } => {
+                        // Extract exit code if available
+                        let exit_code = error.lines()
+                            .find(|l| l.starts_with("Exit code:"))
+                            .and_then(|l| l.split(": ").nth(1))
+                            .unwrap_or("?");
+                        lines.push(Line::from(Span::styled(
+                            format!("$ {} (exit {})", cmd_preview, exit_code),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("$ {}", cmd_preview),
+                    styles::COMMAND_TEXT,
+                )));
+            }
         } else {
+            // Detailed mode - show full command
             for line in params.command.lines() {
                 for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
                     lines.push(Line::from(Span::styled(
@@ -409,33 +464,783 @@ impl DefaultContentRenderer {
                     styles::DIM_TEXT,
                 )));
             }
+
+            // Show output if we have results
+            if let Some(result) = result {
+                lines.push(Line::from(Span::styled(
+                    "─".repeat(wrap_width.min(40)),
+                    styles::DIM_TEXT,
+                )));
+
+                match result {
+                    ToolResult::Success { output } => {
+                        if output.trim().is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                "(Command completed successfully with no output)",
+                                styles::ITALIC_GRAY,
+                            )));
+                        } else {
+                            const MAX_OUTPUT_LINES: usize = 20;
+                            let output_lines: Vec<&str> = output.lines().collect();
+                            
+                            for line in output_lines.iter().take(MAX_OUTPUT_LINES) {
+                                for wrapped in textwrap::wrap(line, wrap_width) {
+                                    lines.push(Line::from(Span::raw(wrapped.to_string())));
+                                }
+                            }
+                            
+                            if output_lines.len() > MAX_OUTPUT_LINES {
+                                lines.push(Line::from(Span::styled(
+                                    format!("... ({} more lines)", output_lines.len() - MAX_OUTPUT_LINES),
+                                    styles::ITALIC_GRAY,
+                                )));
+                            }
+                        }
+                    }
+                    ToolResult::Error { error } => {
+                        // Show error output
+                        for line in error.lines().take(10) {
+                            for wrapped in textwrap::wrap(line, wrap_width) {
+                                lines.push(Line::from(Span::styled(
+                                    wrapped.to_string(),
+                                    styles::ERROR_TEXT,
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         lines
     }
 
-    fn format_view_tool_lines(
+    fn format_grep_tool(
         &self,
-        params: &ViewParams,
+        params: &GrepParams,
+        result: &Option<ToolResult>,
         wrap_width: usize,
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
-        vec![Line::from(Span::styled(
-            format!("Read({})", params.file_path),
-            styles::DIM_TEXT,
-        ))]
+        let mut lines = Vec::new();
+
+        let path_display = params.path.as_deref().unwrap_or(".");
+        let include_display = params.include.as_ref()
+            .map(|i| format!(" ({})", i))
+            .unwrap_or_default();
+
+        if mode == ViewMode::Compact {
+            // Compact mode - show search and result summary
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { output } => {
+                        let match_count = output.lines().count();
+                        if match_count == 0 {
+                            lines.push(Line::from(Span::styled(
+                                format!("Grep '{}' in {}{} - no matches", params.pattern, path_display, include_display),
+                                styles::DIM_TEXT,
+                            )));
+                        } else {
+                            lines.push(Line::from(Span::styled(
+                                format!("Grep '{}' in {}{} - {} matches", params.pattern, path_display, include_display, match_count),
+                                styles::DIM_TEXT,
+                            )));
+                        }
+                    }
+                    ToolResult::Error { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Grep '{}' failed", params.pattern),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("Grep '{}' in {}{}", params.pattern, path_display, include_display),
+                    styles::DIM_TEXT,
+                )));
+            }
+        } else {
+            // Detailed mode
+            lines.push(Line::from(Span::styled("Search Parameters:", styles::TOOL_HEADER)));
+            lines.push(Line::from(Span::styled(
+                format!("  Pattern: {}", params.pattern),
+                Style::default(),
+            )));
+            if let Some(path) = &params.path {
+                lines.push(Line::from(Span::styled(
+                    format!("  Path: {}", path),
+                    Style::default(),
+                )));
+            }
+            if let Some(include) = &params.include {
+                lines.push(Line::from(Span::styled(
+                    format!("  Include: {}", include),
+                    Style::default(),
+                )));
+            }
+
+            // Show matches if we have results
+            if let Some(ToolResult::Success { output }) = result {
+                if !output.trim().is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(wrap_width.min(40)),
+                        styles::DIM_TEXT,
+                    )));
+                    
+                    const MAX_MATCHES: usize = 15;
+                    let matches: Vec<&str> = output.lines().collect();
+                    
+                    for line in matches.iter().take(MAX_MATCHES) {
+                        for wrapped in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::styled(
+                                wrapped.to_string(),
+                                Style::default(),
+                            )));
+                        }
+                    }
+                    
+                    if matches.len() > MAX_MATCHES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more matches)", matches.len() - MAX_MATCHES),
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
+                } else {
+                    lines.push(Line::from(Span::styled(
+                        "No matches found",
+                        styles::ITALIC_GRAY,
+                    )));
+                }
+            }
+        }
+
+        lines
     }
 
-    fn format_default_tool_lines(
+    fn format_todo_read_tool(
+        &self,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        if let Some(result) = result {
+            // We have a result - show summary or details based on mode
+            match result {
+                ToolResult::Success { output } => {
+                    if mode == ViewMode::Compact {
+                        // Try to parse as JSON to show summary
+                        if let Ok(todos) = serde_json::from_str::<Vec<serde_json::Value>>(output) {
+                            let pending = todos.iter().filter(|t| 
+                                t.get("status").and_then(|s| s.as_str()) == Some("pending")
+                            ).count();
+                            let in_progress = todos.iter().filter(|t| 
+                                t.get("status").and_then(|s| s.as_str()) == Some("in_progress")
+                            ).count();
+                            lines.push(Line::from(Span::styled(
+                                format!("{} todos ({} pending, {} in progress)", todos.len(), pending, in_progress),
+                                styles::DIM_TEXT,
+                            )));
+                        } else {
+                            lines.push(Line::from(Span::styled(
+                                "Read todo list",
+                                styles::DIM_TEXT,
+                            )));
+                        }
+                    } else {
+                        // Detailed mode - show the todos
+                        lines.push(Line::from(Span::styled("Todo List:", styles::TOOL_HEADER)));
+                        if let Ok(todos) = serde_json::from_str::<Vec<serde_json::Value>>(output) {
+                            for todo in &todos {
+                                if let (Some(content), Some(status), Some(priority)) = (
+                                    todo.get("content").and_then(|c| c.as_str()),
+                                    todo.get("status").and_then(|s| s.as_str()),
+                                    todo.get("priority").and_then(|p| p.as_str()),
+                                ) {
+                                    let status_icon = match status {
+                                        "pending" => "⏳",
+                                        "in_progress" => "🔄",
+                                        "completed" => "✅",
+                                        _ => "❓",
+                                    };
+                                    let priority_color = match priority {
+                                        "high" => Color::Red,
+                                        "medium" => Color::Yellow,
+                                        "low" => Color::Green,
+                                        _ => Color::White,
+                                    };
+                                    lines.push(Line::from(vec![
+                                        Span::styled(format!("{} ", status_icon), Style::default()),
+                                        Span::styled(
+                                            format!("[{}] ", priority.to_uppercase()),
+                                            Style::default().fg(priority_color),
+                                        ),
+                                        Span::styled(content.to_string(), Style::default()),
+                                    ]));
+                                }
+                            }
+                        } else {
+                            // Fallback to raw output
+                            for line in output.lines().take(20) {
+                                for wrapped in textwrap::wrap(line, wrap_width) {
+                                    lines.push(Line::from(Span::raw(wrapped.to_string())));
+                                }
+                            }
+                        }
+                    }
+                }
+                ToolResult::Error { error } => {
+                    lines.push(Line::from(Span::styled(
+                        format!("Error reading todos: {}", error),
+                        styles::ERROR_TEXT,
+                    )));
+                }
+            }
+        } else {
+            // No result yet - just show we're reading
+            lines.push(Line::from(Span::styled(
+                "Read todo list",
+                styles::DIM_TEXT,
+            )));
+        }
+
+        lines
+    }
+
+    fn format_todo_write_tool(
+        &self,
+        params: &TodoWriteParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        let todo_count = params.todos.len();
+        let completed_count = params.todos.iter()
+            .filter(|t| t.status == tools::tools::todo::TodoStatus::Completed)
+            .count();
+
+        if mode == ViewMode::Compact || result.is_some() {
+            // Compact mode or when we have a result - show single line summary
+            lines.push(Line::from(Span::styled(
+                format!("Update todos ({} items, {} completed)", todo_count, completed_count),
+                styles::DIM_TEXT,
+            )));
+        } else {
+            // Detailed mode without result - show full todo list
+            lines.push(Line::from(Span::styled(
+                format!("Updating {} todo items:", params.todos.len()),
+                Style::default(),
+            )));
+            for todo in &params.todos {
+                let status_icon = match todo.status {
+                    tools::tools::todo::TodoStatus::Pending => "⏳",
+                    tools::tools::todo::TodoStatus::InProgress => "🔄",
+                    tools::tools::todo::TodoStatus::Completed => "✅",
+                };
+                let priority_color = match todo.priority {
+                    tools::tools::todo::TodoPriority::High => Color::Red,
+                    tools::tools::todo::TodoPriority::Medium => Color::Yellow,
+                    tools::tools::todo::TodoPriority::Low => Color::Green,
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{} ", status_icon), Style::default()),
+                    Span::styled(
+                        format!("[{}] ", format!("{:?}", todo.priority).to_uppercase()),
+                        Style::default().fg(priority_color),
+                    ),
+                    Span::styled(todo.content.clone(), Style::default()),
+                ]));
+            }
+        }
+
+        lines
+    }
+
+    fn format_view_tool(
+        &self,
+        params: &ViewParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        let file_name = std::path::Path::new(&params.file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&params.file_path);
+
+        if mode == ViewMode::Compact {
+            // Compact mode - just show file name and result summary
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { output } => {
+                        let line_count = output.lines().count();
+                        lines.push(Line::from(Span::styled(
+                            format!("Read {} ({} lines)", file_name, line_count),
+                            styles::DIM_TEXT,
+                        )));
+                    }
+                    ToolResult::Error { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Failed to read {}", file_name),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("Read {}", file_name),
+                    styles::DIM_TEXT,
+                )));
+            }
+        } else {
+            // Detailed mode
+            lines.push(Line::from(Span::styled(
+                format!("File: {}", params.file_path),
+                Style::default(),
+            )));
+            
+            // Add file info if available
+            if let Some(offset) = params.offset {
+                lines.push(Line::from(Span::styled(
+                    format!("Starting from line: {}", offset),
+                    styles::DIM_TEXT,
+                )));
+            }
+            if let Some(limit) = params.limit {
+                lines.push(Line::from(Span::styled(
+                    format!("Max lines: {}", limit),
+                    styles::DIM_TEXT,
+                )));
+            }
+
+            // Show file content if we have a result
+            if let Some(ToolResult::Success { output }) = result {
+                if !output.trim().is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(wrap_width.min(40)),
+                        styles::DIM_TEXT,
+                    )));
+                    
+                    const MAX_PREVIEW_LINES: usize = 20;
+                    let content_lines: Vec<&str> = output.lines().collect();
+                    
+                    for line in content_lines.iter().take(MAX_PREVIEW_LINES) {
+                        for wrapped in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        }
+                    }
+                    
+                    if content_lines.len() > MAX_PREVIEW_LINES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more lines)", content_lines.len() - MAX_PREVIEW_LINES),
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn format_ls_tool(
+        &self,
+        params: &LsParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        let dir_name = std::path::Path::new(&params.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&params.path);
+
+        if mode == ViewMode::Compact {
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { output } => {
+                        let file_count = output.lines().filter(|line| !line.trim().is_empty()).count();
+                        lines.push(Line::from(Span::styled(
+                            format!("List {} ({} files)", dir_name, file_count),
+                            styles::DIM_TEXT,
+                        )));
+                    }
+                    ToolResult::Error { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Failed to list {}", dir_name),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("List {}", dir_name),
+                    styles::DIM_TEXT,
+                )));
+            }
+        } else {
+            // Detailed mode
+            lines.push(Line::from(Span::styled(
+                format!("Directory: {}", params.path),
+                Style::default(),
+            )));
+            if let Some(ignore) = &params.ignore {
+                lines.push(Line::from(Span::styled(
+                    format!("Ignore patterns: {}", ignore.join(", ")),
+                    styles::DIM_TEXT,
+                )));
+            }
+
+            // Show files if we have results
+            if let Some(ToolResult::Success { output }) = result {
+                if !output.trim().is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(wrap_width.min(40)),
+                        styles::DIM_TEXT,
+                    )));
+                    
+                    const MAX_FILES: usize = 20;
+                    let files: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+                    
+                    for file in files.iter().take(MAX_FILES) {
+                        lines.push(Line::from(Span::raw(file.to_string())));
+                    }
+                    
+                    if files.len() > MAX_FILES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more files)", files.len() - MAX_FILES),
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn format_glob_tool(
+        &self,
+        params: &GlobParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        let path_display = params.path.as_deref().unwrap_or(".");
+
+        if mode == ViewMode::Compact {
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { output } => {
+                        let file_count = output.lines().filter(|line| !line.trim().is_empty()).count();
+                        lines.push(Line::from(Span::styled(
+                            format!("Glob '{}' in {} ({} matches)", params.pattern, path_display, file_count),
+                            styles::DIM_TEXT,
+                        )));
+                    }
+                    ToolResult::Error { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Glob '{}' failed", params.pattern),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("Glob '{}' in {}", params.pattern, path_display),
+                    styles::DIM_TEXT,
+                )));
+            }
+        } else {
+            // Detailed mode
+            lines.push(Line::from(Span::styled(
+                format!("Pattern: {}", params.pattern),
+                Style::default(),
+            )));
+            if let Some(path) = &params.path {
+                lines.push(Line::from(Span::styled(
+                    format!("Path: {}", path),
+                    Style::default(),
+                )));
+            }
+
+            // Show matches if we have results
+            if let Some(ToolResult::Success { output }) = result {
+                if !output.trim().is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(wrap_width.min(40)),
+                        styles::DIM_TEXT,
+                    )));
+                    
+                    const MAX_FILES: usize = 20;
+                    let files: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+                    
+                    for file in files.iter().take(MAX_FILES) {
+                        lines.push(Line::from(Span::raw(file.to_string())));
+                    }
+                    
+                    if files.len() > MAX_FILES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more matches)", files.len() - MAX_FILES),
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn format_replace_tool(
+        &self,
+        params: &ReplaceParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        if mode == ViewMode::Compact {
+            if result.is_some() {
+                lines.push(Line::from(Span::styled(
+                    format!("Replace {} ({} lines)", params.file_path, params.content.lines().count()),
+                    Style::default().fg(Color::Yellow),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("Replace {}", params.file_path),
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("Replacing {}", params.file_path),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            
+            if result.is_none() {
+                // Show preview of new content
+                lines.push(Line::from(Span::styled(
+                    format!("+++ {} (Full New Content)", params.file_path),
+                    styles::TOOL_SUCCESS,
+                )));
+                const MAX_PREVIEW_LINES: usize = 15;
+                for (idx, line) in params.content.lines().enumerate() {
+                    if idx >= MAX_PREVIEW_LINES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more lines)", params.content.lines().count() - MAX_PREVIEW_LINES),
+                            styles::ITALIC_GRAY,
+                        )));
+                        break;
+                    }
+                    for wrapped_line in textwrap::wrap(line, wrap_width) {
+                        lines.push(Line::from(Span::styled(
+                            format!("+ {}", wrapped_line),
+                            styles::TOOL_SUCCESS,
+                        )));
+                    }
+                }
+            }
+
+            // Show error if result is an error
+            if let Some(ToolResult::Error { error }) = result {
+                lines.push(Line::from(Span::styled(
+                    format!("Error: {}", error),
+                    styles::ERROR_TEXT,
+                )));
+            }
+        }
+
+        lines
+    }
+
+    fn format_dispatch_agent_tool(
+        &self,
+        params: &DispatchAgentParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        if mode == ViewMode::Compact {
+            let preview = if params.prompt.len() > 60 {
+                format!("{}...", &params.prompt[..57])
+            } else {
+                params.prompt.clone()
+            };
+            
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { output } => {
+                        let line_count = output.lines().count();
+                        lines.push(Line::from(Span::styled(
+                            format!("Agent: {} ({} lines)", preview, line_count),
+                            styles::DIM_TEXT,
+                        )));
+                    }
+                    ToolResult::Error { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Agent failed: {}", preview),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("Agent: {}", preview),
+                    styles::DIM_TEXT,
+                )));
+            }
+        } else {
+            // Detailed mode
+            lines.push(Line::from(Span::styled("Agent Task:", styles::TOOL_HEADER)));
+            for line in params.prompt.lines() {
+                for wrapped_line in textwrap::wrap(line, wrap_width) {
+                    lines.push(Line::from(Span::styled(
+                        wrapped_line.to_string(),
+                        Style::default(),
+                    )));
+                }
+            }
+
+            // Show output if we have results
+            if let Some(ToolResult::Success { output }) = result {
+                if !output.trim().is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(wrap_width.min(40)),
+                        styles::DIM_TEXT,
+                    )));
+                    
+                    const MAX_OUTPUT_LINES: usize = 30;
+                    let output_lines: Vec<&str> = output.lines().collect();
+                    
+                    for line in output_lines.iter().take(MAX_OUTPUT_LINES) {
+                        for wrapped in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        }
+                    }
+                    
+                    if output_lines.len() > MAX_OUTPUT_LINES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more lines)", output_lines.len() - MAX_OUTPUT_LINES),
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn format_fetch_tool(
+        &self,
+        params: &FetchParams,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+    ) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        if mode == ViewMode::Compact {
+            if let Some(result) = result {
+                match result {
+                    ToolResult::Success { output } => {
+                        let char_count = output.len();
+                        let size_str = if char_count > 1000 {
+                            format!("{:.1}KB", char_count as f64 / 1000.0)
+                        } else {
+                            format!("{} chars", char_count)
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("Fetch: {} ({})", params.url, size_str),
+                            styles::DIM_TEXT,
+                        )));
+                    }
+                    ToolResult::Error { .. } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Failed to fetch: {}", params.url),
+                            styles::ERROR_TEXT,
+                        )));
+                    }
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!("Fetch: {}", params.url),
+                    styles::DIM_TEXT,
+                )));
+            }
+        } else {
+            // Detailed mode
+            lines.push(Line::from(Span::styled(
+                format!("URL: {}", params.url),
+                Style::default(),
+            )));
+            lines.push(Line::from(Span::styled("Prompt:", styles::TOOL_HEADER)));
+            for line in params.prompt.lines() {
+                for wrapped_line in textwrap::wrap(line, wrap_width) {
+                    lines.push(Line::from(Span::styled(
+                        wrapped_line.to_string(),
+                        Style::default(),
+                    )));
+                }
+            }
+
+            // Show output if we have results
+            if let Some(ToolResult::Success { output }) = result {
+                if !output.trim().is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(wrap_width.min(40)),
+                        styles::DIM_TEXT,
+                    )));
+                    
+                    const MAX_OUTPUT_LINES: usize = 25;
+                    let output_lines: Vec<&str> = output.lines().collect();
+                    
+                    for line in output_lines.iter().take(MAX_OUTPUT_LINES) {
+                        for wrapped in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        }
+                    }
+                    
+                    if output_lines.len() > MAX_OUTPUT_LINES {
+                        lines.push(Line::from(Span::styled(
+                            format!("... ({} more lines)", output_lines.len() - MAX_OUTPUT_LINES),
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn format_default_tool(
         &self,
         call: &ToolCall,
+        result: &Option<ToolResult>,
         wrap_width: usize,
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         if mode == ViewMode::Detailed {
-            // Fallback to JSON
+            // Show parameters
             if let Ok(json) = serde_json::to_string_pretty(&call.parameters) {
                 for line in json.lines() {
                     let wrapped_lines = textwrap::wrap(line, wrap_width);
@@ -447,83 +1252,51 @@ impl DefaultContentRenderer {
                     }
                 }
             }
+        } else {
+            // Compact mode - just show tool name
+            lines.push(Line::from(Span::styled(
+                format!("{} tool", call.name),
+                styles::DIM_TEXT,
+            )));
         }
 
-        lines
-    }
-
-    fn format_tool_result_lines(
-        &self,
-        output: &str,
-        wrap_width: usize,
-        is_error: bool,
-        mode: ViewMode,
-    ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
-        if mode == ViewMode::Compact {
-            if output.trim().is_empty() {
+        // Show result if available
+        if let Some(result) = result {
+            if mode == ViewMode::Detailed {
                 lines.push(Line::from(Span::styled(
-                    if is_error {
-                        "✗ Error (no details)"
-                    } else {
-                        "✓ Completed (no output)"
-                    },
-                    if is_error {
-                        styles::TOOL_ERROR
-                    } else {
-                        styles::TOOL_SUCCESS
-                    },
+                    "─".repeat(wrap_width.min(40)),
+                    styles::DIM_TEXT,
                 )));
-            } else {
-                let first_line = output.lines().next().unwrap_or("");
-                let line_count = output.lines().count();
-                if is_error {
-                    lines.push(Line::from(Span::styled(
-                        format!("✗ Error: {}", first_line),
-                        styles::TOOL_ERROR,
-                    )));
-                } else {
-                    lines.push(Line::from(Span::styled(
-                        format!("✓ {} lines output", line_count),
-                        styles::TOOL_SUCCESS,
-                    )));
-                }
             }
-        } else {
-            // Detailed mode
-            if output.trim().is_empty() {
-                lines.push(Line::from(Span::styled("(No output)", styles::ITALIC_GRAY)));
-            } else {
-                const MAX_PREVIEW_LINES: usize = 20;
-                let output_lines: Vec<&str> = output.lines().collect();
-                let truncated = output_lines.len() > MAX_PREVIEW_LINES;
 
-                for (_idx, line) in output_lines.iter().take(MAX_PREVIEW_LINES).enumerate() {
-                    let wrapped_lines = textwrap::wrap(line, wrap_width);
-                    if wrapped_lines.is_empty() {
-                        lines.push(Line::raw(""));
+            match result {
+                ToolResult::Success { output } => {
+                    if output.trim().is_empty() {
+                        if mode == ViewMode::Detailed {
+                            lines.push(Line::from(Span::styled("(No output)", styles::ITALIC_GRAY)));
+                        }
                     } else {
-                        for wrapped_line in wrapped_lines {
+                        const MAX_LINES: usize = 10;
+                        let output_lines: Vec<&str> = output.lines().collect();
+                        
+                        for line in output_lines.iter().take(MAX_LINES) {
+                            for wrapped in textwrap::wrap(line, wrap_width) {
+                                lines.push(Line::from(Span::raw(wrapped.to_string())));
+                            }
+                        }
+                        
+                        if output_lines.len() > MAX_LINES {
                             lines.push(Line::from(Span::styled(
-                                wrapped_line.to_string(),
-                                if is_error {
-                                    styles::ERROR_TEXT
-                                } else {
-                                    Style::default()
-                                },
+                                format!("... ({} more lines)", output_lines.len() - MAX_LINES),
+                                styles::ITALIC_GRAY,
                             )));
                         }
                     }
                 }
-
-                if truncated {
+                ToolResult::Error { error } => {
                     lines.push(Line::from(Span::styled(
-                        format!(
-                            "... ({} more lines)",
-                            output_lines.len() - MAX_PREVIEW_LINES
-                        ),
-                        styles::ITALIC_GRAY,
+                        format!("Error: {}", error),
+                        styles::ERROR_TEXT,
                     )));
                 }
             }
@@ -531,6 +1304,7 @@ impl DefaultContentRenderer {
 
         lines
     }
+
 
     fn draw_tool_box(
         &self,
@@ -541,22 +1315,27 @@ impl DefaultContentRenderer {
         buf: &mut Buffer,
     ) {
         let box_style = styles::TOOL_BOX;
-        let icon = Self::get_tool_icon(&call.name);
 
-        // Build title with multiple styled parts
-        let mut title_spans = vec![
-            Span::styled(format!(" {} {} ", icon, call.name), box_style),
-            Span::styled(format!("[{}]", call.id), styles::TOOL_ID),
-        ];
-
-        // Add result indicator if there's a result
+        // Build title with status indicator first, then tool name
+        let mut title_spans = vec![];
+        
+        // Add status indicator if there's a result
         if let Some(result) = result {
             let (indicator, style) = match result {
-                ToolResult::Success { .. } => (" → ✓", styles::TOOL_SUCCESS),
-                ToolResult::Error { .. } => (" → ✗", styles::TOOL_ERROR),
+                ToolResult::Success { .. } => (" ✓ ", styles::TOOL_SUCCESS),
+                ToolResult::Error { .. } => (" ✗ ", styles::TOOL_ERROR),
             };
             title_spans.push(Span::styled(indicator, style));
+        } else {
+            // Add space to align with completed tools
+            title_spans.push(Span::raw("   "));
         }
+        
+        // Add tool name
+        title_spans.push(Span::styled(format!("{} ", call.name), box_style));
+        
+        // Add tool ID
+        title_spans.push(Span::styled(format!("[{}]", call.id), styles::TOOL_ID));
 
         let title = Line::from(title_spans);
 
@@ -747,12 +1526,12 @@ impl DefaultContentRenderer {
             // Just show status
             if exit_code == 0 {
                 lines.push(Line::from(Span::styled(
-                    "✓ Completed successfully",
+                    "Completed successfully",
                     styles::TOOL_SUCCESS,
                 )));
             } else {
                 lines.push(Line::from(Span::styled(
-                    format!("✗ Failed with exit code {}", exit_code),
+                    format!("Failed with exit code {}", exit_code),
                     styles::TOOL_ERROR,
                 )));
             }
@@ -832,11 +1611,17 @@ impl DefaultContentRenderer {
             styles::COMMAND_ERROR_BOX
         };
 
-        let icon = if exit_code == 0 { "✓" } else { "✗" };
-        let title = Line::from(Span::styled(
-            format!(" {} Command Execution ", icon),
-            box_style,
-        ));
+        // Build title with status indicator first
+        let status_indicator = if exit_code == 0 { 
+            Span::styled(" ✓ ", styles::TOOL_SUCCESS)
+        } else { 
+            Span::styled(" ✗ ", styles::TOOL_ERROR)
+        };
+        
+        let title = Line::from(vec![
+            status_indicator,
+            Span::styled("Command Execution", box_style),
+        ]);
 
         // Create the block
         let block = Block::default()
@@ -934,26 +1719,10 @@ impl ContentRenderer for DefaultContentRenderer {
                 // Box borders
                 let mut height = 3;
 
-                // Tool call content
-                let call_lines =
-                    self.format_tool_call_lines(call, width.saturating_sub(4) as usize, mode);
-                height += call_lines.len() as u16;
-
-                // Result if present
-                if let Some(result) = result {
-                    // height += 1; // Separator
-                    let output = match result {
-                        ToolResult::Success { output } => output,
-                        ToolResult::Error { error } => error,
-                    };
-                    let result_lines = self.format_tool_result_lines(
-                        output,
-                        width.saturating_sub(4) as usize,
-                        matches!(result, ToolResult::Error { .. }),
-                        mode,
-                    );
-                    height += result_lines.len() as u16;
-                }
+                // Tool content with integrated call/result
+                let tool_lines =
+                    self.format_tool_with_result(call, result, width.saturating_sub(4) as usize, mode);
+                height += tool_lines.len() as u16;
 
                 height
             }
