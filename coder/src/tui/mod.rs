@@ -367,7 +367,7 @@ impl Tui {
                     }
                 }
 
-                _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2) => {}
+                _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2), if self.is_processing => {}
             }
         }
 
