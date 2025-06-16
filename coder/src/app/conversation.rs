@@ -34,7 +34,6 @@ pub enum UserContent {
 }
 
 impl UserContent {
-    /// Format command execution as XML for consistent representation across providers
     pub fn format_command_execution_as_xml(
         command: &str,
         stdout: &str,
@@ -42,7 +41,12 @@ impl UserContent {
         exit_code: i32,
     ) -> String {
         format!(
-            "<command_execution>\n    <command>{}</command>\n    <stdout>{}</stdout>\n    <stderr>{}</stderr>\n    <exit_code>{}</exit_code>\n</command_execution>",
+            r#"<executed_command>
+    <command>{}</command>
+    <stdout>{}</stdout>
+    <stderr>{}</stderr>
+    <exit_code>{}</exit_code>
+</executed_command>"#,
             command, stdout, stderr, exit_code
         )
     }
@@ -78,15 +82,9 @@ impl ThoughtContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantContent {
-    Text {
-        text: String,
-    },
-    ToolCall {
-        tool_call: ToolCall,
-    },
-    Thought {
-        thought: ThoughtContent,
-    },
+    Text { text: String },
+    ToolCall { tool_call: ToolCall },
+    Thought { thought: ThoughtContent },
 }
 
 /// Result from a tool execution
@@ -118,7 +116,6 @@ pub enum Message {
         id: String,
     },
 }
-
 
 impl Message {
     pub fn role(&self) -> Role {
@@ -215,35 +212,29 @@ impl Message {
     /// Extract all text content from the message
     pub fn extract_text(&self) -> String {
         match self {
-            Message::User { content, .. } => {
-                content.iter()
-                    .filter_map(|c| match c {
-                        UserContent::Text { text } => Some(text.clone()),
-                        UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            Message::Assistant { content, .. } => {
-                content.iter()
-                    .filter_map(|c| match c {
-                        AssistantContent::Text { text } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            Message::User { content, .. } => content
+                .iter()
+                .filter_map(|c| match c {
+                    UserContent::Text { text } => Some(text.clone()),
+                    UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Assistant { content, .. } => content
+                .iter()
+                .filter_map(|c| match c {
+                    AssistantContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
             Message::Tool { result, .. } => match result {
                 ToolResult::Success { output } => output.clone(),
                 ToolResult::Error { error } => format!("Error: {}", error),
             },
         }
     }
-
-
 }
-
-
 
 const SUMMARY_PROMPT: &str = r#"Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
 This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
