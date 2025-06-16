@@ -49,11 +49,12 @@ impl EventProcessor for ProcessingStateProcessor {
 
                 // Add cancellation message to the UI
                 let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
-                let cancellation_message = crate::tui::widgets::message_list::MessageContent::System {
-                    id: display_id,
-                    text: format!("Operation cancelled: {}", info),
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                };
+                let cancellation_message =
+                    crate::tui::widgets::message_list::MessageContent::Command {
+                        id: display_id,
+                        text: format!("Operation cancelled: {}", info),
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
                 ctx.messages.push(cancellation_message);
                 *ctx.messages_updated = true;
 

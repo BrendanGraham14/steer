@@ -36,7 +36,7 @@ impl EventProcessor for SystemEventProcessor {
             }
             AppEvent::CommandResponse { content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                let response_message = MessageContent::System {
+                let response_message = MessageContent::Command {
                     id: response_id,
                     text: content,
                     timestamp: chrono::Utc::now().to_rfc3339(),

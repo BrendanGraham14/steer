@@ -33,7 +33,7 @@ pub enum MessageContent {
         result: Option<ToolResult>,
         timestamp: String,
     },
-    System {
+    Command {
         id: String,
         text: String,
         timestamp: String,
@@ -46,7 +46,7 @@ impl MessageContent {
             Self::User { id, .. } => id,
             Self::Assistant { id, .. } => id,
             Self::Tool { id, .. } => id,
-            Self::System { id, .. } => id,
+            Self::Command { id, .. } => id,
         }
     }
 
@@ -143,7 +143,12 @@ impl MessageListState {
         };
     }
 
-    pub fn scroll_to_selected(&mut self, messages: &[MessageContent], renderer: &dyn ContentRenderer, width: u16) {
+    pub fn scroll_to_selected(
+        &mut self,
+        messages: &[MessageContent],
+        renderer: &dyn ContentRenderer,
+        width: u16,
+    ) {
         if let Some(selected) = self.selected {
             let mut y_offset = 0u16;
             for (idx, message) in messages.iter().enumerate() {
@@ -153,14 +158,17 @@ impl MessageListState {
                     self.user_scrolled = true;
                     break;
                 }
-                
+
                 let mode = if self.view_prefs.global_override.is_some() {
                     self.view_prefs.global_override.unwrap()
                 } else {
                     match message {
                         MessageContent::Tool { .. } => self.view_prefs.tool_calls,
                         MessageContent::Assistant { blocks, .. } => {
-                            if blocks.iter().any(|b| matches!(b, AssistantContent::Thought { .. })) {
+                            if blocks
+                                .iter()
+                                .any(|b| matches!(b, AssistantContent::Thought { .. }))
+                            {
                                 ViewMode::Detailed
                             } else {
                                 self.view_prefs.text
@@ -169,7 +177,7 @@ impl MessageListState {
                         _ => self.view_prefs.text,
                     }
                 };
-                
+
                 let height = renderer.calculate_height(message, mode, width);
                 y_offset = y_offset.saturating_add(height);
                 if idx + 1 < messages.len() {
@@ -226,11 +234,7 @@ impl<'a> MessageList<'a> {
         self
     }
 
-    fn determine_view_mode(
-        &self,
-        content: &MessageContent,
-        state: &MessageListState,
-    ) -> ViewMode {
+    fn determine_view_mode(&self, content: &MessageContent, state: &MessageListState) -> ViewMode {
         // Check for global override first
         if let Some(mode) = state.view_prefs.global_override {
             return mode;
@@ -295,16 +299,19 @@ impl<'a> StatefulWidget for MessageList<'a> {
         // Create ScrollView and render messages into it
         let mut scroll_view = ScrollView::new(content_size)
             .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
-        
+
         // Create a custom widget that renders all messages
         let messages_widget = MessagesRenderer {
             messages: self.messages,
             renderer: &*self.renderer,
             state,
         };
-        
+
         // Render the messages widget into the scroll view
-        scroll_view.render_widget(messages_widget, Rect::new(0, 0, content_size.width, content_size.height));
+        scroll_view.render_widget(
+            messages_widget,
+            Rect::new(0, 0, content_size.width, content_size.height),
+        );
 
         // Render the scroll view to the screen
         scroll_view.render(messages_area, buf, &mut state.scroll_state);
@@ -332,11 +339,11 @@ struct MessagesRenderer<'a> {
 impl<'a> Widget for MessagesRenderer<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut y = 0;
-        
+
         for (idx, message) in self.messages.iter().enumerate() {
             let mode = self.determine_view_mode(message);
             let height = self.renderer.calculate_height(message, mode, area.width);
-            
+
             // Check if this message is visible in the current area
             if y + height < area.y {
                 // Message is above visible area, skip rendering but count height
@@ -346,44 +353,44 @@ impl<'a> Widget for MessagesRenderer<'a> {
                 }
                 continue;
             }
-            
+
             if y >= area.y + area.height {
                 // Message is below visible area, stop rendering
                 break;
             }
-            
+
             // Calculate the actual area for this message (might be clipped)
             let message_y = y.max(area.y);
             let visible_height = (y + height).min(area.y + area.height) - message_y;
-            
+
             let message_area = Rect {
                 x: area.x,
                 y: message_y,
                 width: area.width,
                 height: visible_height,
             };
-            
+
             // Highlight selected message
             if self.state.selected == Some(idx) {
                 let highlight_block = Block::default()
                     .borders(Borders::LEFT)
                     .border_style(styles::SELECTION_HIGHLIGHT);
                 highlight_block.render(message_area, buf);
-                
+
                 // Adjust area for content
                 let content_area = Rect {
                     x: message_area.x + 1,
                     width: message_area.width.saturating_sub(1),
                     ..message_area
                 };
-                
+
                 self.renderer.render(message, mode, content_area, buf);
             } else {
                 self.renderer.render(message, mode, message_area, buf);
             }
-            
+
             y += height;
-            
+
             // Add gap between messages
             if idx + 1 < self.messages.len() {
                 y += 1;

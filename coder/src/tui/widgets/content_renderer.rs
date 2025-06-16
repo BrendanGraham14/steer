@@ -1536,7 +1536,7 @@ impl DefaultContentRenderer {
         content
     }
 
-    fn render_system_message(&self, text: &str, area: Rect, buf: &mut Buffer) {
+    fn render_command_message(&self, text: &str, area: Rect, buf: &mut Buffer) {
         // Create wrapped text
         let wrapped_text = self.wrap_text(text, area.width.saturating_sub(2));
 
@@ -1703,8 +1703,8 @@ impl ContentRenderer for DefaultContentRenderer {
             MessageContent::Tool { call, result, .. } => {
                 self.render_tool_message(call, result, mode, area, buf);
             }
-            MessageContent::System { text, .. } => {
-                self.render_system_message(text, area, buf);
+            MessageContent::Command { text, .. } => {
+                self.render_command_message(text, area, buf);
             }
         }
     }
@@ -1779,7 +1779,7 @@ impl ContentRenderer for DefaultContentRenderer {
 
                 height
             }
-            MessageContent::System { text, .. } => {
+            MessageContent::Command { text, .. } => {
                 // Box borders + content
                 let mut height = 3;
                 let lines = textwrap::wrap(text, width.saturating_sub(4) as usize);
