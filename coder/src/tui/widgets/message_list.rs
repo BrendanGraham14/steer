@@ -320,6 +320,14 @@ impl<'a> StatefulWidget for MessageList<'a> {
 
             scrollbar.render(messages_area, buf, &mut scrollbar_state);
         }
+
+        // --- Update user_scrolled flag based on current position ---
+        // Determine the maximum vertical offset (0 when content fits the view).
+        let max_offset = total_height.saturating_sub(messages_area.height) as u16;
+        let current_offset = state.scroll_state.offset().y;
+        // If we're at (or past, due to clamping) the bottom, clear the manual scroll flag.
+        // Otherwise, mark that the user has scrolled away.
+        state.user_scrolled = current_offset < max_offset;
     }
 }
 
