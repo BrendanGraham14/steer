@@ -205,6 +205,26 @@ impl DefaultContentRenderer {
         self.draw_tool_box(call, result, all_lines, area, buf);
     }
 
+    /// Generic helper to format a tool with parameters or fall back to default formatting
+    fn format_tool_or_default<T, F>(
+        &self,
+        call: &ToolCall,
+        result: &Option<ToolResult>,
+        wrap_width: usize,
+        mode: ViewMode,
+        formatter: F,
+    ) -> Vec<Line<'static>>
+    where
+        T: serde::de::DeserializeOwned,
+        F: FnOnce(&Self, &T, &Option<ToolResult>, usize, ViewMode) -> Vec<Line<'static>>,
+    {
+        if let Ok(params) = serde_json::from_value::<T>(call.parameters.clone()) {
+            formatter(self, &params, result, wrap_width, mode)
+        } else {
+            self.format_default_tool(call, result, wrap_width, mode)
+        }
+    }
+
     fn format_tool_with_result(
         &self,
         call: &ToolCall,
@@ -213,82 +233,77 @@ impl DefaultContentRenderer {
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
         match call.name.as_str() {
-            EDIT_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<EditParams>(call.parameters.clone()) {
-                    self.format_edit_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            REPLACE_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<ReplaceParams>(call.parameters.clone())
-                {
-                    self.format_replace_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            BASH_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<BashParams>(call.parameters.clone()) {
-                    self.format_bash_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            VIEW_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<ViewParams>(call.parameters.clone()) {
-                    self.format_view_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            GREP_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<GrepParams>(call.parameters.clone()) {
-                    self.format_grep_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            LS_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<LsParams>(call.parameters.clone()) {
-                    self.format_ls_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            GLOB_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<GlobParams>(call.parameters.clone()) {
-                    self.format_glob_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
+            EDIT_TOOL_NAME => self.format_tool_or_default::<EditParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_edit_tool(p, r, w, m),
+            ),
+            REPLACE_TOOL_NAME => self.format_tool_or_default::<ReplaceParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_replace_tool(p, r, w, m),
+            ),
+            BASH_TOOL_NAME => self.format_tool_or_default::<BashParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_bash_tool(p, r, w, m),
+            ),
+            VIEW_TOOL_NAME => self.format_tool_or_default::<ViewParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_view_tool(p, r, w, m),
+            ),
+            GREP_TOOL_NAME => self.format_tool_or_default::<GrepParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_grep_tool(p, r, w, m),
+            ),
+            LS_TOOL_NAME => self.format_tool_or_default::<LsParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_ls_tool(p, r, w, m),
+            ),
+            GLOB_TOOL_NAME => self.format_tool_or_default::<GlobParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_glob_tool(p, r, w, m),
+            ),
             TODO_READ_TOOL_NAME => self.format_todo_read_tool(result, wrap_width, mode),
-            TODO_WRITE_TOOL_NAME => {
-                if let Ok(params) =
-                    serde_json::from_value::<TodoWriteParams>(call.parameters.clone())
-                {
-                    self.format_todo_write_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            DISPATCH_AGENT_TOOL_NAME => {
-                if let Ok(params) =
-                    serde_json::from_value::<DispatchAgentParams>(call.parameters.clone())
-                {
-                    self.format_dispatch_agent_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
-            FETCH_TOOL_NAME => {
-                if let Ok(params) = serde_json::from_value::<FetchParams>(call.parameters.clone()) {
-                    self.format_fetch_tool(&params, result, wrap_width, mode)
-                } else {
-                    self.format_default_tool(call, result, wrap_width, mode)
-                }
-            }
+            TODO_WRITE_TOOL_NAME => self.format_tool_or_default::<TodoWriteParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_todo_write_tool(p, r, w, m),
+            ),
+            DISPATCH_AGENT_TOOL_NAME => self.format_tool_or_default::<DispatchAgentParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_dispatch_agent_tool(p, r, w, m),
+            ),
+            FETCH_TOOL_NAME => self.format_tool_or_default::<FetchParams, _>(
+                call,
+                result,
+                wrap_width,
+                mode,
+                |s, p, r, w, m| s.format_fetch_tool(p, r, w, m),
+            ),
             _ => self.format_default_tool(call, result, wrap_width, mode),
         }
     }
