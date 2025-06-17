@@ -3,7 +3,10 @@
 //! Manages the overall processing state of the TUI, including thinking/processing
 //! indicators, spinner state, and progress messages.
 
-use crate::app::AppEvent;
+use crate::app::{
+    AppEvent,
+    conversation::{AppCommandType, UserContent},
+};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 
 /// Processor for events that affect the overall processing state
@@ -50,9 +53,12 @@ impl EventProcessor for ProcessingStateProcessor {
                 // Add cancellation message to the UI
                 let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
                 let cancellation_message =
-                    crate::tui::widgets::message_list::MessageContent::Command {
+                    crate::tui::widgets::message_list::MessageContent::User {
                         id: display_id,
-                        text: format!("Operation cancelled: {}", info),
+                        blocks: vec![UserContent::AppCommand {
+                            command: AppCommandType::Cancel,
+                            response: Some(format!("Operation cancelled: {}", info)),
+                        }],
                         timestamp: chrono::Utc::now().to_rfc3339(),
                     };
                 ctx.messages.push(cancellation_message);

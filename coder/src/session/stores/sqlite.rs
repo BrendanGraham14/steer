@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::app::Message;
 use crate::app::conversation::{AssistantContent, UserContent};
 use crate::events::StreamEvent;
-use crate::session::state::ToolVisibility;
+// use crate::session::state::ToolVisibility;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionOrderBy, SessionState,
     SessionStatus, SessionStore, SessionStoreError, ToolApprovalPolicy, ToolCallState,

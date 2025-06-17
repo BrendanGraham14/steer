@@ -9,6 +9,57 @@ use crate::api::Model;
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 
+/// Types of app commands that can be executed
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "command_type", rename_all = "snake_case")]
+pub enum AppCommandType {
+    /// Model management - list or change models
+    Model { target: Option<String> },
+    /// Clear the conversation
+    Clear,
+    /// Compact the conversation
+    Compact,
+    /// Cancel current operation
+    Cancel,
+    /// Unknown/unrecognized command
+    Unknown { command: String },
+}
+
+impl AppCommandType {
+    /// Get the command string representation
+    pub fn as_command_str(&self) -> String {
+        match self {
+            AppCommandType::Model { target } => {
+                if let Some(model) = target {
+                    format!("model {}", model)
+                } else {
+                    "model".to_string()
+                }
+            }
+            AppCommandType::Clear => "clear".to_string(),
+            AppCommandType::Compact => "compact".to_string(),
+            AppCommandType::Cancel => "cancel".to_string(),
+            AppCommandType::Unknown { command } => command.clone(),
+        }
+    }
+
+    /// Parse a command string into an AppCommandType
+    pub fn from_command_str(command: &str) -> Self {
+        let parts: Vec<&str> = command.trim_start_matches('/').split_whitespace().collect();
+        match parts.first().map(|s| *s) {
+            Some("model") => AppCommandType::Model {
+                target: parts.get(1).map(|s| s.to_string()),
+            },
+            Some("clear") => AppCommandType::Clear,
+            Some("compact") => AppCommandType::Compact,
+            Some("cancel") => AppCommandType::Cancel,
+            _ => AppCommandType::Unknown {
+                command: command.to_string(),
+            },
+        }
+    }
+}
+
 /// Role in the conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy, Display)]
 pub enum Role {
@@ -29,6 +80,10 @@ pub enum UserContent {
         stdout: String,
         stderr: String,
         exit_code: i32,
+    },
+    AppCommand {
+        command: AppCommandType,
+        response: Option<String>,
     },
     // TODO: support attachments
 }
@@ -178,6 +233,13 @@ impl Message {
                         }
                         output
                     }
+                    UserContent::AppCommand { command, response } => {
+                        if let Some(resp) = response {
+                            format!("/{}\n{}", command.as_command_str(), resp)
+                        } else {
+                            format!("/{}", command.as_command_str())
+                        }
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -217,6 +279,7 @@ impl Message {
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.clone()),
                     UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
+                    UserContent::AppCommand { response, .. } => response.clone(),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),

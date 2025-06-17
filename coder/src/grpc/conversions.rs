@@ -3,7 +3,6 @@ use crate::session::state::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, WorkspaceConfig,
 };
-use std::collections::HashSet;
 
 /// Convert internal ToolApprovalPolicy to protobuf
 pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::ToolApprovalPolicy {

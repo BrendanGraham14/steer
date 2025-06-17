@@ -8,11 +8,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::api::Model;
 use crate::api::error::ApiError;
-use crate::app::conversation::{
-    Message as AppMessage, UserContent, AssistantContent, ToolResult,
-    ThoughtContent,
-};
 use crate::api::provider::{CompletionResponse, Provider};
+use crate::app::conversation::{
+    AssistantContent, Message as AppMessage, ThoughtContent, ToolResult,
+    UserContent,
+};
 use tools::ToolSchema;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -359,31 +359,42 @@ struct GeminiContentResponse {
     parts: Vec<GeminiResponsePart>,
 }
 
-
-
 fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
     messages
         .into_iter()
-        .map(|msg| {
-            let (role, parts) = match msg {
+        .filter_map(|msg| {
+            match msg {
                 AppMessage::User { content, .. } => {
                     let parts: Vec<GeminiRequestPart> = content
                         .into_iter()
-                        .map(|user_content| match user_content {
-                            UserContent::Text { text } => GeminiRequestPart::Text { text },
+                        .filter_map(|user_content| match user_content {
+                            UserContent::Text { text } => Some(GeminiRequestPart::Text { text }),
                             UserContent::CommandExecution {
                                 command,
                                 stdout,
                                 stderr,
                                 exit_code,
-                            } => GeminiRequestPart::Text {
+                            } => Some(GeminiRequestPart::Text {
                                 text: UserContent::format_command_execution_as_xml(
-                                    &command, &stdout, &stderr, exit_code
+                                    &command, &stdout, &stderr, exit_code,
                                 ),
-                            },
+                            }),
+                            UserContent::AppCommand { .. } => {
+                                // Don't send app commands to the model - they're for local execution only
+                                None
+                            }
                         })
                         .collect();
-                    ("user", parts)
+
+                    // Only include the message if it has content after filtering
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(GeminiContent {
+                            role: "user".to_string(),
+                            parts,
+                        })
+                    }
                 }
                 AppMessage::Assistant { content, .. } => {
                     let parts: Vec<GeminiRequestPart> = content
@@ -409,9 +420,18 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                             }
                         })
                         .collect();
-                    ("model", parts)
+
+                    // Always include assistant messages (they should always have content)
+                    Some(GeminiContent {
+                        role: "model".to_string(),
+                        parts,
+                    })
                 }
-                AppMessage::Tool { tool_use_id, result, .. } => {
+                AppMessage::Tool {
+                    tool_use_id,
+                    result,
+                    ..
+                } => {
                     // Convert tool result to function response
                     let result_value = match result {
                         ToolResult::Success { output } => {
@@ -420,9 +440,7 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                                 .ok()
                                 .unwrap_or_else(|| Value::String(output))
                         }
-                        ToolResult::Error { error } => {
-                            Value::String(format!("Error: {}", error))
-                        }
+                        ToolResult::Error { error } => Value::String(format!("Error: {}", error)),
                     };
 
                     let parts = vec![GeminiRequestPart::FunctionResponse {
@@ -433,13 +451,12 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                             },
                         },
                     }];
-                    ("function", parts)
-                }
-            };
 
-            GeminiContent {
-                role: role.to_string(),
-                parts,
+                    Some(GeminiContent {
+                        role: "function".to_string(),
+                        parts,
+                    })
+                }
             }
         })
         .collect()

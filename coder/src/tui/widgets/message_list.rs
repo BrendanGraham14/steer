@@ -33,11 +33,6 @@ pub enum MessageContent {
         result: Option<ToolResult>,
         timestamp: String,
     },
-    Command {
-        id: String,
-        text: String,
-        timestamp: String,
-    },
 }
 
 impl MessageContent {
@@ -46,7 +41,6 @@ impl MessageContent {
             Self::User { id, .. } => id,
             Self::Assistant { id, .. } => id,
             Self::Tool { id, .. } => id,
-            Self::Command { id, .. } => id,
         }
     }
 

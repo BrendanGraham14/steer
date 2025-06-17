@@ -1,6 +1,6 @@
 use crate::app::{
     AppEvent, cancellation::ActiveTool,
-    conversation::{Message, Role, AssistantContent, UserContent, ToolResult as ConversationToolResult},
+    conversation::{Message, Role, AssistantContent, UserContent, ToolResult as ConversationToolResult, AppCommandType},
 };
 use tools::ToolCall;
 use crate::grpc::proto::*;
@@ -28,6 +28,12 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                                         stderr: stderr.clone(),
                                         exit_code: *exit_code,
                                     })),
+                                }
+                            }
+                            UserContent::AppCommand { .. } => {
+                                // For now, represent app commands as empty text in gRPC
+                                crate::grpc::proto::UserContent {
+                                    content: Some(user_content::Content::Text(String::new())),
                                 }
                             }
                         }).collect(),
@@ -141,6 +147,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
             id 
         })),
         AppEvent::CommandResponse { 
+            command: _, 
             content, 
             id 
         } => Some(server_event::Event::CommandResponse(CommandResponseEvent { 
@@ -182,7 +189,12 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                                     })),
                                 }
                             }
-                        }).collect(),
+                            UserContent::AppCommand { .. } => {
+                                // For now, represent app commands as empty text in gRPC
+                                crate::grpc::proto::UserContent {
+                                    content: Some(user_content::Content::Text(String::new())),
+                                }
+                            }                        }).collect(),
                         timestamp: *timestamp,
                     })
                 }
@@ -393,6 +405,9 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
             }
         }
         server_event::Event::CommandResponse(e) => Some(AppEvent::CommandResponse { 
+            command: AppCommandType::Unknown { 
+                command: "unknown".to_string() 
+            },
             content: e.content, 
             id: e.id 
         }),

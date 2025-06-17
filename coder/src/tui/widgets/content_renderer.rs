@@ -8,7 +8,7 @@ use ratatui::{
 use similar::{ChangeTag, TextDiff};
 use textwrap;
 
-use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
+use crate::app::conversation::{AppCommandType, AssistantContent, ToolResult, UserContent};
 use crate::tools::dispatch_agent::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams};
 use crate::tools::fetch::{FETCH_TOOL_NAME, FetchParams};
 use tools::tools::bash::BashParams;
@@ -67,6 +67,19 @@ impl DefaultContentRenderer {
                         area.width.saturating_sub(2),
                     );
                     content.extend(cmd_block);
+                }
+                UserContent::AppCommand { command, response } => {
+                    // Format app command and response
+                    content.lines.push(Line::from(vec![
+                        Span::styled("/", styles::COMMAND_PROMPT),
+                        Span::styled(command.as_command_str(), styles::COMMAND_TEXT),
+                    ]));
+
+                    if let Some(resp) = response {
+                        content.lines.push(Line::from(""));
+                        let wrapped = self.wrap_text(resp, area.width.saturating_sub(2));
+                        content.extend(wrapped);
+                    }
                 }
             }
             // Only add spacing between blocks, not after the last one
@@ -1535,160 +1548,6 @@ impl DefaultContentRenderer {
 
         content
     }
-
-    fn render_command_message(&self, text: &str, area: Rect, buf: &mut Buffer) {
-        // Create wrapped text
-        let wrapped_text = self.wrap_text(text, area.width.saturating_sub(2));
-
-        // Create the block with title
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(styles::ROLE_SYSTEM)
-            .title(Line::from(Span::styled(
-                " ℹ System Message ",
-                styles::ROLE_SYSTEM,
-            )));
-
-        // Create paragraph with the content
-        let paragraph = Paragraph::new(wrapped_text).block(block);
-
-        // Render the paragraph
-        paragraph.render(area, buf);
-    }
-
-    fn render_command_execution_message(
-        &self,
-        cmd: &str,
-        stdout: &str,
-        stderr: &str,
-        exit_code: i32,
-        mode: ViewMode,
-        area: Rect,
-        buf: &mut Buffer,
-    ) {
-        let mut lines = Vec::new();
-        let wrap_width = area.width.saturating_sub(4) as usize;
-
-        // Command line
-        lines.push(Line::from(vec![
-            Span::styled("$ ", styles::COMMAND_PROMPT),
-            Span::styled(cmd.to_string(), styles::COMMAND_TEXT),
-        ]));
-
-        if mode == ViewMode::Compact {
-            // Just show status
-            if exit_code == 0 {
-                lines.push(Line::from(Span::styled(
-                    "Completed successfully",
-                    styles::TOOL_SUCCESS,
-                )));
-            } else {
-                lines.push(Line::from(Span::styled(
-                    format!("Failed with exit code {}", exit_code),
-                    styles::TOOL_ERROR,
-                )));
-            }
-        } else {
-            // Detailed mode
-            lines.push(Line::from(Span::styled(
-                "─".repeat(wrap_width.min(cmd.len() + 2)),
-                styles::DIM_TEXT,
-            )));
-
-            // Stdout
-            if !stdout.trim().is_empty() {
-                const MAX_OUTPUT_LINES: usize = 20;
-                let stdout_lines: Vec<&str> = stdout.lines().collect();
-
-                for (_idx, line) in stdout_lines.iter().take(MAX_OUTPUT_LINES).enumerate() {
-                    for wrapped in textwrap::wrap(line, wrap_width) {
-                        lines.push(Line::from(Span::raw(wrapped.to_string())));
-                    }
-                }
-
-                if stdout_lines.len() > MAX_OUTPUT_LINES {
-                    lines.push(Line::from(Span::styled(
-                        format!("... ({} more lines)", stdout_lines.len() - MAX_OUTPUT_LINES),
-                        styles::ITALIC_GRAY,
-                    )));
-                }
-            }
-
-            // Error output and exit code
-            if exit_code != 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("Exit code: {}", exit_code),
-                    styles::ERROR_TEXT,
-                )));
-
-                if !stderr.trim().is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        "Error output:",
-                        styles::ERROR_BOLD,
-                    )));
-
-                    const MAX_ERROR_LINES: usize = 10;
-                    let stderr_lines: Vec<&str> = stderr.lines().collect();
-
-                    for line in stderr_lines.iter().take(MAX_ERROR_LINES) {
-                        for wrapped in textwrap::wrap(line, wrap_width) {
-                            lines.push(Line::from(Span::styled(
-                                wrapped.to_string(),
-                                styles::ERROR_TEXT,
-                            )));
-                        }
-                    }
-
-                    if stderr_lines.len() > MAX_ERROR_LINES {
-                        lines.push(Line::from(Span::styled(
-                            format!(
-                                "... ({} more error lines)",
-                                stderr_lines.len() - MAX_ERROR_LINES
-                            ),
-                            styles::ITALIC_GRAY,
-                        )));
-                    }
-                }
-            } else if stdout.trim().is_empty() {
-                lines.push(Line::from(Span::styled(
-                    "(Command completed successfully with no output)",
-                    styles::ITALIC_GRAY,
-                )));
-            }
-        }
-
-        // Create the block with appropriate styling
-        let box_style = if exit_code == 0 {
-            styles::COMMAND_SUCCESS_BOX
-        } else {
-            styles::COMMAND_ERROR_BOX
-        };
-
-        // Build title with status indicator first
-        let status_indicator = if exit_code == 0 {
-            Span::styled(" ✓ ", styles::TOOL_SUCCESS)
-        } else {
-            Span::styled(" ✗ ", styles::TOOL_ERROR)
-        };
-
-        let title = Line::from(vec![
-            status_indicator,
-            Span::styled("Command Execution", box_style),
-        ]);
-
-        // Create the block
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(box_style)
-            .title(title);
-
-        // Create paragraph with the content
-        let content = Text::from(lines);
-        let paragraph = Paragraph::new(content).block(block);
-
-        // Render the paragraph
-        paragraph.render(area, buf);
-    }
 }
 
 impl ContentRenderer for DefaultContentRenderer {
@@ -1702,9 +1561,6 @@ impl ContentRenderer for DefaultContentRenderer {
             }
             MessageContent::Tool { call, result, .. } => {
                 self.render_tool_message(call, result, mode, area, buf);
-            }
-            MessageContent::Command { text, .. } => {
-                self.render_command_message(text, area, buf);
             }
         }
     }
@@ -1731,6 +1587,16 @@ impl ContentRenderer for DefaultContentRenderer {
                                 if *exit_code != 0 && !stderr.is_empty() {
                                     height += stderr.lines().count().min(10) as u16 + 2;
                                 }
+                            }
+                        }
+                        UserContent::AppCommand { command, response } => {
+                            // Command line
+                            height += 1;
+                            // Response if present
+                            if let Some(resp) = response {
+                                height += 1; // blank line
+                                let lines = textwrap::wrap(resp, width.saturating_sub(2) as usize);
+                                height += lines.len() as u16;
                             }
                         }
                     }
@@ -1777,13 +1643,6 @@ impl ContentRenderer for DefaultContentRenderer {
                 );
                 height += tool_lines.len() as u16;
 
-                height
-            }
-            MessageContent::Command { text, .. } => {
-                // Box borders + content
-                let mut height = 3;
-                let lines = textwrap::wrap(text, width.saturating_sub(4) as usize);
-                height += lines.len() as u16;
                 height
             }
         }

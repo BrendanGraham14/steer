@@ -3,7 +3,10 @@
 //! Processes events related to model changes, command responses, and other
 //! system-level state changes.
 
-use crate::app::AppEvent;
+use crate::app::{
+    AppEvent,
+    conversation::UserContent,
+};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::widgets::message_list::MessageContent;
 
@@ -34,11 +37,15 @@ impl EventProcessor for SystemEventProcessor {
                 *ctx.current_model = model;
                 ProcessingResult::Handled
             }
-            AppEvent::CommandResponse { content, id: _ } => {
+            AppEvent::CommandResponse { command, content, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                let response_message = MessageContent::Command {
+                
+                let response_message = MessageContent::User {
                     id: response_id,
-                    text: content,
+                    blocks: vec![UserContent::AppCommand {
+                        command,
+                        response: Some(content),
+                    }],
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
                 ctx.messages.push(response_message);

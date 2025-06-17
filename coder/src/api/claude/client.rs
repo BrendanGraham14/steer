@@ -6,13 +6,10 @@ use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::api::Model;
-use crate::api::error::ApiError;
-use crate::app::conversation::{
-    Message as AppMessage, UserContent, AssistantContent, ToolResult,
-    ThoughtContent,
+use crate::api::{CompletionResponse, Model, Provider, error::ApiError};
+use crate::app::conversation::{AssistantContent, Message as AppMessage, ThoughtContent, ToolResult,
+    UserContent,
 };
-use crate::api::provider::{CompletionResponse, Provider};
 use tools::ToolSchema;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -215,7 +212,21 @@ impl AnthropicClient {
 
 // Conversion functions start
 fn convert_messages(messages: Vec<AppMessage>) -> Result<Vec<ClaudeMessage>, ApiError> {
-    messages.into_iter().map(convert_single_message).collect()
+    let claude_messages: Result<Vec<ClaudeMessage>, ApiError> =
+        messages.into_iter().map(convert_single_message).collect();
+
+    // Filter out any User messages that have empty content after removing app commands
+    claude_messages.map(|messages| {
+        messages
+            .into_iter()
+            .filter(|msg| {
+                match &msg.content {
+                    ClaudeMessageContent::Text { content } => !content.trim().is_empty(),
+                    _ => true, // Keep all non-text messages
+                }
+            })
+            .collect()
+    })
 }
 
 fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
@@ -224,23 +235,29 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
             // Convert UserContent to Claude format
             let combined_text = content
                 .iter()
-                .map(|user_content| match user_content {
-                    UserContent::Text { text } => text.clone(),
+                .filter_map(|user_content| match user_content {
+                    UserContent::Text { text } => Some(text.clone()),
                     UserContent::CommandExecution {
                         command,
                         stdout,
                         stderr,
                         exit_code,
-                    } => UserContent::format_command_execution_as_xml(
-                        command, stdout, stderr, *exit_code
-                    ),
+                    } => Some(UserContent::format_command_execution_as_xml(
+                        command, stdout, stderr, *exit_code,
+                    )),
+                    UserContent::AppCommand { .. } => {
+                        // Don't send app commands to the model - they're for local execution only
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
 
             Ok(ClaudeMessage {
                 role: ClaudeMessageRole::User,
-                content: ClaudeMessageContent::Text { content: combined_text },
+                content: ClaudeMessageContent::Text {
+                    content: combined_text,
+                },
                 id: Some(id),
             })
         }
@@ -260,15 +277,13 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                             })
                         }
                     }
-                    AssistantContent::ToolCall { tool_call } => {
-                        Some(ClaudeContentBlock::ToolUse {
-                            id: tool_call.id.clone(),
-                            name: tool_call.name.clone(),
-                            input: tool_call.parameters.clone(),
-                            cache_control: None,
-                            extra: Default::default(),
-                        })
-                    }
+                    AssistantContent::ToolCall { tool_call } => Some(ClaudeContentBlock::ToolUse {
+                        id: tool_call.id.clone(),
+                        name: tool_call.name.clone(),
+                        input: tool_call.parameters.clone(),
+                        cache_control: None,
+                        extra: Default::default(),
+                    }),
                     AssistantContent::Thought { thought } => {
                         match thought {
                             ThoughtContent::Signed { text, signature } => {
@@ -324,11 +339,19 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
             } else {
                 Err(ApiError::InvalidRequest {
                     provider: "anthropic".to_string(),
-                    details: format!("Assistant message ID {} resulted in no valid content blocks", id),
+                    details: format!(
+                        "Assistant message ID {} resulted in no valid content blocks",
+                        id
+                    ),
                 })
             }
         }
-        AppMessage::Tool { tool_use_id, result, id, .. } => {
+        AppMessage::Tool {
+            tool_use_id,
+            result,
+            id,
+            ..
+        } => {
             // Convert ToolResult to Claude format
             // Claude expects tool results as User messages
             let (result_text, is_error) = match result {
@@ -340,9 +363,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                     };
                     (text, None)
                 }
-                ToolResult::Error { error } => {
-                    (error, Some(true))
-                }
+                ToolResult::Error { error } => (error, Some(true)),
             };
 
             let claude_blocks = vec![ClaudeContentBlock::ToolResult {
@@ -382,7 +403,7 @@ fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<Assista
                     id,
                     name,
                     parameters: input,
-                }
+                },
             }),
             ClaudeContentBlock::ToolResult { .. } => {
                 warn!("Unexpected ToolResult block received in Claude response content");

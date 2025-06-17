@@ -341,24 +341,31 @@ impl OpenAIClient {
                     // Convert UserContent to text
                     let combined_text = content
                         .iter()
-                        .map(|user_content| match user_content {
-                            UserContent::Text { text } => text.clone(),
+                        .filter_map(|user_content| match user_content {
+                            UserContent::Text { text } => Some(text.clone()),
                             UserContent::CommandExecution {
                                 command,
                                 stdout,
                                 stderr,
                                 exit_code,
-                            } => UserContent::format_command_execution_as_xml(
+                            } => Some(UserContent::format_command_execution_as_xml(
                                 command, stdout, stderr, *exit_code,
-                            ),
+                            )),
+                            UserContent::AppCommand { .. } => {
+                                // Don't send app commands to the model - they're for local execution only
+                                None
+                            }
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
 
-                    openai_messages.push(OpenAIMessage::User {
-                        content: OpenAIContent::String(combined_text),
-                        name: None,
-                    });
+                    // Only add the message if it has content after filtering
+                    if !combined_text.trim().is_empty() {
+                        openai_messages.push(OpenAIMessage::User {
+                            content: OpenAIContent::String(combined_text),
+                            name: None,
+                        });
+                    }
                 }
                 AppMessage::Assistant { content, .. } => {
                     // Convert AssistantContent to OpenAI format
@@ -589,8 +596,8 @@ impl Provider for OpenAIClient {
             }
         };
 
-        let openai_response: OpenAICompletionResponse =
-            serde_json::from_str(&response_text).map_err(|e| {
+        let openai_response: OpenAICompletionResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
                 error!(
                     target: "openai::complete",
                     "Failed to parse response: {}, Body: {}",

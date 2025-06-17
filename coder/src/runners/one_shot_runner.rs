@@ -10,7 +10,7 @@ use crate::config::LlmConfig;
 use crate::session::state::WorkspaceConfig;
 use crate::session::{
     manager::SessionManager,
-    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility},
+    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy},
 };
 
 /// Contains the result of a single agent run, including the final assistant message

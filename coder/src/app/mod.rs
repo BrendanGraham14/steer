@@ -72,6 +72,7 @@ pub enum AppEvent {
     ThinkingStarted,
     ThinkingCompleted,
     CommandResponse {
+        command: conversation::AppCommandType,
         content: String,
         id: String,
     },
@@ -1042,10 +1043,14 @@ async fn handle_app_command(
 
 // Handle slash commands
 async fn handle_slash_command(app: &mut App, command: &str) {
+    // Parse the command type
+    let command_type = conversation::AppCommandType::from_command_str(command);
+    
     match app.handle_command(command).await {
         Ok(response_option) => {
             if let Some(content) = response_option {
                 app.emit_event(AppEvent::CommandResponse {
+                    command: command_type,
                     content,
                     id: format!("cmd_resp_{}", uuid::Uuid::new_v4()),
                 });

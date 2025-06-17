@@ -1,13 +1,11 @@
 use crate::api::Model;
-use crate::app::conversation::{
-    AssistantContent, Role, ToolResult as ConversationToolResult, UserContent,
-};
+use crate::app::conversation::{AssistantContent, UserContent};
 use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::state::ToolFilter;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
-    SessionStoreError, ToolCallUpdate, ToolResult,
+    SessionStoreError, ToolCallUpdate,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -764,6 +762,12 @@ impl SessionManager {
                                                             exit_code: *exit_code,
                                                         }
                                                     )),
+                                                }
+                                            }
+                                            UserContent::AppCommand { .. } => {
+                                                // For now, represent app commands as empty text in gRPC
+                                                crate::grpc::proto::UserContent {
+                                                    content: Some(crate::grpc::proto::user_content::Content::Text(String::new())),
                                                 }
                                             }
                                         }).collect(),

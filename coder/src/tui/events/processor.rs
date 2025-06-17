@@ -4,7 +4,6 @@
 //! Each processor handles a specific category of events and can be composed
 //! into a pipeline for modular event handling.
 
-use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use crate::api::Model;
@@ -82,7 +81,7 @@ impl<'a> ProcessingContext<'a> {
 
     /// Helper to convert app::Message to MessageContent
     pub fn convert_message(&self, message: crate::app::Message) -> crate::tui::widgets::message_list::MessageContent {
-        use crate::app::conversation::{AssistantContent, ToolResult};
+        use crate::app::conversation::AssistantContent;
         use crate::tui::widgets::message_list::MessageContent;
 
         match message {
