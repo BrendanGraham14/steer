@@ -414,15 +414,12 @@ impl<'a> Widget for MessagesRenderer<'a> {
                 break;
             }
 
-            // Calculate the actual area for this message (might be clipped)
-            let message_y = y.max(area.y);
-            let visible_height = (y + height).min(area.y + area.height) - message_y;
-
+            // Calculate the actual area for this message
             let message_area = Rect {
                 x: area.x,
-                y: message_y,
+                y: y,
                 width: area.width,
-                height: visible_height,
+                height: height,
             };
 
             // Highlight selected message

@@ -111,13 +111,20 @@ impl DefaultContentRenderer {
             x: area.x,
             y: area.y,
             width: area.width,
-            height: 2,
+            height: 2.min(area.height),
         };
-        header_paragraph.render(header_area, buf);
-        y_offset += 2;
+        if header_area.height > 0 {
+            header_paragraph.render(header_area, buf);
+            y_offset += header_area.height;
+        }
 
         // Render each content block
         for (idx, block) in blocks.iter().enumerate() {
+            // Stop rendering if we've exceeded the area
+            if y_offset >= area.height {
+                break;
+            }
+            
             let remaining_area = Rect {
                 x: area.x,
                 y: area.y + y_offset,
@@ -1589,9 +1596,8 @@ impl ContentRenderer for DefaultContentRenderer {
                 for block in blocks {
                     match block {
                         UserContent::Text { text } => {
-                            // Use textwrap for accurate line counting
-                            let lines = textwrap::wrap(text, width.saturating_sub(2) as usize);
-                            height += lines.len() as u16;
+                            let wrapped = self.wrap_text(text, width.saturating_sub(2));
+                            height += wrapped.lines.len() as u16;
                         }
                         UserContent::CommandExecution {
                             stdout,
@@ -1612,8 +1618,8 @@ impl ContentRenderer for DefaultContentRenderer {
                             // Response if present
                             if let Some(resp) = response {
                                 height += 1; // blank line
-                                let lines = textwrap::wrap(resp, width.saturating_sub(2) as usize);
-                                height += lines.len() as u16;
+                                let wrapped = self.wrap_text(resp, width.saturating_sub(2));
+                                height += wrapped.lines.len() as u16;
                             }
                         }
                     }
@@ -1625,8 +1631,8 @@ impl ContentRenderer for DefaultContentRenderer {
                 for (idx, block) in blocks.iter().enumerate() {
                     match block {
                         AssistantContent::Text { text } => {
-                            let lines = textwrap::wrap(text, width.saturating_sub(2) as usize);
-                            height += lines.len() as u16;
+                            let wrapped = self.wrap_text(text, width.saturating_sub(2));
+                            height += wrapped.lines.len() as u16;
                         }
                         AssistantContent::ToolCall { .. } => {
                             // Do not count height for tool call – separate Tool message shows it
@@ -1635,9 +1641,8 @@ impl ContentRenderer for DefaultContentRenderer {
                             // Block borders (top + bottom) + content
                             height += 2;
                             let thought_text = thought.display_text();
-                            let lines =
-                                textwrap::wrap(&thought_text, width.saturating_sub(4) as usize);
-                            height += lines.len() as u16;
+                            let formatted = self.format_thought(&thought_text, width.saturating_sub(2));
+                            height += formatted.lines.len() as u16;
                         }
                     }
                     // Add spacing between blocks (but not after the last one)
