@@ -774,27 +774,29 @@ impl DefaultContentRenderer {
         mode: ViewMode,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-
         let todo_count = params.todos.len();
-        let completed_count = params
-            .todos
-            .iter()
-            .filter(|t| t.status == tools::tools::todo::TodoStatus::Completed)
-            .count();
+        let (completed_count, in_progress_count, pending_count) = params.todos.iter().fold(
+            (0, 0, 0),
+            |(completed, in_progress, pending), todo| match todo.status {
+                tools::tools::todo::TodoStatus::Completed => (completed + 1, in_progress, pending),
+                tools::tools::todo::TodoStatus::InProgress => (completed, in_progress + 1, pending),
+                tools::tools::todo::TodoStatus::Pending => (completed, in_progress, pending + 1),
+            },
+        );
 
-        if mode == ViewMode::Compact || result.is_some() {
+        if mode == ViewMode::Compact {
             // Compact mode or when we have a result - show single line summary
             lines.push(Line::from(Span::styled(
                 format!(
-                    "Update todos ({} items, {} completed)",
-                    todo_count, completed_count
+                    "Update todos ({} items, {} completed, {} in progress, {} pending)",
+                    todo_count, completed_count, in_progress_count, pending_count
                 ),
                 styles::DIM_TEXT,
             )));
         } else {
             // Detailed mode without result - show full todo list
             lines.push(Line::from(Span::styled(
-                format!("Updating {} todo items:", params.todos.len()),
+                format!("Updating {} todo items:", todo_count),
                 Style::default(),
             )));
             for todo in &params.todos {
