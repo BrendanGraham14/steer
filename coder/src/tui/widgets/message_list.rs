@@ -1,8 +1,7 @@
-use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
+use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
     widgets::{
         Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
     },
@@ -81,6 +80,14 @@ impl Default for ViewPreferences {
     }
 }
 
+/// Cache key for message heights
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct HeightCacheKey {
+    message_id: String,
+    width: u16,
+    view_mode: ViewMode,
+}
+
 /// State for the message list widget
 #[derive(Debug, Clone)]
 pub struct MessageListState {
@@ -92,6 +99,9 @@ pub struct MessageListState {
 
     // ScrollView state for handling scrolling
     pub scroll_state: ScrollViewState,
+    
+    /// Cache for calculated message heights
+    height_cache: std::collections::HashMap<HeightCacheKey, u16>,
 }
 
 impl MessageListState {
@@ -102,15 +112,51 @@ impl MessageListState {
             view_prefs: ViewPreferences::default(),
             user_scrolled: false,
             scroll_state: ScrollViewState::default(),
+            height_cache: std::collections::HashMap::new(),
         }
+    }
+    
+    /// Get cached height or calculate and cache it
+    fn get_or_calculate_height(
+        &mut self,
+        message: &MessageContent,
+        mode: ViewMode,
+        width: u16,
+        renderer: &dyn ContentRenderer,
+    ) -> u16 {
+        let key = HeightCacheKey {
+            message_id: message.id().to_string(),
+            width,
+            view_mode: mode,
+        };
+        
+        if let Some(&height) = self.height_cache.get(&key) {
+            height
+        } else {
+            let height = renderer.calculate_height(message, mode, width);
+            self.height_cache.insert(key, height);
+            height
+        }
+    }
+    
+    /// Clear the height cache (e.g., when terminal resizes)
+    pub fn clear_height_cache(&mut self) {
+        self.height_cache.clear();
+    }
+    
+    /// Invalidate cache for a specific message
+    pub fn invalidate_message_cache(&mut self, message_id: &str) {
+        self.height_cache.retain(|key, _| key.message_id != message_id);
     }
 
     pub fn toggle_expanded(&mut self, message_id: String) {
         if self.expanded_messages.contains(&message_id) {
             self.expanded_messages.remove(&message_id);
         } else {
-            self.expanded_messages.insert(message_id);
+            self.expanded_messages.insert(message_id.clone());
         }
+        // Clear cache for this message when expansion state changes
+        self.height_cache.retain(|key, _| key.message_id != message_id);
     }
 
     pub fn is_expanded(&self, message_id: &str) -> bool {
@@ -172,7 +218,7 @@ impl MessageListState {
                     }
                 };
 
-                let height = renderer.calculate_height(message, mode, width);
+                let height = self.get_or_calculate_height(message, mode, width, renderer);
                 y_offset = y_offset.saturating_add(height);
                 if idx + 1 < messages.len() {
                     y_offset = y_offset.saturating_add(1); // Gap between messages
@@ -253,19 +299,7 @@ impl<'a> MessageList<'a> {
         }
     }
 
-    fn calculate_total_height(&self, width: u16, state: &MessageListState) -> u16 {
-        let mut total = 0u16;
-        for (idx, msg) in self.messages.iter().enumerate() {
-            let mode = self.determine_view_mode(msg, state);
-            total = total.saturating_add(self.renderer.calculate_height(msg, mode, width));
 
-            // Add gap between messages (but not after the last one)
-            if idx + 1 < self.messages.len() {
-                total = total.saturating_add(1);
-            }
-        }
-        total
-    }
 }
 
 impl<'a> StatefulWidget for MessageList<'a> {
@@ -281,8 +315,22 @@ impl<'a> StatefulWidget for MessageList<'a> {
             area
         };
 
-        // Calculate total content size
-        let total_height = self.calculate_total_height(messages_area.width, state);
+        // Calculate total content size and collect heights
+        let mut cached_heights = Vec::with_capacity(self.messages.len());
+        let mut total_height = 0u16;
+        
+        for (idx, msg) in self.messages.iter().enumerate() {
+            let mode = self.determine_view_mode(msg, state);
+            let height = state.get_or_calculate_height(msg, mode, messages_area.width, &*self.renderer);
+            cached_heights.push(height);
+            total_height = total_height.saturating_add(height);
+
+            // Add gap between messages (but not after the last one)
+            if idx + 1 < self.messages.len() {
+                total_height = total_height.saturating_add(1);
+            }
+        }
+        
         let content_size = ratatui::layout::Size {
             width: messages_area.width,
             height: total_height,
@@ -299,6 +347,7 @@ impl<'a> StatefulWidget for MessageList<'a> {
             messages: self.messages,
             renderer: &*self.renderer,
             state,
+            cached_heights,
         };
 
         // Render the messages widget into the scroll view
@@ -336,6 +385,8 @@ struct MessagesRenderer<'a> {
     messages: &'a [MessageContent],
     renderer: &'a dyn ContentRenderer,
     state: &'a MessageListState,
+    // Pass pre-calculated heights to avoid recalculation during render
+    cached_heights: Vec<u16>,
 }
 
 impl<'a> Widget for MessagesRenderer<'a> {
@@ -344,7 +395,9 @@ impl<'a> Widget for MessagesRenderer<'a> {
 
         for (idx, message) in self.messages.iter().enumerate() {
             let mode = self.determine_view_mode(message);
-            let height = self.renderer.calculate_height(message, mode, area.width);
+            // Use cached height instead of recalculating
+            let height = self.cached_heights.get(idx).copied()
+                .unwrap_or_else(|| self.renderer.calculate_height(message, mode, area.width));
 
             // Check if this message is visible in the current area
             if y + height < area.y {

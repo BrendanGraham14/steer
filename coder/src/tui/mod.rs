@@ -242,27 +242,41 @@ impl Tui {
         });
 
         let mut should_exit = false;
+        let mut needs_redraw = true; // Force initial draw
+        let mut last_spinner_char = String::new();
+        
         while !should_exit {
-            // Update state needed before drawing (like spinner)
-            self.update_spinner_state();
+            // Check if spinner needs update
+            let spinner_updated = if self.is_processing && self.last_spinner_update.elapsed() > SPINNER_UPDATE_INTERVAL {
+                self.spinner_state = self.spinner_state.wrapping_add(1);
+                self.last_spinner_update = Instant::now();
+                let new_spinner = self.get_spinner_char();
+                let changed = new_spinner != last_spinner_char;
+                last_spinner_char = new_spinner;
+                changed
+            } else {
+                false
+            };
 
-            let input_mode = self.input_mode;
-            let is_processing = self.is_processing;
-            let progress_message_owned: Option<String> = self.progress_message.clone();
-            let spinner_char_owned: String = self.get_spinner_char();
-            let current_model_owned: String = self.current_model.to_string();
-            let current_tool_approval_info = self.current_tool_approval.clone();
+            // Only redraw if something changed
+            if needs_redraw || spinner_updated {
+                let input_mode = self.input_mode;
+                let is_processing = self.is_processing;
+                let progress_message_owned: Option<String> = self.progress_message.clone();
+                let spinner_char_owned: String = self.get_spinner_char();
+                let current_model_owned: String = self.current_model.to_string();
+                let current_tool_approval_info = self.current_tool_approval.clone();
 
-            let input_block = Tui::create_input_block_static(
-                input_mode,
-                is_processing,
-                progress_message_owned,
-                spinner_char_owned,
-                current_tool_approval_info.as_ref(),
-            );
-            self.textarea.set_block(input_block);
+                let input_block = Tui::create_input_block_static(
+                    input_mode,
+                    is_processing,
+                    progress_message_owned,
+                    spinner_char_owned,
+                    current_tool_approval_info.as_ref(),
+                );
+                self.textarea.set_block(input_block);
 
-            self.terminal.draw(|f| {
+                self.terminal.draw(|f| {
                 let textarea_ref = &self.textarea;
                 let current_approval_ref = self.current_tool_approval.as_ref();
 
@@ -278,6 +292,9 @@ impl Tui {
                     error!(target:"tui.run.draw", "UI rendering failed: {}", e);
                 }
             })?;
+                
+                needs_redraw = false; // Reset after drawing
+            }
 
             select! {
                 // Prioritize terminal events (especially mouse events) for responsiveness
@@ -289,6 +306,8 @@ impl Tui {
                             match event {
                                 Event::Resize(_, _) => {
                                     debug!(target:"tui.run", "Terminal resized");
+                                    self.view_model.message_list_state.clear_height_cache();
+                                    needs_redraw = true;
                                     // The widget will handle recalculating sizes internally
                                 }
                                 Event::Paste(data) => {
@@ -296,6 +315,7 @@ impl Tui {
                                         let normalized_data = data.replace("\r\n", "\n").replace("\r", "\n");
                                         self.textarea.insert_str(&normalized_data);
                                         debug!(target:"tui.run", "Pasted {} chars", normalized_data.len());
+                                        needs_redraw = true;
                                     }
                                 }
                                 Event::Key(key) => {
@@ -305,8 +325,13 @@ impl Tui {
                                             if self.dispatch_input_action(action).await? {
                                                 should_exit = true;
                                             }
+                                            needs_redraw = true;
                                         }
-                                        Ok(None) => {}
+                                        Ok(None) => {
+                                            // Some keys (like navigation) are handled in handle_input
+                                            // Check if they changed state
+                                            needs_redraw = true; // Conservative: assume state changed
+                                        }
                                         Err(e) => {
                                             error!(target:"tui.run",    "Error handling input: {}", e);
                                         }
@@ -324,6 +349,7 @@ impl Tui {
                                             let current_offset = self.view_model.message_list_state.scroll_state.offset();
                                             let new_offset = current_offset.y.saturating_add(3);
                                             self.view_model.message_list_state.set_scroll_offset(new_offset as usize);
+                                            needs_redraw = true;
                                             // Force immediate redraw to prevent scroll artifacts
                                             continue;
                                         }
@@ -334,6 +360,7 @@ impl Tui {
                                             let current_offset = self.view_model.message_list_state.scroll_state.offset();
                                             let new_offset = current_offset.y.saturating_sub(3);
                                             self.view_model.message_list_state.set_scroll_offset(new_offset as usize);
+                                            needs_redraw = true;
                                             // Force immediate redraw to prevent scroll artifacts
                                             continue;
                                         }
@@ -359,6 +386,7 @@ impl Tui {
                     match maybe_app_event {
                         Some(event) => {
                             self.handle_app_event(event).await;
+                            needs_redraw = true; // App events usually require redraw
                         }
                         None => {
                             info!(target:"tui.run", "App event channel closed.");
@@ -367,7 +395,10 @@ impl Tui {
                     }
                 }
 
-                _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2), if self.is_processing => {}
+                _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2), if self.is_processing => {
+                    // Timer fired, spinner will update on next iteration
+                    needs_redraw = true;
+                }
             }
         }
 
@@ -502,12 +533,7 @@ impl Tui {
         SPINNER[self.spinner_state % SPINNER.len()].to_string()
     }
 
-    fn update_spinner_state(&mut self) {
-        if self.last_spinner_update.elapsed() > SPINNER_UPDATE_INTERVAL {
-            self.spinner_state = self.spinner_state.wrapping_add(1);
-            self.last_spinner_update = Instant::now();
-        }
-    }
+
 
     /// Ensure there is exactly one MessageContent::Tool for the given id.
     /// Returns the index into self.view_model.messages for that message. If it does not
@@ -752,6 +778,8 @@ impl Tui {
                         Some(ViewMode::Compact) => Some(ViewMode::Detailed),
                         Some(ViewMode::Detailed) => None,
                     };
+                    // Clear cache when view mode changes
+                    self.view_model.message_list_state.clear_height_cache();
                     return Ok(None);
                 }
                 (KeyCode::Char('D'), KeyModifiers::SHIFT)
@@ -761,6 +789,8 @@ impl Tui {
                         .message_list_state
                         .view_prefs
                         .global_override = Some(ViewMode::Detailed);
+                    // Clear cache when view mode changes
+                    self.view_model.message_list_state.clear_height_cache();
                     return Ok(None);
                 }
                 (KeyCode::Char('C'), KeyModifiers::SHIFT)
@@ -770,6 +800,8 @@ impl Tui {
                         .message_list_state
                         .view_prefs
                         .global_override = Some(ViewMode::Compact);
+                    // Clear cache when view mode changes
+                    self.view_model.message_list_state.clear_height_cache();
                     return Ok(None);
                 }
 
