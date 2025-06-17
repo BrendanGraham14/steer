@@ -479,6 +479,9 @@ impl App {
                 self.current_op_context = None; // Clear context after command
                 Ok(result)
             }
+            "help" => {
+                Ok(Some(build_help_text()))
+            }
             "model" => {
                 if args.is_empty() {
                     // If no model specified, list available models
@@ -1241,6 +1244,18 @@ fn get_model_system_prompt(model: Model) -> &'static str {
 
 /// Parse the output from the bash tool
 /// The bash tool returns stdout on success, or a formatted error message on failure
+
+
+
+fn build_help_text() -> String {
+    "Available slash commands:\n\
+/help                        - Show this help message\n\
+/model [name]                - Show or set the current language model. Without args lists models.\n\
+/clear                       - Clear the current conversation history and tool approvals.\n\
+/compact                     - Summarize older messages to save context space.\n\
+/cancel                      - Cancel the current operation in progress.\n".to_string()
+}
+
 fn parse_bash_output(output: &str) -> (String, String, i32) {
     // Check if this is an error output from the bash tool
     if output.starts_with("Command failed with exit code") {

@@ -21,6 +21,8 @@ pub enum AppCommandType {
     Compact,
     /// Cancel current operation
     Cancel,
+    /// Show help information
+    Help,
     /// Unknown/unrecognized command
     Unknown { command: String },
 }
@@ -39,6 +41,7 @@ impl AppCommandType {
             AppCommandType::Clear => "clear".to_string(),
             AppCommandType::Compact => "compact".to_string(),
             AppCommandType::Cancel => "cancel".to_string(),
+            AppCommandType::Help => "help".to_string(),
             AppCommandType::Unknown { command } => command.clone(),
         }
     }
@@ -53,6 +56,7 @@ impl AppCommandType {
             Some("clear") => AppCommandType::Clear,
             Some("compact") => AppCommandType::Compact,
             Some("cancel") => AppCommandType::Cancel,
+            Some("help") => AppCommandType::Help,
             _ => AppCommandType::Unknown {
                 command: command.to_string(),
             },
