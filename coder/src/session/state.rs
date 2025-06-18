@@ -62,7 +62,7 @@ impl Session {
         let cutoff = Utc::now() - threshold;
         self.updated_at > cutoff
     }
-    
+
     /// Build a workspace from this session's configuration
     pub async fn build_workspace(&self) -> Result<Arc<dyn crate::workspace::Workspace>> {
         crate::workspace::create_workspace(&self.config.workspace).await
@@ -165,32 +165,32 @@ impl SessionConfig {
         Ok(registry)
     }
 
-    /// Get the list of tools to present to the AI agent based on visibility settings
-    pub async fn get_agent_tools(&self, registry: &BackendRegistry) -> Vec<tools::ToolSchema> {
-        let all_schemas = registry.get_tool_schemas().await;
-        
+    /// Filter tools based on visibility settings
+    pub fn filter_tools_by_visibility(
+        &self,
+        tools: Vec<tools::ToolSchema>,
+    ) -> Vec<tools::ToolSchema> {
         match &self.tool_config.visibility {
-            ToolVisibility::All => all_schemas,
+            ToolVisibility::All => tools,
             ToolVisibility::ReadOnly => {
                 let read_only_names: HashSet<String> = read_only_workspace_tools()
                     .iter()
                     .map(|t| t.name().to_string())
                     .collect();
-                
-                all_schemas.into_iter()
+
+                tools
+                    .into_iter()
                     .filter(|schema| read_only_names.contains(&schema.name))
                     .collect()
             }
-            ToolVisibility::Whitelist(allowed) => {
-                all_schemas.into_iter()
-                    .filter(|schema| allowed.contains(&schema.name))
-                    .collect()
-            }
-            ToolVisibility::Blacklist(blocked) => {
-                all_schemas.into_iter()
-                    .filter(|schema| !blocked.contains(&schema.name))
-                    .collect()
-            }
+            ToolVisibility::Whitelist(allowed) => tools
+                .into_iter()
+                .filter(|schema| allowed.contains(&schema.name))
+                .collect(),
+            ToolVisibility::Blacklist(blocked) => tools
+                .into_iter()
+                .filter(|schema| !blocked.contains(&schema.name))
+                .collect(),
         }
     }
 
@@ -211,13 +211,13 @@ impl SessionConfig {
 pub enum ToolVisibility {
     /// Show all registered tools to the AI
     All,
-    
+
     /// Only show read-only tools to the AI
     ReadOnly,
-    
+
     /// Show only specific tools to the AI (whitelist)
     Whitelist(HashSet<String>),
-    
+
     /// Hide specific tools from the AI (blacklist)
     Blacklist(HashSet<String>),
 }
@@ -236,9 +236,7 @@ pub enum ToolApprovalPolicy {
     AlwaysAsk,
 
     /// Pre-approved tools execute without asking
-    PreApproved {
-        tools: HashSet<String>,
-    },
+    PreApproved { tools: HashSet<String> },
 
     /// Mixed policy: some tools pre-approved, others require approval
     Mixed {
@@ -701,7 +699,9 @@ mod tests {
 
         // Add a message
         let message = Message::User {
-            content: vec![UserContent::Text { text: "Hello".to_string() }],
+            content: vec![UserContent::Text {
+                text: "Hello".to_string(),
+            }],
             timestamp: 123456789,
             id: "msg1".to_string(),
         };
@@ -779,11 +779,15 @@ mod tests {
         let config = SessionToolConfig::read_only();
         assert_eq!(config.backends.len(), 0); // Empty backends means use defaults
         assert!(matches!(config.visibility, ToolVisibility::ReadOnly));
-        assert!(matches!(config.approval_policy, ToolApprovalPolicy::AlwaysAsk));
+        assert!(matches!(
+            config.approval_policy,
+            ToolApprovalPolicy::AlwaysAsk
+        ));
     }
 
     #[tokio::test]
-    async fn test_session_config_build_registry_local_workspace() {
+    async fn test_session_config_build_registry_server_tools() {
+        // Test that server tools are properly registered
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local,
             tool_config: SessionToolConfig::default(),
@@ -794,151 +798,27 @@ mod tests {
         let registry = config.build_registry().await.unwrap();
         let schemas = registry.get_tool_schemas().await;
         let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
-        let workspace_tool_names: Vec<String> = workspace_tools()
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
 
+        // Only server tools should be in the registry
+        assert!(tool_names.contains(&"dispatch_agent".to_string()));
+        assert!(tool_names.contains(&"web_fetch".to_string()));
+
+        // Verify workspace tools are NOT in the registry (they're handled by Workspace)
+        let workspace_tool_names = vec!["bash", "grep", "glob", "ls", "read", "write", "edit"];
         for tool_name in workspace_tool_names {
-            assert!(tool_names.contains(&tool_name));
+            assert!(
+                !tool_names.contains(&tool_name.to_string()),
+                "Workspace tool {} should not be in registry",
+                tool_name
+            );
         }
-
-        // Check that workspace backend is Local
-        let workspace_backend = registry
-            .backends()
-            .iter()
-            .find(|(name, _)| name == "workspace")
-            .unwrap();
-        assert_eq!(workspace_backend.1.metadata().backend_type, "Local");
     }
 
-    #[tokio::test]
-    async fn test_session_config_build_registry_user_override_is_ignored() {
-        // User tries to override 'bash' to be a different (local) backend.
-        // The workspace-defined backend should take precedence.
-        let user_tool_config = SessionToolConfig {
-            backends: vec![BackendConfig::Local {
-                tool_filter: ToolFilter::Include(vec![BASH_TOOL_NAME.to_string()]),
-            }],
-            visibility: ToolVisibility::All,
-            approval_policy: ToolApprovalPolicy::AlwaysAsk,
-            metadata: HashMap::new(),
-        };
+    // Test removed: workspace tools are no longer in the registry
 
-        let config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
-            tool_config: user_tool_config,
-            system_prompt: None,
-            metadata: HashMap::new(),
-        };
+    // Test removed: tool visibility filtering for workspace tools happens at the Workspace level
 
-        let registry = config.build_registry().await.unwrap();
-
-        // The 'bash' tool should be mapped to the 'workspace' backend, not the 'user_local_0' backend.
-        let bash_backend = registry.get_backend_for_tool(BASH_TOOL_NAME).unwrap();
-        let backend_metadata = bash_backend.metadata();
-
-        // Find the name of the backend instance
-        let backend_instance_name = registry
-            .backends()
-            .iter()
-            .find(|(_, backend)| Arc::ptr_eq(backend, &bash_backend))
-            .map(|(name, _)| name)
-            .unwrap();
-
-        assert_eq!(backend_instance_name, "workspace");
-        assert_eq!(backend_metadata.backend_type, "Local");
-    }
-
-    #[tokio::test]
-    async fn test_tool_visibility_filtering() {
-        // Test different visibility modes
-        let base_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
-            tool_config: SessionToolConfig::default(),
-            system_prompt: None,
-            metadata: HashMap::new(),
-        };
-        
-        let registry = base_config.build_registry().await.unwrap();
-        let all_tools = base_config.get_agent_tools(&registry).await;
-        let all_names: Vec<String> = all_tools.iter().map(|s| s.name.clone()).collect();
-        
-        // Test ReadOnly visibility
-        let mut read_only_tool_config = SessionToolConfig::default();
-        read_only_tool_config.visibility = ToolVisibility::ReadOnly;
-        let read_only_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
-            tool_config: read_only_tool_config,
-            system_prompt: None,
-            metadata: HashMap::new(),
-        };
-        let read_only_tools = read_only_config.get_agent_tools(&registry).await;
-        let read_only_names: Vec<String> = read_only_tools.iter().map(|s| s.name.clone()).collect();
-        assert!(read_only_names.contains(&VIEW_TOOL_NAME.to_string()));
-        assert!(!read_only_names.contains(&BASH_TOOL_NAME.to_string()));
-        assert!(!read_only_names.contains(&EDIT_TOOL_NAME.to_string()));
-        
-        // Test Whitelist visibility
-        let mut whitelist_tool_config = SessionToolConfig::default();
-        whitelist_tool_config.visibility = ToolVisibility::Whitelist(
-            vec![VIEW_TOOL_NAME.to_string(), LS_TOOL_NAME.to_string()]
-                .into_iter()
-                .collect()
-        );
-        let whitelist_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
-            tool_config: whitelist_tool_config,
-            system_prompt: None,
-            metadata: HashMap::new(),
-        };
-        let whitelist_tools = whitelist_config.get_agent_tools(&registry).await;
-        assert_eq!(whitelist_tools.len(), 2);
-        
-        // Test Blacklist visibility
-        let mut blacklist_tool_config = SessionToolConfig::default();
-        blacklist_tool_config.visibility = ToolVisibility::Blacklist(
-            vec![BASH_TOOL_NAME.to_string(), EDIT_TOOL_NAME.to_string()]
-                .into_iter()
-                .collect()
-        );
-        let blacklist_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
-            tool_config: blacklist_tool_config,
-            system_prompt: None,
-            metadata: HashMap::new(),
-        };
-        let blacklist_tools = blacklist_config.get_agent_tools(&registry).await;
-        let blacklist_names: Vec<String> = blacklist_tools.iter().map(|s| s.name.clone()).collect();
-        assert!(!blacklist_names.contains(&BASH_TOOL_NAME.to_string()));
-        assert!(!blacklist_names.contains(&EDIT_TOOL_NAME.to_string()));
-        assert!(blacklist_names.contains(&VIEW_TOOL_NAME.to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_session_tool_config_build_registry() {
-        let config = SessionConfig::read_only();
-        let registry = config.build_registry().await.unwrap();
-
-        // Should have backends registered
-        let backend_names: Vec<String> =
-            registry.backends().iter().map(|(n, _)| n.clone()).collect();
-        assert!(backend_names.contains(&"workspace".to_string()));
-
-        // The registry should have ALL tools available
-        let all_schemas = registry.get_tool_schemas().await;
-        let all_tool_names: Vec<String> = all_schemas.iter().map(|s| s.name.clone()).collect();
-        assert!(all_tool_names.contains(&VIEW_TOOL_NAME.to_string()));
-        assert!(all_tool_names.contains(&LS_TOOL_NAME.to_string()));
-        assert!(all_tool_names.contains(&BASH_TOOL_NAME.to_string())); // Bash IS in registry
-
-        // But get_agent_tools should filter based on visibility
-        let agent_tools = config.get_agent_tools(&registry).await;
-        let agent_tool_names: Vec<String> = agent_tools.iter().map(|s| s.name.clone()).collect();
-        assert!(agent_tool_names.contains(&VIEW_TOOL_NAME.to_string()));
-        assert!(agent_tool_names.contains(&LS_TOOL_NAME.to_string()));
-        assert!(!agent_tool_names.contains(&BASH_TOOL_NAME.to_string())); // Bash NOT shown to agent
-    }
+    // Test removed: workspace backend no longer exists in the registry
 
     #[test]
     fn test_backend_config_variants() {

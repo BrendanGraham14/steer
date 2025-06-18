@@ -116,52 +116,14 @@ impl App {
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
-        tool_executor: Arc<ToolExecutor>,
-    ) -> Result<Self> {
-        Self::with_session_config(config, event_tx, initial_model, tool_executor, None)
-    }
-
-    pub fn with_session_config(
-        config: AppConfig,
-        event_tx: mpsc::Sender<AppEvent>,
-        initial_model: Model,
+        workspace: Arc<dyn crate::workspace::Workspace>,
         tool_executor: Arc<ToolExecutor>,
         session_config: Option<crate::session::state::SessionConfig>,
     ) -> Result<Self> {
         let conversation = Arc::new(Mutex::new(Conversation::new()));
 
         let api_client = ApiClient::new(&config.llm_config);
-        let agent_executor = AgentExecutor::new(Arc::new(api_client.clone())); // Create AgentExecutor
-
-        Ok(Self {
-            config,
-            conversation,
-            tool_executor,
-            api_client, // Keep for direct calls if needed (e.g., compact)
-            agent_executor,
-            event_sender: event_tx,
-            approved_tools: HashSet::new(),
-            current_op_context: None,
-            current_model: initial_model,
-            session_config,
-            workspace: None, // No workspace in legacy constructor
-        })
-    }
-    
-    /// Create an App with a workspace (recommended approach)
-    pub fn with_workspace(
-        config: AppConfig,
-        event_tx: mpsc::Sender<AppEvent>,
-        initial_model: Model,
-        workspace: Arc<dyn crate::workspace::Workspace>,
-    ) -> Result<Self> {
-        let conversation = Arc::new(Mutex::new(Conversation::new()));
-
-        let api_client = ApiClient::new(&config.llm_config);
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
-        
-        // Create a tool executor with the workspace
-        let tool_executor = Arc::new(ToolExecutor::with_workspace(workspace.clone()));
 
         Ok(Self {
             config,
@@ -173,7 +135,7 @@ impl App {
             approved_tools: HashSet::new(),
             current_op_context: None,
             current_model: initial_model,
-            session_config: None, // Workspace contains the configuration
+            session_config,
             workspace: Some(workspace),
         })
     }
@@ -296,14 +258,14 @@ impl App {
             "Spawning agent operation task...",
         );
 
-        // Get tools for the operation, filtered by visibility settings
-        let tool_schemas = if let Some(session_config) = &self.session_config {
-            session_config
-                .get_agent_tools(self.tool_executor.backend_registry())
-                .await
-        } else {
-            self.tool_executor.get_tool_schemas().await
-        };
+        // Get tools for the operation
+        // Always get all tools from the tool executor (includes workspace tools)
+        let mut tool_schemas = self.tool_executor.get_tool_schemas().await;
+
+        // Then apply visibility filtering if we have a session config
+        if let Some(session_config) = &self.session_config {
+            tool_schemas = session_config.filter_tools_by_visibility(tool_schemas);
+        }
 
         // Get mutable access to OpContext and its token
         let op_context = match &mut self.current_op_context {
@@ -324,7 +286,7 @@ impl App {
 
         let current_model = self.current_model;
         let agent_executor = self.agent_executor.clone();
-        
+
         // Create system prompt using workspace if available, otherwise fall back to local collection
         let system_prompt = if let Some(workspace) = &self.workspace {
             create_system_prompt_with_workspace(Some(current_model), workspace.as_ref()).await?
@@ -459,7 +421,10 @@ impl App {
 
     // Modified handle_command to return only the response string (or None)
     // It now starts tasks directly but doesn't return the receiver.
-    pub async fn handle_command(&mut self, command: &str) -> Result<Option<conversation::CommandResponse>> {
+    pub async fn handle_command(
+        &mut self,
+        command: &str,
+    ) -> Result<Option<conversation::CommandResponse>> {
         let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
         let command_name = parts[0];
         let args = parts.get(1).unwrap_or(&"").trim();
@@ -472,7 +437,9 @@ impl App {
             "clear" => {
                 self.conversation.lock().await.clear();
                 self.approved_tools.clear(); // Also clear tool approvals
-                Ok(Some(conversation::CommandResponse::Text("Conversation and tool approvals cleared.".to_string())))
+                Ok(Some(conversation::CommandResponse::Text(
+                    "Conversation and tool approvals cleared.".to_string(),
+                )))
             }
             "compact" => {
                 // Create OpContext for cancellable command
@@ -505,9 +472,7 @@ impl App {
                 self.current_op_context = None; // Clear context after command
                 Ok(result)
             }
-            "help" => {
-                Ok(Some(conversation::CommandResponse::Text(build_help_text())))
-            }
+            "help" => Ok(Some(conversation::CommandResponse::Text(build_help_text()))),
             "model" => {
                 if args.is_empty() {
                     // If no model specified, list available models
@@ -547,18 +512,33 @@ impl App {
 
                     match Model::from_str(args) {
                         Ok(model) => match self.set_model(model) {
-                            Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!("Model changed to {}", model.as_ref())))),
-                            Err(e) => Ok(Some(conversation::CommandResponse::Text(format!("Failed to set model: {}", e)))),
+                            Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!(
+                                "Model changed to {}",
+                                model.as_ref()
+                            )))),
+                            Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
+                                "Failed to set model: {}",
+                                e
+                            )))),
                         },
-                        Err(_) => Ok(Some(conversation::CommandResponse::Text(format!("Unknown model: {}", args)))),
+                        Err(_) => Ok(Some(conversation::CommandResponse::Text(format!(
+                            "Unknown model: {}",
+                            args
+                        )))),
                     }
                 }
             }
-            _ => Ok(Some(conversation::CommandResponse::Text(format!("Unknown command: {}", command_name)))),
+            _ => Ok(Some(conversation::CommandResponse::Text(format!(
+                "Unknown command: {}",
+                command_name
+            )))),
         }
     }
 
-    pub async fn compact_conversation(&mut self, token: CancellationToken) -> Result<CompactResult> {
+    pub async fn compact_conversation(
+        &mut self,
+        token: CancellationToken,
+    ) -> Result<CompactResult> {
         info!(target:"App.compact_conversation", "Compacting conversation...");
         let client = self.api_client.clone();
         let conversation_arc = self.conversation.clone();
@@ -896,17 +876,17 @@ async fn handle_app_command(
             approved_tools,
         } => {
             // Atomically restore entire conversation state
-            debug!(target:"handle_app_command", "Restoring conversation with {} messages and {} approved tools", 
+            debug!(target:"handle_app_command", "Restoring conversation with {} messages and {} approved tools",
                 messages.len(), approved_tools.len());
-            
+
             // Restore messages
             let mut conversation_guard = app.conversation.lock().await;
             conversation_guard.messages = messages;
             drop(conversation_guard);
-            
+
             // Restore approved tools
             app.approved_tools = approved_tools;
-            
+
             debug!(target:"handle_app_command", "Conversation restoration complete");
             false
         }
@@ -1062,7 +1042,7 @@ async fn handle_app_command(
 async fn handle_slash_command(app: &mut App, command: &str) {
     // Parse the command type
     let command_type = conversation::AppCommandType::from_command_str(command);
-    
+
     match app.handle_command(command).await {
         Ok(response_option) => {
             if let Some(response) = response_option {
@@ -1282,15 +1262,14 @@ fn get_model_system_prompt(model: Model) -> &'static str {
 /// Parse the output from the bash tool
 /// The bash tool returns stdout on success, or a formatted error message on failure
 
-
-
 fn build_help_text() -> String {
     "Available slash commands:\n\
 /help                        - Show this help message\n\
 /model [name]                - Show or set the current language model. Without args lists models.\n\
 /clear                       - Clear the current conversation history and tool approvals.\n\
 /compact                     - Summarize older messages to save context space.\n\
-/cancel                      - Cancel the current operation in progress.\n".to_string()
+/cancel                      - Cancel the current operation in progress.\n"
+        .to_string()
 }
 
 fn parse_bash_output(output: &str) -> (String, String, i32) {

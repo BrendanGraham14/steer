@@ -8,6 +8,7 @@ mod tests {
     };
     use crate::config::LlmConfig;
     use crate::tools::{BackendRegistry, LocalBackend};
+    use crate::workspace::local::LocalWorkspace;
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use tools::ToolCall;
@@ -20,12 +21,17 @@ mod tests {
         }
     }
 
-    fn create_test_tool_executor() -> Arc<ToolExecutor> {
+    async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {
+        let workspace = LocalWorkspace::new().await.unwrap();
+        Arc::new(workspace) as Arc<dyn crate::workspace::Workspace>
+    }
+
+    fn create_test_tool_executor(workspace: Arc<dyn crate::workspace::Workspace>) -> Arc<ToolExecutor> {
         let mut backend_registry = BackendRegistry::new();
         backend_registry.register("local".to_string(), Arc::new(LocalBackend::full()));
 
         Arc::new(ToolExecutor::with_components(
-            None, // No workspace for tests
+            Some(workspace),
             Arc::new(backend_registry),
             Arc::new(ValidatorRegistry::new()),
         ))
@@ -40,11 +46,16 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
 
+        let workspace = create_test_workspace().await;
+        let tool_executor = create_test_tool_executor(workspace.clone());
+        
         let mut app = App::new(
             app_config,
             event_tx,
             initial_model,
-            create_test_tool_executor(),
+            workspace,
+            tool_executor,
+            None,
         )
         .unwrap();
 
@@ -117,11 +128,16 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
 
+        let workspace = create_test_workspace().await;
+        let tool_executor = create_test_tool_executor(workspace.clone());
+        
         let mut app = App::new(
             app_config,
             event_tx,
             initial_model,
-            create_test_tool_executor(),
+            workspace,
+            tool_executor,
+            None,
         )
         .unwrap();
 
@@ -177,11 +193,16 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
 
+        let workspace = create_test_workspace().await;
+        let tool_executor = create_test_tool_executor(workspace.clone());
+        
         let mut app = App::new(
             app_config,
             event_tx,
             initial_model,
-            create_test_tool_executor(),
+            workspace,
+            tool_executor,
+            None,
         )
         .unwrap();
 

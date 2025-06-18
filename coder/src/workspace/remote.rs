@@ -65,11 +65,11 @@ impl RemoteWorkspace {
         let response = client.get_environment_info(request).await?;
         let env_response = response.into_inner();
         
-        self.convert_environment_response(env_response)
+        Self::convert_environment_response(env_response)
     }
     
     /// Convert gRPC response to EnvironmentInfo
-    fn convert_environment_response(&self, response: GetEnvironmentInfoResponse) -> Result<EnvironmentInfo> {
+    fn convert_environment_response(response: GetEnvironmentInfoResponse) -> Result<EnvironmentInfo> {
         use std::path::PathBuf;
         
         Ok(EnvironmentInfo {
@@ -168,29 +168,16 @@ mod tests {
             claude_md_content: None,
         };
         
-        // Create a dummy workspace for testing the conversion
-        let address = "localhost:50051".to_string();
-        let metadata = WorkspaceMetadata {
-            id: format!("remote:{}", address),
-            workspace_type: WorkspaceType::Remote,
-            location: address.clone(),
-        };
+        // Test the static conversion function directly
+        let env_info = RemoteWorkspace::convert_environment_response(response).unwrap();
         
-        let workspace = RemoteWorkspace {
-            client: RemoteBackendServiceClient::connect("http://localhost:50051").await.unwrap_or_else(|_| {
-                // Create a dummy client for testing
-                panic!("This test requires a connection, skipping conversion test")
-            }),
-            address,
-            auth: None,
-            environment_cache: Arc::new(RwLock::new(None)),
-            tool_backend: Arc::new(RemoteBackend::new("localhost:50051", None).await.unwrap_or_else(|_| {
-                panic!("This test requires a connection, skipping")
-            })),
-            metadata,
-        };
-        
-        // This test would work if we had a connection, but we'll skip the actual conversion test
-        // since it requires a live connection. The logic is straightforward field mapping.
+        assert_eq!(env_info.working_directory, PathBuf::from("/home/user/project"));
+        assert_eq!(env_info.is_git_repo, true);
+        assert_eq!(env_info.platform, "linux");
+        assert_eq!(env_info.date, "2025-06-17");
+        assert_eq!(env_info.directory_structure, "project/\nsrc/\nmain.rs\n");
+        assert_eq!(env_info.git_status, Some("Current branch: main\n\nStatus:\nWorking tree clean\n".to_string()));
+        assert_eq!(env_info.readme_content, Some("# My Project".to_string()));
+        assert_eq!(env_info.claude_md_content, None);
     }
 }

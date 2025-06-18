@@ -93,16 +93,17 @@ impl ManagedSession {
         let workspace = session.build_workspace().await?;
         
         let tool_executor = Arc::new(crate::app::ToolExecutor::with_components(
-            Some(workspace),
+            Some(workspace.clone()),
             Arc::new(backend_registry),
             Arc::new(crate::app::validation::ValidatorRegistry::new()),
         ));
 
         // Create the App instance with the configured tool executor and session config
-        let mut app = App::with_session_config(
+        let mut app = App::new(
             app_config,
             app_event_tx,
             default_model,
+            workspace.clone(),
             tool_executor,
             Some(session.config.clone()),
         )?;
@@ -1194,7 +1195,6 @@ mod tests {
     use crate::app::conversation::Role;
     use crate::config::LlmConfig;
     use crate::session::stores::sqlite::SqliteSessionStore;
-    use crate::app::conversation::Role;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 

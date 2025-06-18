@@ -332,7 +332,7 @@ mod tests {
     use super::*;
     use crate::grpc::remote_workspace::{
         ExecuteToolResponse, HealthResponse, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
-        remote_backend_service_server::{RemoteBackendService, RemoteBackendServiceServer},
+        remote_workspace_service_server::{RemoteWorkspaceService, RemoteWorkspaceServiceServer},
     };
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl RemoteBackendService for MockRemoteBackend {
+    impl RemoteWorkspaceService for MockRemoteBackend {
         async fn execute_tool(
             &self,
             _request: Request<ExecuteToolRequest>,
@@ -394,6 +394,16 @@ mod tests {
         > {
             unimplemented!()
         }
+        
+        async fn get_environment_info(
+            &self,
+            _request: Request<crate::grpc::remote_workspace::GetEnvironmentInfoRequest>,
+        ) -> Result<
+            tonic::Response<crate::grpc::remote_workspace::GetEnvironmentInfoResponse>,
+            Status,
+        > {
+            unimplemented!()
+        }
     }
 
     async fn setup_mock_server(tool_names: Vec<String>) -> SocketAddr {
@@ -404,7 +414,7 @@ mod tests {
 
         tokio::spawn(async move {
             Server::builder()
-                .add_service(RemoteBackendServiceServer::new(service))
+                .add_service(RemoteWorkspaceServiceServer::new(service))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
                 .await
                 .unwrap();
