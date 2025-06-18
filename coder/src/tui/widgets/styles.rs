@@ -9,6 +9,7 @@ pub const ROLE_SYSTEM: Style = Style::new().fg(Color::Yellow);
 // Tool styles
 pub const TOOL_BOX: Style = Style::new().fg(Color::Cyan);
 pub const TOOL_HEADER: Style = Style::new().fg(Color::Cyan);
+pub const TOOL_BORDER: Style = Style::new().fg(Color::Cyan);
 pub const TOOL_ID: Style = Style::new().fg(Color::DarkGray);
 pub const TOOL_SUCCESS: Style = Style::new().fg(Color::Green);
 pub const TOOL_ERROR: Style = Style::new().fg(Color::Red);
@@ -16,6 +17,7 @@ pub const TOOL_ERROR: Style = Style::new().fg(Color::Red);
 // Message styles
 pub const THOUGHT_BOX: Style = Style::new().fg(Color::DarkGray);
 pub const THOUGHT_HEADER: Style = Style::new().fg(Color::Gray);
+pub const THOUGHT_BORDER: Style = Style::new().fg(Color::DarkGray);
 pub const THOUGHT_TEXT: Style = Style::new()
     .fg(Color::DarkGray)
     .add_modifier(Modifier::ITALIC);
