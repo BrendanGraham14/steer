@@ -26,7 +26,6 @@ impl EventProcessor for MessageEventProcessor {
         matches!(
             event,
             AppEvent::MessageAdded { .. }
-                | AppEvent::RestoredMessage { .. }
                 | AppEvent::MessageUpdated { .. }
                 | AppEvent::MessagePart { .. }
         )
@@ -35,10 +34,6 @@ impl EventProcessor for MessageEventProcessor {
     fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::MessageAdded { message, .. } => {
-                self.handle_message_added(message, ctx);
-                ProcessingResult::Handled
-            }
-            AppEvent::RestoredMessage { message, model: _ } => {
                 self.handle_message_added(message, ctx);
                 ProcessingResult::Handled
             }

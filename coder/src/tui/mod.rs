@@ -24,6 +24,7 @@ use tokio::select;
 use crate::api::Model;
 use crate::app::AppEvent;
 use crate::app::command::AppCommand;
+use crate::app::conversation::Message;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 pub mod events;
@@ -165,6 +166,48 @@ impl Tui {
         Ok((tui, event_rx))
     }
 
+    /// Create a TUI with restored conversation state for local sessions
+    pub fn new_with_conversation(
+        command_tx: mpsc::Sender<AppCommand>,
+        initial_model: Model,
+        messages: Vec<Message>,
+        _approved_tools: Vec<String>, // TODO: restore approved tools
+    ) -> Result<Self> {
+        let mut tui = Self::new(command_tx, initial_model)?;
+        
+        // Restore messages to the TUI using the encapsulated method
+        let message_count = messages.len();
+        info!("Starting to restore {} messages to TUI", message_count);
+        
+        let converted_messages: Vec<MessageContent> = messages
+            .into_iter()
+            .enumerate()
+            .map(|(i, message)| {
+                let content = Self::convert_message(message, &tui.view_model.tool_registry);
+                
+                if i < 5 || i >= message_count - 5 {
+                    info!("Converting message {}: type={:?}", i, match &content {
+                        MessageContent::User { .. } => "User",
+                        MessageContent::Assistant { .. } => "Assistant", 
+                        MessageContent::Tool { .. } => "Tool",
+                    });
+                }
+                
+                content
+            })
+            .collect();
+            
+        // Add all messages with proper coordination
+        tui.view_model.add_messages(converted_messages);
+        
+        info!("Finished restoring messages. TUI now has {} messages", tui.view_model.messages.len());
+        
+        // Reset scroll to bottom after restoring messages
+        tui.view_model.message_list_state.scroll_to_bottom();
+        
+        Ok(tui)
+    }
+
     /// Resume an existing remote session
     pub async fn resume_remote(
         addr: &str,
@@ -178,13 +221,12 @@ impl Tui {
         // Connect to the gRPC server
         let mut client = GrpcClientAdapter::connect(addr).await?;
 
-        // Resume the session
-        client.resume_session(session_id.clone()).await?;
-        info!("Resumed remote session: {}", session_id);
+        // Activate the session synchronously
+        let (messages, approved_tools) = client.activate_session(session_id.clone()).await?;
+        info!("Activated remote session: {} with {} messages", session_id, messages.len());
 
-        // Start streaming
+        // Start streaming (session already active)
         let event_rx = client.start_streaming().await?;
-
         // Create command sender that forwards to the gRPC client
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<AppCommand>(32);
 
@@ -199,7 +241,40 @@ impl Tui {
         });
 
         // Initialize TUI with the command sender
-        let tui = Self::new(cmd_tx, initial_model)?;
+        let mut tui = Self::new(cmd_tx, initial_model)?;
+        
+        // Restore messages to the TUI using the encapsulated method
+        let message_count = messages.len();
+        info!("Starting to restore {} messages to TUI", message_count);
+        
+        let converted_messages: Vec<MessageContent> = messages
+            .into_iter()
+            .enumerate()
+            .map(|(i, message)| {
+                let content = Self::convert_message(message, &tui.view_model.tool_registry);
+                
+                if i < 5 || i >= message_count - 5 {
+                    info!("Converting message {}: type={:?}", i, match &content {
+                        MessageContent::User { .. } => "User",
+                        MessageContent::Assistant { .. } => "Assistant", 
+                        MessageContent::Tool { .. } => "Tool",
+                    });
+                }
+                
+                content
+            })
+            .collect();
+            
+        // Add all messages with proper coordination
+        tui.view_model.add_messages(converted_messages);
+        
+        info!("Finished restoring messages. TUI now has {} messages", tui.view_model.messages.len());
+        
+        // Reset scroll to bottom after restoring messages
+        tui.view_model.message_list_state.scroll_to_bottom();
+        
+        // TODO: Restore approved tools
+        // This would require sending them through a command or storing them in the TUI state
 
         Ok((tui, event_rx))
     }
@@ -217,16 +292,11 @@ impl Tui {
     }
 
     pub async fn run(&mut self, mut event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
-        // Request current conversation state to populate display with any existing messages
-        // (e.g., when resuming a session)
-        if let Err(e) = self
-            .command_tx
-            .send(AppCommand::GetCurrentConversation)
-            .await
-        {
-            warn!(target:"tui.run", "Failed to request current conversation: {}", e);
-        }
-
+        // Log the current state of messages
+        info!("Starting TUI run with {} messages in view model", self.view_model.messages.len());
+        
+        // No need to request current conversation - messages are restored in resume_remote
+        
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let _input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
@@ -279,6 +349,8 @@ impl Tui {
                 self.terminal.draw(|f| {
                 let textarea_ref = &self.textarea;
                 let current_approval_ref = self.current_tool_approval.as_ref();
+
+                debug!(target:"tui.run.draw", "Drawing UI with {} messages", self.view_model.messages.len());
 
                 if let Err(e) = Tui::render_ui_static(
                     f,

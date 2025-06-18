@@ -1,4 +1,5 @@
 use crate::grpc::proto::*;
+use crate::grpc::conversions::message_to_proto;
 use crate::session::manager::SessionManager;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -15,6 +16,8 @@ impl AgentServiceImpl {
         Self { session_manager }
     }
 }
+
+
 
 #[tonic::async_trait]
 impl agent_service_server::AgentService for AgentServiceImpl {
@@ -45,13 +48,8 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                             .await
                         {
                             Ok(receiver) => {
-                                // Session is already active - send conversation history to new client
-                                debug!("Session {} is already active, sending conversation history to new client", session_id);
-                                if let Err(e) = session_manager.send_command(&session_id, crate::app::AppCommand::GetCurrentConversation).await {
-                                    warn!("Failed to send GetCurrentConversation command for active session {}: {}", session_id, e);
-                                } else {
-                                    debug!("Sent GetCurrentConversation command for active session: {}", session_id);
-                                }
+                                // Session is already active - TUI will call GetConversation RPC to get history
+                                debug!("Session {} is already active, TUI should call GetConversation to retrieve history", session_id);
                                 receiver
                             },
                             Err(crate::session::manager::SessionManagerError::SessionNotActive { session_id }) => {
@@ -333,6 +331,47 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         }
     }
 
+    async fn get_conversation(
+        &self,
+        request: Request<GetConversationRequest>,
+    ) -> Result<Response<GetConversationResponse>, Status> {
+        let req = request.into_inner();
+        
+        info!("GetConversation called for session: {}", req.session_id);
+
+        match self.session_manager.get_session_state(&req.session_id).await {
+            Ok(Some(session_state)) => {
+                info!("Found session state with {} messages and {} approved tools", 
+                    session_state.messages.len(), session_state.approved_tools.len());
+                
+                // Convert messages to proto format
+                let messages: Vec<_> = session_state.messages.iter().map(|msg| {
+                    let proto_msg = message_to_proto(msg.clone());
+                    debug!("Converted message {} to proto", msg.id());
+                    proto_msg
+                }).collect();
+                
+                info!("Converted {} messages to proto format", messages.len());
+
+                Ok(Response::new(GetConversationResponse {
+                    messages,
+                    approved_tools: session_state.approved_tools.into_iter().collect(),
+                }))
+            }
+            Ok(None) => {
+                info!("Session not found: {}", req.session_id);
+                Err(Status::not_found(format!(
+                    "Session not found: {}",
+                    req.session_id
+                )))
+            }
+            Err(e) => {
+                error!("Failed to get conversation: {}", e);
+                Err(Status::internal(format!("Failed to get conversation: {}", e)))
+            }
+        }
+    }
+
     async fn send_message(
         &self,
         request: Request<SendMessageRequest>,
@@ -402,6 +441,55 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         }
     }
 
+    async fn activate_session(
+        &self,
+        request: Request<ActivateSessionRequest>,
+    ) -> Result<Response<ActivateSessionResponse>, Status> {
+        let req = request.into_inner();
+        info!("ActivateSession called for {}", req.session_id);
+
+        // If already active, return state directly
+        if let Ok(Some(state)) = self.session_manager.get_session_state(&req.session_id).await {
+            return Ok(Response::new(ActivateSessionResponse {
+                messages: state
+                    .messages
+                    .into_iter()
+                    .map(message_to_proto)
+                    .collect(),
+                approved_tools: state.approved_tools.into_iter().collect(),
+            }));
+        }
+
+        // Load LLM config
+        let llm_config = crate::config::LlmConfig::from_env().map_err(|e| {
+            Status::internal(format!("Failed to load LLM config: {}", e))
+        })?;
+        let app_config = crate::app::AppConfig { llm_config };
+
+        match self
+            .session_manager
+            .resume_session(&req.session_id, app_config)
+            .await
+        {
+            Ok((true, _)) => {
+                // Fetch state now active
+                if let Ok(Some(state)) = self.session_manager.get_session_state(&req.session_id).await {
+                    return Ok(Response::new(ActivateSessionResponse {
+                        messages: state
+                            .messages
+                            .into_iter()
+                            .map(message_to_proto)
+                            .collect(),
+                        approved_tools: state.approved_tools.into_iter().collect(),
+                    }));
+                }
+                Err(Status::internal("Activation succeeded but state unavailable"))
+            }
+            Ok((false, _)) => Err(Status::not_found(format!("Session not found: {}", req.session_id))),
+            Err(e) => Err(Status::internal(format!("Failed to activate session: {}", e))),
+        }
+    }
+
     async fn cancel_operation(
         &self,
         request: Request<CancelOperationRequest>,
@@ -445,24 +533,7 @@ async fn try_resume_session(
     match session_manager.resume_session(session_id, app_config).await {
         Ok((true, command_tx)) => {
             info!("Successfully resumed session: {}", session_id);
-
-            // Send GetCurrentConversation command to trigger RestoredMessage events
-            // This ensures the TUI gets populated with existing conversation history
-            if let Err(e) = command_tx
-                .send(crate::app::AppCommand::GetCurrentConversation)
-                .await
-            {
-                warn!(
-                    "Failed to send GetCurrentConversation command after resuming session {}: {}",
-                    session_id, e
-                );
-            } else {
-                debug!(
-                    "Sent GetCurrentConversation command for resumed session: {}",
-                    session_id
-                );
-            }
-
+            // TUI will call GetCurrentConversation when it connects
             Ok(())
         }
         Ok((false, _)) => {

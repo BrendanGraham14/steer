@@ -1,5 +1,6 @@
 pub mod client_adapter;
 pub mod conversions;
+pub mod error;
 pub mod events;
 pub mod server;
 
@@ -17,5 +18,6 @@ pub mod remote_backend {
 pub use agent as proto; // Keep this for existing code that uses proto::*
 
 pub use client_adapter::*;
+pub use error::*;
 pub use events::*;
 pub use server::*;

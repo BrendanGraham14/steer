@@ -900,6 +900,7 @@ mod tests {
     use crate::app::conversation::{Message, Role, AssistantContent, UserContent, ToolResult};
     use crate::events::SessionMetadata;
     use crate::session::state::WorkspaceConfig;
+    use crate::session::ToolVisibility;
 
     use super::*;
     use tempfile::TempDir;

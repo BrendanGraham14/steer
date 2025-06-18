@@ -7,11 +7,13 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use crate::app::{AppCommand, AppEvent};
+use crate::app::conversation::Message;
 use crate::grpc::conversions::{session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto};
+use crate::grpc::error::GrpcError;
 use crate::grpc::proto::{
     ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
-    DeleteSessionRequest, GetSessionRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
-    SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse,
+    DeleteSessionRequest, GetSessionRequest, GetConversationRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
+    SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse, ActivateSessionRequest,
     agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
 };
 use crate::session::{SessionConfig, ToolApprovalPolicy};
@@ -68,18 +70,40 @@ impl GrpcClientAdapter {
         Ok(session_info.id)
     }
 
-    /// Resume an existing session
-    pub async fn resume_session(&mut self, session_id: String) -> Result<()> {
-        // For now, just set the session ID - the session should already exist on the server
-        self.session_id = Some(session_id.clone());
-        info!("Resuming session: {}", session_id);
-        Ok(())
+    /// Activate (load) an existing dormant session and get its state
+    pub async fn activate_session(&mut self, session_id: String) -> Result<(Vec<Message>, Vec<String>)> {
+        info!("Activating remote session: {}", session_id);
+
+        let response = self
+            .client
+            .activate_session(crate::grpc::proto::ActivateSessionRequest {
+                session_id: session_id.clone(),
+            })
+            .await?
+            .into_inner();
+
+        // Convert proto messages -> app messages with explicit error handling
+        let mut messages = Vec::new();
+        for (i, proto_msg) in response.messages.into_iter().enumerate() {
+            match proto_message_to_app_message(proto_msg) {
+                Some(msg) => messages.push(msg),
+                None => {
+                    return Err(GrpcError::MessageConversionFailed {
+                        index: i,
+                        reason: "Failed to convert proto message to app message".to_string(),
+                    }.into());
+                }
+            }
+        }
+
+        self.session_id = Some(session_id);
+        Ok((messages, response.approved_tools))
     }
 
     /// Start bidirectional streaming with the server
     pub async fn start_streaming(&mut self) -> Result<mpsc::Receiver<AppEvent>> {
         let session_id = self.session_id.as_ref().ok_or_else(|| {
-            anyhow!("No session ID - call create_session or resume_session first")
+            anyhow!("No session ID - call create_session or activate_session first")
         })?;
 
         debug!("Starting bidirectional stream for session: {}", session_id);
@@ -238,6 +262,42 @@ impl GrpcClientAdapter {
         }
     }
 
+    /// Get the current conversation for a session
+    pub async fn get_conversation(&mut self, session_id: &str) -> Result<(Vec<Message>, Vec<String>)> {
+        info!("Client adapter getting conversation for session: {}", session_id);
+        
+        let response = self
+            .client
+            .get_conversation(GetConversationRequest {
+                session_id: session_id.to_string(),
+            })
+            .await?
+            .into_inner();
+
+        info!("Received GetConversation response with {} messages and {} approved tools", 
+            response.messages.len(), response.approved_tools.len());
+
+        // Convert proto messages to app messages with explicit error handling
+        let proto_message_count = response.messages.len();
+        let mut messages = Vec::new();
+        for (i, proto_msg) in response.messages.into_iter().enumerate() {
+            match proto_message_to_app_message(proto_msg) {
+                Some(msg) => messages.push(msg),
+                None => {
+                    return Err(GrpcError::MessageConversionFailed {
+                        index: i,
+                        reason: "Failed to convert proto message to app message".to_string(),
+                    }.into());
+                }
+            }
+        }
+        
+        info!("Converted {} proto messages to {} app messages", 
+            proto_message_count, messages.len());
+
+        Ok((messages, response.approved_tools))
+    }
+
     /// Shutdown the adapter and clean up resources
     pub async fn shutdown(mut self) {
         if let Some(handle) = self.stream_handle.take() {
@@ -296,8 +356,7 @@ fn convert_app_command_to_client_message(
         AppCommand::ExecuteBashCommand { .. } => None,
         AppCommand::Shutdown => None,
         AppCommand::RequestToolApprovalInternal { .. } => None,
-        AppCommand::RestoreMessage(_) => None,
-        AppCommand::PreApproveTools(_) => None,
+        AppCommand::RestoreConversation { .. } => None,
         AppCommand::GetCurrentConversation => None,
     };
 
@@ -313,6 +372,96 @@ fn convert_server_event_to_app_event(event: ServerEvent) -> Option<AppEvent> {
 
     // Use the existing conversion function from grpc/events.rs
     server_event_to_app_event(event)
+}
+
+/// Convert proto Message to app Message
+fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Option<Message> {
+    use crate::app::conversation::{AssistantContent, UserContent, ToolResult as ConversationToolResult};
+    use crate::grpc::proto::{message, user_content, assistant_content, tool_result};
+    use tools::ToolCall;
+    
+    let message_type = proto_msg.message.as_ref().map(|m| match m {
+        message::Message::User(_) => "User",
+        message::Message::Assistant(_) => "Assistant",
+        message::Message::Tool(_) => "Tool",
+    }).unwrap_or("Unknown");
+    
+    debug!("Converting proto message {} of type {}", proto_msg.id, message_type);
+    
+    match proto_msg.message? {
+        message::Message::User(user_msg) => {
+            let content = user_msg.content.into_iter().filter_map(|user_content| {
+                match user_content.content? {
+                    user_content::Content::Text(text) => {
+                        Some(UserContent::Text { text })
+                    }
+                    user_content::Content::CommandExecution(cmd) => {
+                        Some(UserContent::CommandExecution {
+                            command: cmd.command,
+                            stdout: cmd.stdout,
+                            stderr: cmd.stderr,
+                            exit_code: cmd.exit_code,
+                        })
+                    }
+                }
+            }).collect();
+            Some(Message::User { 
+                content, 
+                timestamp: user_msg.timestamp, 
+                id: proto_msg.id,
+            })
+        }
+        message::Message::Assistant(assistant_msg) => {
+            let content = assistant_msg.content.into_iter().filter_map(|assistant_content| {
+                match assistant_content.content? {
+                    assistant_content::Content::Text(text) => {
+                        Some(AssistantContent::Text { text })
+                    }
+                    assistant_content::Content::ToolCall(tool_call) => {
+                        let params = serde_json::from_str(&tool_call.parameters_json)
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        
+                        Some(AssistantContent::ToolCall { 
+                            tool_call: ToolCall {
+                                id: tool_call.id,
+                                name: tool_call.name,
+                                parameters: params,
+                            }
+                        })
+                    }
+                    assistant_content::Content::Thought(_) => {
+                        // TODO: Handle thoughts properly when we implement them
+                        None
+                    }
+                }
+            }).collect();
+            Some(Message::Assistant { 
+                content, 
+                timestamp: assistant_msg.timestamp, 
+                id: proto_msg.id,
+            })
+        }
+        message::Message::Tool(tool_msg) => {
+            if let Some(result) = tool_msg.result {
+                let tool_result = match result.result? {
+                    tool_result::Result::Success(output) => {
+                        ConversationToolResult::Success { output }
+                    }
+                    tool_result::Result::Error(error) => {
+                        ConversationToolResult::Error { error }
+                    }
+                };
+                Some(Message::Tool {
+                    tool_use_id: tool_msg.tool_use_id,
+                    result: tool_result,
+                    timestamp: tool_msg.timestamp,
+                    id: proto_msg.id,
+                })
+            } else {
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]

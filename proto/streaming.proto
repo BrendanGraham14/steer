@@ -18,6 +18,10 @@ service AgentService {
   rpc SendMessage(SendMessageRequest) returns (Operation);
   rpc ApproveTool(ApproveToolRequest) returns (google.protobuf.Empty);
   rpc CancelOperation(CancelOperationRequest) returns (google.protobuf.Empty);
+  rpc GetConversation(GetConversationRequest) returns (GetConversationResponse);
+
+  // Explicitly activate (load) a dormant session into memory and return its state
+  rpc ActivateSession(ActivateSessionRequest) returns (ActivateSessionResponse);
 }
 
 // Client to server messages in the bidirectional stream
@@ -52,7 +56,6 @@ message ServerEvent {
     OperationCancelledEvent operation_cancelled = 13;
     ModelChangedEvent model_changed = 14;
     ErrorEvent error = 15;
-    RestoredMessageEvent restored_message = 16;
   }
 }
 
@@ -183,16 +186,6 @@ message ErrorEvent {
   string message = 1;
 }
 
-message RestoredMessageEvent {
-  oneof message {
-    UserMessage user = 1;
-    AssistantMessage assistant = 2;
-    ToolMessage tool = 3;
-  }
-  string id = 4;
-  string model = 5;
-}
-
 message OperationCancelledEvent {
   CancellationInfo info = 1;
 }
@@ -256,6 +249,24 @@ message GetSessionRequest {
 
 message DeleteSessionRequest {
   string session_id = 1;
+}
+
+message GetConversationRequest {
+  string session_id = 1;
+}
+
+message ActivateSessionRequest {
+  string session_id = 1;
+}
+
+message ActivateSessionResponse {
+  repeated Message messages = 1;
+  repeated string approved_tools = 2;
+}
+
+message GetConversationResponse {
+  repeated Message messages = 1;
+  repeated string approved_tools = 2;
 }
 
 // Core data types

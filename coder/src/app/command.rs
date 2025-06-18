@@ -2,6 +2,7 @@ use crate::app::Message;
 use crate::app::agent_executor::ApprovalDecision;
 use tokio::sync::oneshot;
 use tools::ToolCall;
+use std::collections::HashSet;
 
 /// Defines messages the TUI can send *to* the `App` actor.
 #[derive(Debug)]
@@ -27,10 +28,11 @@ pub enum AppCommand {
         tool_call: ToolCall,
         responder: oneshot::Sender<ApprovalDecision>,
     },
-    /// Restore a message to the conversation (used when resuming sessions)
-    RestoreMessage(Message),
-    /// Pre-approve tools for the session (used when resuming sessions)
-    PreApproveTools(Vec<String>),
+    /// Restore conversation state when resuming a session
+    RestoreConversation {
+        messages: Vec<Message>,
+        approved_tools: HashSet<String>,
+    },
     /// Request to send the current conversation state
     /// Used by TUI to populate display after session restoration
     GetCurrentConversation,

@@ -392,40 +392,23 @@ impl SessionManager {
         // Get command sender before restoration
         let command_tx = managed_session.command_tx.clone();
 
-        // Restore conversation history
-        if !session.state.messages.is_empty() {
-            info!(session_id = %session_id, message_count = session.state.messages.len(), "Restoring conversation history");
+        // Restore conversation history and approved tools atomically
+        if !session.state.messages.is_empty() || !session.state.approved_tools.is_empty() {
+            info!(
+                session_id = %session_id, 
+                message_count = session.state.messages.len(),
+                tool_count = session.state.approved_tools.len(),
+                "Restoring conversation state"
+            );
 
-            // Send messages to the App to rebuild conversation state
-            for message in &session.state.messages {
-                // Convert from stored format to App format
-                let app_message = crate::app::Message::try_from(message.clone()).map_err(|e| {
-                    SessionManagerError::CreationFailed {
-                        message: format!("Failed to restore message: {}", e),
-                    }
-                })?;
-
-                // Send command to add message to conversation
-                command_tx
-                    .send(AppCommand::RestoreMessage(app_message))
-                    .await
-                    .map_err(|_| SessionManagerError::CreationFailed {
-                        message: "Failed to send restore command to App".to_string(),
-                    })?;
-            }
-        }
-
-        // Restore approved tools
-        if !session.state.approved_tools.is_empty() {
-            info!(session_id = %session_id, tool_count = session.state.approved_tools.len(), "Restoring approved tools");
-
-            // Send all approved tools at once
-            let tools: Vec<String> = session.state.approved_tools.iter().cloned().collect();
             command_tx
-                .send(AppCommand::PreApproveTools(tools))
+                .send(AppCommand::RestoreConversation {
+                    messages: session.state.messages.clone(),
+                    approved_tools: session.state.approved_tools.clone(),
+                })
                 .await
                 .map_err(|_| SessionManagerError::CreationFailed {
-                    message: "Failed to send tool approval command to App".to_string(),
+                    message: "Failed to send restore command to App".to_string(),
                 })?;
         }
 
@@ -711,12 +694,23 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Option<crate::session::SessionState>, SessionManagerError> {
+        info!("get_session_state called for session: {}", session_id);
+        
         // Always load from store to get the most up-to-date state
         // The in-memory state in ManagedSession may be stale
         match self.store.get_session(session_id).await {
-            Ok(Some(session)) => Ok(Some(session.state)),
-            Ok(None) => Ok(None),
-            Err(e) => Err(SessionManagerError::Storage(e)),
+            Ok(Some(session)) => {
+                info!("Loaded session from store with {} messages", session.state.messages.len());
+                Ok(Some(session.state))
+            }
+            Ok(None) => {
+                info!("Session not found in store: {}", session_id);
+                Ok(None)
+            }
+            Err(e) => {
+                error!("Error loading session from store: {}", e);
+                Err(SessionManagerError::Storage(e))
+            }
         }
     }
 
@@ -1192,6 +1186,7 @@ async fn update_session_state_for_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::conversation::Role;
     use crate::config::LlmConfig;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use tempfile::TempDir;

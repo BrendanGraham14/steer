@@ -90,11 +90,6 @@ pub enum AppEvent {
     Error {
         message: String,
     },
-    /// Messages that are being restored from a session (not to be persisted again)
-    RestoredMessage {
-        message: Message,
-        model: Model,
-    },
 }
 
 #[derive(Clone)]
@@ -865,21 +860,23 @@ async fn handle_app_command(
             }
             false
         }
-        AppCommand::RestoreMessage(message) => {
-            // Directly add the message to the conversation without emitting events
-            // This is used during session restoration
-            debug!(target:"handle_app_command", "Restoring message to conversation");
+        AppCommand::RestoreConversation {
+            messages,
+            approved_tools,
+        } => {
+            // Atomically restore entire conversation state
+            debug!(target:"handle_app_command", "Restoring conversation with {} messages and {} approved tools", 
+                messages.len(), approved_tools.len());
+            
+            // Restore messages
             let mut conversation_guard = app.conversation.lock().await;
-            conversation_guard.messages.push(message);
+            conversation_guard.messages = messages;
             drop(conversation_guard);
-            false
-        }
-        AppCommand::PreApproveTools(tool_names) => {
-            // Add tools to the approved set for this session
-            debug!(target:"handle_app_command", "Pre-approving tools: {:?}", tool_names);
-            for tool_name in tool_names {
-                app.approved_tools.insert(tool_name);
-            }
+            
+            // Restore approved tools
+            app.approved_tools = approved_tools;
+            
+            debug!(target:"handle_app_command", "Conversation restoration complete");
             false
         }
 
@@ -999,23 +996,9 @@ async fn handle_app_command(
             true
         }
         AppCommand::GetCurrentConversation => {
-            // Get all messages from the conversation and emit them as RestoredMessage events
-            // These will be displayed by the TUI but won't be persisted again by the session
-            // system since they're already stored
-            let conversation_messages = {
-                let conv_guard = app.conversation.lock().await;
-                conv_guard.messages.clone()
-            };
-
-            debug!(target:"handle_app_command", "Sending {} existing messages to TUI", conversation_messages.len());
-
-            for message in conversation_messages {
-                // Emit RestoredMessage event which TUI will handle but session won't persist
-                app.emit_event(AppEvent::RestoredMessage {
-                    message,
-                    model: app.current_model, // Use current model as a placeholder
-                });
-            }
+            // This command is now handled synchronously via RPC
+            // Should not be called directly anymore
+            warn!(target:"handle_app_command", "GetCurrentConversation command received - this should use the sync RPC instead");
             false
         }
         AppCommand::RequestToolApprovalInternal {

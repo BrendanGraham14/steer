@@ -84,6 +84,12 @@ impl Command for ResumeSessionCommand {
                         anyhow!("Failed to get event receiver for resumed session: {}", e)
                     })?;
 
+                // Get the session state to restore messages
+                let session_state = session_manager
+                    .get_session_state(&self.session_id)
+                    .await?
+                    .ok_or_else(|| anyhow!("Session state not found after resume"))?;
+
                 // Get the session info to determine the model
                 let session_info = session_manager
                     .get_session(&self.session_id)
@@ -97,8 +103,13 @@ impl Command for ResumeSessionCommand {
                 // Set panic hook for terminal cleanup
                 crate::tui::setup_panic_hook();
 
-                // Create and run the TUI
-                let mut tui = crate::tui::Tui::new(command_tx, model)?;
+                // Create and run the TUI with restored conversation
+                let mut tui = crate::tui::Tui::new_with_conversation(
+                    command_tx,
+                    model,
+                    session_state.messages,
+                    session_state.approved_tools.into_iter().collect(),
+                )?;
                 tui.run(event_rx).await?;
             }
             Ok((false, _)) => {
@@ -189,6 +200,13 @@ impl Command for LatestSessionCommand {
                         anyhow!("Failed to get event receiver for resumed session: {}", e)
                     })?;
 
+                // Get the session state to restore messages
+                let session_state = session_manager
+                    .get_session_state(session_id)
+                    .await
+                    .map_err(|e| anyhow!("Failed to get session state: {}", e))?
+                    .ok_or_else(|| anyhow!("Session state not found after resume"))?;
+
                 let model = latest_session
                     .last_model
                     .unwrap_or(Model::ClaudeSonnet4_20250514);
@@ -196,8 +214,13 @@ impl Command for LatestSessionCommand {
                 // Set panic hook for terminal cleanup
                 crate::tui::setup_panic_hook();
 
-                // Create and run the TUI
-                let mut tui = crate::tui::Tui::new(command_tx, model)?;
+                // Create and run the TUI with restored conversation
+                let mut tui = crate::tui::Tui::new_with_conversation(
+                    command_tx,
+                    model,
+                    session_state.messages,
+                    session_state.approved_tools.into_iter().collect(),
+                )?;
                 tui.run(event_rx).await?;
             }
             Ok((false, _)) => {

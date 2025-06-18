@@ -3,6 +3,91 @@ use crate::session::state::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, WorkspaceConfig,
 };
+use crate::app::conversation::{Message, UserContent, AssistantContent, ToolResult};
+
+/// Convert internal Message to protobuf
+pub fn message_to_proto(message: Message) -> proto::Message {
+    let (message_variant, created_at) = match &message {
+        Message::User { content, timestamp, id } => {
+            let user_msg = proto::UserMessage {
+                content: content.iter().map(|user_content| match user_content {
+                    UserContent::Text { text } => proto::UserContent {
+                        content: Some(proto::user_content::Content::Text(text.clone())),
+                    },
+                    UserContent::CommandExecution { command, stdout, stderr, exit_code } => {
+                        proto::UserContent {
+                            content: Some(proto::user_content::Content::CommandExecution(proto::CommandExecution {
+                                command: command.clone(),
+                                stdout: stdout.clone(),
+                                stderr: stderr.clone(),
+                                exit_code: *exit_code,
+                            })),
+                        }
+                    }
+                    UserContent::AppCommand { .. } => {
+                        // For now, represent app commands as empty text in gRPC
+                        proto::UserContent {
+                            content: Some(proto::user_content::Content::Text(String::new())),
+                        }
+                    }
+                }).collect(),
+                timestamp: *timestamp,
+            };
+            (proto::message::Message::User(user_msg), *timestamp)
+        }
+        Message::Assistant { content, timestamp, id } => {
+            let assistant_msg = proto::AssistantMessage {
+                content: content.iter().map(|assistant_content| match assistant_content {
+                    AssistantContent::Text { text } => proto::AssistantContent {
+                        content: Some(proto::assistant_content::Content::Text(text.clone())),
+                    },
+                    AssistantContent::ToolCall { tool_call } => {
+                        proto::AssistantContent {
+                            content: Some(proto::assistant_content::Content::ToolCall(proto::ToolCall {
+                                id: tool_call.id.clone(),
+                                name: tool_call.name.clone(),
+                                parameters_json: serde_json::to_string(&tool_call.parameters).unwrap_or_default(),
+                            })),
+                        }
+                    }
+                    AssistantContent::Thought { thought } => {
+                        // For now, convert thoughts to text
+                        proto::AssistantContent {
+                            content: Some(proto::assistant_content::Content::Text(format!("<thinking>\n{}\n</thinking>", thought.display_text()))),
+                        }
+                    }
+                }).collect(),
+                timestamp: *timestamp,
+            };
+            (proto::message::Message::Assistant(assistant_msg), *timestamp)
+        }
+        Message::Tool { tool_use_id, result, timestamp, id } => {
+            let proto_result = match result {
+                ToolResult::Success { output } => {
+                    proto::tool_result::Result::Success(output.clone())
+                }
+                ToolResult::Error { error } => {
+                    proto::tool_result::Result::Error(error.clone())
+                }
+            };
+            let tool_msg = proto::ToolMessage {
+                tool_use_id: tool_use_id.clone(),
+                result: Some(proto::ToolResult {
+                    result: Some(proto_result),
+                }),
+                timestamp: *timestamp,
+            };
+            (proto::message::Message::Tool(tool_msg), *timestamp)
+        }
+    };
+
+    proto::Message {
+        id: message.id().to_string(),
+        message: Some(message_variant),
+        created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(created_at))),
+        metadata: Default::default(),
+    }
+}
 
 /// Convert internal ToolApprovalPolicy to protobuf
 pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::ToolApprovalPolicy {

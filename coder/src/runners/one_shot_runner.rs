@@ -268,6 +268,7 @@ impl OneShotRunner {
 mod tests {
     use super::*;
     use crate::app::conversation::{Message, Role, AssistantContent, UserContent, ToolResult};
+use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
     use dotenv::dotenv;
