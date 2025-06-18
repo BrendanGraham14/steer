@@ -1,149 +1,127 @@
 # Coder
 
-Coder is an AI-powered agent and CLI tool that assists with software engineering tasks, written in Rust.
+Coder is an AI-powered CLI assistant for software engineering tasks.  It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
 
-## Features
+---
 
-- Terminal-based chat interface
-- Context-aware tooling for file operations, search, and more
-- Headless one-shot mode for programmatic and CLI usage
-- Git integration
-- Memory management via CLAUDE.md files
-- API key management from multiple sources
-- Conversation history management
-- File operation tooling: view, edit, replace, glob search, grep search, etc.
-
-## Usage
+## Quick start
 
 ```bash
-# Start a conversation using API key from .env or environment
+# Start an interactive chat in the current directory
 coder
 
-# Start a conversation using a specific API key
-coder --api-key YOUR_API_KEY
+# Work inside a different directory
+coder --directory /path/to/project
 
-# Start a conversation in a specific directory
-coder --directory /path/to/your/project
+# Use a specific model (run `coder /model` at runtime to list models)
+coder --model claude-3-opus-20250430
 
-# Initialize a configuration file
-coder init
+# Point the client at a remote gRPC server instead of running locally
+coder --remote 127.0.0.1:50051
 
-# Run in headless one-shot mode reading prompt from stdin
-echo "What is 2+2?" | coder headless --timeout 30
-
-# Run in headless one-shot mode with a JSON file containing messages
-coder headless --messages-json /path/to/messages.json --model gemini-pro
-
-# Clear conversation history
-coder clear
-
-# Compact conversation to save context space
-coder compact
+# Override the built-in system prompt
+coder --system-prompt "You are an expert Rust mentor"
 ```
 
-## API Key Setup
-
-Coder loads API keys for different providers. The primary way to provide these keys is through environment variables. These can be set directly in your shell or via a `.env` file in your project's root directory.
-
-The supported environment variables are:
-
-- **Anthropic (Claude):** `ANTHROPIC_API_KEY` (alternatively, `CLAUDE_API_KEY` is also checked)
-- **OpenAI:** `OPENAI_API_KEY`
-- **Google (Gemini):** `GEMINI_API_KEY`
-
-**Order of Precedence:**
-
-1.  Provider-specific environment variables (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
-2.  Values from a `.env` file (which populates the environment variables).
-
-The configuration file created by `coder init` (`config.json`) is used for storing preferences like the default model and history size, not for API keys directly.
-
-## Commands and Tools
-
-Coder supports a variety of commands and tools to help with pair programming:
-
-- `/help` - Get help with using Coder
-- `/model` - View or change the current LLM model
-- `/clear` - Clear the current conversation
-- `/compact` - Compact the conversation to save context space
-
-## Installation
+### Headless one-shot mode
 
 ```bash
-# Coming soon
+# Read prompt from stdin and return a single JSON response
+echo "What is 2+2?" | coder headless
+
+# Provide a JSON file containing `Vec<Message>` in the Coder message format
+coder headless --messages-json /tmp/messages.json --model gemini-pro
+
+# Run inside an existing session (keeps history / tool approvals)
+coder headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
+
+# Supply a custom tool-visibility / pre-approval configuration
+coder headless --tool-config tools.json < prompt.txt
 ```
+
+### gRPC server / remote mode
+
+```bash
+# Start a local server (default 127.0.0.1:50051)
+coder serve --port 50051
+
+# Connect to an already running server
+coder --remote 192.168.1.10:50051
+```
+
+### Session management
+
+```bash
+# List saved sessions
+coder session list --limit 20
+
+# Resume a session
+coder session resume <SESSION_ID>
+
+# Create a new session with pre-approved tools
+coder session create --tool-policy pre_approved \
+                    --pre-approved-tools view,grep,glob,ls
+
+# Delete a session
+coder session delete <SESSION_ID> --force
+```
+
+---
+
+## Slash commands (inside the chat UI)
+
+```
+/help        Show help
+/model       Show or change the current model
+/clear       Clear conversation history and tool approvals
+/compact     Summarise older messages to save context space
+/cancel      Cancel the current operation in progress
+```
+
+---
+
+## API keys
+
+Coder only looks at environment variables (optionally loaded from a `.env` file).  Set the variables that correspond to the providers you intend to use:
+
+* `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
+* `OPENAI_API_KEY`
+* `GEMINI_API_KEY`
+
+The `coder init` command creates `~/.config/coder/config.json` for preferences such as default model or history size, **not** for secrets.
+
+---
+
+## Tool approval system
+
+Read-only tools run automatically ( `view`, `grep`, `ls`, `glob`, `fetch`, `todo.read` ).  Mutating tools ( `edit`, `replace`, `bash`, etc.) ask for confirmation the first time; choose **always** to remember the decision for the rest of the session.
+
+Headless mode pre-approves every built-in tool for convenience.
+
+---
 
 ## Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/coder.git
 cd coder
 
-# Build the project
+# Build & test
 cargo build
-
-# Run the project
-cargo run
-
-# Run tests
 cargo test
 ```
 
-## Tool Approval System
+Run `cargo run --` to launch the CLI in the current directory.
 
-Coder includes a tool approval system to ensure safety when executing tools:
+---
 
-- Read-only tools (view, grep, ls, glob, fetch) do not require approval and execute automatically
-- Write tools (edit_file, replace_file, bash, etc.) require explicit approval
-- When approving a tool, you can use the "always" option to save that tool to your approved list for the current session
-- Tools approved with "always" will not prompt for approval again during the same session
+## Project layout (high-level)
 
-## Headless One-Shot Mode
+* `coder/src/api`    – provider abstractions (Anthropic, OpenAI, Gemini)
+* `coder/src/app`    – core state machine and agent orchestration
+* `coder/src/tools`  – implementation of builtin tools
+* `coder/src/tui`    – ratatui-based terminal UI
+* `coder/src/commands` – top-level CLI subcommand implementations
+* `remote-backend`   – gRPC server binary
 
-The headless one-shot mode allows for non-interactive, programmatic usage of Coder:
-
-- Run the AI as a single request-response cycle with automatic tool execution
-- Perfect for scripting, automation, and API-like usage
-- Supports both simple prompts and structured message JSON files as input
-- Returns structured JSON with the assistant's message and all tool result details
-- Optional timeout setting to limit execution time
-
-### Example JSON Message Format
-
-```json
-[
-  {
-    "role": "user",
-    "content": {
-      "content": "Analyze the code in the current directory."
-    }
-  }
-]
-```
-
-### Example JSON Output
-
-```json
-{
-  "final_msg": {
-    "role": "assistant",
-    "content": {
-      "content": [
-        {
-          "type": "text",
-          "text": "Here is my analysis..."
-        }
-      ]
-    }
-  },
-  "tool_results": [
-    {
-      "tool_call_id": "call_123",
-      "output": "src/main.rs\nsrc/lib.rs\n...",
-      "is_error": false
-    }
-  ]
-}
-```
-
+Full details live in `ARCHITECTURE.md`.
