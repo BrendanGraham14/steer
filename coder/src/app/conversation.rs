@@ -9,6 +9,28 @@ use crate::api::Model;
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 
+/// Result of a conversation compaction operation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "result_type", rename_all = "snake_case")]
+pub enum CompactResult {
+    /// Compaction completed successfully with the summary
+    Success(String),
+    /// Compaction was cancelled by the user
+    Cancelled,
+    /// Not enough messages to compact
+    InsufficientMessages,
+}
+
+/// Response from executing an app command
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "response_type", rename_all = "snake_case")]
+pub enum CommandResponse {
+    /// Simple text response
+    Text(String),
+    /// Compact command response with structured result
+    Compact(CompactResult),
+}
+
 /// Types of app commands that can be executed
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "command_type", rename_all = "snake_case")]
@@ -87,7 +109,7 @@ pub enum UserContent {
     },
     AppCommand {
         command: AppCommandType,
-        response: Option<String>,
+        response: Option<CommandResponse>,
     },
     // TODO: support attachments
 }
@@ -239,7 +261,15 @@ impl Message {
                     }
                     UserContent::AppCommand { command, response } => {
                         if let Some(resp) = response {
-                            format!("/{}\n{}", command.as_command_str(), resp)
+                            let text = match resp {
+                                CommandResponse::Text(msg) => msg.clone(),
+                                CommandResponse::Compact(result) => match result {
+                                    CompactResult::Success(summary) => summary.clone(),
+                                    CompactResult::Cancelled => "Compact command cancelled.".to_string(),
+                                    CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).".to_string(),
+                                },
+                            };
+                            format!("/{}\n{}", command.as_command_str(), text)
                         } else {
                             format!("/{}", command.as_command_str())
                         }
@@ -283,7 +313,14 @@ impl Message {
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.clone()),
                     UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
-                    UserContent::AppCommand { response, .. } => response.clone(),
+                    UserContent::AppCommand { response, .. } => response.as_ref().map(|r| match r {
+                        CommandResponse::Text(msg) => msg.clone(),
+                        CommandResponse::Compact(result) => match result {
+                            CompactResult::Success(summary) => summary.clone(),
+                            CompactResult::Cancelled => "Compact command cancelled.".to_string(),
+                            CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).".to_string(),
+                        },
+                    }),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -449,10 +486,10 @@ impl Conversation {
         &mut self,
         api_client: &ApiClient,
         token: CancellationToken,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<CompactResult> {
         // Skip if we don't have enough messages to compact
         if self.messages.len() < 10 {
-            return Ok(());
+            return Ok(CompactResult::InsufficientMessages);
         }
         let mut prompt_messages = self.messages.clone();
         prompt_messages.push(Message::User {
@@ -463,27 +500,35 @@ impl Conversation {
             id: Message::generate_id("user", Message::current_timestamp()),
         });
 
-        let summary = api_client
-            .complete(
+        let summary = tokio::select! {
+            biased;
+            result = api_client.complete(
                 Model::Claude3_7Sonnet20250219,
                 prompt_messages,
                 None,
                 None,
                 token.clone(),
-            )
-            .await?;
+            ) => result?,
+            _ = token.cancelled() => {
+                return Ok(CompactResult::Cancelled);
+            }
+        };
+        
         let summary_text = summary.extract_text();
 
+        // Clear messages and add compaction marker
         self.messages.clear();
         let timestamp = Message::current_timestamp();
+        
+        // Add the summary as a user message with a clear marker
         self.add_message(Message::User {
             content: vec![UserContent::Text {
-                text: format!("Previous conversation summary:\n{}", summary_text),
+                text: format!("[CONVERSATION COMPACTED]\n\nPrevious conversation summary:\n{}", summary_text),
             }],
             timestamp,
             id: Message::generate_id("user", timestamp),
         });
 
-        Ok(())
+        Ok(CompactResult::Success(summary_text))
     }
 }

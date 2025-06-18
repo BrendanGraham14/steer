@@ -57,7 +57,7 @@ impl EventProcessor for ProcessingStateProcessor {
                         id: display_id,
                         blocks: vec![UserContent::AppCommand {
                             command: AppCommandType::Cancel,
-                            response: Some(format!("Operation cancelled: {}", info)),
+                            response: Some(crate::app::conversation::CommandResponse::Text(format!("Operation cancelled: {}", info))),
                         }],
                         timestamp: chrono::Utc::now().to_rfc3339(),
                     };

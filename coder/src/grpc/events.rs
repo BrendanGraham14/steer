@@ -148,10 +148,17 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
         })),
         AppEvent::CommandResponse { 
             command: _, 
-            content, 
+            response, 
             id 
         } => Some(server_event::Event::CommandResponse(CommandResponseEvent { 
-            content, 
+            content: match response {
+                crate::app::conversation::CommandResponse::Text(msg) => msg,
+                crate::app::conversation::CommandResponse::Compact(result) => match result {
+                    crate::app::conversation::CompactResult::Success(summary) => summary,
+                    crate::app::conversation::CompactResult::Cancelled => "Compact command cancelled.".to_string(),
+                    crate::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).".to_string(),
+                },
+            }, 
             id 
         })),
         AppEvent::ModelChanged { 
@@ -331,7 +338,7 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
             command: AppCommandType::Unknown { 
                 command: "unknown".to_string() 
             },
-            content: e.content, 
+            response: crate::app::conversation::CommandResponse::Text(e.content), 
             id: e.id 
         }),
         server_event::Event::ModelChanged(e) => {
