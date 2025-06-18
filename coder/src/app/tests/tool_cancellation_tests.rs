@@ -24,10 +24,11 @@ mod tests {
         let mut backend_registry = BackendRegistry::new();
         backend_registry.register("local".to_string(), Arc::new(LocalBackend::full()));
 
-        Arc::new(ToolExecutor {
-            backend_registry: Arc::new(backend_registry),
-            validators: Arc::new(ValidatorRegistry::new()),
-        })
+        Arc::new(ToolExecutor::with_components(
+            None, // No workspace for tests
+            Arc::new(backend_registry),
+            Arc::new(ValidatorRegistry::new()),
+        ))
     }
 
     /// Test that incomplete tool calls are detected and cancelled tool results are injected

@@ -108,6 +108,7 @@ pub struct App {
     current_op_context: Option<OpContext>,
     current_model: Model,
     session_config: Option<crate::session::state::SessionConfig>, // For tool visibility filtering
+    workspace: Option<Arc<dyn crate::workspace::Workspace>>, // Workspace for environment and tool execution
 }
 
 impl App {
@@ -143,6 +144,37 @@ impl App {
             current_op_context: None,
             current_model: initial_model,
             session_config,
+            workspace: None, // No workspace in legacy constructor
+        })
+    }
+    
+    /// Create an App with a workspace (recommended approach)
+    pub fn with_workspace(
+        config: AppConfig,
+        event_tx: mpsc::Sender<AppEvent>,
+        initial_model: Model,
+        workspace: Arc<dyn crate::workspace::Workspace>,
+    ) -> Result<Self> {
+        let conversation = Arc::new(Mutex::new(Conversation::new()));
+
+        let api_client = ApiClient::new(&config.llm_config);
+        let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
+        
+        // Create a tool executor with the workspace
+        let tool_executor = Arc::new(ToolExecutor::with_workspace(workspace.clone()));
+
+        Ok(Self {
+            config,
+            conversation,
+            tool_executor,
+            api_client,
+            agent_executor,
+            event_sender: event_tx,
+            approved_tools: HashSet::new(),
+            current_op_context: None,
+            current_model: initial_model,
+            session_config: None, // Workspace contains the configuration
+            workspace: Some(workspace),
         })
     }
 
@@ -292,7 +324,13 @@ impl App {
 
         let current_model = self.current_model;
         let agent_executor = self.agent_executor.clone();
-        let system_prompt = create_system_prompt(Some(current_model))?;
+        
+        // Create system prompt using workspace if available, otherwise fall back to local collection
+        let system_prompt = if let Some(workspace) = &self.workspace {
+            create_system_prompt_with_workspace(Some(current_model), workspace.as_ref()).await?
+        } else {
+            create_system_prompt(Some(current_model))?
+        };
 
         // --- Updated Tool Executor Callback with Approval Logic ---
         let tool_executor_for_callback = self.tool_executor.clone();
@@ -1200,6 +1238,29 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
 
 fn create_system_prompt(model: Option<Model>) -> Result<String> {
     let env_info = EnvironmentInfo::collect()?;
+
+    // Use model-specific prompt if available, otherwise use default
+    let system_prompt_body = if let Some(model) = model {
+        get_model_system_prompt(model)
+    } else {
+        include_str!("../../../prompts/system_prompt.md")
+    };
+
+    let prompt = format!(
+        r#"{}
+
+{}"#,
+        system_prompt_body,
+        env_info.as_context()
+    );
+    Ok(prompt)
+}
+
+async fn create_system_prompt_with_workspace(
+    model: Option<Model>,
+    workspace: &dyn crate::workspace::Workspace,
+) -> Result<String> {
+    let env_info = workspace.environment().await?;
 
     // Use model-specific prompt if available, otherwise use default
     let system_prompt_body = if let Some(model) = model {

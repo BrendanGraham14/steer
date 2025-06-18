@@ -12,10 +12,10 @@ use crate::tools::execution_context::{ExecutionContext, ExecutionEnvironment};
 use tools::ToolError;
 use tools::ToolSchema;
 
-// Generated gRPC client from proto/remote_backend.proto
-use crate::grpc::remote_backend::{
+// Generated gRPC client from proto/remote_workspace.proto
+use crate::grpc::remote_workspace::{
     ExecuteToolRequest, HealthStatus, ToolApprovalRequirementsRequest,
-    remote_backend_service_client::RemoteBackendServiceClient,
+    remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
 
 /// Serializable version of ExecutionContext for remote transmission
@@ -75,7 +75,7 @@ impl Interceptor for AuthInterceptor {
 /// VM, or container. It serializes tool calls and forwards them to the agent,
 /// which executes the tools in its local environment.
 pub struct RemoteBackend {
-    client: RemoteBackendServiceClient<
+    client: RemoteWorkspaceServiceClient<
         tonic::service::interceptor::InterceptedService<Channel, AuthInterceptor>,
     >,
     address: String,
@@ -114,14 +114,14 @@ impl RemoteBackend {
         let client = match auth {
             Some(auth_config) => {
                 let interceptor = AuthInterceptor { auth: auth_config };
-                RemoteBackendServiceClient::with_interceptor(channel, interceptor)
+                RemoteWorkspaceServiceClient::with_interceptor(channel, interceptor)
             }
             None => {
                 // Create a no-op interceptor for consistent client type
                 let interceptor = AuthInterceptor {
                     auth: RemoteAuth::ApiKey { key: String::new() },
                 };
-                RemoteBackendServiceClient::with_interceptor(channel, interceptor)
+                RemoteWorkspaceServiceClient::with_interceptor(channel, interceptor)
             }
         };
 
@@ -330,7 +330,7 @@ impl ToolBackend for RemoteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grpc::remote_backend::{
+    use crate::grpc::remote_workspace::{
         ExecuteToolResponse, HealthResponse, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
         remote_backend_service_server::{RemoteBackendService, RemoteBackendServiceServer},
     };
@@ -358,7 +358,7 @@ mod tests {
         async fn get_agent_info(
             &self,
             _request: Request<()>,
-        ) -> Result<tonic::Response<crate::grpc::remote_backend::AgentInfo>, Status> {
+        ) -> Result<tonic::Response<crate::grpc::remote_workspace::AgentInfo>, Status> {
             unimplemented!()
         }
 
@@ -389,7 +389,7 @@ mod tests {
             &self,
             _request: Request<ToolApprovalRequirementsRequest>,
         ) -> Result<
-            tonic::Response<crate::grpc::remote_backend::ToolApprovalRequirementsResponse>,
+            tonic::Response<crate::grpc::remote_workspace::ToolApprovalRequirementsResponse>,
             Status,
         > {
             unimplemented!()
