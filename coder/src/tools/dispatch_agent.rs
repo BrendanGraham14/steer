@@ -62,10 +62,11 @@ Usage notes:
 
         let mut backend_registry = crate::tools::BackendRegistry::new();
         backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only()));
-        let tool_executor = Arc::new(ToolExecutor {
-            backend_registry: Arc::new(backend_registry),
-            validators: Arc::new(ValidatorRegistry::new()),
-        });
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            None, // No workspace for agent dispatch
+            Arc::new(backend_registry),
+            Arc::new(ValidatorRegistry::new()),
+        ));
 
         // Get available tools before moving read_only_tool_executor into the closure
         let available_tools: Vec<ToolSchema> = tool_executor.get_tool_schemas().await;

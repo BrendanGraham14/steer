@@ -9,9 +9,9 @@ pub mod agent {
     tonic::include_proto!("coder.agent.v1");
 }
 
-// Re-export the generated protobuf code for remote backend service
-pub mod remote_backend {
-    tonic::include_proto!("coder.remote_backend.v1");
+// Re-export the generated protobuf code for remote workspace service
+pub mod remote_workspace {
+    tonic::include_proto!("coder.remote_workspace.v1");
 }
 
 // Export commonly used types from agent proto for backward compatibility

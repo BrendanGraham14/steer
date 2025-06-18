@@ -1,11 +1,11 @@
 syntax = "proto3";
-package coder.remote_backend.v1;
+package coder.remote_workspace.v1;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
 
-// Agent service for remote tool execution
-service RemoteBackendService {
+// Agent service for remote workspace tool execution
+service RemoteWorkspaceService {
   // Execute a tool call on the agent
   rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
 
@@ -20,6 +20,9 @@ service RemoteBackendService {
 
   // Get tool approval requirements
   rpc GetToolApprovalRequirements(ToolApprovalRequirementsRequest) returns (ToolApprovalRequirementsResponse);
+
+  // Get environment information for the remote workspace
+  rpc GetEnvironmentInfo(GetEnvironmentInfoRequest) returns (GetEnvironmentInfoResponse);
 }
 
 message ExecuteToolRequest {
@@ -80,4 +83,22 @@ message ToolApprovalRequirementsRequest {
 message ToolApprovalRequirementsResponse {
   // Map from tool name to whether it requires approval
   map<string, bool> approval_requirements = 1;
+}
+
+// Request for environment information
+message GetEnvironmentInfoRequest {
+  // Optional working directory override
+  optional string working_directory = 1;
+}
+
+// Response containing environment information
+message GetEnvironmentInfoResponse {
+  string working_directory = 1;
+  bool is_git_repo = 2;
+  string platform = 3;
+  string date = 4;
+  string directory_structure = 5;
+  optional string git_status = 6;
+  optional string readme_content = 7;
+  optional string claude_md_content = 8;
 }

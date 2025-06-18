@@ -62,6 +62,11 @@ impl Session {
         let cutoff = Utc::now() - threshold;
         self.updated_at > cutoff
     }
+    
+    /// Build a workspace from this session's configuration
+    pub async fn build_workspace(&self) -> Result<Arc<dyn crate::workspace::Workspace>> {
+        crate::workspace::create_workspace(&self.config.workspace).await
+    }
 }
 
 /// Session configuration - immutable once created
@@ -76,7 +81,8 @@ pub struct SessionConfig {
 }
 
 impl SessionConfig {
-    /// Build a BackendRegistry from this configuration, with workspace/server tools taking precedence.
+    /// Build a BackendRegistry from this configuration for external tools only.
+    /// Workspace tools are now handled directly by the Workspace.
     pub async fn build_registry(&self) -> Result<BackendRegistry> {
         let mut registry = BackendRegistry::new();
 
@@ -146,45 +152,15 @@ impl SessionConfig {
             }
         }
 
-        // 2. Register SERVER tools. This will overwrite any user-defined backend for these tools.
+        // 2. Register SERVER tools (like dispatch_agent and web_fetch).
+        // These are external tools, not workspace tools.
         let server_backend = LocalBackend::server_only();
         if !server_backend.supported_tools().is_empty() {
             registry.register("server".to_string(), Arc::new(server_backend));
         }
 
-        // 3. Register WORKSPACE tools. This will overwrite any user or server backend for these tools.
-        let workspace_tool_names: Vec<String> = workspace_tools()
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
-
-        let workspace_backend: Arc<dyn crate::tools::ToolBackend> = match &self.workspace {
-            WorkspaceConfig::Local => {
-                let backend = LocalBackend::with_tools(workspace_tool_names);
-                Arc::new(backend)
-            }
-            WorkspaceConfig::Remote {
-                agent_address,
-                auth,
-            } => Arc::new(
-                crate::tools::RemoteBackend::new(
-                    agent_address.clone(),
-                    std::time::Duration::from_secs(30),
-                    auth.clone(),
-                    ToolFilter::Include(workspace_tool_names),
-                )
-                .await?,
-            ),
-            WorkspaceConfig::Container { image, .. } => {
-                tracing::warn!(
-                    "Container workspace with image '{}' not yet supported, falling back to empty local backend for workspace tools.",
-                    image
-                );
-                let backend = LocalBackend::with_tools(vec![]);
-                Arc::new(backend)
-            }
-        };
-        registry.register("workspace".to_string(), workspace_backend);
+        // Note: Workspace tools are no longer registered here.
+        // They are handled directly by the Workspace implementation.
 
         Ok(registry)
     }

@@ -88,10 +88,15 @@ impl ManagedSession {
 
         // Build backend registry from session tool config
         let backend_registry = session.config.build_registry().await?;
-        let tool_executor = Arc::new(crate::app::ToolExecutor {
-            backend_registry: Arc::new(backend_registry),
-            validators: Arc::new(crate::app::validation::ValidatorRegistry::new()),
-        });
+        
+        // Build workspace from session config
+        let workspace = session.build_workspace().await?;
+        
+        let tool_executor = Arc::new(crate::app::ToolExecutor::with_components(
+            Some(workspace),
+            Arc::new(backend_registry),
+            Arc::new(crate::app::validation::ValidatorRegistry::new()),
+        ));
 
         // Create the App instance with the configured tool executor and session config
         let mut app = App::with_session_config(

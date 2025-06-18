@@ -10,6 +10,7 @@ pub mod session;
 pub mod tools;
 pub mod tui;
 pub mod utils;
+pub mod workspace;
 
 use api::Model;
 use app::Message;

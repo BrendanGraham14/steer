@@ -4,16 +4,8 @@ use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing::{info, warn};
 
-mod remote_backend_service;
-
-use remote_backend_service::RemoteBackendService;
-
-// Include the generated protobuf code
-pub mod proto {
-    tonic::include_proto!("coder.remote_backend.v1");
-}
-
-use proto::remote_backend_service_server::RemoteBackendServiceServer;
+use remote_backend::remote_backend_service::RemoteWorkspaceService;
+use remote_backend::proto::remote_workspace_service_server::RemoteWorkspaceServiceServer;
 
 #[derive(Parser)]
 #[command(name = "remote-backend")]
@@ -56,12 +48,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create the remote backend service
-    let remote_backend_service = RemoteBackendService::new()
+    let remote_workspace_service = RemoteWorkspaceService::new()
         .map_err(|e| format!("Failed to create remote backend service: {}", e))?;
 
     info!(
         "Remote backend service created with {} supported tools",
-        remote_backend_service.get_supported_tools().len()
+        remote_workspace_service.get_supported_tools().len()
     );
 
     // Create the server
@@ -82,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start the server
     let server = Server::builder()
-        .add_service(RemoteBackendServiceServer::new(remote_backend_service))
+        .add_service(RemoteWorkspaceServiceServer::new(remote_workspace_service))
         .serve_with_shutdown(addr, async {
             rx.await.ok();
         });
