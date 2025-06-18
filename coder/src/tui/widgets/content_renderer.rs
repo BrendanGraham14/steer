@@ -71,25 +71,30 @@ impl DefaultContentRenderer {
                 UserContent::AppCommand { command, response } => {
                     // For compact commands with actual summaries, render a separator first
                     if matches!(command, crate::app::conversation::AppCommandType::Compact) {
-                        if let Some(crate::app::conversation::CommandResponse::Compact(crate::app::conversation::CompactResult::Success(_))) = response {
+                        if let Some(crate::app::conversation::CommandResponse::Compact(
+                            crate::app::conversation::CompactResult::Success(_),
+                        )) = response
+                        {
                             // Add a visual separator line
                             let separator = "━".repeat(area.width as usize);
                             content.lines.push(Line::from(Span::styled(
                                 separator,
-                                Style::default().fg(Color::DarkGray)
+                                Style::default().fg(Color::DarkGray),
                             )));
                             content.lines.push(Line::from(Span::styled(
                                 "Conversation Compacted",
-                                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::ITALIC),
                             )));
                             content.lines.push(Line::from(Span::styled(
                                 "━".repeat(area.width as usize),
-                                Style::default().fg(Color::DarkGray)
+                                Style::default().fg(Color::DarkGray),
                             )));
                             content.lines.push(Line::from(""));
                         }
                     }
-                    
+
                     // Format app command and response
                     content.lines.push(Line::from(vec![
                         Span::styled("/", styles::COMMAND_PROMPT),
@@ -153,7 +158,7 @@ impl DefaultContentRenderer {
             if y_offset >= area.height {
                 break;
             }
-            
+
             let remaining_area = Rect {
                 x: area.x,
                 y: area.y + y_offset,
@@ -1643,13 +1648,17 @@ impl ContentRenderer for DefaultContentRenderer {
                         }
                         UserContent::AppCommand { command, response } => {
                             // For compact commands with actual summaries, add separator height
-                            if matches!(command, crate::app::conversation::AppCommandType::Compact) {
-                                if let Some(crate::app::conversation::CommandResponse::Compact(crate::app::conversation::CompactResult::Success(_))) = response {
+                            if matches!(command, crate::app::conversation::AppCommandType::Compact)
+                            {
+                                if let Some(crate::app::conversation::CommandResponse::Compact(
+                                    crate::app::conversation::CompactResult::Success(_),
+                                )) = response
+                                {
                                     // Add height for separator lines: 3 lines + blank line
                                     height += 4;
                                 }
                             }
-                            
+
                             // Command line
                             height += 1;
                             // Response if present
@@ -1686,7 +1695,8 @@ impl ContentRenderer for DefaultContentRenderer {
                             // Block borders (top + bottom) + content
                             height += 2;
                             let thought_text = thought.display_text();
-                            let formatted = self.format_thought(&thought_text, width.saturating_sub(2));
+                            let formatted =
+                                self.format_thought(&thought_text, width.saturating_sub(2));
                             height += formatted.lines.len() as u16;
                         }
                     }

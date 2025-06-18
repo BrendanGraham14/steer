@@ -10,10 +10,11 @@ use ratatui::crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect, Margin};
+use ratatui::style::{Style, Stylize, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use std::cell::RefCell;
 use std::io::{self, Stdout};
 use std::panic;
 use std::time::{Duration, Instant};
@@ -33,9 +34,13 @@ pub mod widgets;
 
 use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
 use crate::tui::events::{EventPipeline, processors::*};
+use crate::tui::state::content_cache::ContentCache;
 use crate::tui::state::view_model::MessageViewModel;
+use crate::tui::widgets::{
+    CachedContentRenderer, MessageList, MessageListState, ViewMode, message_list::MessageContent,
+    content_renderer::{ContentRenderer, DefaultContentRenderer},
+};
 use widgets::styles;
-use widgets::{MessageList, MessageListState, ViewMode, message_list::MessageContent};
 
 const MAX_INPUT_HEIGHT: u16 = 10;
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -62,6 +67,7 @@ pub struct Tui {
     current_tool_approval: Option<tools::ToolCall>,
     current_model: Model,
     event_pipeline: EventPipeline,
+    render_count: usize,
 }
 
 #[derive(Debug)]
@@ -78,13 +84,22 @@ enum InputAction {
 
 impl Tui {
     pub fn new(command_tx: mpsc::Sender<AppCommand>, initial_model: Model) -> Result<Self> {
+        // Detect terminal for diagnostics
+        let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
+        debug!(target:"tui.new", "Terminal detected: {}", term_program);
+
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(
             stdout,
             EnterAlternateScreen,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+            ),
             EnableBracketedPaste,
             EnableMouseCapture
         )?;
@@ -95,10 +110,12 @@ impl Tui {
         textarea.set_block(
             ratatui::widgets::Block::default()
                 .borders(Borders::ALL)
-                .title("Input (Ctrl+S or i to edit, Enter to send, Esc to exit)"),
+                .title("Input (Ctrl+S or i to edit, Enter to send, Alt+Enter for newline, Esc to exit)"),
         );
         textarea.set_placeholder_text("Enter your message here...");
         textarea.set_style(Style::default());
+        // Set cursor style to make it more visible
+        textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
 
         Ok(Self {
             terminal,
@@ -113,6 +130,7 @@ impl Tui {
             current_tool_approval: None,
             current_model: initial_model,
             event_pipeline: Self::create_event_pipeline(),
+            render_count: 0,
         })
     }
 
@@ -174,37 +192,44 @@ impl Tui {
         _approved_tools: Vec<String>, // TODO: restore approved tools
     ) -> Result<Self> {
         let mut tui = Self::new(command_tx, initial_model)?;
-        
+
         // Restore messages to the TUI using the encapsulated method
         let message_count = messages.len();
         info!("Starting to restore {} messages to TUI", message_count);
-        
+
         let converted_messages: Vec<MessageContent> = messages
             .into_iter()
             .enumerate()
             .map(|(i, message)| {
                 let content = Self::convert_message(message, &tui.view_model.tool_registry);
-                
+
                 if i < 5 || i >= message_count - 5 {
-                    info!("Converting message {}: type={:?}", i, match &content {
-                        MessageContent::User { .. } => "User",
-                        MessageContent::Assistant { .. } => "Assistant", 
-                        MessageContent::Tool { .. } => "Tool",
-                    });
+                    info!(
+                        "Converting message {}: type={:?}",
+                        i,
+                        match &content {
+                            MessageContent::User { .. } => "User",
+                            MessageContent::Assistant { .. } => "Assistant",
+                            MessageContent::Tool { .. } => "Tool",
+                        }
+                    );
                 }
-                
+
                 content
             })
             .collect();
-            
+
         // Add all messages with proper coordination
         tui.view_model.add_messages(converted_messages);
-        
-        info!("Finished restoring messages. TUI now has {} messages", tui.view_model.messages.len());
-        
+
+        info!(
+            "Finished restoring messages. TUI now has {} messages",
+            tui.view_model.messages.len()
+        );
+
         // Reset scroll to bottom after restoring messages
         tui.view_model.message_list_state.scroll_to_bottom();
-        
+
         Ok(tui)
     }
 
@@ -223,7 +248,11 @@ impl Tui {
 
         // Activate the session synchronously
         let (messages, approved_tools) = client.activate_session(session_id.clone()).await?;
-        info!("Activated remote session: {} with {} messages", session_id, messages.len());
+        info!(
+            "Activated remote session: {} with {} messages",
+            session_id,
+            messages.len()
+        );
 
         // Start streaming (session already active)
         let event_rx = client.start_streaming().await?;
@@ -242,37 +271,44 @@ impl Tui {
 
         // Initialize TUI with the command sender
         let mut tui = Self::new(cmd_tx, initial_model)?;
-        
+
         // Restore messages to the TUI using the encapsulated method
         let message_count = messages.len();
         info!("Starting to restore {} messages to TUI", message_count);
-        
+
         let converted_messages: Vec<MessageContent> = messages
             .into_iter()
             .enumerate()
             .map(|(i, message)| {
                 let content = Self::convert_message(message, &tui.view_model.tool_registry);
-                
+
                 if i < 5 || i >= message_count - 5 {
-                    info!("Converting message {}: type={:?}", i, match &content {
-                        MessageContent::User { .. } => "User",
-                        MessageContent::Assistant { .. } => "Assistant", 
-                        MessageContent::Tool { .. } => "Tool",
-                    });
+                    info!(
+                        "Converting message {}: type={:?}",
+                        i,
+                        match &content {
+                            MessageContent::User { .. } => "User",
+                            MessageContent::Assistant { .. } => "Assistant",
+                            MessageContent::Tool { .. } => "Tool",
+                        }
+                    );
                 }
-                
+
                 content
             })
             .collect();
-            
+
         // Add all messages with proper coordination
         tui.view_model.add_messages(converted_messages);
-        
-        info!("Finished restoring messages. TUI now has {} messages", tui.view_model.messages.len());
-        
+
+        info!(
+            "Finished restoring messages. TUI now has {} messages",
+            tui.view_model.messages.len()
+        );
+
         // Reset scroll to bottom after restoring messages
         tui.view_model.message_list_state.scroll_to_bottom();
-        
+
         // TODO: Restore approved tools
         // This would require sending them through a command or storing them in the TUI state
 
@@ -293,10 +329,13 @@ impl Tui {
 
     pub async fn run(&mut self, mut event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
         // Log the current state of messages
-        info!("Starting TUI run with {} messages in view model", self.view_model.messages.len());
-        
+        info!(
+            "Starting TUI run with {} messages in view model",
+            self.view_model.messages.len()
+        );
+
         // No need to request current conversation - messages are restored in resume_remote
-        
+
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let _input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
@@ -314,10 +353,12 @@ impl Tui {
         let mut should_exit = false;
         let mut needs_redraw = true; // Force initial draw
         let mut last_spinner_char = String::new();
-        
+
         while !should_exit {
             // Check if spinner needs update
-            let spinner_updated = if self.is_processing && self.last_spinner_update.elapsed() > SPINNER_UPDATE_INTERVAL {
+            let spinner_updated = if self.is_processing
+                && self.last_spinner_update.elapsed() > SPINNER_UPDATE_INTERVAL
+            {
                 self.spinner_state = self.spinner_state.wrapping_add(1);
                 self.last_spinner_update = Instant::now();
                 let new_spinner = self.get_spinner_char();
@@ -347,24 +388,29 @@ impl Tui {
                 self.textarea.set_block(input_block);
 
                 self.terminal.draw(|f| {
-                let textarea_ref = &self.textarea;
-                let current_approval_ref = self.current_tool_approval.as_ref();
+                    let textarea_ref = &self.textarea;
+                    let current_approval_ref = self.current_tool_approval.as_ref();
 
-                debug!(target:"tui.run.draw", "Drawing UI with {} messages", self.view_model.messages.len());
+                    debug!(target:"tui.run.draw", "Drawing UI with {} messages", self.view_model.messages.len());
 
-                if let Err(e) = Tui::render_ui_static(
-                    f,
-                    textarea_ref,
-                    self.view_model.messages.as_slice(),
-                    &mut self.view_model.message_list_state,
-                    input_mode,
-                    &current_model_owned,
-                    current_approval_ref,
-                ) {
-                    error!(target:"tui.run.draw", "UI rendering failed: {}", e);
-                }
-            })?;
-                
+                    // Get references separately to avoid borrow conflicts
+                    let messages_slice = self.view_model.messages.as_slice();
+                    let content_cache = self.view_model.content_cache();
+
+                    if let Err(e) = Tui::render_ui_static(
+                        f,
+                        textarea_ref,
+                        messages_slice,
+                        &mut self.view_model.message_list_state,
+                        input_mode,
+                        &current_model_owned,
+                        current_approval_ref,
+                        content_cache,
+                    ) {
+                        error!(target:"tui.run.draw", "UI rendering failed: {}", e);
+                    }
+                })?;
+
                 needs_redraw = false; // Reset after drawing
             }
 
@@ -418,22 +464,28 @@ impl Tui {
                                             kind: MouseEventKind::ScrollDown,
                                             ..
                                         } => {
-                                            let current_offset = self.view_model.message_list_state.scroll_state.offset();
-                                            let new_offset = current_offset.y.saturating_add(3);
-                                            self.view_model.message_list_state.set_scroll_offset(new_offset as usize);
+                                            // Use bounds-respecting scroll method for mouse wheel
+                                            let renderer = DefaultContentRenderer;
+                                            let terminal_size = self.terminal.size().unwrap_or_default();
+                                            let viewport_height = terminal_size.height.saturating_sub(4);
+                                            
+                                            self.view_model.message_list_state.scroll_down_by(
+                                                self.view_model.messages.as_slice(),
+                                                viewport_height,
+                                                terminal_size.width.saturating_sub(2),
+                                                &renderer,
+                                                3, // Scroll by 3 lines for mouse wheel
+                                            );
                                             needs_redraw = true;
-                                            // Force immediate redraw to prevent scroll artifacts
                                             continue;
                                         }
                                         MouseEvent {
                                             kind: MouseEventKind::ScrollUp,
                                             ..
                                         } => {
-                                            let current_offset = self.view_model.message_list_state.scroll_state.offset();
-                                            let new_offset = current_offset.y.saturating_sub(3);
-                                            self.view_model.message_list_state.set_scroll_offset(new_offset as usize);
+                                            // Use bounds-respecting scroll method for mouse wheel
+                                            self.view_model.message_list_state.scroll_up_by(3);
                                             needs_redraw = true;
-                                            // Force immediate redraw to prevent scroll artifacts
                                             continue;
                                         }
                                         _ => {} // Ignore other mouse events
@@ -605,8 +657,6 @@ impl Tui {
         SPINNER[self.spinner_state % SPINNER.len()].to_string()
     }
 
-
-
     /// Ensure there is exactly one MessageContent::Tool for the given id.
     /// Returns the index into self.view_model.messages for that message. If it does not
     /// exist yet, a placeholder is created (optionally with a provided name).
@@ -660,7 +710,7 @@ impl Tui {
             InputMode::ConfirmExit => styles::INPUT_BORDER_EXIT,
         };
         let input_title: String = match input_mode {
-            InputMode::Editing => "Input (Esc to stop editing, Enter to send)".to_string(),
+            InputMode::Editing => "Input (Esc to stop editing, Enter to send, Alt+Enter for newline)".to_string(),
             InputMode::Normal => {
                 "Normal (i=edit, j/k=scroll, d/u=½page, G/End=bottom, v=view mode, Shift+D/C=detail/compact, Ctrl+C=exit)".to_string()
             }
@@ -711,6 +761,7 @@ impl Tui {
         input_mode: InputMode,
         current_model: &str,
         current_approval_info: Option<&tools::ToolCall>,
+        content_cache: std::sync::Arc<std::sync::Mutex<ContentCache>>,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -743,20 +794,35 @@ impl Tui {
         let input_area = chunks[2];
         let model_info_area = chunks[3];
 
+        // Pre-calculate visible range to get messages_above count
+        let inner_area = messages_area.inner(Margin { horizontal: 1, vertical: 1 });
+        let cached_renderer = CachedContentRenderer::new(content_cache);
+        let visible_range = view_state.calculate_visible_range(
+            messages,
+            inner_area.height,
+            inner_area.width,
+            &cached_renderer as &dyn ContentRenderer,
+        );
+        
         // Render Messages using the new widget with StatefulWidget pattern
-        let scroll_offset = view_state.scroll_state.offset().y;
-        let message_block = if scroll_offset > 0 {
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Line::from(Span::styled(
-                    format!("(↑ {} lines above)", scroll_offset),
-                    Style::default().white(),
-                )))
+        let message_block = if let Some(range) = &visible_range {
+            if range.messages_above > 0 {
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(Line::from(Span::styled(
+                        format!("(↑ {} messages above)", range.messages_above),
+                        Style::default().white(),
+                    )))
+            } else {
+                Block::default().borders(Borders::ALL)
+            }
         } else {
             Block::default().borders(Borders::ALL)
         };
 
-        let message_widget = MessageList::new(messages).block(message_block);
+        let message_widget = MessageList::new(messages)
+            .with_renderer(Box::new(cached_renderer))
+            .block(message_block);
         f.render_stateful_widget(message_widget, messages_area, view_state);
 
         // Render Tool Preview (conditionally)
@@ -773,23 +839,11 @@ impl Tui {
                 .alignment(ratatui::layout::Alignment::Right);
         f.render_widget(model_info, model_info_area);
 
-        // Set cursor visibility and position
+        // Hide terminal cursor when in editing mode
+        // The textarea widget renders its own cursor, so we don't need the terminal cursor
         if input_mode == InputMode::Editing {
-            // Calculate cursor position relative to the input area
-            let cursor_col = input_area.x + 1 + textarea.cursor().0 as u16;
-            let cursor_row = input_area.y + 1 + textarea.cursor().1 as u16;
-
-            // Ensure cursor stays within the visible area of the textarea block
-            if cursor_row < input_area.bottom() - 1 && cursor_col < input_area.right() - 1 {
-                // Use set_cursor_position with a Position struct
-                f.set_cursor_position(Position {
-                    x: cursor_col,
-                    y: cursor_row,
-                });
-            } else {
-                // Hide cursor if it would be outside the box (e.g., during scrolling)
-                f.set_cursor_position(Position { x: 0, y: 0 });
-            }
+            // Hide cursor by setting it outside the visible area
+            f.set_cursor_position(Position { x: 0, y: 0 });
         }
 
         Ok(())
@@ -850,8 +904,9 @@ impl Tui {
                         Some(ViewMode::Compact) => Some(ViewMode::Detailed),
                         Some(ViewMode::Detailed) => None,
                     };
-                    // Clear cache when view mode changes
+                    // Clear caches when view mode changes
                     self.view_model.message_list_state.clear_height_cache();
+                    self.view_model.clear_content_cache();
                     return Ok(None);
                 }
                 (KeyCode::Char('D'), KeyModifiers::SHIFT)
@@ -861,8 +916,9 @@ impl Tui {
                         .message_list_state
                         .view_prefs
                         .global_override = Some(ViewMode::Detailed);
-                    // Clear cache when view mode changes
+                    // Clear caches when view mode changes
                     self.view_model.message_list_state.clear_height_cache();
+                    self.view_model.clear_content_cache();
                     return Ok(None);
                 }
                 (KeyCode::Char('C'), KeyModifiers::SHIFT)
@@ -879,12 +935,18 @@ impl Tui {
 
                 // Navigation
                 (KeyCode::PageUp, _) => {
-                    self.view_model.message_list_state.scroll_state.scroll_page_up();
+                    self.view_model
+                        .message_list_state
+                        .scroll_state
+                        .scroll_page_up();
                     self.view_model.message_list_state.user_scrolled = true;
                     return Ok(None);
                 }
                 (KeyCode::PageDown, _) => {
-                    self.view_model.message_list_state.scroll_state.scroll_page_down();
+                    self.view_model
+                        .message_list_state
+                        .scroll_state
+                        .scroll_page_down();
                     self.view_model.message_list_state.user_scrolled = true;
                     return Ok(None);
                 }
@@ -917,7 +979,10 @@ impl Tui {
                             .select_next(self.view_model.messages.len());
                     } else {
                         // Scroll down
-                        self.view_model.message_list_state.scroll_state.scroll_down();
+                        self.view_model
+                            .message_list_state
+                            .scroll_state
+                            .scroll_down();
                         self.view_model.message_list_state.user_scrolled = true;
                     }
                     return Ok(None);
@@ -942,34 +1007,56 @@ impl Tui {
                 (KeyCode::Char('k'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    self.view_model.message_list_state.scroll_state.scroll_up();
+                    // Scroll up one line - use bounds-respecting method
+                    self.view_model.message_list_state.scroll_up_by(1);
                     self.view_model.message_list_state.user_scrolled = true;
                     return Ok(None);
                 }
                 (KeyCode::Char('j'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    self.view_model.message_list_state.scroll_state.scroll_down();
+                    // Scroll down one line - use bounds-respecting method
+                    let renderer = DefaultContentRenderer;
+                    
+                    // Get current terminal size for viewport height calculation
+                    let terminal_size = self.terminal.size().unwrap_or_default();
+                    let viewport_height = terminal_size.height.saturating_sub(4); // Account for UI borders
+                    
+                    self.view_model.message_list_state.scroll_down_by(
+                        self.view_model.messages.as_slice(),
+                        viewport_height,
+                        terminal_size.width.saturating_sub(2), // Account for borders
+                        &renderer,
+                        1, // Scroll by 1 line
+                    );
                     self.view_model.message_list_state.user_scrolled = true;
                     return Ok(None);
                 }
                 (KeyCode::Char('u'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    // Scroll up half page
-                    for _ in 0..10 {
-                        self.view_model.message_list_state.scroll_state.scroll_up();
-                    }
+                    // Scroll up half page - use bounds-respecting method
+                    self.view_model.message_list_state.scroll_up_by(20);
                     self.view_model.message_list_state.user_scrolled = true;
                     return Ok(None);
                 }
                 (KeyCode::Char('d'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    // Scroll down half page
-                    for _ in 0..10 {
-                        self.view_model.message_list_state.scroll_state.scroll_down();
-                    }
+                    // Scroll down half page - use bounds-respecting method
+                    let renderer = DefaultContentRenderer;
+                    
+                    // Get current terminal size for viewport height calculation
+                    let terminal_size = self.terminal.size().unwrap_or_default();
+                    let viewport_height = terminal_size.height.saturating_sub(4); // Account for UI borders
+                    
+                    self.view_model.message_list_state.scroll_down_by(
+                        self.view_model.messages.as_slice(),
+                        viewport_height,
+                        terminal_size.width.saturating_sub(2), // Account for borders
+                        &renderer,
+                        20, // Scroll amount
+                    );
                     self.view_model.message_list_state.user_scrolled = true;
                     return Ok(None);
                 }
@@ -1050,19 +1137,28 @@ impl Tui {
                     KeyCode::Esc => {
                         self.input_mode = InputMode::Normal;
                     }
-                    // Send Message
+                    // Debug: log all Enter key variants
                     KeyCode::Enter => {
-                        let input = self.textarea.lines().join("\n");
-                        if !input.trim().is_empty() {
-                            action = Some(InputAction::SendMessage(input));
-                            // Re-initialize the textarea to clear it
-                            let mut new_textarea = TextArea::default();
-                            new_textarea
-                                .set_block(self.textarea.block().cloned().unwrap_or_default());
-                            new_textarea.set_placeholder_text(self.textarea.placeholder_text());
-                            new_textarea.set_style(self.textarea.style());
-                            self.textarea = new_textarea;
-                            self.input_mode = InputMode::Normal;
+                        debug!(target:"tui.input", "Enter key pressed with modifiers: {:?}", key.modifiers);
+
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            // Insert newline (Alt+Enter)
+                            self.textarea.insert_char('\n');
+                        } else {
+                            // Send Message (plain Enter)
+                            let input = self.textarea.lines().join("\n");
+                            if !input.trim().is_empty() {
+                                action = Some(InputAction::SendMessage(input));
+                                // Re-initialize the textarea to clear it
+                                let mut new_textarea = TextArea::default();
+                                new_textarea
+                                    .set_block(self.textarea.block().cloned().unwrap_or_default());
+                                new_textarea.set_placeholder_text(self.textarea.placeholder_text());
+                                new_textarea.set_style(self.textarea.style());
+                                new_textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+                                self.textarea = new_textarea;
+                                self.input_mode = InputMode::Normal;
+                            }
                         }
                     }
                     // Cancel Processing (Ctrl+C)
