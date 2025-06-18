@@ -7,7 +7,7 @@
 - [x] Omit .gitignore files from view
 
 ### TUI
-- [ ] Tool output formatting
+- [x] Tool output formatting
   - [x] Diff format for `edit` and `replace_file`
 - [ ] Support properly vertically expanding terminal input for multiple lines
 - [x] Add mouse wheel scrolling support to the TUI
@@ -18,9 +18,9 @@
 ### User Experience
 - [ ] Support navigating through previous messages and editing them
 - [ ] (Maybe): automatically create a new git worktree when a new instance is started
-- [ ] Support executing bash comments (like ! in claude code)
+- [x] Support executing bash comments (like ! in claude code)
 - [ ] @files with fzf-like fuzzy search
-- [ ] Show which model we're using and support switching models
+- [x] Show which model we're using and support switching models
 - [ ] Esc to clear input
 - [x] Handle slash commands
 
@@ -30,7 +30,7 @@
 - [ ] (Optional) Add utilities for prompt truncation
 
 ### Configuration and Persistence
-- [ ] Conversation history storage
+- [x] Conversation history storage
 - [ ] Project-specific settings
 
 ### API Client
