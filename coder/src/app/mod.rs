@@ -1,5 +1,5 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
-use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
+use crate::app::conversation::{AssistantContent, CompactResult, ToolResult, UserContent};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -73,7 +73,7 @@ pub enum AppEvent {
     ThinkingCompleted,
     CommandResponse {
         command: conversation::AppCommandType,
-        content: String,
+        response: conversation::CommandResponse,
         id: String,
     },
     RequestToolApproval {
@@ -421,7 +421,7 @@ impl App {
 
     // Modified handle_command to return only the response string (or None)
     // It now starts tasks directly but doesn't return the receiver.
-    pub async fn handle_command(&mut self, command: &str) -> Result<Option<String>> {
+    pub async fn handle_command(&mut self, command: &str) -> Result<Option<conversation::CommandResponse>> {
         let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
         let command_name = parts[0];
         let args = parts.get(1).unwrap_or(&"").trim();
@@ -434,7 +434,7 @@ impl App {
             "clear" => {
                 self.conversation.lock().await.clear();
                 self.approved_tools.clear(); // Also clear tool approvals
-                Ok(Some("Conversation and tool approvals cleared.".to_string()))
+                Ok(Some(conversation::CommandResponse::Text("Conversation and tool approvals cleared.".to_string())))
             }
             "compact" => {
                 // Create OpContext for cancellable command
@@ -455,27 +455,20 @@ impl App {
                     "Compact command task spawning needs TaskOutcome handling in actor loop.",
                 );
                 let result = match self.compact_conversation(token).await {
-                    Ok(()) => Ok(Some("Conversation compacted.".to_string())),
+                    Ok(result) => Ok(Some(conversation::CommandResponse::Compact(result))),
                     Err(e) => {
-                        if e.downcast_ref::<tokio::task::JoinError>().is_some()
-                            || e.to_string().contains("cancelled")
-                        {
-                            info!(target:"App.handle_command", "Compact command cancelled.");
-                            Ok(Some("Compact command cancelled.".to_string()))
-                        } else {
-                            error!(target:
-                                "App.handle_command",
-                                "Error during compact: {}", e,
-                            );
-                            Err(e) // Propagate actual errors
-                        }
+                        error!(target:
+                            "App.handle_command",
+                            "Error during compact: {}", e,
+                        );
+                        Err(e) // Propagate actual errors
                     }
                 }?;
                 self.current_op_context = None; // Clear context after command
                 Ok(result)
             }
             "help" => {
-                Ok(Some(build_help_text()))
+                Ok(Some(conversation::CommandResponse::Text(build_help_text())))
             }
             "model" => {
                 if args.is_empty() {
@@ -504,11 +497,11 @@ impl App {
                         })
                         .collect();
 
-                    Ok(Some(format!(
+                    Ok(Some(conversation::CommandResponse::Text(format!(
                         "Current model: {}\nAvailable models:\n{}",
                         current_model.as_ref(),
                         available_models.join("\n")
-                    )))
+                    ))))
                 } else {
                     // Try to set the model
                     use crate::api::Model;
@@ -516,34 +509,34 @@ impl App {
 
                     match Model::from_str(args) {
                         Ok(model) => match self.set_model(model) {
-                            Ok(()) => Ok(Some(format!("Model changed to {}", model.as_ref()))),
-                            Err(e) => Ok(Some(format!("Failed to set model: {}", e))),
+                            Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!("Model changed to {}", model.as_ref())))),
+                            Err(e) => Ok(Some(conversation::CommandResponse::Text(format!("Failed to set model: {}", e)))),
                         },
-                        Err(_) => Ok(Some(format!("Unknown model: {}", args))),
+                        Err(_) => Ok(Some(conversation::CommandResponse::Text(format!("Unknown model: {}", args)))),
                     }
                 }
             }
-            _ => Ok(Some(format!("Unknown command: {}", command_name))),
+            _ => Ok(Some(conversation::CommandResponse::Text(format!("Unknown command: {}", command_name)))),
         }
     }
 
-    pub async fn compact_conversation(&mut self, token: CancellationToken) -> Result<()> {
+    pub async fn compact_conversation(&mut self, token: CancellationToken) -> Result<CompactResult> {
         info!(target:"App.compact_conversation", "Compacting conversation...");
         let client = self.api_client.clone();
         let conversation_arc = self.conversation.clone();
 
         // Run directly but make it cancellable.
-        tokio::select! {
+        let result = tokio::select! {
             biased;
             res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res?,
             _ = token.cancelled() => {
                  info!(target:"App.compact_conversation", "Compaction cancelled.");
-                 return Err(anyhow::anyhow!("Compaction cancelled"));
+                 return Ok(CompactResult::Cancelled);
              }
-        }
+        };
 
         info!(target:"App.compact_conversation", "Conversation compacted.");
-        Ok(())
+        Ok(result)
     }
 
     pub async fn cancel_current_processing(&mut self) {
@@ -1034,10 +1027,10 @@ async fn handle_slash_command(app: &mut App, command: &str) {
     
     match app.handle_command(command).await {
         Ok(response_option) => {
-            if let Some(content) = response_option {
+            if let Some(response) = response_option {
                 app.emit_event(AppEvent::CommandResponse {
                     command: command_type,
-                    content,
+                    response,
                     id: format!("cmd_resp_{}", uuid::Uuid::new_v4()),
                 });
             }

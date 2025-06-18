@@ -17,6 +17,22 @@ impl SystemEventProcessor {
     pub fn new() -> Self {
         Self
     }
+    
+    /// Create a user command response message
+    fn create_command_response(
+        id: String,
+        command: crate::app::conversation::AppCommandType,
+        response: crate::app::conversation::CommandResponse,
+    ) -> MessageContent {
+        MessageContent::User {
+            id,
+            blocks: vec![UserContent::AppCommand {
+                command,
+                response: Some(response),
+            }],
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }
+    }
 }
 
 impl EventProcessor for SystemEventProcessor {
@@ -37,17 +53,9 @@ impl EventProcessor for SystemEventProcessor {
                 *ctx.current_model = model;
                 ProcessingResult::Handled
             }
-            AppEvent::CommandResponse { command, content, id: _ } => {
+            AppEvent::CommandResponse { command, response, id: _ } => {
                 let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                
-                let response_message = MessageContent::User {
-                    id: response_id,
-                    blocks: vec![UserContent::AppCommand {
-                        command,
-                        response: Some(content),
-                    }],
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                };
+                let response_message = Self::create_command_response(response_id, command, response);
                 ctx.messages.push(response_message);
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled

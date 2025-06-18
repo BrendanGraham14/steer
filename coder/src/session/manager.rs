@@ -1189,6 +1189,7 @@ mod tests {
     use crate::app::conversation::Role;
     use crate::config::LlmConfig;
     use crate::session::stores::sqlite::SqliteSessionStore;
+    use crate::app::conversation::Role;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 

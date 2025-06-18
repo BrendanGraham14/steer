@@ -8,7 +8,7 @@ use ratatui::{
 use similar::{ChangeTag, TextDiff};
 use textwrap;
 
-use crate::app::conversation::{AppCommandType, AssistantContent, ToolResult, UserContent};
+use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
 use crate::tools::dispatch_agent::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams};
 use crate::tools::fetch::{FETCH_TOOL_NAME, FetchParams};
 use tools::tools::bash::BashParams;
@@ -69,6 +69,27 @@ impl DefaultContentRenderer {
                     content.extend(cmd_block);
                 }
                 UserContent::AppCommand { command, response } => {
+                    // For compact commands with actual summaries, render a separator first
+                    if matches!(command, crate::app::conversation::AppCommandType::Compact) {
+                        if let Some(crate::app::conversation::CommandResponse::Compact(crate::app::conversation::CompactResult::Success(_))) = response {
+                            // Add a visual separator line
+                            let separator = "━".repeat(area.width as usize);
+                            content.lines.push(Line::from(Span::styled(
+                                separator,
+                                Style::default().fg(Color::DarkGray)
+                            )));
+                            content.lines.push(Line::from(Span::styled(
+                                "Conversation Compacted",
+                                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+                            )));
+                            content.lines.push(Line::from(Span::styled(
+                                "━".repeat(area.width as usize),
+                                Style::default().fg(Color::DarkGray)
+                            )));
+                            content.lines.push(Line::from(""));
+                        }
+                    }
+                    
                     // Format app command and response
                     content.lines.push(Line::from(vec![
                         Span::styled("/", styles::COMMAND_PROMPT),
@@ -77,7 +98,15 @@ impl DefaultContentRenderer {
 
                     if let Some(resp) = response {
                         content.lines.push(Line::from(""));
-                        let wrapped = self.wrap_text(resp, area.width.saturating_sub(2));
+                        let text = match resp {
+                            crate::app::conversation::CommandResponse::Text(msg) => msg,
+                            crate::app::conversation::CommandResponse::Compact(result) => match result {
+                                crate::app::conversation::CompactResult::Success(summary) => summary,
+                                crate::app::conversation::CompactResult::Cancelled => "Compact command cancelled.",
+                                crate::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).",
+                            },
+                        };
+                        let wrapped = self.wrap_text(text, area.width.saturating_sub(2));
                         content.extend(wrapped);
                     }
                 }
@@ -1613,12 +1642,28 @@ impl ContentRenderer for DefaultContentRenderer {
                             }
                         }
                         UserContent::AppCommand { command, response } => {
+                            // For compact commands with actual summaries, add separator height
+                            if matches!(command, crate::app::conversation::AppCommandType::Compact) {
+                                if let Some(crate::app::conversation::CommandResponse::Compact(crate::app::conversation::CompactResult::Success(_))) = response {
+                                    // Add height for separator lines: 3 lines + blank line
+                                    height += 4;
+                                }
+                            }
+                            
                             // Command line
                             height += 1;
                             // Response if present
                             if let Some(resp) = response {
                                 height += 1; // blank line
-                                let wrapped = self.wrap_text(resp, width.saturating_sub(2));
+                                let text = match resp {
+                                    crate::app::conversation::CommandResponse::Text(msg) => msg,
+                                    crate::app::conversation::CommandResponse::Compact(result) => match result {
+                                        crate::app::conversation::CompactResult::Success(summary) => summary,
+                                        crate::app::conversation::CompactResult::Cancelled => "Compact command cancelled.",
+                                        crate::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).",
+                                    },
+                                };
+                                let wrapped = self.wrap_text(text, width.saturating_sub(2));
                                 height += wrapped.lines.len() as u16;
                             }
                         }
