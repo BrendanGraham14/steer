@@ -192,16 +192,31 @@ impl Tui {
         _approved_tools: Vec<String>, // TODO: restore approved tools
     ) -> Result<Self> {
         let mut tui = Self::new(command_tx, initial_model)?;
+        tui.restore_messages(messages);
+        Ok(tui)
+    }
 
-        // Restore messages to the TUI using the encapsulated method
+    /// Restore messages to the TUI, properly populating the tool registry
+    fn restore_messages(&mut self, messages: Vec<Message>) {
         let message_count = messages.len();
         info!("Starting to restore {} messages to TUI", message_count);
+
+        // First pass: populate tool registry with tool calls from assistant messages
+        for message in &messages {
+            if let crate::app::Message::Assistant { content, .. } = message {
+                for item in content {
+                    if let AssistantContent::ToolCall { tool_call } = item {
+                        self.view_model.tool_registry.register_call(tool_call.clone());
+                    }
+                }
+            }
+        }
 
         let converted_messages: Vec<MessageContent> = messages
             .into_iter()
             .enumerate()
             .map(|(i, message)| {
-                let content = Self::convert_message(message, &tui.view_model.tool_registry);
+                let content = Self::convert_message(message, &self.view_model.tool_registry);
 
                 if i < 5 || i >= message_count - 5 {
                     info!(
@@ -220,17 +235,15 @@ impl Tui {
             .collect();
 
         // Add all messages with proper coordination
-        tui.view_model.add_messages(converted_messages);
+        self.view_model.add_messages(converted_messages);
 
         info!(
             "Finished restoring messages. TUI now has {} messages",
-            tui.view_model.messages.len()
+            self.view_model.messages.len()
         );
 
         // Reset scroll to bottom after restoring messages
-        tui.view_model.message_list_state.scroll_to_bottom();
-
-        Ok(tui)
+        self.view_model.message_list_state.scroll_to_bottom();
     }
 
     /// Resume an existing remote session
@@ -271,43 +284,7 @@ impl Tui {
 
         // Initialize TUI with the command sender
         let mut tui = Self::new(cmd_tx, initial_model)?;
-
-        // Restore messages to the TUI using the encapsulated method
-        let message_count = messages.len();
-        info!("Starting to restore {} messages to TUI", message_count);
-
-        let converted_messages: Vec<MessageContent> = messages
-            .into_iter()
-            .enumerate()
-            .map(|(i, message)| {
-                let content = Self::convert_message(message, &tui.view_model.tool_registry);
-
-                if i < 5 || i >= message_count - 5 {
-                    info!(
-                        "Converting message {}: type={:?}",
-                        i,
-                        match &content {
-                            MessageContent::User { .. } => "User",
-                            MessageContent::Assistant { .. } => "Assistant",
-                            MessageContent::Tool { .. } => "Tool",
-                        }
-                    );
-                }
-
-                content
-            })
-            .collect();
-
-        // Add all messages with proper coordination
-        tui.view_model.add_messages(converted_messages);
-
-        info!(
-            "Finished restoring messages. TUI now has {} messages",
-            tui.view_model.messages.len()
-        );
-
-        // Reset scroll to bottom after restoring messages
-        tui.view_model.message_list_state.scroll_to_bottom();
+        tui.restore_messages(messages);
 
         // TODO: Restore approved tools
         // This would require sending them through a command or storing them in the TUI state
