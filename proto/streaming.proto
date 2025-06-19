@@ -79,6 +79,7 @@ message UserContent {
   oneof content {
     string text = 1;
     CommandExecution command_execution = 2;
+    AppCommand app_command = 3;
   }
 }
 
@@ -87,6 +88,45 @@ message CommandExecution {
   string stdout = 2;
   string stderr = 3;
   int32 exit_code = 4;
+}
+
+message AppCommand {
+  AppCommandType command = 1;
+  optional CommandResponse response = 2;
+}
+
+message AppCommandType {
+  oneof command_type {
+    ModelCommand model = 1;
+    bool clear = 2;
+    bool compact = 3;
+    bool cancel = 4;
+    bool help = 5;
+    UnknownCommand unknown = 6;
+  }
+}
+
+message ModelCommand {
+  optional string target = 1;
+}
+
+message UnknownCommand {
+  string command = 1;
+}
+
+message CommandResponse {
+  oneof response {
+    string text = 1;
+    CompactResult compact = 2;
+  }
+}
+
+message CompactResult {
+  oneof result_type {
+    string success = 1;
+    bool cancelled = 2;
+    bool insufficient_messages = 3;
+  }
 }
 
 message AssistantMessage {
@@ -176,6 +216,8 @@ message ThinkingCompletedEvent {
 message CommandResponseEvent {
   string content = 1;
   string id = 2;
+  AppCommandType command = 3;
+  CommandResponse response = 4;
 }
 
 message ModelChangedEvent {

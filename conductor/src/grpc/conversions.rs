@@ -24,10 +24,58 @@ pub fn message_to_proto(message: Message) -> proto::Message {
                             })),
                         }
                     }
-                    UserContent::AppCommand { .. } => {
-                        // For now, represent app commands as empty text in gRPC
+                    UserContent::AppCommand { command, response } => {
+                        use crate::app::conversation::AppCommandType as AppCmdType;
+                        use crate::app::conversation::CommandResponse as AppCmdResponse;
+                        
+                        let command_type = match command {
+                            AppCmdType::Model { target } => {
+                                Some(proto::app_command_type::CommandType::Model(proto::ModelCommand {
+                                    target: target.clone(),
+                                }))
+                            }
+                            AppCmdType::Clear => Some(proto::app_command_type::CommandType::Clear(true)),
+                            AppCmdType::Compact => Some(proto::app_command_type::CommandType::Compact(true)),
+                            AppCmdType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
+                            AppCmdType::Help => Some(proto::app_command_type::CommandType::Help(true)),
+                            AppCmdType::Unknown { command } => {
+                                Some(proto::app_command_type::CommandType::Unknown(proto::UnknownCommand {
+                                    command: command.clone(),
+                                }))
+                            }
+                        };
+                        
+                        let proto_response = response.as_ref().map(|resp| {
+                            let response_type = match resp {
+                                AppCmdResponse::Text(text) => {
+                                    Some(proto::command_response::Response::Text(text.clone()))
+                                }
+                                AppCmdResponse::Compact(result) => {
+                                    use crate::app::conversation::CompactResult as AppCompactResult;
+                                    let compact_type = match result {
+                                        AppCompactResult::Success(summary) => {
+                                            Some(proto::compact_result::ResultType::Success(summary.clone()))
+                                        }
+                                        AppCompactResult::Cancelled => {
+                                            Some(proto::compact_result::ResultType::Cancelled(true))
+                                        }
+                                        AppCompactResult::InsufficientMessages => {
+                                            Some(proto::compact_result::ResultType::InsufficientMessages(true))
+                                        }
+                                    };
+                                    Some(proto::command_response::Response::Compact(proto::CompactResult {
+                                        result_type: compact_type,
+                                    }))
+                                }
+                            };
+                            proto::CommandResponse { response: response_type }
+                        });
+                        
                         proto::UserContent {
-                            content: Some(proto::user_content::Content::Text(String::new())),
+                            content: Some(proto::user_content::Content::AppCommand(proto::AppCommand {
+                                command: Some(proto::AppCommandType { command_type }),
+                                response: proto_response,
+                            })),
                         }
                     }
                 }).collect(),
@@ -51,9 +99,31 @@ pub fn message_to_proto(message: Message) -> proto::Message {
                         }
                     }
                     AssistantContent::Thought { thought } => {
-                        // For now, convert thoughts to text
+                        use crate::app::conversation::ThoughtContent as AppThoughtContent;
+                        
+                        let thought_type = match thought {
+                            AppThoughtContent::Simple { text } => {
+                                Some(proto::thought_content::ThoughtType::Simple(proto::SimpleThought {
+                                    text: text.clone(),
+                                }))
+                            }
+                            AppThoughtContent::Signed { text, signature } => {
+                                Some(proto::thought_content::ThoughtType::Signed(proto::SignedThought {
+                                    text: text.clone(),
+                                    signature: signature.clone(),
+                                }))
+                            }
+                            AppThoughtContent::Redacted { data } => {
+                                Some(proto::thought_content::ThoughtType::Redacted(proto::RedactedThought {
+                                    data: data.clone(),
+                                }))
+                            }
+                        };
+                        
                         proto::AssistantContent {
-                            content: Some(proto::assistant_content::Content::Text(format!("<thinking>\n{}\n</thinking>", thought.display_text()))),
+                            content: Some(proto::assistant_content::Content::Thought(proto::ThoughtContent {
+                                thought_type,
+                            })),
                         }
                     }
                 }).collect(),
