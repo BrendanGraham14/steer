@@ -1,3 +1,4 @@
+pub mod astgrep;
 pub mod bash;
 pub mod collections;
 pub mod edit;
@@ -8,6 +9,7 @@ pub mod replace;
 pub mod todo;
 pub mod view;
 
+pub use astgrep::{AST_GREP_TOOL_NAME, AstGrepTool};
 pub use bash::{BASH_TOOL_NAME, BashTool};
 pub use edit::{
     EDIT_TOOL_NAME, EditTool,
