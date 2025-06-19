@@ -68,6 +68,8 @@ pub enum Model {
     Gpt4_1Nano20250414,
     #[strum(serialize = "o3-2025-04-16", serialize = "o3")]
     O3_20250416,
+    #[strum(serialize = "o3-pro-2025-06-10", serialize = "o3-pro")]
+    O3Pro20250610,
     #[strum(serialize = "o4-mini-2025-04-16")]
     O4Mini20250416,
     #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
@@ -92,6 +94,7 @@ impl Model {
             | Model::Gpt4_1Mini20250414
             | Model::Gpt4_1Nano20250414
             | Model::O3_20250416
+            | Model::O3Pro20250610
             | Model::O4Mini20250416 => ProviderKind::OpenAI,
 
             Model::Gemini2_5FlashPreview0417
@@ -105,6 +108,7 @@ impl Model {
             Model::ClaudeSonnet4_20250514 => vec!["sonnet"],
             Model::ClaudeOpus4_20250514 => vec!["opus"],
             Model::O3_20250416 => vec!["o3"],
+            Model::O3Pro20250610 => vec!["o3-pro"],
             Model::O4Mini20250416 => vec!["o4-mini"],
             Model::Gemini2_5ProPreview0605 => vec!["gemini"],
             _ => vec![],
@@ -117,6 +121,7 @@ impl Model {
             | Model::ClaudeSonnet4_20250514
             | Model::ClaudeOpus4_20250514
             | Model::O3_20250416
+            | Model::O3Pro20250610
             | Model::O4Mini20250416
             | Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
@@ -128,6 +133,7 @@ impl Model {
     pub fn default_system_prompt_file(&self) -> Option<&'static str> {
         match self {
             Model::O3_20250416 => Some("models/o3.md"),
+            Model::O3Pro20250610 => Some("models/o3.md"),
             Model::O4Mini20250416 => Some("models/o3.md"),
             _ => None,
         }
@@ -148,6 +154,7 @@ impl clap::ValueEnum for Model {
             Model::ClaudeSonnet4_20250514 => Some(pv.alias("sonnet")),
             Model::ClaudeOpus4_20250514 => Some(pv.alias("opus")),
             Model::O3_20250416 => Some(pv.alias("o3")),
+            Model::O3Pro20250610 => Some(pv.alias("o3-pro")),
             Model::Gemini2_5ProPreview0605 => Some(pv.alias("gemini")),
             _ => Some(pv),
         }
