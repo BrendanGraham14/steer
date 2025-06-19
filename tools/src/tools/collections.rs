@@ -1,7 +1,7 @@
 use crate::Tool;
 use crate::tools::{
-    BashTool, EditTool, GlobTool, GrepTool, LsTool, MultiEditTool, ReplaceTool, TodoReadTool,
-    TodoWriteTool, ViewTool,
+    AstGrepTool, BashTool, EditTool, GlobTool, GrepTool, LsTool, MultiEditTool, ReplaceTool,
+    TodoReadTool, TodoWriteTool, ViewTool,
 };
 
 /// Tools that operate on the workspace (files, execution, etc.)
@@ -12,6 +12,7 @@ pub fn workspace_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(BashTool),
         Box::new(GrepTool),
+        Box::new(AstGrepTool),
         Box::new(GlobTool),
         Box::new(LsTool),
         Box::new(ViewTool),
@@ -32,6 +33,7 @@ pub fn workspace_tools() -> Vec<Box<dyn Tool>> {
 pub fn read_only_workspace_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(GrepTool),
+        Box::new(AstGrepTool),
         Box::new(GlobTool),
         Box::new(LsTool),
         Box::new(ViewTool),
