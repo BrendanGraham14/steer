@@ -1,7 +1,7 @@
-use coder::api::ApiError;
-use coder::api::{Client, Model};
-use coder::app::conversation::{AssistantContent, Message, ToolCall, ToolResult, UserContent};
-use coder::config::LlmConfig;
+use conductor::api::ApiError;
+use conductor::api::{Client, Model};
+use conductor::app::conversation::{AssistantContent, Message, ToolCall, ToolResult, UserContent};
+use conductor::config::LlmConfig;
 use dotenv::dotenv;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -130,13 +130,13 @@ async fn test_api_with_tools() {
     // Get current directory once
     let pwd = std::env::current_dir().unwrap();
     // Get tools once
-    let mut backend_registry = coder::tools::BackendRegistry::new();
+    let mut backend_registry = conductor::tools::BackendRegistry::new();
     backend_registry.register(
         "local".to_string(),
-        std::sync::Arc::new(coder::tools::LocalBackend::standard()),
+        std::sync::Arc::new(conductor::tools::LocalBackend::standard()),
     );
     let tool_executor_template =
-        coder::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
+        conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
     let tools = tool_executor_template.to_api_tools(); // Clone this Vec<Tool>
 
     for model in models_to_test {
@@ -209,13 +209,13 @@ async fn test_api_with_tools() {
             // );
 
             // Execute the tool using ToolExecutor with cancellation
-            let mut backend_registry = coder::tools::BackendRegistry::new();
+            let mut backend_registry = conductor::tools::BackendRegistry::new();
             backend_registry.register(
                 "local".to_string(),
-                std::sync::Arc::new(coder::tools::LocalBackend::standard()),
+                std::sync::Arc::new(conductor::tools::LocalBackend::standard()),
             );
             let tool_executor =
-                coder::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
+                conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
             let result = tool_executor
                 .execute_tool_with_cancellation(
                     first_tool_call,
@@ -736,12 +736,12 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         },
     };
     // Assuming ToolExecutor provides 'ls' or similar standard tools
-    let mut backend_registry = coder::tools::BackendRegistry::new();
+    let mut backend_registry = conductor::tools::BackendRegistry::new();
     backend_registry.register(
         "local".to_string(),
-        std::sync::Arc::new(coder::tools::LocalBackend::standard()),
+        std::sync::Arc::new(conductor::tools::LocalBackend::standard()),
     );
-    let tool_executor = coder::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
+    let tool_executor = conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
     let mut tools = tool_executor.to_api_tools();
     tools.push(weather_tool);
 

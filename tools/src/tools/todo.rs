@@ -37,12 +37,12 @@ pub struct TodoItem {
 // Define TodoList type
 pub type TodoList = Vec<TodoItem>;
 
-// Helper function to get the .coder/todos directory
+// Helper function to get the .conductor/todos directory
 fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
     let home_dir = dirs::home_dir().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
     })?;
-    let todos_dir = home_dir.join(".coder").join("todos");
+    let todos_dir = home_dir.join(".conductor").join("todos");
 
     if !todos_dir.exists() {
         fs::create_dir_all(&todos_dir)?;
@@ -53,7 +53,7 @@ fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
 
 // Helper function to get the todo file path
 fn get_todo_file_path() -> Result<PathBuf, std::io::Error> {
-    let workspace_id = match std::env::var("CODER_WORKSPACE_ID") {
+    let workspace_id = match std::env::var("CONDUCTOR_WORKSPACE_ID") {
         Ok(id) => id,
         Err(_) => {
             // Fallback: Use a hex-encoded string of the current directory path

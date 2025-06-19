@@ -166,17 +166,17 @@ impl Parse for ToolDefinition {
 }
 
 /// Tool macro that generates the implementation differently based on whether
-/// it's used within coder-tools or in an external crate.
+/// it's used within conductor-tools or in an external crate.
 ///
-/// When used in coder-tools, imports will use `crate::`.
-/// When used externally, imports will use `coder_tools::`.
+/// When used in conductor-tools, imports will use `crate::`.
+/// When used externally, imports will use `conductor_tools::`.
 #[proc_macro]
 pub fn tool(input: TokenStream) -> TokenStream {
     tool_impl(input, false)
 }
 
 /// Alternative version of the tool macro for use in external crates.
-/// This ensures imports use `coder_tools::` instead of `crate::`.
+/// This ensures imports use `conductor_tools::` instead of `crate::`.
 #[proc_macro]
 pub fn tool_external(input: TokenStream) -> TokenStream {
     tool_impl(input, true)

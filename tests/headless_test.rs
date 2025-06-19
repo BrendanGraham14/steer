@@ -1,6 +1,6 @@
-use coder::api::Model;
-use coder::app::conversation::{AssistantContent, Message, UserContent};
-use coder::config::LlmConfig;
+use conductor::api::Model;
+use conductor::app::conversation::{AssistantContent, Message, UserContent};
+use conductor::config::LlmConfig;
 use std::time::Duration;
 
 // This test requires real API keys and makes actual API calls
@@ -27,7 +27,7 @@ async fn test_headless_mode_integration() {
     let timeout = Some(Duration::from_secs(30));
 
     // Call run_once
-    let result = coder::run_once(messages, Model::Claude3_7Sonnet20250219, &config, timeout)
+    let result = conductor::run_once(messages, Model::Claude3_7Sonnet20250219, &config, timeout)
         .await
         .expect("run_once should succeed");
 

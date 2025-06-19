@@ -1,5 +1,5 @@
 syntax = "proto3";
-package coder.agent.v1;
+package conductor.agent.v1;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";

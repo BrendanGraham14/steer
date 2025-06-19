@@ -5,25 +5,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
 use tracing::info;
 
-use coder::api::Model;
-use coder::app::AppConfig;
-use coder::cli::{Cli, Commands};
-use coder::commands::{
+use conductor::api::Model;
+use conductor::app::AppConfig;
+use conductor::cli::{Cli, Commands};
+use conductor::commands::{
     Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
 };
-use coder::config::LlmConfig;
-use coder::events::StreamEventWithMetadata;
-use coder::session::{SessionManager, SessionManagerConfig};
-use coder::utils;
-use coder::utils::session::{create_default_session_config, create_session_store};
+use conductor::config::LlmConfig;
+use conductor::events::StreamEventWithMetadata;
+use conductor::session::{SessionManager, SessionManagerConfig};
+use conductor::utils;
+use conductor::utils::session::{create_default_session_config, create_session_store};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load .env file if it exists
-    coder::cli::config::load_env()?;
+    conductor::cli::config::load_env()?;
 
     // Initialize tracing (level configured via RUST_LOG env var)
     utils::tracing::init_tracing()?;
@@ -31,10 +31,10 @@ async fn main() -> Result<()> {
     // Set up signal handlers for terminal cleanup
     setup_signal_handlers().await;
 
-    info!(target: "main", "Coder application starting");
+    info!(target: "main", "Conductor application starting");
 
     // Load or initialize config using the library path
-    let _config = coder::config::load_config()?;
+    let _config = conductor::config::load_config()?;
 
     // Handle subcommands if present
     if let Some(cmd) = &cli.command {
@@ -93,11 +93,15 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
     }
 }
 
-async fn run_remote_mode(remote_addr: &str, model: Model, system_prompt: Option<String>) -> Result<()> {
+async fn run_remote_mode(
+    remote_addr: &str,
+    model: Model,
+    system_prompt: Option<String>,
+) -> Result<()> {
     info!("Connecting to remote server at {}", remote_addr);
 
     // Set panic hook for terminal cleanup
-    coder::tui::setup_panic_hook();
+    conductor::tui::setup_panic_hook();
 
     // Create TUI in remote mode
     let session_config = system_prompt.map(|prompt| {
@@ -105,7 +109,8 @@ async fn run_remote_mode(remote_addr: &str, model: Model, system_prompt: Option<
         config.system_prompt = Some(prompt);
         config
     });
-    let (mut tui, event_rx) = coder::tui::Tui::new_remote(remote_addr, model, session_config).await?;
+    let (mut tui, event_rx) =
+        conductor::tui::Tui::new_remote(remote_addr, model, session_config).await?;
 
     println!("Connected to remote server at {}", remote_addr);
 
@@ -134,12 +139,12 @@ async fn run_local_mode(model: Model, system_prompt: Option<String>) -> Result<(
 
     // Create a new interactive session
     let mut session_config = create_default_session_config();
-    
+
     // Set system prompt if provided
     if let Some(prompt) = system_prompt {
         session_config.system_prompt = Some(prompt);
     }
-    
+
     let app_config = AppConfig { llm_config };
 
     // Add the initial model to session metadata so it can be set in the App
@@ -163,10 +168,10 @@ async fn run_local_mode(model: Model, system_prompt: Option<String>) -> Result<(
     println!("Session ID: {}", session_id);
 
     // Set panic hook for terminal cleanup
-    coder::tui::setup_panic_hook();
+    conductor::tui::setup_panic_hook();
 
     // Create and run the TUI
-    let mut tui = coder::tui::Tui::new(command_tx, model)?;
+    let mut tui = conductor::tui::Tui::new(command_tx, model)?;
     tui.run(event_rx).await?;
 
     Ok(())

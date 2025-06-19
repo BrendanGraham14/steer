@@ -1,6 +1,6 @@
-# Coder
+# Conductor
 
-Coder is an AI-powered CLI assistant for software engineering tasks.  It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
+Conductor is an AI-powered CLI assistant for software engineering tasks.  It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
 
 ---
 
@@ -8,62 +8,62 @@ Coder is an AI-powered CLI assistant for software engineering tasks.  It provide
 
 ```bash
 # Start an interactive chat in the current directory
-coder
+conductor
 
 # Work inside a different directory
-coder --directory /path/to/project
+conductor --directory /path/to/project
 
-# Use a specific model (run `coder /model` at runtime to list models)
-coder --model claude-3-opus-20250430
+# Use a specific model (run `conductor /model` at runtime to list models)
+conductor --model claude-3-opus-20250430
 
 # Point the client at a remote gRPC server instead of running locally
-coder --remote 127.0.0.1:50051
+conductor --remote 127.0.0.1:50051
 
 # Override the built-in system prompt
-coder --system-prompt "You are an expert Rust mentor"
+conductor --system-prompt "You are an expert Rust mentor"
 ```
 
 ### Headless one-shot mode
 
 ```bash
 # Read prompt from stdin and return a single JSON response
-echo "What is 2+2?" | coder headless
+echo "What is 2+2?" | conductor headless
 
-# Provide a JSON file containing `Vec<Message>` in the Coder message format
-coder headless --messages-json /tmp/messages.json --model gemini-pro
+# Provide a JSON file containing `Vec<Message>` in the Conductor message format
+conductor headless --messages-json /tmp/messages.json --model gemini-pro
 
 # Run inside an existing session (keeps history / tool approvals)
-coder headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
+conductor headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
 
 # Supply a custom tool-visibility / pre-approval configuration
-coder headless --tool-config tools.json < prompt.txt
+conductor headless --tool-config tools.json < prompt.txt
 ```
 
 ### gRPC server / remote mode
 
 ```bash
 # Start a local server (default 127.0.0.1:50051)
-coder serve --port 50051
+conductor serve --port 50051
 
 # Connect to an already running server
-coder --remote 192.168.1.10:50051
+conductor --remote 192.168.1.10:50051
 ```
 
 ### Session management
 
 ```bash
 # List saved sessions
-coder session list --limit 20
+conductor session list --limit 20
 
 # Resume a session
-coder session resume <SESSION_ID>
+conductor session resume <SESSION_ID>
 
 # Create a new session with pre-approved tools
-coder session create --tool-policy pre_approved \
+conductor session create --tool-policy pre_approved \
                     --pre-approved-tools view,grep,glob,ls
 
 # Delete a session
-coder session delete <SESSION_ID> --force
+conductor session delete <SESSION_ID> --force
 ```
 
 ---
@@ -82,13 +82,13 @@ coder session delete <SESSION_ID> --force
 
 ## API keys
 
-Coder only looks at environment variables (optionally loaded from a `.env` file).  Set the variables that correspond to the providers you intend to use:
+Conductor only looks at environment variables (optionally loaded from a `.env` file).  Set the variables that correspond to the providers you intend to use:
 
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`
 * `GEMINI_API_KEY`
 
-The `coder init` command creates `~/.config/coder/config.json` for preferences such as default model or history size, **not** for secrets.
+The `conductor init` command creates `~/.config/conductor/config.json` for preferences such as default model or history size, **not** for secrets.
 
 ---
 
@@ -103,8 +103,8 @@ Headless mode pre-approves every built-in tool for convenience.
 ## Development
 
 ```bash
-git clone https://github.com/yourusername/coder.git
-cd coder
+git clone https://github.com/yourusername/conductor.git
+cd conductor
 
 # Build & test
 cargo build
@@ -117,11 +117,11 @@ Run `cargo run --` to launch the CLI in the current directory.
 
 ## Project layout (high-level)
 
-* `coder/src/api`    – provider abstractions (Anthropic, OpenAI, Gemini)
-* `coder/src/app`    – core state machine and agent orchestration
-* `coder/src/tools`  – implementation of builtin tools
-* `coder/src/tui`    – ratatui-based terminal UI
-* `coder/src/commands` – top-level CLI subcommand implementations
+* `conductor/src/api`    – provider abstractions (Anthropic, OpenAI, Gemini)
+* `conductor/src/app`    – core state machine and agent orchestration
+* `conductor/src/tools`  – implementation of builtin tools
+* `conductor/src/tui`    – ratatui-based terminal UI
+* `conductor/src/commands` – top-level CLI subcommand implementations
 * `remote-backend`   – gRPC server binary
 
 Full details live in `ARCHITECTURE.md`.

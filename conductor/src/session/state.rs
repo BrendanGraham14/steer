@@ -74,7 +74,7 @@ impl Session {
 pub struct SessionConfig {
     pub workspace: WorkspaceConfig,
     pub tool_config: SessionToolConfig,
-    /// Optional custom system prompt to use for the session. If `None`, Coder will
+    /// Optional custom system prompt to use for the session. If `None`, Conductor will
     /// fall back to its built-in default prompt.
     pub system_prompt: Option<String>,
     pub metadata: HashMap<String, String>,

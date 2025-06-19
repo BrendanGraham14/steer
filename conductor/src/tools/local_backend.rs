@@ -5,11 +5,11 @@ use crate::api::ToolCall;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};
 use tools::tools::{read_only_workspace_tools, workspace_tools};
-use tools::{ExecutionContext as CoderExecutionContext, Tool, ToolError, ToolSchema};
+use tools::{ExecutionContext as ConductorExecutionContext, Tool, ToolError, ToolSchema};
 
 /// Local backend that executes tools in the current process
 ///
-/// This backend uses the coder-tools implementations directly.
+/// This backend uses the conductor-tools implementations directly.
 pub struct LocalBackend {
     /// The tool registry containing all available tools
     registry: HashMap<String, Box<dyn Tool>>,
@@ -108,13 +108,13 @@ impl ToolBackend for LocalBackend {
             .get(&tool_call.name)
             .ok_or_else(|| ToolError::UnknownTool(tool_call.name.clone()))?;
 
-        // Create execution context for coder-tools
-        let coder_context = CoderExecutionContext::new(tool_call.id.clone())
+        // Create execution context for conductor-tools
+        let conductor_context = ConductorExecutionContext::new(tool_call.id.clone())
             .with_cancellation_token(context.cancellation_token.clone())
             .with_working_directory(std::env::current_dir().unwrap_or_else(|_| "/".into()));
 
         // Execute the tool directly
-        tool.execute(tool_call.parameters.clone(), &coder_context)
+        tool.execute(tool_call.parameters.clone(), &conductor_context)
             .await
     }
 

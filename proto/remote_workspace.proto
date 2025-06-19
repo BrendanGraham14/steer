@@ -1,5 +1,5 @@
 syntax = "proto3";
-package coder.remote_workspace.v1;
+package conductor.remote_workspace.v1;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";

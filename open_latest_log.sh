@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Find the most recently modified file in ~/.coder matching the datetime log file pattern: YYYYMMDD_HHMMSS.log
-latest_file=$(ls -t ~/.coder/*.log 2>/dev/null | grep -E '/[0-9]{8}_[0-9]{6}\.log$' | head -1)
+# Find the most recently modified file in ~/.conductor matching the datetime log file pattern: YYYYMMDD_HHMMSS.log
+latest_file=$(ls -t ~/.conductor/*.log 2>/dev/null | grep -E '/[0-9]{8}_[0-9]{6}\.log$' | head -1)
 
 if [ -z "$latest_file" ]; then
-    echo "No log files matching pattern YYYYMMDD_HHMMSS.log found in ~/.coder"
+    echo "No log files matching pattern YYYYMMDD_HHMMSS.log found in ~/.conductor"
     exit 1
 fi
 

@@ -1,12 +1,12 @@
 use anyhow::Result;
-use coder::api::Model;
-use coder::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
-use coder::app::validation::ValidatorRegistry;
-use coder::config::LlmConfig;
-use coder::tools::{BackendRegistry, LocalBackend};
-use coder::tools::edit::EditTool;
-use coder::tools::traits::Tool;
-use coder::tools::view::ViewTool;
+use conductor::api::Model;
+use conductor::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
+use conductor::app::validation::ValidatorRegistry;
+use conductor::config::LlmConfig;
+use conductor::tools::{BackendRegistry, LocalBackend};
+use conductor::tools::edit::EditTool;
+use conductor::tools::traits::Tool;
+use conductor::tools::view::ViewTool;
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ fn create_test_tool_executor() -> Arc<ToolExecutor> {
         "local".to_string(),
         Arc::new(LocalBackend::full()),
     );
-    
+
     Arc::new(ToolExecutor {
         backend_registry: Arc::new(backend_registry),
         validators: Arc::new(ValidatorRegistry::new()),
@@ -85,7 +85,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
         Model::Claude3_7Sonnet20250219,
         create_test_tool_executor(),
     )?;
-    let actor_handle = tokio::spawn(coder::app::app_actor_loop(
+    let actor_handle = tokio::spawn(conductor::app::app_actor_loop(
         app_for_actor,
         command_rx_for_actor,
     ));
@@ -94,7 +94,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
 
     // Tool Call 1
     let tool_call_id_1 = "test_tool_call_id_1".to_string();
-    let api_tool_call_1 = coder::api::tools::ToolCall {
+    let api_tool_call_1 = conductor::api::tools::ToolCall {
         id: tool_call_id_1.clone(),
         name: tool_name_to_approve.clone(),
         parameters: json!({"path": "/test/file1.txt", "content": "content1"}),
@@ -123,7 +123,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     // Tool Call 2 is sent to the app and queued, but no UI event is expected for it yet,
     // as the first one is still active at the UI.
     let tool_call_id_2 = "test_tool_call_id_2".to_string();
-    let api_tool_call_2 = coder::api::tools::ToolCall {
+    let api_tool_call_2 = conductor::api::tools::ToolCall {
         id: tool_call_id_2.clone(),
         name: tool_name_to_approve.clone(), // Same tool name
         parameters: json!({"path": "/test/file2.txt", "content": "content2"}),

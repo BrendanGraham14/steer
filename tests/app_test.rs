@@ -1,9 +1,9 @@
 use anyhow::Result;
-use coder::api::{Model, ToolCall};
-use coder::app::{App, AppConfig, ToolExecutor};
-use coder::app::validation::ValidatorRegistry;
-use coder::config::LlmConfig;
-use coder::tools::{BackendRegistry, LocalBackend};
+use conductor::api::{Model, ToolCall};
+use conductor::app::{App, AppConfig, ToolExecutor};
+use conductor::app::validation::ValidatorRegistry;
+use conductor::config::LlmConfig;
+use conductor::tools::{BackendRegistry, LocalBackend};
 use dotenv::dotenv;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -14,7 +14,7 @@ fn create_test_tool_executor() -> Arc<ToolExecutor> {
         "local".to_string(),
         Arc::new(LocalBackend::full()),
     );
-    
+
     Arc::new(ToolExecutor {
         backend_registry: Arc::new(backend_registry),
         validators: Arc::new(ValidatorRegistry::new()),

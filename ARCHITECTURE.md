@@ -1,10 +1,10 @@
-# Coder - Architecture
+# Conductor - Architecture
 
-This document outlines the architecture of Coder, an AI-powered CLI assistant for software engineering tasks.
+This document outlines the architecture of Conductor, an AI-powered CLI assistant for software engineering tasks.
 
 ## Overview
 
-Coder can operate in three modes:
+Conductor can operate in three modes:
 
 1. **Local Interactive**: Terminal UI runs directly with a local App instance
 2. **Headless**: One-shot execution that outputs JSON (for scripting/automation)
@@ -39,15 +39,15 @@ Coder can operate in three modes:
 
 ## Core Components
 
-### 1. Terminal UI (`coder/src/tui`)
+### 1. Terminal UI (`conductor/src/tui`)
 - **ratatui-based** terminal interface
 - Sends `AppCommand` messages to control the App
 - Receives `AppEvent` messages for display updates
 - Handles user input, text editing, and tool approval prompts
 - Can connect to local App or remote gRPC server
 
-### 2. App Actor Loop (`coder/src/app`)
-The heart of Coder - an event-driven actor that:
+### 2. App Actor Loop (`conductor/src/app`)
+The heart of Conductor - an event-driven actor that:
 - Manages conversation state
 - Coordinates with LLM providers (Anthropic, OpenAI, Gemini)
 - Executes tools through `ToolExecutor`
@@ -59,13 +59,13 @@ Key structures:
 - `OpContext`: Tracks active operations and enables cancellation
 - `AgentExecutor`: Manages LLM API calls and streaming responses
 
-### 3. Session Manager (`coder/src/session`)
+### 3. Session Manager (`conductor/src/session`)
 - Multiplexes multiple App instances (sessions)
-- Persists conversations to SQLite (`~/.coder/coder.sqlite`)
+- Persists conversations to SQLite (`~/.conductor/conductor.sqlite`)
 - Handles session lifecycle (create, resume, delete)
 - Manages tool approval policies per session
 
-### 4. Tool System (`coder/src/tools`, `tools/`)
+### 4. Tool System (`conductor/src/tools`, `tools/`)
 Tools are implemented as async functions that can:
 - Read/write files (`view`, `edit`, `replace`)
 - Search code (`grep`, `glob`)
@@ -79,7 +79,7 @@ Tool execution flow:
 4. Tool runs on selected backend (local, remote, container)
 5. Result returned to LLM as `Message::Tool`
 
-### 5. Workspace Abstraction (`coder/src/workspace`)
+### 5. Workspace Abstraction (`conductor/src/workspace`)
 - **Local**: Tools execute in current directory
 - **Remote**: Tools execute on remote machine via gRPC
 - Provides environment context for system prompt
@@ -88,7 +88,7 @@ Tool execution flow:
 
 The gRPC protocol enables client/server separation using bidirectional streaming:
 
-### Server Side (`coder serve`)
+### Server Side (`conductor serve`)
 ```
 ┌─────────────────────────┐
 │    gRPC Server          │
@@ -108,7 +108,7 @@ The server:
 - Streams events to connected clients
 - Handles session persistence
 
-### Client Side (`coder --remote`)
+### Client Side (`conductor --remote`)
 ```
 ┌─────────────────────────┐
 │   Terminal UI           │
@@ -216,7 +216,7 @@ Display ← AppEvent ← gRPC Events ← Network ← Server Events
 ## File Structure
 
 ```
-coder/
+conductor/
 ├── src/
 │   ├── api/          # LLM provider clients
 │   ├── app/          # Core App actor and logic

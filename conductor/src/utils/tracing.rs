@@ -11,7 +11,7 @@ use tracing_subscriber::{
 /// Initialize the tracing system with either stdout or file logging.
 ///
 /// Configuration behavior:
-/// - In normal operation: Logs to file in ~/.coder directory
+/// - In normal operation: Logs to file in ~/.conductor directory
 /// - Logging level is controlled by the RUST_LOG environment variable
 pub fn init_tracing() -> io::Result<()> {
     // Default log file in the user's home directory with timestamp
@@ -19,16 +19,15 @@ pub fn init_tracing() -> io::Result<()> {
     let timestamp = now.format("%Y%m%d_%H%M%S");
 
     // Configure the filter based on RUST_LOG env var, with sensible defaults
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            // Default: info for all crates, debug for coder crate only, silence noisy crates
-            EnvFilter::new("info,coder=debug,tui_markdown=warn")
-        });
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        // Default: info for all crates, debug for conductor crate only, silence noisy crates
+        EnvFilter::new("info,conductor=debug,tui_markdown=warn")
+    });
 
     if let Some(home_dir) = dirs::home_dir() {
         // Normal operation - log to file
-        // Create the .coder directory if it doesn't exist
-        let log_dir = home_dir.join(".coder");
+        // Create the .conductor directory if it doesn't exist
+        let log_dir = home_dir.join(".conductor");
         std::fs::create_dir_all(&log_dir)?;
 
         // Create the file appender directly (synchronous writing)
@@ -49,7 +48,7 @@ pub fn init_tracing() -> io::Result<()> {
             .expect("Failed to set global default subscriber");
 
         tracing::debug!(
-            target: "coder::utils::tracing",
+            target: "conductor::utils::tracing",
             path = %log_dir.join(format!("{}.log", timestamp)).display(),
             "Tracing initialized with file output. Filter configured via RUST_LOG env var."
         );
@@ -63,7 +62,7 @@ pub fn init_tracing() -> io::Result<()> {
             .expect("Failed to set global default subscriber");
 
         tracing::debug!(
-            target: "coder::utils::tracing",
+            target: "conductor::utils::tracing",
             "Tracing initialized with stdout output. Filter configured via RUST_LOG env var."
         );
     }

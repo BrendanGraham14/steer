@@ -465,19 +465,19 @@ mod tests {
     async fn test_grep_relative_path_glob_matching() {
         let temp_dir = tempdir().unwrap();
 
-        // Create nested directory structure similar to coder project
-        fs::create_dir_all(temp_dir.path().join("coder/src/session")).unwrap();
-        fs::create_dir_all(temp_dir.path().join("coder/src/utils")).unwrap();
+        // Create nested directory structure similar to conductor project
+        fs::create_dir_all(temp_dir.path().join("conductor/src/session")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("conductor/src/utils")).unwrap();
         fs::create_dir_all(temp_dir.path().join("other/src")).unwrap();
 
         // Create test files
         fs::write(
-            temp_dir.path().join("coder/src/session/state.rs"),
+            temp_dir.path().join("conductor/src/session/state.rs"),
             "pub struct SessionConfig {\n    pub field: String,\n}",
         )
         .unwrap();
         fs::write(
-            temp_dir.path().join("coder/src/utils/session.rs"),
+            temp_dir.path().join("conductor/src/utils/session.rs"),
             "use crate::SessionConfig;\nfn test() -> SessionConfig {\n    SessionConfig { field: \"test\".to_string() }\n}",
         )
         .unwrap();
@@ -492,16 +492,18 @@ mod tests {
         let tool = GrepTool;
         let params = GrepParams {
             pattern: "SessionConfig \\{".to_string(),
-            include: Some("coder/src/**/*.rs".to_string()),
+            include: Some("conductor/src/**/*.rs".to_string()),
             path: None,
         };
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
 
-        // Should find matches in coder/src files but not in other/src
-        assert!(result.contains("coder/src/session/state.rs:1: pub struct SessionConfig {"));
-        assert!(result.contains("coder/src/utils/session.rs:3:     SessionConfig { field: \"test\".to_string() }"));
+        // Should find matches in conductor/src files but not in other/src
+        assert!(result.contains("conductor/src/session/state.rs:1: pub struct SessionConfig {"));
+        assert!(result.contains(
+            "conductor/src/utils/session.rs:3:     SessionConfig { field: \"test\".to_string() }"
+        ));
         assert!(!result.contains("other/src/main.rs"));
     }
 

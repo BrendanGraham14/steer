@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use coder::app::{AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision};
-    use coder::app::conversation::{AssistantContent, Message, ToolCall, UserContent};
-    use coder::config::LlmConfig;
-    use coder::tools::ToolError;
-    use coder::api::{Client as ApiClient, Model};
+    use conductor::app::{AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision};
+    use conductor::app::conversation::{AssistantContent, Message, ToolCall, UserContent};
+    use conductor::config::LlmConfig;
+    use conductor::tools::ToolError;
+    use conductor::api::{Client as ApiClient, Model};
     use dotenv::dotenv;
     use serde_json::json;
     use std::sync::Arc;

@@ -25,7 +25,7 @@ impl Config {
 pub fn get_config_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .context("Could not find config directory")?
-        .join("coder");
+        .join("conductor");
 
     fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 

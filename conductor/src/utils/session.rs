@@ -7,13 +7,15 @@ use std::sync::Arc;
 use crate::session::stores::sqlite::SqliteSessionStore;
 use crate::session::{
     Session,
-    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility, WorkspaceConfig},
+    state::{
+        SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility, WorkspaceConfig,
+    },
     store::SessionStore,
 };
 
 pub fn create_session_store_path() -> Result<std::path::PathBuf> {
     let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
-    let db_path = home_dir.join(".coder").join("sessions.db");
+    let db_path = home_dir.join(".conductor").join("sessions.db");
     Ok(db_path)
 }
 
@@ -98,7 +100,7 @@ pub fn parse_metadata(metadata_str: Option<&str>) -> Result<HashMap<String, Stri
 pub fn create_mock_session(id: &str, tool_policy: ToolApprovalPolicy) -> Session {
     let mut tool_config = SessionToolConfig::default();
     tool_config.approval_policy = tool_policy;
-    
+
     let config = SessionConfig {
         workspace: WorkspaceConfig::default(),
         tool_config,

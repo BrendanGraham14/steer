@@ -47,5 +47,5 @@ pub fn read_only_workspace_tools() -> Vec<Box<dyn Tool>> {
 /// Note: These are NOT included in the tools crate, but this function
 /// documents what would be considered server tools.
 pub fn server_tools_note() -> &'static str {
-    "Server tools like FetchTool and DispatchAgentTool are defined in the coder crate"
+    "Server tools like FetchTool and DispatchAgentTool are defined in the conductor crate"
 }

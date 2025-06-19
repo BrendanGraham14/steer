@@ -9,9 +9,9 @@ const SYSTEM_MESSAGE: &str = r#"Your task is to process Bash commands that an AI
 This policy spec defines how to determine the prefix of a Bash command:"#;
 
 const USER_MESSAGE_TEMPLATE: &str = r#"<policy_spec>
-# Coder Bash command prefix detection
+# Conductor Bash command prefix detection
 
-This document defines risk levels for actions that the Coder agent may take. This classification system is part of a broader safety framework and is used to determine when additional user confirmation or oversight may be needed.
+This document defines risk levels for actions that the Conductor agent may take. This classification system is part of a broader safety framework and is used to determine when additional user confirmation or oversight may be needed.
 
 ## Definitions
 
@@ -86,7 +86,10 @@ pub async fn get_command_prefix(command: &str, token: CancellationToken) -> Resu
     let messages = vec![crate::app::conversation::Message::User {
         content: vec![crate::app::conversation::UserContent::Text { text: user_message }],
         timestamp: crate::app::conversation::Message::current_timestamp(),
-        id: crate::app::conversation::Message::generate_id("user", crate::app::conversation::Message::current_timestamp()),
+        id: crate::app::conversation::Message::generate_id(
+            "user",
+            crate::app::conversation::Message::current_timestamp(),
+        ),
     }];
 
     let system_content = SYSTEM_MESSAGE;

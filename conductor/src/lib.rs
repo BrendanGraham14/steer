@@ -47,7 +47,15 @@ pub async fn run_once_ephemeral(
     tool_policy: Option<session::ToolApprovalPolicy>,
     system_prompt: Option<String>,
 ) -> anyhow::Result<RunOnceResult> {
-    OneShotRunner::run_ephemeral(session_manager, init_msgs, model, tool_config, tool_policy, system_prompt).await
+    OneShotRunner::run_ephemeral(
+        session_manager,
+        init_msgs,
+        model,
+        tool_config,
+        tool_policy,
+        system_prompt,
+    )
+    .await
 }
 
 /// Convenience function for simple one-shot runs with default tool configuration.
@@ -69,7 +77,7 @@ pub async fn create_session_manager() -> anyhow::Result<SessionManager> {
     use session::SessionManagerConfig;
     use tokio::sync::mpsc;
 
-    // Use the same session store as normal operation (~/.coder/sessions.db)
+    // Use the same session store as normal operation (~/.conductor/sessions.db)
     let store = crate::utils::session::create_session_store().await?;
 
     let (event_tx, _event_rx) = mpsc::channel(100);
