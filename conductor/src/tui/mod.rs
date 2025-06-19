@@ -401,7 +401,7 @@ impl Tui {
                             match event {
                                 Event::Resize(_, _) => {
                                     debug!(target:"tui.run", "Terminal resized");
-                                    self.view_model.message_list_state.clear_height_cache();
+                                    
                                     needs_redraw = true;
                                     // The widget will handle recalculating sizes internally
                                 }
@@ -738,7 +738,7 @@ impl Tui {
         input_mode: InputMode,
         current_model: &str,
         current_approval_info: Option<&tools::ToolCall>,
-        content_cache: std::sync::Arc<std::sync::Mutex<ContentCache>>,
+        content_cache: std::sync::Arc<std::sync::RwLock<ContentCache>>,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -882,7 +882,7 @@ impl Tui {
                         Some(ViewMode::Detailed) => None,
                     };
                     // Clear caches when view mode changes
-                    self.view_model.message_list_state.clear_height_cache();
+                    
                     self.view_model.clear_content_cache();
                     return Ok(None);
                 }
@@ -894,7 +894,7 @@ impl Tui {
                         .view_prefs
                         .global_override = Some(ViewMode::Detailed);
                     // Clear caches when view mode changes
-                    self.view_model.message_list_state.clear_height_cache();
+                    
                     self.view_model.clear_content_cache();
                     return Ok(None);
                 }
@@ -906,7 +906,7 @@ impl Tui {
                         .view_prefs
                         .global_override = Some(ViewMode::Compact);
                     // Clear cache when view mode changes
-                    self.view_model.message_list_state.clear_height_cache();
+                    
                     return Ok(None);
                 }
 

@@ -1,5 +1,5 @@
 use ratatui::{buffer::Buffer, layout::Rect};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::tui::widgets::message_list::{MessageContent, ViewMode};
 use crate::tui::state::content_cache::ContentCache;
@@ -9,11 +9,11 @@ use super::content_renderer::{ContentRenderer, DefaultContentRenderer};
 /// but always uses the original rendering logic for drawing
 pub struct CachedContentRenderer {
     inner: DefaultContentRenderer,
-    cache: Arc<Mutex<ContentCache>>,
+    cache: Arc<RwLock<ContentCache>>,
 }
 
 impl CachedContentRenderer {
-    pub fn new(cache: Arc<Mutex<ContentCache>>) -> Self {
+    pub fn new(cache: Arc<RwLock<ContentCache>>) -> Self {
         Self {
             inner: DefaultContentRenderer,
             cache,
@@ -30,7 +30,7 @@ impl ContentRenderer for CachedContentRenderer {
 
     fn calculate_height(&self, content: &MessageContent, mode: ViewMode, width: u16) -> u16 {
         // Only cache height calculations
-        if let Ok(mut cache) = self.cache.lock() {
+        if let Ok(mut cache) = self.cache.write() {
             cache.get_or_parse_height(
                 content,
                 mode,

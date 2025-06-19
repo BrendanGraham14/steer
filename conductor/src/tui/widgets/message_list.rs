@@ -107,14 +107,6 @@ impl ViewPreferences {
     }
 }
 
-/// Cache key for message heights
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct HeightCacheKey {
-    message_id: String,
-    width: u16,
-    view_mode: ViewMode,
-}
-
 /// Represents the range of messages visible in the viewport
 #[derive(Debug, Clone)]
 pub struct VisibleRange {
@@ -140,8 +132,6 @@ pub struct MessageListState {
     // ScrollView state for handling scrolling
     pub scroll_state: ScrollViewState,
     
-    /// Cache for calculated message heights
-    height_cache: std::collections::HashMap<HeightCacheKey, u16>,
     
     /// Currently visible message range (cached for performance)
     visible_range: Option<VisibleRange>,
@@ -158,7 +148,6 @@ impl MessageListState {
             view_prefs: ViewPreferences::default(),
             user_scrolled: false,
             scroll_state: ScrollViewState::default(),
-            height_cache: std::collections::HashMap::new(),
             visible_range: None,
             last_viewport_height: 0,
         }
@@ -172,26 +161,9 @@ impl MessageListState {
         width: u16,
         renderer: &dyn ContentRenderer,
     ) -> u16 {
-        let key = HeightCacheKey {
-            message_id: message.id().to_string(),
-            width,
-            view_mode: mode,
-        };
-        
-        if let Some(&height) = self.height_cache.get(&key) {
-            height
-        } else {
-            let height = renderer.calculate_height(message, mode, width);
-            self.height_cache.insert(key, height);
-            height
-        }
+        renderer.calculate_height(message, mode, width)
     }
     
-    /// Clear the height cache (e.g., when terminal resizes)
-    pub fn clear_height_cache(&mut self) {
-        self.height_cache.clear();
-        self.visible_range = None; // Also invalidate visible range
-    }
     
     /// Calculate which messages are visible in the viewport
     pub fn calculate_visible_range(
@@ -287,10 +259,6 @@ impl MessageListState {
         range
     }
     
-    /// Invalidate cache for a specific message
-    pub fn invalidate_message_cache(&mut self, message_id: &str) {
-        self.height_cache.retain(|key, _| key.message_id != message_id);
-    }
 
     /// Scroll down by a specific amount, respecting content bounds
     pub fn scroll_down_by(&mut self, messages: &[MessageContent], viewport_height: u16, width: u16, renderer: &dyn ContentRenderer, amount: u16) {
@@ -345,8 +313,6 @@ impl MessageListState {
         } else {
             self.expanded_messages.insert(message_id.clone());
         }
-        // Clear cache for this message when expansion state changes
-        self.height_cache.retain(|key, _| key.message_id != message_id);
     }
 
     pub fn is_expanded(&self, message_id: &str) -> bool {
@@ -389,24 +355,7 @@ impl MessageListState {
                     break;
                 }
 
-                let mode = if self.view_prefs.global_override.is_some() {
-                    self.view_prefs.global_override.unwrap()
-                } else {
-                    match message {
-                        MessageContent::Tool { .. } => self.view_prefs.tool_calls,
-                        MessageContent::Assistant { blocks, .. } => {
-                            if blocks
-                                .iter()
-                                .any(|b| matches!(b, AssistantContent::Thought { .. }))
-                            {
-                                ViewMode::Detailed
-                            } else {
-                                self.view_prefs.text
-                            }
-                        }
-                        _ => self.view_prefs.text,
-                    }
-                };
+                let mode = self.view_prefs.determine_mode(message);
 
                 let height = self.get_or_calculate_height(message, mode, width, renderer);
                 y_offset = y_offset.saturating_add(height);
@@ -465,28 +414,7 @@ impl<'a> MessageList<'a> {
     }
 
     fn determine_view_mode(&self, content: &MessageContent, state: &MessageListState) -> ViewMode {
-        // Check for global override first
-        if let Some(mode) = state.view_prefs.global_override {
-            return mode;
-        }
-
-        // Determine mode based on content type and preferences
-        match content {
-            MessageContent::Tool { .. } => state.view_prefs.tool_calls,
-            MessageContent::Assistant { blocks, .. } => {
-                // Always show thoughts in detailed mode, regardless of view preferences
-                // Only tool blocks within assistant messages should be affected by view mode
-                if blocks
-                    .iter()
-                    .any(|b| matches!(b, AssistantContent::Thought { .. }))
-                {
-                    ViewMode::Detailed
-                } else {
-                    state.view_prefs.text
-                }
-            }
-            _ => state.view_prefs.text,
-        }
+        state.view_prefs.determine_mode(content)
     }
 
 
@@ -662,27 +590,7 @@ impl<'a> Widget for MessagesRenderer<'a> {
 
 impl<'a> MessagesRenderer<'a> {
     fn determine_view_mode(&self, content: &MessageContent) -> ViewMode {
-        // Check for global override first
-        if let Some(mode) = self.state.view_prefs.global_override {
-            return mode;
-        }
-
-        // Determine mode based on content type and preferences
-        match content {
-            MessageContent::Tool { .. } => self.state.view_prefs.tool_calls,
-            MessageContent::Assistant { blocks, .. } => {
-                // Always show thoughts in detailed mode, regardless of view preferences
-                if blocks
-                    .iter()
-                    .any(|b| matches!(b, AssistantContent::Thought { .. }))
-                {
-                    ViewMode::Detailed
-                } else {
-                    self.state.view_prefs.text
-                }
-            }
-            _ => self.state.view_prefs.text,
-        }
+        self.state.view_prefs.determine_mode(content)
     }
 }
 

@@ -11,7 +11,7 @@ use crate::tui::widgets::message_list::{MessageContent, MessageListState, ViewMo
 use super::message_store::MessageStore;
 use super::tool_registry::ToolCallRegistry;
 use super::content_cache::ContentCache;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug)]
 pub struct MessageViewModel {
@@ -22,7 +22,7 @@ pub struct MessageViewModel {
     /// Centralized tool call lifecycle tracking
     pub tool_registry: ToolCallRegistry,
     /// Content rendering cache for performance
-    content_cache: Arc<Mutex<ContentCache>>,
+    content_cache: Arc<RwLock<ContentCache>>,
 }
 
 impl MessageViewModel {
@@ -31,12 +31,12 @@ impl MessageViewModel {
             messages: MessageStore::new(),
             message_list_state: MessageListState::new(),
             tool_registry: ToolCallRegistry::new(),
-            content_cache: Arc::new(Mutex::new(ContentCache::new())),
+            content_cache: Arc::new(RwLock::new(ContentCache::new())),
         }
     }
     
     /// Get access to the content cache for rendering
-    pub fn content_cache(&self) -> Arc<Mutex<ContentCache>> {
+    pub fn content_cache(&self) -> Arc<RwLock<ContentCache>> {
         self.content_cache.clone()
     }
 
@@ -98,7 +98,7 @@ impl MessageViewModel {
         
         // Log summary after bulk loading
         if count > 0 {
-            if let Ok(cache) = self.content_cache.lock() {
+            if let Ok(cache) = self.content_cache.read() {
                 tracing::debug!(target: "view_model", "Loaded {} messages. Cache ready for lazy loading.", count);
                 cache.log_summary();
             }
@@ -115,7 +115,7 @@ impl MessageViewModel {
         
         for &width in &common_widths {
             for &mode in &view_modes {
-                if let Ok(mut cache) = self.content_cache.lock() {
+                if let Ok(mut cache) = self.content_cache.write() {
                     // Pre-calculate height for common configurations
                     cache.get_or_parse_height(
                         content,
@@ -132,21 +132,21 @@ impl MessageViewModel {
 
     /// Clear the content cache (e.g., on major UI changes)
     pub fn clear_content_cache(&mut self) {
-        if let Ok(mut cache) = self.content_cache.lock() {
+        if let Ok(mut cache) = self.content_cache.write() {
             cache.clear();
         }
     }
 
     /// Invalidate cache for a specific message (when message content changes)
     pub fn invalidate_message_cache(&mut self, message_id: &str) {
-        if let Ok(mut cache) = self.content_cache.lock() {
+        if let Ok(mut cache) = self.content_cache.write() {
             cache.invalidate_message(message_id);
         }
     }
 
     /// Get content cache statistics for debugging
     pub fn cache_stats(&self) -> (usize, usize, f64) {
-        if let Ok(cache) = self.content_cache.lock() {
+        if let Ok(cache) = self.content_cache.read() {
             cache.stats()
         } else {
             (0, 0, 0.0)
@@ -167,7 +167,7 @@ impl MessageViewModel {
             if let Some(message) = self.messages.get(idx) {
                 let mode = self.message_list_state.view_prefs.determine_mode(message);
                 
-                if let Ok(mut cache) = self.content_cache.lock() {
+                if let Ok(mut cache) = self.content_cache.write() {
                     // Ensure height is cached
                     cache.get_or_parse_height(
                         message,
@@ -184,7 +184,7 @@ impl MessageViewModel {
     
     /// Log cache performance summary
     pub fn log_cache_performance(&self) {
-        if let Ok(cache) = self.content_cache.lock() {
+        if let Ok(cache) = self.content_cache.read() {
             cache.log_summary();
         }
     }
