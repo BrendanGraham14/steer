@@ -14,13 +14,10 @@ conductor
 conductor --directory /path/to/project
 
 # Use a specific model (run `conductor /model` at runtime to list models)
-conductor --model claude-3-opus-20250430
+conductor --model opus
 
 # Point the client at a remote gRPC server instead of running locally
 conductor --remote 127.0.0.1:50051
-
-# Override the built-in system prompt
-conductor --system-prompt "You are an expert Rust mentor"
 ```
 
 ### Headless one-shot mode
