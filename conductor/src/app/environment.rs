@@ -23,9 +23,16 @@ impl EnvironmentInfo {
     pub fn collect() -> Result<Self> {
         let working_directory =
             std::env::current_dir().context("Failed to get current directory")?;
+        Self::collect_for_path(&working_directory)
+    }
+
+    /// Collect information about the environment for a specific path
+    pub fn collect_for_path(workspace_path: &Path) -> Result<Self> {
+        let working_directory = workspace_path.to_path_buf();
 
         // Check if we're in a git repo
-        let is_git_repo = Path::new(".git").exists() || Self::is_git_repo()?;
+        let is_git_repo =
+            workspace_path.join(".git").exists() || Self::is_git_repo(workspace_path)?;
 
         // Get platform information
         let platform = Self::get_platform();
@@ -34,20 +41,20 @@ impl EnvironmentInfo {
         let date = Self::get_date();
 
         // Get directory structure
-        let directory_structure = Self::get_directory_structure(&working_directory)?;
+        let directory_structure = Self::get_directory_structure(workspace_path)?;
 
         // Get git status if in a repo
         let git_status = if is_git_repo {
-            Some(Self::get_git_status()?)
+            Some(Self::get_git_status(workspace_path)?)
         } else {
             None
         };
 
         // Check for README.md
-        let readme_content = Self::read_file_if_exists("README.md");
+        let readme_content = Self::read_file_if_exists(workspace_path, "README.md");
 
         // Check for CLAUDE.md
-        let claude_md_content = Self::read_file_if_exists("CLAUDE.md");
+        let claude_md_content = Self::read_file_if_exists(workspace_path, "CLAUDE.md");
 
         Ok(Self {
             working_directory,
@@ -61,10 +68,11 @@ impl EnvironmentInfo {
         })
     }
 
-    /// Check if the current directory is in a git repo
-    fn is_git_repo() -> Result<bool> {
+    /// Check if the specified directory is in a git repo
+    fn is_git_repo(path: &Path) -> Result<bool> {
         let output = Command::new("git")
             .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(path)
             .output();
 
         match output {
@@ -158,13 +166,15 @@ impl EnvironmentInfo {
         Ok(())
     }
 
-    /// Get git status information
-    fn get_git_status() -> Result<String> {
+    /// Get git status information for a specific path
+    fn get_git_status(path: &Path) -> Result<String> {
+        // TODO: We should use the git crate instead.
         let mut result = String::new();
 
         // Get current branch
         let branch_output = Command::new("git")
             .args(["branch", "--show-current"])
+            .current_dir(path)
             .output()
             .context("Failed to run git branch")?;
 
@@ -176,6 +186,7 @@ impl EnvironmentInfo {
         // Get status
         let status_output = Command::new("git")
             .args(["status", "--short"])
+            .current_dir(path)
             .output()
             .context("Failed to run git status")?;
 
@@ -193,6 +204,7 @@ impl EnvironmentInfo {
         // Get recent commits
         let log_output = Command::new("git")
             .args(["log", "--oneline", "-n", "5"])
+            .current_dir(path)
             .output()
             .context("Failed to run git log")?;
 
@@ -205,9 +217,10 @@ impl EnvironmentInfo {
         Ok(result)
     }
 
-    /// Read a file if it exists
-    fn read_file_if_exists(filename: &str) -> Option<String> {
-        match fs::read_to_string(filename) {
+    /// Read a file if it exists at a specific path
+    fn read_file_if_exists(path: &Path, filename: &str) -> Option<String> {
+        let file_path = path.join(filename);
+        match fs::read_to_string(file_path) {
             Ok(content) => Some(content),
             Err(_) => None,
         }

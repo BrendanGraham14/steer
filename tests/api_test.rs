@@ -127,13 +127,11 @@ async fn test_api_with_tools() {
 
     let mut tasks = Vec::new();
 
-    // Get current directory once
-    let pwd = std::env::current_dir().unwrap();
     // Get tools once
     let mut backend_registry = conductor::tools::BackendRegistry::new();
     backend_registry.register(
         "local".to_string(),
-        std::sync::Arc::new(conductor::tools::LocalBackend::standard()),
+        std::sync::Arc::new(conductor::tools::LocalBackend::full()),
     );
     let tool_executor_template =
         conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
@@ -212,7 +210,7 @@ async fn test_api_with_tools() {
             let mut backend_registry = conductor::tools::BackendRegistry::new();
             backend_registry.register(
                 "local".to_string(),
-                std::sync::Arc::new(conductor::tools::LocalBackend::standard()),
+                std::sync::Arc::new(conductor::tools::LocalBackend::full()),
             );
             let tool_executor =
                 conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
@@ -739,7 +737,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
     let mut backend_registry = conductor::tools::BackendRegistry::new();
     backend_registry.register(
         "local".to_string(),
-        std::sync::Arc::new(conductor::tools::LocalBackend::standard()),
+        std::sync::Arc::new(conductor::tools::LocalBackend::full()),
     );
     let tool_executor = conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
     let mut tools = tool_executor.to_api_tools();

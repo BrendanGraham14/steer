@@ -7,8 +7,9 @@ use tools::{ToolCall, ToolSchema};
 use crate::{
     api::{Client as ApiClient, Model},
     app::{
+        ToolExecutor,
         conversation::{Message, UserContent},
-        ToolExecutor, validation::ValidatorRegistry
+        validation::ValidatorRegistry,
     },
 };
 

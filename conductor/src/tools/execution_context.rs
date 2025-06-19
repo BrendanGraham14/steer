@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -18,7 +19,9 @@ pub struct ExecutionContext {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutionEnvironment {
     /// Execute tools locally in the current process
-    Local,
+    Local {
+        working_directory: PathBuf,
+    },
 
     /// Execute tools on a remote machine via an agent
     Remote {
@@ -57,8 +60,7 @@ impl ExecutionContext {
             tool_call_id,
             cancellation_token,
             timeout: Duration::from_secs(300),
-
-            environment: ExecutionEnvironment::Local,
+            environment: ExecutionEnvironment::default(),
         }
     }
 
@@ -75,7 +77,9 @@ impl ExecutionContext {
 
 impl Default for ExecutionEnvironment {
     fn default() -> Self {
-        Self::Local
+        Self::Local {
+            working_directory: crate::utils::default_working_directory(),
+        }
     }
 }
 

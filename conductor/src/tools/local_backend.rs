@@ -108,10 +108,20 @@ impl ToolBackend for LocalBackend {
             .get(&tool_call.name)
             .ok_or_else(|| ToolError::UnknownTool(tool_call.name.clone()))?;
 
+        // Extract working directory from execution environment
+        let working_directory = match &context.environment {
+            crate::tools::ExecutionEnvironment::Local { working_directory } => working_directory.clone(),
+            crate::tools::ExecutionEnvironment::Remote { working_directory, .. } => {
+                working_directory.as_ref()
+                    .map(|p| std::path::PathBuf::from(p))
+                    .unwrap_or_else(crate::utils::default_working_directory)
+            }
+        };
+
         // Create execution context for conductor-tools
         let conductor_context = ConductorExecutionContext::new(tool_call.id.clone())
             .with_cancellation_token(context.cancellation_token.clone())
-            .with_working_directory(std::env::current_dir().unwrap_or_else(|_| "/".into()));
+            .with_working_directory(working_directory);
 
         // Execute the tool directly
         tool.execute(tool_call.parameters.clone(), &conductor_context)

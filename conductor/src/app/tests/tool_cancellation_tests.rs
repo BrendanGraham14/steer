@@ -4,7 +4,7 @@ mod tests {
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
         App, AppConfig, ToolExecutor,
-        conversation::{Message, ToolResult, AssistantContent},
+        conversation::{AssistantContent, Message, ToolResult},
     };
     use crate::config::LlmConfig;
     use crate::tools::{BackendRegistry, LocalBackend};
@@ -26,7 +26,9 @@ mod tests {
         Arc::new(workspace) as Arc<dyn crate::workspace::Workspace>
     }
 
-    fn create_test_tool_executor(workspace: Arc<dyn crate::workspace::Workspace>) -> Arc<ToolExecutor> {
+    fn create_test_tool_executor(
+        workspace: Arc<dyn crate::workspace::Workspace>,
+    ) -> Arc<ToolExecutor> {
         let mut backend_registry = BackendRegistry::new();
         backend_registry.register("local".to_string(), Arc::new(LocalBackend::full()));
 
@@ -48,7 +50,7 @@ mod tests {
 
         let workspace = create_test_workspace().await;
         let tool_executor = create_test_tool_executor(workspace.clone());
-        
+
         let mut app = App::new(
             app_config,
             event_tx,
@@ -68,8 +70,12 @@ mod tests {
 
         let assistant_msg = Message::Assistant {
             content: vec![
-                AssistantContent::Text { text: "I'll use a tool to help with that.".to_string() },
-                AssistantContent::ToolCall { tool_call: tool_call.clone() },
+                AssistantContent::Text {
+                    text: "I'll use a tool to help with that.".to_string(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: tool_call.clone(),
+                },
             ],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
@@ -99,7 +105,12 @@ mod tests {
 
             // Check the tool result message
             let tool_result_msg = &messages[1];
-            if let Message::Tool { tool_use_id, result, .. } = tool_result_msg {
+            if let Message::Tool {
+                tool_use_id,
+                result,
+                ..
+            } = tool_result_msg
+            {
                 assert_eq!(tool_use_id, "test_tool_123");
                 match result {
                     ToolResult::Success { output } => {
@@ -130,7 +141,7 @@ mod tests {
 
         let workspace = create_test_workspace().await;
         let tool_executor = create_test_tool_executor(workspace.clone());
-        
+
         let mut app = App::new(
             app_config,
             event_tx,
@@ -149,7 +160,9 @@ mod tests {
         };
 
         let assistant_msg = Message::Assistant {
-            content: vec![AssistantContent::ToolCall { tool_call: tool_call.clone() }],
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
         };
@@ -159,7 +172,9 @@ mod tests {
         // Add a tool result for this tool call
         let tool_result_msg = Message::Tool {
             tool_use_id: "complete_tool_456".to_string(),
-            result: ToolResult::Success { output: "Tool completed successfully".to_string() },
+            result: ToolResult::Success {
+                output: "Tool completed successfully".to_string(),
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
         };
@@ -195,7 +210,7 @@ mod tests {
 
         let workspace = create_test_workspace().await;
         let tool_executor = create_test_tool_executor(workspace.clone());
-        
+
         let mut app = App::new(
             app_config,
             event_tx,
@@ -221,9 +236,15 @@ mod tests {
 
         let assistant_msg = Message::Assistant {
             content: vec![
-                AssistantContent::Text { text: "I'll use multiple tools.".to_string() },
-                AssistantContent::ToolCall { tool_call: tool_call_1.clone() },
-                AssistantContent::ToolCall { tool_call: tool_call_2.clone() },
+                AssistantContent::Text {
+                    text: "I'll use multiple tools.".to_string(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: tool_call_1.clone(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: tool_call_2.clone(),
+                },
             ],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
@@ -247,7 +268,12 @@ mod tests {
             let mut found_tool_2 = false;
 
             for message in &messages[1..] {
-                if let Message::Tool { tool_use_id, result, .. } = message {
+                if let Message::Tool {
+                    tool_use_id,
+                    result,
+                    ..
+                } = message
+                {
                     if tool_use_id == "tool_1" {
                         found_tool_1 = true;
                         match result {
