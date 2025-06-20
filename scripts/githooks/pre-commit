@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# Git pre-commit hook: run the full test suite
+CARGO_CMD="cargo test"
+
+# Print what we are about to run (helpful for debugging)
+echo "Running: $CARGO_CMD"
+
+# Execute tests; propagate exit status so commit aborts on failure
+$CARGO_CMD
