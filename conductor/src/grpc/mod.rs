@@ -4,15 +4,8 @@ pub mod error;
 pub mod events;
 pub mod server;
 
-// Re-export the generated protobuf code for agent service
-pub mod agent {
-    tonic::include_proto!("conductor.agent.v1");
-}
-
-// Re-export the generated protobuf code for remote workspace service
-pub mod remote_workspace {
-    tonic::include_proto!("conductor.remote_workspace.v1");
-}
+// Re-export protobuf modules from conductor-proto crate
+pub use conductor_proto::{agent, remote_workspace};
 
 // Export commonly used types from agent proto for backward compatibility
 pub use agent as proto; // Keep this for existing code that uses proto::*

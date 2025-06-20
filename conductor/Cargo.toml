@@ -57,6 +57,7 @@ proc-macro2 = "1.0.95"
 schemars = { version = "0.8", features = ["derive"] }
 
 macros = { path = "../macros" }
+conductor-proto = { path = "../conductor-proto" }
 tools = { path = "../tools" }
 
 ignore = "0.4"
@@ -88,10 +89,11 @@ sqlx = { version = "0.7", features = [
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
+
 tokio-stream = "0.1"
 gethostname = "0.5"
 tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 lazy_static = "1.5.0"
 
 [build-dependencies]
-tonic-build = "0.12"
+
