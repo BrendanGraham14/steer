@@ -10,11 +10,10 @@ use ratatui::crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::layout::{Constraint, Direction, Layout, Position, Rect, Margin};
-use ratatui::style::{Style, Stylize, Modifier};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use std::cell::RefCell;
 use std::io::{self, Stdout};
 use std::panic;
 use std::time::{Duration, Instant};
@@ -37,8 +36,9 @@ use crate::tui::events::{EventPipeline, processors::*};
 use crate::tui::state::content_cache::ContentCache;
 use crate::tui::state::view_model::MessageViewModel;
 use crate::tui::widgets::{
-    CachedContentRenderer, MessageList, MessageListState, ViewMode, message_list::MessageContent,
+    CachedContentRenderer, MessageList, MessageListState, ViewMode,
     content_renderer::{ContentRenderer, DefaultContentRenderer},
+    message_list::MessageContent,
 };
 use widgets::styles;
 
@@ -56,6 +56,7 @@ enum InputMode {
 
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
+    terminal_size: (u16, u16), // Track terminal size for accurate scrolling
     textarea: TextArea<'static>,
     input_mode: InputMode,
     view_model: crate::tui::state::view_model::MessageViewModel,
@@ -105,6 +106,10 @@ impl Tui {
         )?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
+        let terminal_size = terminal
+            .size()
+            .map(|s| (s.width, s.height))
+            .unwrap_or((80, 24));
         // Initialize TextArea
         let mut textarea = TextArea::default();
         textarea.set_block(
@@ -119,6 +124,7 @@ impl Tui {
 
         Ok(Self {
             terminal,
+            terminal_size,
             textarea,
             input_mode: InputMode::Normal,
             view_model: MessageViewModel::new(),
@@ -206,7 +212,9 @@ impl Tui {
             if let crate::app::Message::Assistant { content, .. } = message {
                 for item in content {
                     if let AssistantContent::ToolCall { tool_call } = item {
-                        self.view_model.tool_registry.register_call(tool_call.clone());
+                        self.view_model
+                            .tool_registry
+                            .register_call(tool_call.clone());
                     }
                 }
             }
@@ -399,9 +407,10 @@ impl Tui {
                     match maybe_term_event {
                         Some(Ok(event)) => {
                             match event {
-                                Event::Resize(_, _) => {
-                                    debug!(target:"tui.run", "Terminal resized");
-                                    
+                                Event::Resize(width, height) => {
+                                    debug!(target:"tui.run", "Terminal resized to {}x{}", width, height);
+                                    self.terminal_size = (width, height);
+
                                     needs_redraw = true;
                                     // The widget will handle recalculating sizes internally
                                 }
@@ -436,33 +445,36 @@ impl Tui {
                                 Event::FocusLost => debug!(target:"tui.run", "Focus lost"),
                                 Event::Mouse(event) => {
                                     // Fast path for mouse events to minimize latency
+                                    // Mouse scroll events are handled with early return to prevent
+                                    // processing of other events in the same iteration. This ensures
+                                    // clean scroll behavior without interference from other inputs.
                                     match event {
                                         MouseEvent {
                                             kind: MouseEventKind::ScrollDown,
                                             ..
                                         } => {
-                                            // Use bounds-respecting scroll method for mouse wheel
-                                            let renderer = DefaultContentRenderer;
-                                            let terminal_size = self.terminal.size().unwrap_or_default();
-                                            let viewport_height = terminal_size.height.saturating_sub(4);
-                                            
-                                            self.view_model.message_list_state.scroll_down_by(
-                                                self.view_model.messages.as_slice(),
-                                                viewport_height,
-                                                terminal_size.width.saturating_sub(2),
-                                                &renderer,
+                                            let scrolled = self.view_model.message_list_state.simple_scroll_down(
                                                 3, // Scroll by 3 lines for mouse wheel
+                                                self.view_model.messages.as_slice(),
+                                                Some(self.terminal_size),
                                             );
-                                            needs_redraw = true;
+                                            if scrolled {
+                                                needs_redraw = true;
+                                            }
                                             continue;
                                         }
                                         MouseEvent {
                                             kind: MouseEventKind::ScrollUp,
                                             ..
                                         } => {
-                                            // Use bounds-respecting scroll method for mouse wheel
-                                            self.view_model.message_list_state.scroll_up_by(3);
-                                            needs_redraw = true;
+                                            let scrolled = self.view_model.message_list_state.simple_scroll_up(
+                                                3, // Scroll by 3 lines for mouse wheel
+                                                self.view_model.messages.as_slice(),
+                                                Some(self.terminal_size),
+                                            );
+                                            if scrolled {
+                                                needs_redraw = true;
+                                            }
                                             continue;
                                         }
                                         _ => {} // Ignore other mouse events
@@ -772,7 +784,10 @@ impl Tui {
         let model_info_area = chunks[3];
 
         // Pre-calculate visible range to get messages_above count
-        let inner_area = messages_area.inner(Margin { horizontal: 1, vertical: 1 });
+        let inner_area = messages_area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
         let cached_renderer = CachedContentRenderer::new(content_cache);
         let visible_range = view_state.calculate_visible_range(
             messages,
@@ -780,7 +795,7 @@ impl Tui {
             inner_area.width,
             &cached_renderer as &dyn ContentRenderer,
         );
-        
+
         // Render Messages using the new widget with StatefulWidget pattern
         let message_block = if let Some(range) = &visible_range {
             if range.messages_above > 0 {
@@ -882,7 +897,7 @@ impl Tui {
                         Some(ViewMode::Detailed) => None,
                     };
                     // Clear caches when view mode changes
-                    
+
                     self.view_model.clear_content_cache();
                     return Ok(None);
                 }
@@ -894,7 +909,7 @@ impl Tui {
                         .view_prefs
                         .global_override = Some(ViewMode::Detailed);
                     // Clear caches when view mode changes
-                    
+
                     self.view_model.clear_content_cache();
                     return Ok(None);
                 }
@@ -906,25 +921,35 @@ impl Tui {
                         .view_prefs
                         .global_override = Some(ViewMode::Compact);
                     // Clear cache when view mode changes
-                    
+
                     return Ok(None);
                 }
 
                 // Navigation
                 (KeyCode::PageUp, _) => {
-                    self.view_model
-                        .message_list_state
-                        .scroll_state
-                        .scroll_page_up();
-                    self.view_model.message_list_state.user_scrolled = true;
+                    // Scroll up by approximately one page
+                    let page_size = self.terminal_size.1.saturating_sub(6) / 2; // Half page
+                    let scrolled = self.view_model.message_list_state.simple_scroll_up(
+                        page_size,
+                        self.view_model.messages.as_slice(),
+                        Some(self.terminal_size),
+                    );
+                    if scrolled {
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
                     return Ok(None);
                 }
                 (KeyCode::PageDown, _) => {
-                    self.view_model
-                        .message_list_state
-                        .scroll_state
-                        .scroll_page_down();
-                    self.view_model.message_list_state.user_scrolled = true;
+                    // Scroll down by approximately one page
+                    let page_size = self.terminal_size.1.saturating_sub(6) / 2; // Half page
+                    let scrolled = self.view_model.message_list_state.simple_scroll_down(
+                        page_size,
+                        self.view_model.messages.as_slice(),
+                        Some(self.terminal_size),
+                    );
+                    if scrolled {
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
                     return Ok(None);
                 }
                 (KeyCode::Home, _) => {
@@ -943,8 +968,14 @@ impl Tui {
                         self.view_model.message_list_state.select_previous();
                     } else {
                         // Scroll up
-                        self.view_model.message_list_state.scroll_state.scroll_up();
-                        self.view_model.message_list_state.user_scrolled = true;
+                        let scrolled = self.view_model.message_list_state.simple_scroll_up(
+                            1,
+                            self.view_model.messages.as_slice(),
+                            Some(self.terminal_size),
+                        );
+                        if scrolled {
+                            self.view_model.message_list_state.user_scrolled = true;
+                        }
                     }
                     return Ok(None);
                 }
@@ -956,11 +987,14 @@ impl Tui {
                             .select_next(self.view_model.messages.len());
                     } else {
                         // Scroll down
-                        self.view_model
-                            .message_list_state
-                            .scroll_state
-                            .scroll_down();
-                        self.view_model.message_list_state.user_scrolled = true;
+                        let scrolled = self.view_model.message_list_state.simple_scroll_down(
+                            1,
+                            self.view_model.messages.as_slice(),
+                            Some(self.terminal_size),
+                        );
+                        if scrolled {
+                            self.view_model.message_list_state.user_scrolled = true;
+                        }
                     }
                     return Ok(None);
                 }
@@ -984,57 +1018,57 @@ impl Tui {
                 (KeyCode::Char('k'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    // Scroll up one line - use bounds-respecting method
-                    self.view_model.message_list_state.scroll_up_by(1);
-                    self.view_model.message_list_state.user_scrolled = true;
+                    // Scroll up one line
+                    let scrolled = self.view_model.message_list_state.simple_scroll_up(
+                        1,
+                        self.view_model.messages.as_slice(),
+                        Some(self.terminal_size),
+                    );
+                    if scrolled {
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
                     return Ok(None);
                 }
                 (KeyCode::Char('j'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    // Scroll down one line - use bounds-respecting method
-                    let renderer = DefaultContentRenderer;
-                    
-                    // Get current terminal size for viewport height calculation
-                    let terminal_size = self.terminal.size().unwrap_or_default();
-                    let viewport_height = terminal_size.height.saturating_sub(4); // Account for UI borders
-                    
-                    self.view_model.message_list_state.scroll_down_by(
+                    // Scroll down one line
+                    let scrolled = self.view_model.message_list_state.simple_scroll_down(
+                        1,
                         self.view_model.messages.as_slice(),
-                        viewport_height,
-                        terminal_size.width.saturating_sub(2), // Account for borders
-                        &renderer,
-                        1, // Scroll by 1 line
+                        Some(self.terminal_size),
                     );
-                    self.view_model.message_list_state.user_scrolled = true;
+                    if scrolled {
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
                     return Ok(None);
                 }
                 (KeyCode::Char('u'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    // Scroll up half page - use bounds-respecting method
-                    self.view_model.message_list_state.scroll_up_by(20);
-                    self.view_model.message_list_state.user_scrolled = true;
+                    // Scroll up half page
+                    let scrolled = self.view_model.message_list_state.simple_scroll_up(
+                        20,
+                        self.view_model.messages.as_slice(),
+                        Some(self.terminal_size),
+                    );
+                    if scrolled {
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
                     return Ok(None);
                 }
                 (KeyCode::Char('d'), KeyModifiers::NONE)
                     if self.input_mode == InputMode::Normal =>
                 {
-                    // Scroll down half page - use bounds-respecting method
-                    let renderer = DefaultContentRenderer;
-                    
-                    // Get current terminal size for viewport height calculation
-                    let terminal_size = self.terminal.size().unwrap_or_default();
-                    let viewport_height = terminal_size.height.saturating_sub(4); // Account for UI borders
-                    
-                    self.view_model.message_list_state.scroll_down_by(
+                    // Scroll down half page
+                    let scrolled = self.view_model.message_list_state.simple_scroll_down(
+                        20,
                         self.view_model.messages.as_slice(),
-                        viewport_height,
-                        terminal_size.width.saturating_sub(2), // Account for borders
-                        &renderer,
-                        20, // Scroll amount
+                        Some(self.terminal_size),
                     );
-                    self.view_model.message_list_state.user_scrolled = true;
+                    if scrolled {
+                        self.view_model.message_list_state.user_scrolled = true;
+                    }
                     return Ok(None);
                 }
 
@@ -1132,7 +1166,9 @@ impl Tui {
                                     .set_block(self.textarea.block().cloned().unwrap_or_default());
                                 new_textarea.set_placeholder_text(self.textarea.placeholder_text());
                                 new_textarea.set_style(self.textarea.style());
-                                new_textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+                                new_textarea.set_cursor_style(
+                                    Style::default().add_modifier(Modifier::REVERSED),
+                                );
                                 self.textarea = new_textarea;
                                 self.input_mode = InputMode::Normal;
                             }

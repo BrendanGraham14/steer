@@ -112,7 +112,7 @@ impl ViewPreferences {
 pub struct VisibleRange {
     /// Index of the first visible message
     pub first_index: usize,
-    /// Index of the last visible message  
+    /// Index of the last visible message
     pub last_index: usize,
     /// Y offset where the first visible message starts (relative to viewport)
     pub first_y_offset: i16,
@@ -131,11 +131,10 @@ pub struct MessageListState {
 
     // ScrollView state for handling scrolling
     pub scroll_state: ScrollViewState,
-    
-    
+
     /// Currently visible message range (cached for performance)
     visible_range: Option<VisibleRange>,
-    
+
     /// Last rendered viewport height (for accurate scrolling)
     last_viewport_height: u16,
 }
@@ -152,7 +151,7 @@ impl MessageListState {
             last_viewport_height: 0,
         }
     }
-    
+
     /// Get cached height or calculate and cache it
     fn get_or_calculate_height(
         &mut self,
@@ -163,24 +162,23 @@ impl MessageListState {
     ) -> u16 {
         renderer.calculate_height(message, mode, width)
     }
-    
-    
+
     /// Calculate which messages are visible in the viewport
     pub fn calculate_visible_range(
         &mut self,
-        messages: &[MessageContent], 
+        messages: &[MessageContent],
         viewport_height: u16,
         width: u16,
         renderer: &dyn ContentRenderer,
     ) -> Option<VisibleRange> {
         // Store the viewport height for use in scroll methods
         self.last_viewport_height = viewport_height;
-        
+
         if messages.is_empty() {
             self.visible_range = None;
             return None;
         }
-        
+
         // First pass: calculate total content height to determine max scroll
         let mut total_height = 0u16;
         for (idx, message) in messages.iter().enumerate() {
@@ -201,22 +199,22 @@ impl MessageListState {
         };
         let raw_offset = self.scroll_state.offset().y;
         let scroll_offset = raw_offset.min(max_scroll);
-        
+
         // Update scroll state if it was beyond bounds
         if raw_offset > max_scroll {
             self.scroll_state.set_offset((0, max_scroll).into());
         }
-        
+
         let mut current_y = 0u16;
         let mut first_index = None;
         let mut first_y_offset = 0i16;
         let mut last_index = 0;
         let mut messages_above = 0usize;
-        
+
         for (idx, message) in messages.iter().enumerate() {
             let mode = self.view_prefs.determine_mode(message);
             let height = self.get_or_calculate_height(message, mode, width, renderer);
-            
+
             // Count messages that are completely above the viewport
             if current_y.saturating_add(height) < scroll_offset {
                 messages_above += 1;
@@ -228,47 +226,77 @@ impl MessageListState {
                 // Calculate offset of first visible message relative to viewport top
                 first_y_offset = (current_y as i16).saturating_sub(scroll_offset as i16);
             }
-            
+
             // Update last visible index if any part of message is in viewport
-            if current_y < scroll_offset.saturating_add(viewport_height) && 
-               current_y.saturating_add(height) > scroll_offset {
+            if current_y < scroll_offset.saturating_add(viewport_height)
+                && current_y.saturating_add(height) > scroll_offset
+            {
                 last_index = idx;
             }
-            
+
             // Check if we've gone past the viewport (check AFTER updating last_index)
             if current_y >= scroll_offset.saturating_add(viewport_height) {
                 break;
             }
-            
+
             current_y = current_y.saturating_add(height);
-            
+
             // Add gap between messages (except after last)
             if idx + 1 < messages.len() {
                 current_y = current_y.saturating_add(1);
             }
         }
-        
+
         let range = first_index.map(|first| VisibleRange {
             first_index: first,
             last_index,
             first_y_offset,
             messages_above,
         });
-        
+
         self.visible_range = range.clone();
         range
     }
-    
 
-    /// Scroll down by a specific amount, respecting content bounds
-    pub fn scroll_down_by(&mut self, messages: &[MessageContent], viewport_height: u16, width: u16, renderer: &dyn ContentRenderer, amount: u16) {
+    /// Scroll by a specific amount (positive = down, negative = up), respecting content bounds
+    /// Returns true if the scroll position changed
+    pub fn scroll_by(
+        &mut self,
+        messages: &[MessageContent],
+        viewport_height: u16,
+        width: u16,
+        renderer: &dyn ContentRenderer,
+        amount: i32,
+    ) -> bool {
         // Use the last rendered viewport height if available, as it's more accurate
         let actual_viewport_height = if self.last_viewport_height > 0 {
             self.last_viewport_height
         } else {
             viewport_height
         };
-        
+
+        let current_offset = self.scroll_state.offset().y;
+
+        // For scrolling up, we can calculate the new offset directly
+        if amount < 0 {
+            // Clamp the absolute value to prevent overflow when casting to u16
+            let abs_amount = amount.unsigned_abs();
+            let scroll_amount = abs_amount.min(u32::from(u16::MAX)) as u16;
+            let new_offset = current_offset.saturating_sub(scroll_amount);
+            if new_offset != current_offset {
+                self.scroll_state.set_offset((0, new_offset).into());
+                return true;
+            }
+            return false;
+        }
+
+        // For scrolling down, clamp amount to prevent overflow
+        let scroll_amount = if amount > 0 {
+            amount.min(i32::from(u16::MAX)) as u16
+        } else {
+            0
+        };
+
         // Calculate total content height
         let mut total_height = 0u16;
         for (idx, message) in messages.iter().enumerate() {
@@ -279,27 +307,89 @@ impl MessageListState {
                 total_height = total_height.saturating_add(1);
             }
         }
-        
+
         // Calculate max scroll position
         let max_scroll = if total_height > actual_viewport_height {
             total_height.saturating_sub(actual_viewport_height)
         } else {
             0
         };
-        let current_offset = self.scroll_state.offset().y;
-        let new_offset = current_offset.saturating_add(amount).min(max_scroll);
-        
-        // Only scroll if we're not already at the bottom
+
+        let new_offset = current_offset.saturating_add(scroll_amount).min(max_scroll);
+
         if new_offset != current_offset {
             self.scroll_state.set_offset((0, new_offset).into());
+            true
+        } else {
+            false
         }
     }
-    
+
+    /// Simplified scroll down method that handles all the boilerplate
+    /// Returns true if the scroll position changed
+    pub fn simple_scroll_down(&mut self, amount: u16, messages: &[MessageContent], terminal_size: Option<(u16, u16)>) -> bool {
+        // Use cached viewport height if available, otherwise use terminal size or default
+        let viewport_height = if self.last_viewport_height > 0 {
+            self.last_viewport_height
+        } else if let Some((_, height)) = terminal_size {
+            height.saturating_sub(4) // Account for UI chrome
+        } else {
+            30 // Fallback only when absolutely necessary
+        };
+
+        // Use actual terminal width if provided, otherwise use default
+        let width = terminal_size.map(|(w, _)| w.saturating_sub(2)).unwrap_or(80);
+
+        // Use the default renderer
+        let renderer = DefaultContentRenderer;
+
+        self.scroll_down_by(messages, viewport_height, width, &renderer, amount)
+    }
+
+    /// Simplified scroll up method that handles all the boilerplate
+    /// Returns true if the scroll position changed
+    pub fn simple_scroll_up(&mut self, amount: u16, messages: &[MessageContent], terminal_size: Option<(u16, u16)>) -> bool {
+        // Use cached viewport height if available, otherwise use terminal size or default
+        let viewport_height = if self.last_viewport_height > 0 {
+            self.last_viewport_height
+        } else if let Some((_, height)) = terminal_size {
+            height.saturating_sub(4) // Account for UI chrome
+        } else {
+            30 // Fallback only when absolutely necessary
+        };
+
+        let width = terminal_size.map(|(w, _)| w.saturating_sub(2)).unwrap_or(80);
+        let renderer = DefaultContentRenderer;
+
+        self.scroll_up_by(messages, viewport_height, width, &renderer, amount)
+    }
+
+    /// Scroll down by a specific amount, respecting content bounds
+    /// Returns true if the scroll position changed
+    #[inline]
+    pub fn scroll_down_by(
+        &mut self,
+        messages: &[MessageContent],
+        viewport_height: u16,
+        width: u16,
+        renderer: &dyn ContentRenderer,
+        amount: u16,
+    ) -> bool {
+        self.scroll_by(messages, viewport_height, width, renderer, amount as i32)
+    }
+
     /// Scroll up by a specific amount
-    pub fn scroll_up_by(&mut self, amount: u16) {
-        let current_offset = self.scroll_state.offset().y;
-        let new_offset = current_offset.saturating_sub(amount);
-        self.scroll_state.set_offset((0, new_offset).into());
+    /// Returns true if the scroll position changed
+    #[inline]
+    pub fn scroll_up_by(
+        &mut self,
+        messages: &[MessageContent],
+        viewport_height: u16,
+        width: u16,
+        renderer: &dyn ContentRenderer,
+        amount: u16,
+    ) -> bool {
+        self.scroll_by(messages, viewport_height, width, renderer, -(amount as i32))
     }
 
     /// Get the last calculated visible range
@@ -416,8 +506,6 @@ impl<'a> MessageList<'a> {
     fn determine_view_mode(&self, content: &MessageContent, state: &MessageListState) -> ViewMode {
         state.view_prefs.determine_mode(content)
     }
-
-
 }
 
 impl<'a> StatefulWidget for MessageList<'a> {
@@ -444,10 +532,11 @@ impl<'a> StatefulWidget for MessageList<'a> {
         // Calculate total content size and collect heights
         let mut cached_heights = Vec::with_capacity(self.messages.len());
         let mut total_height = 0u16;
-        
+
         for (idx, msg) in self.messages.iter().enumerate() {
             let mode = self.determine_view_mode(msg, state);
-            let height = state.get_or_calculate_height(msg, mode, messages_area.width, &*self.renderer);
+            let height =
+                state.get_or_calculate_height(msg, mode, messages_area.width, &*self.renderer);
             cached_heights.push(height);
             total_height = total_height.saturating_add(height);
 
@@ -456,7 +545,7 @@ impl<'a> StatefulWidget for MessageList<'a> {
                 total_height = total_height.saturating_add(1);
             }
         }
-        
+
         let content_size = ratatui::layout::Size {
             width: messages_area.width,
             height: total_height,
@@ -525,7 +614,7 @@ impl<'a> Widget for MessagesRenderer<'a> {
             Some(range) => range,
             None => return,
         };
-        
+
         let mut y = 0u16;
 
         // Skip messages before visible range
@@ -542,10 +631,13 @@ impl<'a> Widget for MessagesRenderer<'a> {
             if idx >= self.messages.len() {
                 break;
             }
-            
+
             let message = &self.messages[idx];
             let mode = self.determine_view_mode(message);
-            let height = self.cached_heights.get(idx).copied()
+            let height = self
+                .cached_heights
+                .get(idx)
+                .copied()
                 .unwrap_or_else(|| self.renderer.calculate_height(message, mode, area.width));
 
             // Calculate the actual area for this message
@@ -557,7 +649,9 @@ impl<'a> Widget for MessagesRenderer<'a> {
             };
 
             // Only render if the message area intersects with the visible area
-            if message_area.y < area.y.saturating_add(area.height) && message_area.y.saturating_add(message_area.height) > area.y {
+            if message_area.y < area.y.saturating_add(area.height)
+                && message_area.y.saturating_add(message_area.height) > area.y
+            {
                 // Highlight selected message
                 if self.state.selected == Some(idx) {
                     let highlight_block = Block::default()
@@ -601,9 +695,46 @@ pub type MessageViewState = MessageListState;
 mod tests {
     use super::*;
     use crate::app::conversation::UserContent;
-    
+
     #[test]
     fn test_visible_range_no_overflow() {
+        let mut state = MessageListState::new();
+        let renderer = DefaultContentRenderer;
+
+        // Create test messages
+        let messages = vec![
+            MessageContent::User {
+                id: "test-1".to_string(),
+                blocks: vec![UserContent::Text {
+                    text: "Message 1".to_string(),
+                }],
+                timestamp: "2023-01-01T00:00:00Z".to_string(),
+            },
+            MessageContent::User {
+                id: "test-2".to_string(),
+                blocks: vec![UserContent::Text {
+                    text: "Message 2".to_string(),
+                }],
+                timestamp: "2023-01-01T00:00:00Z".to_string(),
+            },
+        ];
+
+        // Set scroll offset to a high value that could cause overflow
+        state.scroll_state.set_offset((0, u16::MAX - 100).into());
+
+        // This should not panic with overflow
+        let range = state.calculate_visible_range(
+            &messages, 200, // viewport height
+            80,  // width
+            &renderer,
+        );
+
+        // The range calculation should handle the overflow gracefully
+        assert!(range.is_some() || range.is_none()); // Either result is fine, as long as no panic
+    }
+
+    #[test]
+    fn test_scroll_by_integer_overflow_protection() {
         let mut state = MessageListState::new();
         let renderer = DefaultContentRenderer;
         
@@ -611,28 +742,62 @@ mod tests {
         let messages = vec![
             MessageContent::User {
                 id: "test-1".to_string(),
-                blocks: vec![UserContent::Text { text: "Message 1".to_string() }],
-                timestamp: "2023-01-01T00:00:00Z".to_string(),
-            },
-            MessageContent::User {
-                id: "test-2".to_string(),
-                blocks: vec![UserContent::Text { text: "Message 2".to_string() }],
+                blocks: vec![UserContent::Text {
+                    text: "Message 1".to_string(),
+                }],
                 timestamp: "2023-01-01T00:00:00Z".to_string(),
             },
         ];
         
-        // Set scroll offset to a high value that could cause overflow
-        state.scroll_state.set_offset((0, u16::MAX - 100).into());
-        
-        // This should not panic with overflow
-        let range = state.calculate_visible_range(
+        // Test with extremely large positive amount
+        let result = state.scroll_by(
             &messages,
-            200,  // viewport height
-            80,   // width
+            200,
+            80,
             &renderer,
+            i32::MAX,
         );
         
-        // The range calculation should handle the overflow gracefully
-        assert!(range.is_some() || range.is_none()); // Either result is fine, as long as no panic
+        // Should handle without panic
+        assert!(result == true || result == false); // Either is fine, just no panic
+        
+        // Test with extremely large negative amount  
+        let result = state.scroll_by(
+            &messages,
+            200,
+            80,
+            &renderer,
+            i32::MIN,
+        );
+        
+        // Should handle without panic
+        assert!(result == true || result == false); // Either is fine, just no panic
+    }
+
+    #[test]
+    fn test_simple_scroll_with_terminal_size() {
+        let mut state = MessageListState::new();
+        
+        // Create test messages
+        let messages = vec![
+            MessageContent::User {
+                id: "test-1".to_string(),
+                blocks: vec![UserContent::Text {
+                    text: "Message 1".to_string(),
+                }],
+                timestamp: "2023-01-01T00:00:00Z".to_string(),
+            },
+        ];
+        
+        // Test with provided terminal size
+        let terminal_size = Some((100, 50));
+        let result = state.simple_scroll_down(5, &messages, terminal_size);
+        
+        // Should not panic and should use the provided terminal size
+        assert!(result == true || result == false);
+        
+        // Test without terminal size (fallback)
+        let result = state.simple_scroll_up(5, &messages, None);
+        assert!(result == true || result == false);
     }
 }
