@@ -523,6 +523,7 @@ dependencies = [
  "hex",
  "home",
  "ignore",
+ "lazy_static",
  "macros",
  "once_cell",
  "proc-macro2",

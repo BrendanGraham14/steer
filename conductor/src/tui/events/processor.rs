@@ -101,20 +101,8 @@ impl<'a> ProcessingContext<'a> {
                 timestamp,
                 id,
             } => {
-                // If it is a single tool call, convert directly to Tool message
-                if content.len() == 1 {
-                    if let AssistantContent::ToolCall { tool_call } = &content[0] {
-                        return MessageContent::Tool {
-                            id: tool_call.id.clone(),
-                            call: tool_call.clone(),
-                            result: None,
-                            timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                                .unwrap_or_else(|| timestamp.to_string()),
-                        };
-                    }
-                }
-
+                // Always keep tool calls as part of Assistant messages
+                // The Tool message will be handled separately
                 MessageContent::Assistant {
                     id,
                     blocks: content,
