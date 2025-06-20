@@ -141,7 +141,13 @@ fn grep_search_internal(
             &matcher,
             path,
             UTF8(|line_num, line| {
-                matches_in_file.push(format!("{}:{}: {}", path.display(), line_num, line));
+                // Canonicalize the path for clean output
+                let display_path = match path.canonicalize() {
+                    Ok(canonical) => canonical.display().to_string(),
+                    // If canonicalization fails (e.g., file doesn't exist), fall back to regular display
+                    Err(_) => path.display().to_string(),
+                };
+                matches_in_file.push(format!("{}:{}: {}", display_path, line_num, line));
                 Ok(true)
             }),
         );
@@ -551,5 +557,39 @@ mod tests {
         assert!(result.contains("src/api/client/mod.rs:2: pub use client::ApiClient;"));
         assert!(result.contains("src/tools/grep.rs:1: pub struct GrepTool;"));
         assert!(!result.contains("tests/integration/api_test.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_canonicalized_paths() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create a test file
+        fs::write(
+            temp_dir.path().join("test.txt"),
+            "line one\nfind this line\nline three",
+        )
+        .unwrap();
+
+        let context = create_test_context(&temp_dir);
+
+        let tool = GrepTool;
+        // Use "." as the path to simulate the issue
+        let params = GrepParams {
+            pattern: "find this".to_string(),
+            include: None,
+            path: Some(".".to_string()),
+        };
+        let params_json = serde_json::to_value(params).unwrap();
+
+        let result = tool.execute(params_json, &context).await.unwrap();
+
+        // The result should contain a canonicalized path without "./"
+        assert!(result.contains(":2: find this line"));
+        // Ensure no "./" appears in the path
+        assert!(!result.contains("./"));
+
+        // The path should be absolute and canonical
+        let canonical_path = temp_dir.path().join("test.txt").canonicalize().unwrap();
+        assert!(result.contains(&canonical_path.display().to_string()));
     }
 }
