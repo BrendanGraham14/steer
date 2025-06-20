@@ -212,30 +212,39 @@ impl Tui {
             }
         }
 
-        let converted_messages: Vec<MessageContent> = messages
-            .into_iter()
-            .enumerate()
-            .map(|(i, message)| {
-                let content = Self::convert_message(message, &self.view_model.tool_registry);
+        for (i, message) in messages.into_iter().enumerate() {
+            let content = Self::convert_message(message, &self.view_model.tool_registry);
 
-                if i < 5 || i >= message_count - 5 {
-                    info!(
-                        "Converting message {}: type={:?}",
-                        i,
-                        match &content {
-                            MessageContent::User { .. } => "User",
-                            MessageContent::Assistant { .. } => "Assistant",
-                            MessageContent::Tool { .. } => "Tool",
+            if i < 5 || i >= message_count - 5 {
+                info!(
+                    "Converting message {}: type={:?}",
+                    i,
+                    match &content {
+                        MessageContent::User { .. } => "User",
+                        MessageContent::Assistant { .. } => "Assistant",
+                        MessageContent::Tool { .. } => "Tool",
+                    }
+                );
+            }
+
+            match &content {
+                MessageContent::Tool { id, call, result, .. } => {
+                    // Merge with existing placeholder or create new
+                    let idx = self.get_or_create_tool_index(id, Some(call.name.clone()));
+                    if let MessageContent::Tool { call: existing_call, result: existing_result, .. } = &mut self.view_model.messages[idx] {
+                        // Always keep latest call params (they should be identical)
+                        *existing_call = call.clone();
+                        // Attach result if we didn't have it yet
+                        if existing_result.is_none() {
+                            *existing_result = result.clone();
                         }
-                    );
+                    }
                 }
-
-                content
-            })
-            .collect();
-
-        // Add all messages with proper coordination
-        self.view_model.add_messages(converted_messages);
+                _ => {
+                    self.view_model.add_message(content);
+                }
+            }
+        }
 
         info!(
             "Finished restoring messages. TUI now has {} messages",
@@ -576,20 +585,8 @@ impl Tui {
                 timestamp,
                 id,
             } => {
-                // If it is a single tool call, convert directly to Tool message
-                if content.len() == 1 {
-                    if let AssistantContent::ToolCall { tool_call } = &content[0] {
-                        return MessageContent::Tool {
-                            id: tool_call.id.clone(),
-                            call: tool_call.clone(),
-                            result: None,
-                            timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                                .unwrap_or_else(|| timestamp.to_string()),
-                        };
-                    }
-                }
-
+                // Don't convert single tool calls to Tool messages during restore
+                // The actual Tool message will provide the complete information
                 MessageContent::Assistant {
                     id,
                     blocks: content,
