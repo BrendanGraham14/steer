@@ -1427,6 +1427,20 @@ impl Drop for Tui {
     }
 }
 
+/// Free function for best-effort terminal cleanup (raw mode, alt screen, mouse, etc.)
+pub fn cleanup_terminal() {
+    use ratatui::crossterm::{execute, terminal::{LeaveAlternateScreen, disable_raw_mode}};
+    use ratatui::crossterm::event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags};
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        std::io::stdout(),
+        LeaveAlternateScreen,
+        PopKeyboardEnhancementFlags,
+        DisableBracketedPaste,
+        DisableMouseCapture
+    );
+}
+
 // Helper to wrap terminal cleanup in panic handler
 pub fn setup_panic_hook() {
     panic::set_hook(Box::new(|panic_info| {

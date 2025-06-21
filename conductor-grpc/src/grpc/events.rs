@@ -6,7 +6,7 @@ use conductor_core::app::{
         UserContent,
     },
 };
-use crate::proto::*;
+use conductor_proto::agent::*;
 use crate::grpc::conversions::proto_tool_call_to_core;
 use prost_types::Timestamp;
 use serde_json;
@@ -29,7 +29,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                         content: content
                             .iter()
                             .map(|user_content| match user_content {
-                                UserContent::Text { text } => crate::grpc::proto::UserContent {
+                                UserContent::Text { text } => conductor_proto::agent::UserContent {
                                     content: Some(user_content::Content::Text(text.clone())),
                                 },
                                 UserContent::CommandExecution {
@@ -37,7 +37,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                                     stdout,
                                     stderr,
                                     exit_code,
-                                } => crate::grpc::proto::UserContent {
+                                } => conductor_proto::agent::UserContent {
                                     content: Some(user_content::Content::CommandExecution(
                                         CommandExecution {
                                             command: command.clone(),
@@ -49,7 +49,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                                 },
                                 UserContent::AppCommand { .. } => {
                                     // For now, represent app commands as empty text in gRPC
-                                    crate::grpc::proto::UserContent {
+                                    conductor_proto::agent::UserContent {
                                         content: Some(user_content::Content::Text(String::new())),
                                     }
                                 }
@@ -68,16 +68,16 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                             .iter()
                             .map(|assistant_content| match assistant_content {
                                 AssistantContent::Text { text } => {
-                                    crate::grpc::proto::AssistantContent {
+                                    conductor_proto::agent::AssistantContent {
                                         content: Some(assistant_content::Content::Text(
                                             text.clone(),
                                         )),
                                     }
                                 }
                                 AssistantContent::ToolCall { tool_call } => {
-                                    crate::grpc::proto::AssistantContent {
+                                    conductor_proto::agent::AssistantContent {
                                         content: Some(assistant_content::Content::ToolCall(
-                                            crate::grpc::proto::ToolCall {
+                                            conductor_proto::agent::ToolCall {
                                                 id: tool_call.id.clone(),
                                                 name: tool_call.name.clone(),
                                                 parameters_json: serde_json::to_string(
@@ -90,7 +90,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                                 }
                                 AssistantContent::Thought { thought } => {
                                     // For now, convert thoughts to text
-                                    crate::grpc::proto::AssistantContent {
+                                    conductor_proto::agent::AssistantContent {
                                         content: Some(assistant_content::Content::Text(format!(
                                             "<thinking>\n{}\n</thinking>",
                                             thought.display_text()
@@ -118,7 +118,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                     };
                     message_added_event::Message::Tool(ToolMessage {
                         tool_use_id: tool_use_id.clone(),
-                        result: Some(crate::grpc::proto::ToolResult {
+                        result: Some(conductor_proto::agent::ToolResult {
                             result: Some(proto_result),
                         }),
                         timestamp: *timestamp,
@@ -198,12 +198,12 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
             id,
         } => {
             use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult};
-            use crate::grpc::proto::{app_command_type, command_response};
+            use conductor_proto::agent::{app_command_type, command_response};
             
             // Convert app command to proto command
             let proto_command_type = match command {
                 AppCmdType::Model { target } => {
-                    Some(app_command_type::CommandType::Model(crate::grpc::proto::ModelCommand {
+                    Some(app_command_type::CommandType::Model(conductor_proto::agent::ModelCommand {
                         target: target.clone(),
                     }))
                 }
@@ -226,16 +226,16 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
                 AppCmdResponse::Compact(result) => {
                     let compact_type = match result {
                         CompactResult::Success(summary) => {
-                            Some(crate::grpc::proto::compact_result::ResultType::Success(summary.clone()))
+                            Some(conductor_proto::agent::compact_result::ResultType::Success(summary.clone()))
                         }
                         CompactResult::Cancelled => {
-                            Some(crate::grpc::proto::compact_result::ResultType::Cancelled(true))
+                            Some(conductor_proto::agent::compact_result::ResultType::Cancelled(true))
                         }
                         CompactResult::InsufficientMessages => {
-                            Some(crate::grpc::proto::compact_result::ResultType::InsufficientMessages(true))
+                            Some(conductor_proto::agent::compact_result::ResultType::InsufficientMessages(true))
                         }
                     };
-                    Some(command_response::Response::Compact(crate::grpc::proto::CompactResult {
+                    Some(command_response::Response::Compact(conductor_proto::agent::CompactResult {
                         result_type: compact_type,
                     }))
                 }
@@ -256,8 +256,8 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
             Some(server_event::Event::CommandResponse(CommandResponseEvent {
                 content,
                 id,
-                command: Some(crate::grpc::proto::AppCommandType { command_type: proto_command_type }),
-                response: Some(crate::grpc::proto::CommandResponse { response: proto_response_type }),
+                command: Some(conductor_proto::agent::AppCommandType { command_type: proto_command_type }),
+                response: Some(conductor_proto::agent::CommandResponse { response: proto_response_type }),
             }))
         },
         AppEvent::ModelChanged { model } => {
@@ -309,7 +309,7 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
                             }
                             user_content::Content::AppCommand(app_cmd) => {
                                 use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult};
-                                use crate::grpc::proto::{app_command_type, command_response};
+                                use conductor_proto::agent::{app_command_type, command_response};
 
                                 let command = app_cmd.command.as_ref().and_then(|cmd| {
                                     cmd.command_type.as_ref().map(|ct| match ct {
@@ -333,13 +333,13 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
                                         }
                                         command_response::Response::Compact(result) => {
                                             let compact_result = result.result_type.as_ref().map(|rt| match rt {
-                                                crate::grpc::proto::compact_result::ResultType::Success(summary) => {
+                                                conductor_proto::agent::compact_result::ResultType::Success(summary) => {
                                                     CompactResult::Success(summary.clone())
                                                 }
-                                                crate::grpc::proto::compact_result::ResultType::Cancelled(_) => {
+                                                conductor_proto::agent::compact_result::ResultType::Cancelled(_) => {
                                                     CompactResult::Cancelled
                                                 }
-                                                crate::grpc::proto::compact_result::ResultType::InsufficientMessages(_) => {
+                                                conductor_proto::agent::compact_result::ResultType::InsufficientMessages(_) => {
                                                     CompactResult::InsufficientMessages
                                                 }
                                             }).unwrap_or(CompactResult::Cancelled);
@@ -501,7 +501,7 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
             use conductor_core::app::conversation::{
                 AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult,
             };
-            use crate::grpc::proto::{app_command_type, command_response};
+            use conductor_proto::agent::{app_command_type, command_response};
 
             // Convert proto command to app command
             let command = e
@@ -533,13 +533,13 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
                     }
                     command_response::Response::Compact(result) => {
                         let compact_result = result.result_type.as_ref().map(|rt| match rt {
-                            crate::grpc::proto::compact_result::ResultType::Success(summary) => {
+                            conductor_proto::agent::compact_result::ResultType::Success(summary) => {
                                 CompactResult::Success(summary.clone())
                             }
-                            crate::grpc::proto::compact_result::ResultType::Cancelled(_) => {
+                            conductor_proto::agent::compact_result::ResultType::Cancelled(_) => {
                                 CompactResult::Cancelled
                             }
-                            crate::grpc::proto::compact_result::ResultType::InsufficientMessages(_) => {
+                            conductor_proto::agent::compact_result::ResultType::InsufficientMessages(_) => {
                                 CompactResult::InsufficientMessages
                             }
                         }).unwrap_or(CompactResult::Cancelled);

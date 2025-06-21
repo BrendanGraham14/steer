@@ -7,7 +7,7 @@ use tonic::transport::Server;
 use tracing::{error, info};
 
 use conductor_core::events::StreamEventWithMetadata;
-use crate::proto::agent_service_server::AgentServiceServer;
+use conductor_proto::agent::agent_service_server::AgentServiceServer;
 use crate::grpc::server::AgentServiceImpl;
 use conductor_core::session::{SessionManager, SessionManagerConfig, SessionStore};
 

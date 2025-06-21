@@ -12,7 +12,7 @@ use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::conversation::Message;
 use crate::grpc::conversions::{session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto};
 use crate::grpc::error::GrpcError;
-use crate::proto::{
+use conductor_proto::agent::{
     ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
     DeleteSessionRequest, GetSessionRequest, GetConversationRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
     SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse,
@@ -49,6 +49,31 @@ impl GrpcClientAdapter {
         })
     }
 
+    /// Create client from an existing channel (for in-memory connections)
+    pub async fn from_channel(channel: Channel) -> Result<Self> {
+        info!("Creating gRPC client from provided channel");
+
+        let client = AgentServiceClient::new(channel);
+
+        Ok(Self {
+            client: Mutex::new(client),
+            session_id: Mutex::new(None),
+            command_tx: Mutex::new(None),
+            stream_handle: Mutex::new(None),
+            event_rx: Mutex::new(None),
+        })
+    }
+
+    /// Convenience constructor: spin up an in-memory gRPC server and return a ready client.
+    pub async fn in_memory(
+        llm_config: conductor_core::config::LlmConfig,
+        default_model: conductor_core::api::Model,
+    ) -> Result<Self> {
+        use crate::in_memory::setup_local_grpc;
+        let channel = setup_local_grpc(llm_config, default_model).await?;
+        Self::from_channel(channel).await
+    }
+
     /// Create a new session on the server
     pub async fn create_session(&self, config: SessionConfig) -> Result<String> {
         debug!("Creating new session with gRPC server");
@@ -82,7 +107,7 @@ impl GrpcClientAdapter {
             .client
             .lock()
             .await
-            .activate_session(crate::grpc::proto::ActivateSessionRequest {
+            .activate_session(conductor_proto::agent::ActivateSessionRequest {
                 session_id: session_id.clone(),
             })
             .await?
@@ -410,9 +435,9 @@ fn convert_server_event_to_app_event(event: ServerEvent) -> Option<AppEvent> {
 }
 
 /// Convert proto Message to app Message
-fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Option<Message> {
+fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> Option<Message> {
     use conductor_core::app::conversation::{AssistantContent, UserContent, ToolResult as ConversationToolResult};
-    use crate::grpc::proto::{message, user_content, assistant_content, tool_result};
+    use conductor_proto::agent::{message, user_content, assistant_content, tool_result};
     use conductor_core::api::ToolCall;
     
     let message_type = proto_msg.message.as_ref().map(|m| match m {
@@ -432,7 +457,7 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
                     }
                     user_content::Content::AppCommand(app_cmd) => {
                         use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse};
-                        use crate::grpc::proto::{app_command_type, command_response};
+                        use conductor_proto::agent::{app_command_type, command_response};
                         
                         let command = app_cmd.command.as_ref().and_then(|cmd| {
                             cmd.command_type.as_ref().map(|ct| match ct {
@@ -457,13 +482,13 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
                                 command_response::Response::Compact(result) => {
                                     use conductor_core::app::conversation::CompactResult;
                                     let compact_result = result.result_type.as_ref().map(|rt| match rt {
-                                        crate::grpc::proto::compact_result::ResultType::Success(summary) => {
+                                        conductor_proto::agent::compact_result::ResultType::Success(summary) => {
                                             CompactResult::Success(summary.clone())
                                         }
-                                        crate::grpc::proto::compact_result::ResultType::Cancelled(_) => {
+                                        conductor_proto::agent::compact_result::ResultType::Cancelled(_) => {
                                             CompactResult::Cancelled
                                         }
-                                        crate::grpc::proto::compact_result::ResultType::InsufficientMessages(_) => {
+                                        conductor_proto::agent::compact_result::ResultType::InsufficientMessages(_) => {
                                             CompactResult::InsufficientMessages
                                         }
                                     }).unwrap_or(CompactResult::Cancelled);
@@ -510,7 +535,7 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
                     }
                     assistant_content::Content::Thought(thought) => {
                         use conductor_core::app::conversation::ThoughtContent;
-                        use crate::grpc::proto::{thought_content, SimpleThought, SignedThought, RedactedThought};
+                        use conductor_proto::agent::{thought_content, SimpleThought, SignedThought, RedactedThought};
                         
                         let thought_content = thought.thought_type.as_ref().and_then(|t| match t {
                             thought_content::ThoughtType::Simple(SimpleThought { text }) => {
@@ -564,7 +589,7 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
 mod tests {
     use super::*;
     use crate::grpc::conversions::{tool_approval_policy_to_proto, message_to_proto};
-    use crate::grpc::proto::tool_approval_policy::Policy;
+    use conductor_proto::agent::tool_approval_policy::Policy;
     use conductor_core::app::conversation::{AppCommandType, CommandResponse, CompactResult, ThoughtContent, AssistantContent, UserContent};
     use conductor_core::api::ToolCall;
 

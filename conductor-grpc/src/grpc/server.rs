@@ -1,4 +1,4 @@
-use crate::proto::*;
+use conductor_proto::agent::*;
 use crate::grpc::conversions::message_to_proto;
 use crate::grpc::session_manager_ext::SessionManagerExt;
 use conductor_core::session::manager::SessionManager;
@@ -270,8 +270,8 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                         updated_at: Some(prost_types::Timestamp::from(
                             std::time::SystemTime::from(session.updated_at),
                         )),
-                        status: crate::grpc::proto::SessionStatus::Active as i32,
-                        metadata: Some(crate::grpc::proto::SessionMetadata {
+                        status: conductor_proto::agent::SessionStatus::Active as i32,
+                        metadata: Some(conductor_proto::agent::SessionMetadata {
                             labels: session.metadata,
                             annotations: std::collections::HashMap::new(),
                         }),
@@ -636,8 +636,8 @@ mod tests {
     use conductor_core::api::Model;
     use conductor_core::config::LlmConfig;
     use conductor_core::events::StreamEventWithMetadata;
-    use crate::grpc::proto::agent_service_client::AgentServiceClient;
-    use crate::grpc::proto::{SendMessageRequest, SubscribeRequest};
+    use conductor_proto::agent::agent_service_client::AgentServiceClient;
+    use conductor_proto::agent::{SendMessageRequest, SubscribeRequest};
     use conductor_core::session::stores::sqlite::SqliteSessionStore;
     use conductor_core::session::state::{WorkspaceConfig, ToolVisibility};
     use conductor_core::session::{
