@@ -7,13 +7,14 @@ use tools::{ToolCall, ToolSchema};
 use tonic::transport::Channel;
 
 use crate::app::EnvironmentInfo;
-use crate::grpc::remote_workspace::{
+use conductor_proto::remote_workspace::{
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
     GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
 };
 use crate::session::state::{RemoteAuth, ToolFilter};
-use crate::tools::{ExecutionContext, RemoteBackend, ToolBackend};
-use super::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
+use crate::tools::{ExecutionContext, ToolBackend};
+use crate::tools::remote_backend::RemoteBackend;
+use crate::workspace::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
 
 /// Remote workspace that executes tools and collects environment info via gRPC
 pub struct RemoteWorkspace {
@@ -136,7 +137,6 @@ impl Workspace for RemoteWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::state::RemoteAuth;
 
     #[tokio::test]
     async fn test_remote_workspace_metadata() {

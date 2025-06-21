@@ -3,14 +3,14 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use super::super::Command;
-use crate::api::Model;
-use crate::app::AppConfig;
-use crate::config::LlmConfig;
-use crate::events::StreamEventWithMetadata;
-use crate::session::{
+use conductor_core::api::Model;
+use conductor_core::app::AppConfig;
+use conductor_core::config::LlmConfig;
+use conductor_core::events::StreamEventWithMetadata;
+use conductor_core::session::{
     SessionConfig, SessionManager, SessionManagerConfig, SessionToolConfig, WorkspaceConfig,
 };
-use crate::utils::session::{create_session_store, parse_metadata, parse_tool_policy};
+use conductor_core::utils::session::{create_session_store, parse_metadata, parse_tool_policy};
 
 pub struct CreateSessionCommand {
     pub tool_policy: String,

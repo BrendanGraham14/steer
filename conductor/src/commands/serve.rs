@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use tracing::info;
 
 use super::Command;
-use crate::api::Model;
-use crate::session::SessionManagerConfig;
+use conductor_core::api::Model;
+use conductor_core::session::SessionManagerConfig;
 
 pub struct ServeCommand {
     pub port: u16,
@@ -22,9 +22,9 @@ impl Command for ServeCommand {
         info!("Starting gRPC server on {}", addr);
 
         // Create session store path
-        let db_path = crate::utils::session::create_session_store_path()?;
+        let db_path = conductor_core::utils::session::create_session_store_path()?;
 
-        let config = crate::runners::ServiceHostConfig {
+        let config = conductor_grpc::ServiceHostConfig {
             db_path,
             session_manager_config: SessionManagerConfig {
                 max_concurrent_sessions: 100,
@@ -34,7 +34,7 @@ impl Command for ServeCommand {
             bind_addr: addr,
         };
 
-        let mut host = crate::runners::ServiceHost::new(config).await?;
+        let mut host = conductor_grpc::ServiceHost::new(config).await?;
         host.start().await?;
 
         info!("gRPC server started on {}", addr);

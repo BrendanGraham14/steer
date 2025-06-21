@@ -6,10 +6,10 @@ use tokio::task::JoinHandle;
 use tonic::transport::Server;
 use tracing::{error, info};
 
-use crate::events::StreamEventWithMetadata;
-use crate::grpc::proto::agent_service_server::AgentServiceServer;
+use conductor_core::events::StreamEventWithMetadata;
+use crate::proto::agent_service_server::AgentServiceServer;
 use crate::grpc::server::AgentServiceImpl;
-use crate::session::{SessionManager, SessionManagerConfig, SessionStore};
+use conductor_core::session::{SessionManager, SessionManagerConfig, SessionStore};
 
 /// Configuration for the ServiceHost
 #[derive(Debug, Clone)]
@@ -171,7 +171,7 @@ impl ServiceHost {
 
 /// Create a session store from the given database path
 async fn create_session_store(db_path: &std::path::Path) -> Result<Arc<dyn SessionStore>> {
-    use crate::session::stores::sqlite::SqliteSessionStore;
+    use conductor_core::session::stores::sqlite::SqliteSessionStore;
 
     // Create directory if it doesn't exist
     if let Some(parent) = db_path.parent() {
@@ -189,7 +189,7 @@ async fn create_session_store(db_path: &std::path::Path) -> Result<Arc<dyn Sessi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::Model;
+    use conductor_core::api::Model;
     use tempfile::TempDir;
 
     fn create_test_config() -> (ServiceHostConfig, TempDir) {

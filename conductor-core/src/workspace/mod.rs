@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tools::{ToolCall, ToolSchema};
 
 use crate::app::EnvironmentInfo;
-use crate::session::state::{RemoteAuth, WorkspaceConfig};
+use crate::session::state::{WorkspaceConfig};
 use crate::tools::ExecutionContext;
 
 pub mod local;
@@ -88,14 +88,14 @@ pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Worksp
             let workspace = local::LocalWorkspace::new().await?;
             Ok(Arc::new(workspace))
         }
-        WorkspaceConfig::Remote { agent_address, auth } => {
-            let workspace = remote::RemoteWorkspace::new(agent_address.clone(), auth.clone()).await?;
-            Ok(Arc::new(workspace))
+        WorkspaceConfig::Remote { .. } => {
+            // Remote workspaces are not supported in conductor-core
+            // They must be created through conductor-grpc
+            Err(anyhow::anyhow!("Remote workspaces require conductor-grpc. Use conductor-grpc to create remote workspaces."))
         }
-        WorkspaceConfig::Container { image, runtime } => {
+        WorkspaceConfig::Container { .. } => {
             // For now, container workspaces are not supported
-            // Use RemoteWorkspace with a container agent instead
-            Err(anyhow::anyhow!("Container workspaces are not yet supported. Use RemoteWorkspace with a container agent instead."))
+            Err(anyhow::anyhow!("Container workspaces are not yet supported."))
         }
     }
 }

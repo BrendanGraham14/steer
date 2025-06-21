@@ -8,8 +8,8 @@ use tracing::info;
 use conductor_core::api::Model;
 use conductor_core::app::AppConfig;
 use conductor_core::app::io::AppEventSource;
-use conductor_core::cli::{Cli, Commands};
-use conductor_core::commands::{
+use conductor::cli::{Cli, Commands};
+use conductor::commands::{
     Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
 };
@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load .env file if it exists
-    conductor_core::cli::config::load_env()?;
+    conductor::cli::config::load_env()?;
 
     // Initialize tracing (level configured via RUST_LOG env var)
     utils::tracing::init_tracing()?;
@@ -47,8 +47,8 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
-    match cli.remote {
-        Some(remote_addr) => run_remote_mode(&remote_addr, cli.model, cli.system_prompt).await,
+    match &cli.remote {
+        Some(remote_addr) => run_remote_mode(remote_addr, cli.model, cli.system_prompt).await,
         None => run_local_mode(cli.model, cli.system_prompt).await,
     }
 }

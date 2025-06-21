@@ -13,7 +13,7 @@ use tools::ToolError;
 use tools::ToolSchema;
 
 // Generated gRPC client from proto/remote_workspace.proto
-use crate::grpc::remote_workspace::{
+use conductor_proto::remote_workspace::{
     ExecuteToolRequest, HealthStatus, ToolApprovalRequirementsRequest,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
@@ -330,7 +330,7 @@ impl ToolBackend for RemoteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grpc::remote_workspace::{
+    use conductor_proto::remote_workspace::{
         ExecuteToolResponse, HealthResponse, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
         remote_workspace_service_server::{RemoteWorkspaceService, RemoteWorkspaceServiceServer},
     };
@@ -358,7 +358,7 @@ mod tests {
         async fn get_agent_info(
             &self,
             _request: Request<()>,
-        ) -> Result<tonic::Response<crate::grpc::remote_workspace::AgentInfo>, Status> {
+        ) -> Result<tonic::Response<conductor_proto::remote_workspace::AgentInfo>, Status> {
             unimplemented!()
         }
 
@@ -389,7 +389,7 @@ mod tests {
             &self,
             _request: Request<ToolApprovalRequirementsRequest>,
         ) -> Result<
-            tonic::Response<crate::grpc::remote_workspace::ToolApprovalRequirementsResponse>,
+            tonic::Response<conductor_proto::remote_workspace::ToolApprovalRequirementsResponse>,
             Status,
         > {
             unimplemented!()
@@ -397,9 +397,9 @@ mod tests {
         
         async fn get_environment_info(
             &self,
-            _request: Request<crate::grpc::remote_workspace::GetEnvironmentInfoRequest>,
+            _request: Request<conductor_proto::remote_workspace::GetEnvironmentInfoRequest>,
         ) -> Result<
-            tonic::Response<crate::grpc::remote_workspace::GetEnvironmentInfoResponse>,
+            tonic::Response<conductor_proto::remote_workspace::GetEnvironmentInfoResponse>,
             Status,
         > {
             unimplemented!()

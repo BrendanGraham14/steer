@@ -15,3 +15,49 @@ Follow the conventional commits format.
 - You generally should not implement the `Default` trait for structs unless explicitly instructed.
 - DO NOT unwrap errors. Use the try operator `?` and propagate errors appropriately.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
+
+
+# Crate Architecture
+
+## Dependency Graph
+The crates must maintain a strict acyclic dependency graph:
+```
+conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc.)
+```
+
+## Crate Responsibilities
+
+### conductor-proto
+- ONLY contains .proto files and tonic-generated code
+- Defines the stable wire protocol
+- No business logic whatsoever
+
+### conductor-core
+- Pure domain logic (LLM APIs, session management, validation, tool execution)
+- MUST NOT:
+  - Import conductor-grpc
+  - Return or accept proto types in public APIs
+  - Know about networking, UI, or transport concerns
+- CAN import conductor-proto for basic type definitions only
+- Exports domain types (Message, SessionConfig) and traits (AppCommandSink, AppEventSource)
+
+### conductor-grpc
+- Network transport layer only
+- The ONLY crate that knows about both core types and proto types
+- Contains ALL conversions between core domain types ↔ proto messages
+- Conversion functions must be pub(crate), never public
+- Implements gRPC server/client that wrap core functionality
+
+### Client crates (conductor-tui, etc.)
+- MUST go through conductor-grpc, never directly access conductor-core
+- Even "local" mode should use an in-memory gRPC channel
+- No special treatment - all clients are equal
+
+## Important Rules
+
+1. **No proto types in core**: If you see `conductor_proto::` in conductor-core outside of basic imports, it's a violation
+2. **All conversions in grpc**: Any function converting between core and proto types belongs in conductor-grpc
+3. **No in-process shortcuts**: Clients must always use the gRPC interface, even for local operations
+4. **Clean boundaries**: Each crate has a single, clear responsibility
+
+See docs/grpc_architecture.md for full details.

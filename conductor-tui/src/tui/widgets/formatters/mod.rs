@@ -70,8 +70,8 @@ lazy_static! {
         map.insert(TODO_READ_TOOL_NAME, Box::new(TodoReadFormatter));
         map.insert(TODO_WRITE_TOOL_NAME, Box::new(TodoWriteFormatter));
         map.insert(AST_GREP_TOOL_NAME, Box::new(AstGrepFormatter));
-        map.insert(crate::tools::fetch::FETCH_TOOL_NAME, Box::new(FetchFormatter));
-        map.insert(crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME, Box::new(DispatchAgentFormatter));
+        map.insert(conductor_core::tools::fetch::FETCH_TOOL_NAME, Box::new(FetchFormatter));
+        map.insert(conductor_core::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME, Box::new(DispatchAgentFormatter));
         
         map
     };

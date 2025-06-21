@@ -1,14 +1,18 @@
-use crate::grpc::proto;
-use crate::session::state::{
+use conductor_proto::agent as proto;
+use conductor_core::session::state::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
-    ToolApprovalPolicy, ToolFilter, WorkspaceConfig,
+    ToolApprovalPolicy, ToolFilter, WorkspaceConfig, ToolVisibility,
 };
-use crate::app::conversation::{Message, UserContent, AssistantContent, ToolResult};
+use conductor_core::app::conversation::{
+    Message as ConversationMessage, UserContent, AssistantContent, ToolResult,
+    ThoughtContent, AppCommandType, CommandResponse, CompactResult
+};
+use conductor_core::api::ToolCall;
 
 /// Convert internal Message to protobuf
-pub fn message_to_proto(message: Message) -> proto::Message {
+pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
     let (message_variant, created_at) = match &message {
-        Message::User { content, timestamp, id } => {
+        ConversationMessage::User { content, timestamp, id: _ } => {
             let user_msg = proto::UserMessage {
                 content: content.iter().map(|user_content| match user_content {
                     UserContent::Text { text } => proto::UserContent {
@@ -25,20 +29,18 @@ pub fn message_to_proto(message: Message) -> proto::Message {
                         }
                     }
                     UserContent::AppCommand { command, response } => {
-                        use crate::app::conversation::AppCommandType as AppCmdType;
-                        use crate::app::conversation::CommandResponse as AppCmdResponse;
                         
                         let command_type = match command {
-                            AppCmdType::Model { target } => {
+                            AppCommandType::Model { target } => {
                                 Some(proto::app_command_type::CommandType::Model(proto::ModelCommand {
                                     target: target.clone(),
                                 }))
                             }
-                            AppCmdType::Clear => Some(proto::app_command_type::CommandType::Clear(true)),
-                            AppCmdType::Compact => Some(proto::app_command_type::CommandType::Compact(true)),
-                            AppCmdType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
-                            AppCmdType::Help => Some(proto::app_command_type::CommandType::Help(true)),
-                            AppCmdType::Unknown { command } => {
+                            AppCommandType::Clear => Some(proto::app_command_type::CommandType::Clear(true)),
+                            AppCommandType::Compact => Some(proto::app_command_type::CommandType::Compact(true)),
+                            AppCommandType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
+                            AppCommandType::Help => Some(proto::app_command_type::CommandType::Help(true)),
+                            AppCommandType::Unknown { command } => {
                                 Some(proto::app_command_type::CommandType::Unknown(proto::UnknownCommand {
                                     command: command.clone(),
                                 }))
@@ -47,19 +49,18 @@ pub fn message_to_proto(message: Message) -> proto::Message {
                         
                         let proto_response = response.as_ref().map(|resp| {
                             let response_type = match resp {
-                                AppCmdResponse::Text(text) => {
+                                CommandResponse::Text(text) => {
                                     Some(proto::command_response::Response::Text(text.clone()))
                                 }
-                                AppCmdResponse::Compact(result) => {
-                                    use crate::app::conversation::CompactResult as AppCompactResult;
+                                CommandResponse::Compact(result) => {
                                     let compact_type = match result {
-                                        AppCompactResult::Success(summary) => {
+                                        CompactResult::Success(summary) => {
                                             Some(proto::compact_result::ResultType::Success(summary.clone()))
                                         }
-                                        AppCompactResult::Cancelled => {
+                                        CompactResult::Cancelled => {
                                             Some(proto::compact_result::ResultType::Cancelled(true))
                                         }
-                                        AppCompactResult::InsufficientMessages => {
+                                        CompactResult::InsufficientMessages => {
                                             Some(proto::compact_result::ResultType::InsufficientMessages(true))
                                         }
                                     };
@@ -83,7 +84,7 @@ pub fn message_to_proto(message: Message) -> proto::Message {
             };
             (proto::message::Message::User(user_msg), *timestamp)
         }
-        Message::Assistant { content, timestamp, id } => {
+        ConversationMessage::Assistant { content, timestamp, id: _ } => {
             let assistant_msg = proto::AssistantMessage {
                 content: content.iter().map(|assistant_content| match assistant_content {
                     AssistantContent::Text { text } => proto::AssistantContent {
@@ -99,21 +100,19 @@ pub fn message_to_proto(message: Message) -> proto::Message {
                         }
                     }
                     AssistantContent::Thought { thought } => {
-                        use crate::app::conversation::ThoughtContent as AppThoughtContent;
-                        
                         let thought_type = match thought {
-                            AppThoughtContent::Simple { text } => {
+                            ThoughtContent::Simple { text } => {
                                 Some(proto::thought_content::ThoughtType::Simple(proto::SimpleThought {
                                     text: text.clone(),
                                 }))
                             }
-                            AppThoughtContent::Signed { text, signature } => {
+                            ThoughtContent::Signed { text, signature } => {
                                 Some(proto::thought_content::ThoughtType::Signed(proto::SignedThought {
                                     text: text.clone(),
                                     signature: signature.clone(),
                                 }))
                             }
-                            AppThoughtContent::Redacted { data } => {
+                            ThoughtContent::Redacted { data } => {
                                 Some(proto::thought_content::ThoughtType::Redacted(proto::RedactedThought {
                                     data: data.clone(),
                                 }))
@@ -131,7 +130,7 @@ pub fn message_to_proto(message: Message) -> proto::Message {
             };
             (proto::message::Message::Assistant(assistant_msg), *timestamp)
         }
-        Message::Tool { tool_use_id, result, timestamp, id } => {
+        ConversationMessage::Tool { tool_use_id, result, timestamp, id: _ } => {
             let proto_result = match result {
                 ToolResult::Success { output } => {
                     proto::tool_result::Result::Success(output.clone())
@@ -328,4 +327,139 @@ pub fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
         workspace_config: Some(workspace_config_to_proto(&config.workspace)),
         system_prompt: config.system_prompt.clone(),
     }
+}
+
+/// Convert from protobuf WorkspaceConfig to internal WorkspaceConfig
+pub fn proto_to_workspace_config(
+    proto_config: proto::WorkspaceConfig,
+) -> WorkspaceConfig {
+    match proto_config.config {
+        Some(proto::workspace_config::Config::Local(_)) => WorkspaceConfig::Local,
+        Some(proto::workspace_config::Config::Remote(remote)) => {
+            let auth = remote.auth.map(|proto_auth| match proto_auth.auth {
+                Some(proto::remote_auth::Auth::BearerToken(token)) => {
+                    RemoteAuth::Bearer { token }
+                }
+                Some(proto::remote_auth::Auth::ApiKey(key)) => {
+                    RemoteAuth::ApiKey { key }
+                }
+                None => RemoteAuth::ApiKey { key: String::new() }, // Default fallback
+            });
+            WorkspaceConfig::Remote {
+                agent_address: remote.agent_address,
+                auth,
+            }
+        }
+        Some(proto::workspace_config::Config::Container(container)) => {
+            let runtime = match container.runtime {
+                1 => ContainerRuntime::Docker, // CONTAINER_RUNTIME_DOCKER
+                2 => ContainerRuntime::Podman, // CONTAINER_RUNTIME_PODMAN
+                _ => ContainerRuntime::Docker, // Default fallback
+            };
+            WorkspaceConfig::Container {
+                image: container.image,
+                runtime,
+            }
+        }
+        None => WorkspaceConfig::Local,
+    }
+}
+
+/// Convert from protobuf ToolFilter to internal ToolFilter
+pub fn proto_to_tool_filter(proto_filter: Option<proto::ToolFilter>) -> ToolFilter {
+    match proto_filter {
+        Some(filter) => {
+            match filter.filter {
+                Some(proto::tool_filter::Filter::All(_)) => ToolFilter::All,
+                Some(proto::tool_filter::Filter::Include(include_filter)) => {
+                    ToolFilter::Include(include_filter.tools)
+                }
+                Some(proto::tool_filter::Filter::Exclude(exclude_filter)) => {
+                    ToolFilter::Exclude(exclude_filter.tools)
+                }
+                None => ToolFilter::All, // Default to all if no filter specified
+            }
+        }
+        None => ToolFilter::All, // Default to all if no filter provided
+    }
+}
+
+/// Convert protobuf SessionToolConfig to internal SessionToolConfig
+pub fn proto_to_tool_config(
+    proto_config: proto::SessionToolConfig,
+) -> SessionToolConfig {
+    let backends = proto_config
+        .backends
+        .into_iter()
+        .map(|proto_backend| {
+            match proto_backend.backend {
+                Some(proto::backend_config::Backend::Local(local)) => {
+                    BackendConfig::Local {
+                        tool_filter: proto_to_tool_filter(local.tool_filter),
+                    }
+                }
+                Some(proto::backend_config::Backend::Remote(remote)) => {
+                    let auth = remote.auth.map(|proto_auth| {
+                        match proto_auth.auth {
+                            Some(proto::remote_auth::Auth::BearerToken(token)) => {
+                                RemoteAuth::Bearer { token }
+                            }
+                            Some(proto::remote_auth::Auth::ApiKey(key)) => {
+                                RemoteAuth::ApiKey { key }
+                            }
+                            None => RemoteAuth::ApiKey { key: String::new() }, // Default fallback
+                        }
+                    });
+
+                    BackendConfig::Remote {
+                        name: remote.name,
+                        endpoint: remote.endpoint,
+                        auth,
+                        tool_filter: proto_to_tool_filter(remote.tool_filter),
+                    }
+                }
+                Some(proto::backend_config::Backend::Container(container)) => {
+                    let runtime = match container.runtime {
+                        1 => ContainerRuntime::Docker, // CONTAINER_RUNTIME_DOCKER
+                        2 => ContainerRuntime::Podman, // CONTAINER_RUNTIME_PODMAN
+                        _ => ContainerRuntime::Docker, // Default fallback
+                    };
+                    BackendConfig::Container {
+                        image: container.image,
+                        runtime,
+                        tool_filter: proto_to_tool_filter(container.tool_filter),
+                    }
+                }
+                Some(proto::backend_config::Backend::Mcp(mcp)) => {
+                    BackendConfig::Mcp {
+                        server_name: mcp.server_name,
+                        transport: mcp.transport,
+                        command: mcp.command,
+                        args: mcp.args,
+                        tool_filter: proto_to_tool_filter(mcp.tool_filter),
+                    }
+                }
+                None => BackendConfig::Local {
+                    tool_filter: ToolFilter::All,
+                }, // Default fallback
+            }
+        })
+        .collect();
+
+    SessionToolConfig {
+        backends,
+        approval_policy: ToolApprovalPolicy::AlwaysAsk, // Default, will be overridden
+        visibility: ToolVisibility::All, // Default visibility
+        metadata: proto_config.metadata,
+    }
+}
+
+/// Convert proto ToolCall to core ToolCall
+pub fn proto_tool_call_to_core(proto_tool_call: &proto::ToolCall) -> Result<ToolCall, serde_json::Error> {
+    let parameters = serde_json::from_str(&proto_tool_call.parameters_json)?;
+    Ok(ToolCall {
+        id: proto_tool_call.id.clone(),
+        name: proto_tool_call.name.clone(),
+        parameters,
+    })
 }

@@ -1,21 +1,15 @@
-pub mod api;
-pub mod app;
 pub mod cli;
 pub mod commands;
-pub mod config;
-pub mod events;
-pub mod grpc;
-pub mod runners;
-pub mod session;
-pub mod tools;
 
-pub mod utils;
-pub mod workspace;
+// Re-export modules from conductor-core
+pub use conductor_core::{
+    api, app, config, events, runners, session, tools, utils, workspace
+};
 
-use api::Model;
-use app::Message;
-use runners::{OneShotRunner, RunOnceResult};
-use session::{SessionManager, SessionToolConfig};
+use conductor_core::api::Model;
+use conductor_core::app::Message;
+use conductor_core::runners::{OneShotRunner, RunOnceResult};
+use conductor_core::session::{SessionManager, SessionToolConfig};
 
 /// Runs the agent once in an existing session.
 ///
@@ -44,7 +38,7 @@ pub async fn run_once_ephemeral(
     init_msgs: Vec<Message>,
     model: Model,
     tool_config: Option<SessionToolConfig>,
-    tool_policy: Option<session::ToolApprovalPolicy>,
+    tool_policy: Option<conductor_core::session::ToolApprovalPolicy>,
     system_prompt: Option<String>,
 ) -> anyhow::Result<RunOnceResult> {
     OneShotRunner::run_ephemeral(
@@ -74,11 +68,11 @@ pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> anyhow::Result<R
 /// This is the recommended way to create a SessionManager for one-shot operations
 /// when you want to reuse it across multiple calls.
 pub async fn create_session_manager() -> anyhow::Result<SessionManager> {
-    use session::SessionManagerConfig;
+    use conductor_core::session::SessionManagerConfig;
     use tokio::sync::mpsc;
 
     // Use the same session store as normal operation (~/.conductor/sessions.db)
-    let store = crate::utils::session::create_session_store().await?;
+    let store = conductor_core::utils::session::create_session_store().await?;
 
     let (event_tx, _event_rx) = mpsc::channel(100);
     let config = SessionManagerConfig {

@@ -7,7 +7,7 @@ use crate::app::conversation::Message;
 use crate::app::agent_executor::AgentExecutorError;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::AppCommand;
-use crate::tools::ToolError;
+use tools::ToolError;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::mpsc;

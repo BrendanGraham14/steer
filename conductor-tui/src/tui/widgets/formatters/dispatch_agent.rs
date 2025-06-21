@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use crate::tools::dispatch_agent::DispatchAgentParams;
+use conductor_core::tools::dispatch_agent::DispatchAgentParams;
 
 pub struct DispatchAgentFormatter;
 

@@ -7,18 +7,18 @@ use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
-use crate::app::{AppCommand, AppEvent};
-use crate::app::io::{AppCommandSink, AppEventSource};
-use crate::app::conversation::Message;
+use conductor_core::app::{AppCommand, AppEvent};
+use conductor_core::app::io::{AppCommandSink, AppEventSource};
+use conductor_core::app::conversation::Message;
 use crate::grpc::conversions::{session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto};
 use crate::grpc::error::GrpcError;
-use crate::grpc::proto::{
+use crate::proto::{
     ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
     DeleteSessionRequest, GetSessionRequest, GetConversationRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
     SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse,
     agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
 };
-use crate::session::{SessionConfig, ToolApprovalPolicy};
+use conductor_core::session::{SessionConfig, ToolApprovalPolicy};
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming
 pub struct GrpcClientAdapter {
@@ -411,9 +411,9 @@ fn convert_server_event_to_app_event(event: ServerEvent) -> Option<AppEvent> {
 
 /// Convert proto Message to app Message
 fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Option<Message> {
-    use crate::app::conversation::{AssistantContent, UserContent, ToolResult as ConversationToolResult};
+    use conductor_core::app::conversation::{AssistantContent, UserContent, ToolResult as ConversationToolResult};
     use crate::grpc::proto::{message, user_content, assistant_content, tool_result};
-    use tools::ToolCall;
+    use conductor_core::api::ToolCall;
     
     let message_type = proto_msg.message.as_ref().map(|m| match m {
         message::Message::User(_) => "User",
@@ -431,7 +431,7 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
                         Some(UserContent::Text { text })
                     }
                     user_content::Content::AppCommand(app_cmd) => {
-                        use crate::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse};
+                        use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse};
                         use crate::grpc::proto::{app_command_type, command_response};
                         
                         let command = app_cmd.command.as_ref().and_then(|cmd| {
@@ -455,7 +455,7 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
                                     AppCmdResponse::Text(text.clone())
                                 }
                                 command_response::Response::Compact(result) => {
-                                    use crate::app::conversation::CompactResult;
+                                    use conductor_core::app::conversation::CompactResult;
                                     let compact_result = result.result_type.as_ref().map(|rt| match rt {
                                         crate::grpc::proto::compact_result::ResultType::Success(summary) => {
                                             CompactResult::Success(summary.clone())
@@ -509,7 +509,7 @@ fn proto_message_to_app_message(proto_msg: crate::grpc::proto::Message) -> Optio
                         })
                     }
                     assistant_content::Content::Thought(thought) => {
-                        use crate::app::conversation::ThoughtContent;
+                        use conductor_core::app::conversation::ThoughtContent;
                         use crate::grpc::proto::{thought_content, SimpleThought, SignedThought, RedactedThought};
                         
                         let thought_content = thought.thought_type.as_ref().and_then(|t| match t {
@@ -565,8 +565,8 @@ mod tests {
     use super::*;
     use crate::grpc::conversions::{tool_approval_policy_to_proto, message_to_proto};
     use crate::grpc::proto::tool_approval_policy::Policy;
-    use crate::app::conversation::{AppCommandType, CommandResponse, CompactResult, ThoughtContent, AssistantContent, UserContent};
-    use tools::ToolCall;
+    use conductor_core::app::conversation::{AppCommandType, CommandResponse, CompactResult, ThoughtContent, AssistantContent, UserContent};
+    use conductor_core::api::ToolCall;
 
     #[test]
     fn test_convert_tool_approval_policy() {

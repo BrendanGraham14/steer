@@ -1,4 +1,4 @@
-use crate::api::Model;
+use conductor_core::api::Model;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
