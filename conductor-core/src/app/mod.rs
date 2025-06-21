@@ -1,5 +1,6 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
 use crate::app::conversation::{AssistantContent, CompactResult, ToolResult, UserContent};
+use crate::tools::ToolError;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -319,7 +320,7 @@ impl App {
                     let requires_approval = match executor.requires_approval(&tool_name).await {
                         Ok(req) => req,
                         Err(e) => {
-                            return Err(crate::tools::ToolError::InternalError(format!(
+                            return Err(ToolError::InternalError(format!(
                                 "Failed to check tool approval status for {}: {}",
                                 tool_name, e
                             )));
@@ -344,7 +345,7 @@ impl App {
                         {
                             // If we can't send the request, treat as an error
                             error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
-                            return Err(crate::tools::ToolError::InternalError(format!(
+                            return Err(ToolError::InternalError(format!(
                                 "Failed to request tool approval: {}",
                                 e
                             )));
@@ -355,7 +356,7 @@ impl App {
                             biased;
                             _ = callback_token.cancelled() => {
                                  info!(tool_id=%tool_id, tool_name=%tool_name, "Tool approval cancelled while waiting for user response.");
-                                 return Err(crate::tools::ToolError::Cancelled(tool_name));
+                                 return Err(ToolError::Cancelled(tool_name));
                             }
                             decision_result = rx => {
                                 match decision_result {
@@ -385,7 +386,7 @@ impl App {
                         }
                         ApprovalDecision::Denied => {
                             warn!(tool_id=%tool_id, tool_name=%tool_name, "Tool execution denied via callback.");
-                            Err(crate::tools::ToolError::DeniedByUser(tool_name))
+                            Err(ToolError::DeniedByUser(tool_name))
                         }
                     }
                 }

@@ -4,10 +4,10 @@ use std::io::{self, Write};
 use tokio::sync::mpsc;
 
 use super::super::Command;
-use crate::api::Model;
-use crate::events::StreamEventWithMetadata;
-use crate::session::{SessionManager, SessionManagerConfig};
-use crate::utils::session::create_session_store;
+use conductor_core::api::Model;
+use conductor_core::events::StreamEventWithMetadata;
+use conductor_core::session::{SessionManager, SessionManagerConfig};
+use conductor_core::utils::session::create_session_store;
 
 pub struct DeleteSessionCommand {
     pub session_id: String,
@@ -69,7 +69,7 @@ impl Command for DeleteSessionCommand {
 
 impl DeleteSessionCommand {
     async fn handle_remote(&self, remote_addr: &str) -> Result<()> {
-        use crate::grpc::GrpcClientAdapter;
+        use conductor_grpc::GrpcClientAdapter;
 
         // Connect to the gRPC server
         let mut client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {

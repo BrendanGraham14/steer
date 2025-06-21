@@ -103,29 +103,15 @@ impl SessionConfig {
                 BackendConfig::Remote {
                     name,
                     endpoint,
-                    auth,
-                    tool_filter,
+                    auth: _,
+                    tool_filter: _,
                 } => {
-                    match crate::tools::RemoteBackend::new(
-                        endpoint.clone(),
-                        std::time::Duration::from_secs(30),
-                        auth.clone(),
-                        tool_filter.clone(),
-                    )
-                    .await
-                    {
-                        Ok(remote_backend) => {
-                            registry.register(name.clone(), Arc::new(remote_backend));
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create user remote backend '{}' at {}: {}",
-                                name,
-                                endpoint,
-                                e
-                            );
-                        }
-                    }
+                    // Remote backends require conductor-grpc and cannot be created in conductor-core
+                    tracing::warn!(
+                        "Remote backend '{}' at {} requires conductor-grpc. Skipping.",
+                        name,
+                        endpoint
+                    );
                 }
                 BackendConfig::Container {
                     image,

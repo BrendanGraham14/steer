@@ -1,5 +1,5 @@
-use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
-use crate::tools::fetch::FETCH_TOOL_NAME;
+use conductor_core::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
+use conductor_core::tools::fetch::FETCH_TOOL_NAME;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::fs;
@@ -12,9 +12,9 @@ use tools::tools::{
 };
 
 use super::Command;
-use crate::api::Model;
-use crate::app::conversation::{Message, UserContent};
-use crate::session::SessionToolConfig;
+use conductor_core::api::Model;
+use conductor_core::app::conversation::{Message, UserContent};
+use conductor_core::session::SessionToolConfig;
 
 pub struct HeadlessCommand {
     pub model: Option<Model>,

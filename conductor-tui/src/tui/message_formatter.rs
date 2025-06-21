@@ -5,8 +5,8 @@ use tools::tools::bash::BashParams;
 use tools::tools::edit::EditParams;
 use tools::tools::replace::ReplaceParams;
 
-use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
-use crate::tools::fetch::FETCH_TOOL_NAME;
+use conductor_core::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
+use conductor_core::tools::fetch::FETCH_TOOL_NAME;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use similar::{ChangeTag, TextDiff};

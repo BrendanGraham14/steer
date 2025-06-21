@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use crate::tools::fetch::FetchParams;
+use conductor_core::tools::fetch::FetchParams;
 
 pub struct FetchFormatter;
 

@@ -148,7 +148,7 @@ impl Tui {
         initial_model: Model,
         session_config: Option<crate::session::SessionConfig>,
     ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
-        use crate::grpc::GrpcClientAdapter;
+        use conductor_grpc::GrpcClientAdapter;
         use crate::session::{SessionConfig, SessionToolConfig};
         use crate::app::io::AppEventSource;
         use std::collections::HashMap;
@@ -285,7 +285,7 @@ impl Tui {
         session_id: String,
         initial_model: Model,
     ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
-        use crate::grpc::GrpcClientAdapter;
+        use conductor_grpc::GrpcClientAdapter;
         use crate::app::io::AppEventSource;
 
         info!("Resuming remote session {} at {}", session_id, addr);

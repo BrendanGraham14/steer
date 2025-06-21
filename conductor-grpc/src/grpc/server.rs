@@ -1,6 +1,7 @@
-use crate::grpc::proto::*;
+use crate::proto::*;
 use crate::grpc::conversions::message_to_proto;
-use crate::session::manager::SessionManager;
+use crate::grpc::session_manager_ext::SessionManagerExt;
+use conductor_core::session::manager::SessionManager;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -52,7 +53,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                 debug!("Session {} is already active, TUI should call GetConversation to retrieve history", session_id);
                                 receiver
                             },
-                            Err(crate::session::manager::SessionManagerError::SessionNotActive { session_id }) => {
+                            Err(conductor_core::session::manager::SessionManagerError::SessionNotActive { session_id }) => {
                                 info!("Session {} not active, attempting to resume", session_id);
 
                                 // Try to resume the session
@@ -82,7 +83,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                     }
                                 }
                             }
-                            Err(crate::session::manager::SessionManagerError::SessionAlreadyHasListener { session_id }) => {
+                            Err(conductor_core::session::manager::SessionManagerError::SessionAlreadyHasListener { session_id }) => {
                                 error!("Session already has an active stream: {}", session_id);
                                 let _ = tx
                                     .send(Err(Status::already_exists(format!(
@@ -230,10 +231,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let req = request.into_inner();
 
         // Load LLM config from environment properly
-        let llm_config = crate::config::LlmConfig::from_env()
+        let llm_config = conductor_core::config::LlmConfig::from_env()
             .map_err(|e| Status::internal(format!("Failed to load LLM config: {}", e)))?;
 
-        let app_config = crate::app::AppConfig { llm_config };
+        let app_config = conductor_core::app::AppConfig { llm_config };
 
         match self
             .session_manager
@@ -255,7 +256,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let _req = request.into_inner();
 
         // Create filter - for now just list all sessions
-        let filter = crate::session::SessionFilter::default();
+        let filter = conductor_core::session::SessionFilter::default();
 
         match self.session_manager.list_sessions(filter).await {
             Ok(sessions) => {
@@ -378,7 +379,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     ) -> Result<Response<Operation>, Status> {
         let req = request.into_inner();
 
-        let app_command = crate::app::AppCommand::ProcessUserInput(req.message);
+        let app_command = conductor_core::app::AppCommand::ProcessUserInput(req.message);
 
         match self
             .session_manager
@@ -422,7 +423,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }
         };
 
-        let app_command = crate::app::AppCommand::HandleToolResponse {
+        let app_command = conductor_core::app::AppCommand::HandleToolResponse {
             id: req.tool_call_id,
             approved,
             always,
@@ -461,10 +462,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         }
 
         // Load LLM config
-        let llm_config = crate::config::LlmConfig::from_env().map_err(|e| {
+        let llm_config = conductor_core::config::LlmConfig::from_env().map_err(|e| {
             Status::internal(format!("Failed to load LLM config: {}", e))
         })?;
-        let app_config = crate::app::AppConfig { llm_config };
+        let app_config = conductor_core::app::AppConfig { llm_config };
 
         match self
             .session_manager
@@ -496,7 +497,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     ) -> Result<Response<()>, Status> {
         let req = request.into_inner();
 
-        let app_command = crate::app::AppCommand::CancelProcessing;
+        let app_command = conductor_core::app::AppCommand::CancelProcessing;
 
         match self
             .session_manager
@@ -520,14 +521,14 @@ async fn try_resume_session(
     session_id: &str,
 ) -> Result<(), Status> {
     // Load LLM config from environment
-    let llm_config = crate::config::LlmConfig::from_env().map_err(|e| {
+    let llm_config = conductor_core::config::LlmConfig::from_env().map_err(|e| {
         Status::internal(format!(
             "Failed to load LLM config for session resume: {}",
             e
         ))
     })?;
 
-    let app_config = crate::app::AppConfig { llm_config };
+    let app_config = conductor_core::app::AppConfig { llm_config };
 
     // Attempt to resume the session
     match session_manager.resume_session(session_id, app_config).await {
@@ -543,7 +544,7 @@ async fn try_resume_session(
                 session_id
             )))
         }
-        Err(crate::session::manager::SessionManagerError::CapacityExceeded { current, max }) => {
+        Err(conductor_core::session::manager::SessionManagerError::CapacityExceeded { current, max }) => {
             warn!(
                 "Cannot resume session {}: server at capacity ({}/{})",
                 session_id, current, max
@@ -573,7 +574,7 @@ async fn handle_client_message(
         match message {
             client_message::Message::SendMessage(send_msg) => {
                 // Convert to AppCommand - just process user input since that's what exists
-                let app_command = crate::app::AppCommand::ProcessUserInput(send_msg.message);
+                let app_command = conductor_core::app::AppCommand::ProcessUserInput(send_msg.message);
 
                 session_manager
                     .send_command(&client_message.session_id, app_command)
@@ -592,7 +593,7 @@ async fn handle_client_message(
                     }
                 };
 
-                let app_command = crate::app::AppCommand::HandleToolResponse {
+                let app_command = conductor_core::app::AppCommand::HandleToolResponse {
                     id: approval.tool_call_id,
                     approved,
                     always,
@@ -606,7 +607,7 @@ async fn handle_client_message(
 
             client_message::Message::Cancel(_cancel) => {
                 // Use existing CancelProcessing command
-                let app_command = crate::app::AppCommand::CancelProcessing;
+                let app_command = conductor_core::app::AppCommand::CancelProcessing;
 
                 session_manager
                     .send_command(&client_message.session_id, app_command)
@@ -632,14 +633,14 @@ async fn handle_client_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::Model;
-    use crate::config::LlmConfig;
-    use crate::events::StreamEventWithMetadata;
+    use conductor_core::api::Model;
+    use conductor_core::config::LlmConfig;
+    use conductor_core::events::StreamEventWithMetadata;
     use crate::grpc::proto::agent_service_client::AgentServiceClient;
     use crate::grpc::proto::{SendMessageRequest, SubscribeRequest};
-    use crate::session::stores::sqlite::SqliteSessionStore;
-    use crate::session::state::{WorkspaceConfig, ToolVisibility};
-    use crate::session::{
+    use conductor_core::session::stores::sqlite::SqliteSessionStore;
+    use conductor_core::session::state::{WorkspaceConfig, ToolVisibility};
+    use conductor_core::session::{
         SessionConfig, SessionManagerConfig, SessionToolConfig, ToolApprovalPolicy,
     };
     use std::collections::HashMap;
@@ -699,7 +700,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = crate::app::AppConfig {
+        let app_config = conductor_core::app::AppConfig {
             llm_config: LlmConfig {
                 anthropic_api_key: None,
                 openai_api_key: None,
@@ -762,7 +763,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = crate::app::AppConfig {
+        let app_config = conductor_core::app::AppConfig {
             llm_config: LlmConfig {
                 anthropic_api_key: None,
                 openai_api_key: None,
@@ -830,7 +831,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = crate::app::AppConfig {
+        let app_config = conductor_core::app::AppConfig {
             llm_config: LlmConfig {
                 anthropic_api_key: None,
                 openai_api_key: None,
@@ -921,7 +922,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = crate::app::AppConfig {
+        let app_config = conductor_core::app::AppConfig {
             llm_config: LlmConfig {
                 anthropic_api_key: None,
                 openai_api_key: None,

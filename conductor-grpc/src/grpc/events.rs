@@ -1,4 +1,4 @@
-use crate::app::{
+use conductor_core::app::{
     AppEvent,
     cancellation::ActiveTool,
     conversation::{
@@ -6,9 +6,11 @@ use crate::app::{
         UserContent,
     },
 };
-use crate::grpc::proto::*;
+use crate::proto::*;
+use crate::grpc::conversions::proto_tool_call_to_core;
 use prost_types::Timestamp;
-use tools::ToolCall;
+use serde_json;
+use conductor_core::api::ToolCall;
 use uuid;
 
 /// Convert AppEvent to protobuf ServerEvent
@@ -195,7 +197,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Serv
             response,
             id,
         } => {
-            use crate::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult};
+            use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult};
             use crate::grpc::proto::{app_command_type, command_response};
             
             // Convert app command to proto command
@@ -306,7 +308,7 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
                                 })
                             }
                             user_content::Content::AppCommand(app_cmd) => {
-                                use crate::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult};
+                                use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult};
                                 use crate::grpc::proto::{app_command_type, command_response};
 
                                 let command = app_cmd.command.as_ref().and_then(|cmd| {
@@ -366,18 +368,14 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
                                     Some(AssistantContent::Text { text })
                                 }
                                 assistant_content::Content::ToolCall(tool_call) => {
-                                    let params = serde_json::from_str(&tool_call.parameters_json)
-                                        .unwrap_or(serde_json::Value::Object(
-                                            serde_json::Map::new(),
-                                        ));
-
-                                    Some(AssistantContent::ToolCall {
-                                        tool_call: ToolCall {
-                                            id: tool_call.id,
-                                            name: tool_call.name,
-                                            parameters: params,
-                                        },
-                                    })
+                                    match proto_tool_call_to_core(&tool_call) {
+                                        Ok(core_tool_call) => {
+                                            Some(AssistantContent::ToolCall {
+                                                tool_call: core_tool_call,
+                                            })
+                                        }
+                                        Err(_) => None, // Skip invalid tool calls
+                                    }
                                 }
                                 assistant_content::Content::Thought(_) => {
                                     // TODO: Handle thoughts properly when we implement them
@@ -416,8 +414,8 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
 
             let model = {
                 use std::str::FromStr;
-                crate::api::Model::from_str(&e.model)
-                    .unwrap_or(crate::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model)
+                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
             };
 
             Some(AppEvent::MessageAdded { message, model })
@@ -433,8 +431,8 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
         server_event::Event::ToolCallStarted(e) => {
             let model = {
                 use std::str::FromStr;
-                crate::api::Model::from_str(&e.model)
-                    .unwrap_or(crate::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model)
+                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
             };
             Some(AppEvent::ToolCallStarted {
                 name: e.name,
@@ -445,8 +443,8 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
         server_event::Event::ToolCallCompleted(e) => {
             let model = {
                 use std::str::FromStr;
-                crate::api::Model::from_str(&e.model)
-                    .unwrap_or(crate::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model)
+                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
             };
             Some(AppEvent::ToolCallCompleted {
                 name: e.name,
@@ -458,8 +456,8 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
         server_event::Event::ToolCallFailed(e) => {
             let model = {
                 use std::str::FromStr;
-                crate::api::Model::from_str(&e.model)
-                    .unwrap_or(crate::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model)
+                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
             };
             Some(AppEvent::ToolCallFailed {
                 name: e.name,
@@ -482,7 +480,7 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
         server_event::Event::OperationCancelled(e) => {
             if let Some(info) = e.info {
                 Some(AppEvent::OperationCancelled {
-                    info: crate::app::cancellation::CancellationInfo {
+                    info: conductor_core::app::cancellation::CancellationInfo {
                         api_call_in_progress: info.api_call_in_progress,
                         active_tools: info
                             .active_tools
@@ -500,7 +498,7 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
             }
         }
         server_event::Event::CommandResponse(e) => {
-            use crate::app::conversation::{
+            use conductor_core::app::conversation::{
                 AppCommandType as AppCmdType, CommandResponse as AppCmdResponse, CompactResult,
             };
             use crate::grpc::proto::{app_command_type, command_response};
@@ -559,8 +557,8 @@ pub fn server_event_to_app_event(server_event: ServerEvent) -> Option<AppEvent> 
         server_event::Event::ModelChanged(e) => {
             let model = {
                 use std::str::FromStr;
-                crate::api::Model::from_str(&e.model)
-                    .unwrap_or(crate::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model)
+                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
             };
             Some(AppEvent::ModelChanged { model })
         }

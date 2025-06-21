@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 use crate::api::ToolCall;
 use crate::app::ToolExecutor;
-use crate::tools::ToolError;
+use tools::ToolError;
 
 // Removed the old execute_tool_with_context function.
 

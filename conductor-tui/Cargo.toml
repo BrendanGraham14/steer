@@ -10,6 +10,7 @@ path = "src/bin/conductor.rs"
 
 [dependencies]
 conductor-core = { path = "../conductor-core" }
+conductor-grpc = { path = "../conductor-grpc" }
 conductor = { path = "../conductor" }
 
 # CLI framework
