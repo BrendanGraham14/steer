@@ -564,6 +564,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "conductor-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "chrono",
+ "clap",
+ "colored",
+ "conductor",
+ "conductor-proto",
+ "dirs 5.0.1",
+ "dotenv",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "gethostname",
+ "glob",
+ "globset",
+ "hex",
+ "home",
+ "ignore",
+ "lazy_static",
+ "macros",
+ "once_cell",
+ "prost",
+ "prost-types",
+ "rand",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "shell-words",
+ "similar",
+ "sqlx",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "textwrap",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
+ "tools",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "conductor-grpc"
+version = "0.1.0"
+dependencies = [
+ "conductor",
+]
+
+[[package]]
 name = "conductor-proto"
 version = "0.1.0"
 dependencies = [
@@ -571,6 +630,32 @@ dependencies = [
  "prost-types",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "conductor-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "conductor",
+ "conductor-core",
+ "crossterm",
+ "lazy_static",
+ "once_cell",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "similar",
+ "textwrap",
+ "tokio",
+ "tools",
+ "tracing",
+ "tui-textarea",
+ "tui-widgets",
+ "uuid",
 ]
 
 [[package]]

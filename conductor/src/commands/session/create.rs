@@ -41,22 +41,9 @@ impl Command for CreateSessionCommand {
         if let Some(remote_addr) = &self.remote {
             println!("Creating remote session at {}", remote_addr);
 
-            // Set panic hook for terminal cleanup
-            crate::tui::setup_panic_hook();
-
-            // Create TUI in remote mode with custom session config
-            let (mut tui, event_rx) = crate::tui::Tui::new_remote(
-                remote_addr,
-                Model::ClaudeSonnet4_20250514, // Default model, could be made configurable
-                Some(session_config),
-            )
-            .await?;
-
-            println!("Connected to remote server and created session");
-
-            // Run the TUI with events from the remote server
-            tui.run(event_rx).await?;
-            return Ok(());
+            // TODO: The TUI functionality has been moved to conductor-tui crate
+            // For now, just create the session without launching the TUI
+            return Err(anyhow!("Remote session creation with TUI is not available in this command. Use the conductor-tui binary instead."));
         }
 
         // Local session handling

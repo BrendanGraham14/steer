@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use tools::ToolCall;
-use tui_widgets::scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
+use tui_widgets::scrollview::{ScrollView, ScrollViewState};
 
 use super::content_renderer::{ContentRenderer, DefaultContentRenderer};
 use super::styles;
@@ -554,8 +554,7 @@ impl<'a> StatefulWidget for MessageList<'a> {
         // The scroll view will update the state automatically during render
 
         // Create ScrollView and render messages into it
-        let mut scroll_view = ScrollView::new(content_size)
-            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+        let mut scroll_view = ScrollView::new(content_size);
 
         // Create a custom widget that renders all messages
         let messages_widget = MessagesRenderer {

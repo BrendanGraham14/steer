@@ -8,7 +8,7 @@ pub mod grpc;
 pub mod runners;
 pub mod session;
 pub mod tools;
-pub mod tui;
+
 pub mod utils;
 pub mod workspace;
 

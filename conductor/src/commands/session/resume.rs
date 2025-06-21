@@ -32,22 +32,9 @@ impl Command for ResumeSessionCommand {
                 self.session_id, remote_addr
             );
 
-            // Set panic hook for terminal cleanup
-            crate::tui::setup_panic_hook();
-
-            // Resume the remote session
-            let (mut tui, event_rx) = crate::tui::Tui::resume_remote(
-                remote_addr,
-                self.session_id.clone(),
-                Model::ClaudeSonnet4_20250514, // Default model, could be made configurable
-            )
-            .await?;
-
-            println!("Connected to remote server and resumed session");
-
-            // Run the TUI with events from the remote server
-            tui.run(event_rx).await?;
-            return Ok(());
+            // TODO: The TUI functionality has been moved to conductor-tui crate
+            // For now, just return an error
+            return Err(anyhow!("Remote session resumption with TUI is not available in this command. Use the conductor-tui binary instead."));
         }
 
         // Local session handling
@@ -100,17 +87,11 @@ impl Command for ResumeSessionCommand {
                     .last_model
                     .unwrap_or(Model::ClaudeSonnet4_20250514);
 
-                // Set panic hook for terminal cleanup
-                crate::tui::setup_panic_hook();
-
-                // Create and run the TUI with restored conversation
-                let mut tui = crate::tui::Tui::new_with_conversation(
-                    command_tx,
-                    model,
-                    session_state.messages,
-                    session_state.approved_tools.into_iter().collect(),
-                )?;
-                tui.run(event_rx).await?;
+                // TODO: The TUI functionality has been moved to conductor-tui crate
+                // For now, just print session info
+                println!("Session resumed successfully. Session ID: {}", self.session_id);
+                println!("Model: {}", model);
+                println!("To interact with the session, use the conductor-tui binary.");
             }
             Ok((false, _)) => {
                 return Err(anyhow!("Session {} not found", self.session_id));
@@ -211,17 +192,11 @@ impl Command for LatestSessionCommand {
                     .last_model
                     .unwrap_or(Model::ClaudeSonnet4_20250514);
 
-                // Set panic hook for terminal cleanup
-                crate::tui::setup_panic_hook();
-
-                // Create and run the TUI with restored conversation
-                let mut tui = crate::tui::Tui::new_with_conversation(
-                    command_tx,
-                    model,
-                    session_state.messages,
-                    session_state.approved_tools.into_iter().collect(),
-                )?;
-                tui.run(event_rx).await?;
+                // TODO: The TUI functionality has been moved to conductor-tui crate
+                // For now, just print session info
+                println!("Session created from snapshot successfully. Session ID: {}", session_id);
+                println!("Model: {}", model);
+                println!("To interact with the session, use the conductor-tui binary.");
             }
             Ok((false, _)) => {
                 return Err(anyhow!("Session {} not found", session_id));
@@ -288,21 +263,9 @@ impl LatestSessionCommand {
             }
         }
 
-        // Set panic hook for terminal cleanup
-        crate::tui::setup_panic_hook();
-
-        // Resume the remote session
-        let (mut tui, event_rx) = crate::tui::Tui::resume_remote(
-            remote_addr,
-            session_id,
-            Model::ClaudeSonnet4_20250514, // Default model, could be made configurable
-        )
-        .await?;
-
-        println!("Connected to remote server and resumed latest session");
-
-        // Run the TUI with events from the remote server
-        tui.run(event_rx).await?;
+        // TODO: The TUI functionality has been moved to conductor-tui crate
+        // For now, just return an error
+        return Err(anyhow!("Remote session resumption with TUI is not available in this command. Use the conductor-tui binary instead."));
 
         Ok(())
     }
