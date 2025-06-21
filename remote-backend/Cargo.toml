@@ -22,7 +22,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # gRPC
-conductor-proto = { path = "../conductor-proto" }
+conductor-grpc = { path = "../conductor-grpc" }
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
