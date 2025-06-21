@@ -1,4 +1,4 @@
-use super::{helpers::*, ToolFormatter};
+use super::{ToolFormatter, helpers::*};
 use crate::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::{
@@ -7,6 +7,7 @@ use ratatui::{
 };
 use serde_json::Value;
 use tools::tools::view::ViewParams;
+use tracing::debug;
 
 pub struct ViewFormatter;
 
@@ -18,16 +19,23 @@ impl ToolFormatter for ViewFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
-        let Ok(params) = serde_json::from_value::<ViewParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid view params", styles::ERROR_TEXT))];
+
+        let params = match serde_json::from_value::<ViewParams>(params.clone()) {
+            Ok(params) => params,
+            Err(e) => {
+                debug!("Error parsing view params: {:?}", e);
+                return vec![Line::from(Span::styled(
+                    "Invalid view params",
+                    styles::ERROR_TEXT,
+                ))];
+            }
         };
-        
+
         let file_name = std::path::Path::new(&params.file_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(&params.file_path);
-        
+
         let info = if let Some(ToolResult::Success { output }) = result {
             let line_count = output.lines().count();
             let size = format_size(output.len());
@@ -37,13 +45,13 @@ impl ToolFormatter for ViewFormatter {
         } else {
             "reading...".to_string()
         };
-        
+
         lines.push(Line::from(vec![
             Span::styled("VIEW ", styles::DIM_TEXT),
             Span::styled(format!("file={} ", file_name), Style::default()),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));
-        
+
         lines
     }
 
@@ -54,16 +62,19 @@ impl ToolFormatter for ViewFormatter {
         wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<ViewParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid view params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid view params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
+
         lines.push(Line::from(Span::styled(
             format!("File: {}", params.file_path),
             Style::default(),
         )));
-        
+
         // Add file info if available
         if let Some(offset) = params.offset {
             lines.push(Line::from(Span::styled(
@@ -77,21 +88,21 @@ impl ToolFormatter for ViewFormatter {
                 styles::DIM_TEXT,
             )));
         }
-        
+
         // Show file content if we have a result
         if let Some(ToolResult::Success { output }) = result {
             if !output.trim().is_empty() {
                 lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-                
+
                 const MAX_PREVIEW_LINES: usize = 20;
                 let content_lines: Vec<&str> = output.lines().collect();
-                
+
                 for line in content_lines.iter().take(MAX_PREVIEW_LINES) {
                     for wrapped in textwrap::wrap(line, wrap_width) {
                         lines.push(Line::from(Span::raw(wrapped.to_string())));
                     }
                 }
-                
+
                 if content_lines.len() > MAX_PREVIEW_LINES {
                     lines.push(Line::from(Span::styled(
                         format!(
@@ -103,7 +114,7 @@ impl ToolFormatter for ViewFormatter {
                 }
             }
         }
-        
+
         lines
     }
 }

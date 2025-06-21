@@ -15,6 +15,9 @@ pub mod command;
 pub mod context;
 pub mod context_util;
 pub mod conversation;
+pub mod io;
+pub mod adapters;
+
 mod environment;
 
 mod tool_executor;

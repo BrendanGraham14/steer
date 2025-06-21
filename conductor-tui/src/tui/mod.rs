@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::io::{self, Stdout};
 use std::panic;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tui_textarea::TextArea;
 
@@ -25,19 +26,20 @@ use crate::api::Model;
 use crate::app::AppEvent;
 use crate::app::command::AppCommand;
 use crate::app::conversation::Message;
+use crate::app::io::AppCommandSink;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 pub mod events;
 pub mod state;
 pub mod widgets;
 
-use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
+use crate::app::conversation::{AssistantContent};
 use crate::tui::events::{EventPipeline, processors::*};
 use crate::tui::state::content_cache::ContentCache;
 use crate::tui::state::view_model::MessageViewModel;
 use crate::tui::widgets::{
     CachedContentRenderer, MessageList, MessageListState, ViewMode,
-    content_renderer::{ContentRenderer, DefaultContentRenderer},
+    content_renderer::ContentRenderer,
     message_list::MessageContent,
 };
 use widgets::styles;
@@ -64,7 +66,7 @@ pub struct Tui {
     progress_message: Option<String>,
     last_spinner_update: Instant,
     spinner_state: usize,
-    command_tx: mpsc::Sender<AppCommand>,
+    command_sink: Arc<dyn AppCommandSink>,
     current_tool_approval: Option<tools::ToolCall>,
     current_model: Model,
     event_pipeline: EventPipeline,
@@ -84,7 +86,7 @@ enum InputAction {
 }
 
 impl Tui {
-    pub fn new(command_tx: mpsc::Sender<AppCommand>, initial_model: Model) -> Result<Self> {
+    pub fn new(command_sink: Arc<dyn AppCommandSink>, initial_model: Model) -> Result<Self> {
         // Detect terminal for diagnostics
         let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
         debug!(target:"tui.new", "Terminal detected: {}", term_program);
@@ -132,7 +134,7 @@ impl Tui {
             progress_message: None,
             last_spinner_update: Instant::now(),
             spinner_state: 0,
-            command_tx,
+            command_sink,
             current_tool_approval: None,
             current_model: initial_model,
             event_pipeline: Self::create_event_pipeline(),
@@ -148,6 +150,7 @@ impl Tui {
     ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
         use crate::grpc::GrpcClientAdapter;
         use crate::session::{SessionConfig, SessionToolConfig};
+        use crate::app::io::AppEventSource;
         use std::collections::HashMap;
 
         info!("Creating TUI in remote mode, connecting to {}", addr);
@@ -168,36 +171,28 @@ impl Tui {
         info!("Created remote session: {}", session_id);
 
         // Start streaming
-        let event_rx = client.start_streaming().await?;
+        client.start_streaming().await?;
 
-        // Create command sender that forwards to the gRPC client
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<AppCommand>(32);
+        // Get the event receiver before wrapping in Arc
+        let event_rx = client.subscribe().await;
 
-        // Spawn task to forward commands to gRPC client
-        tokio::spawn(async move {
-            while let Some(command) = cmd_rx.recv().await {
-                if let Err(e) = client.send_command(command).await {
-                    error!("Failed to send command to gRPC server: {}", e);
-                    // For now, continue processing other commands
-                }
-            }
-            info!("Command forwarding task ended");
-        });
+        // Wrap client in Arc
+        let client = Arc::new(client);
 
-        // Initialize TUI with the command sender
-        let tui = Self::new(cmd_tx, initial_model)?;
+        // Initialize TUI with the gRPC client as command sink
+        let tui = Self::new(client, initial_model)?;
 
         Ok((tui, event_rx))
     }
 
     /// Create a TUI with restored conversation state for local sessions
     pub fn new_with_conversation(
-        command_tx: mpsc::Sender<AppCommand>,
+        command_sink: Arc<dyn AppCommandSink>,
         initial_model: Model,
         messages: Vec<Message>,
         _approved_tools: Vec<String>, // TODO: restore approved tools
     ) -> Result<Self> {
-        let mut tui = Self::new(command_tx, initial_model)?;
+        let mut tui = Self::new(command_sink, initial_model)?;
         tui.restore_messages(messages);
         Ok(tui)
     }
@@ -291,6 +286,7 @@ impl Tui {
         initial_model: Model,
     ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
         use crate::grpc::GrpcClientAdapter;
+        use crate::app::io::AppEventSource;
 
         info!("Resuming remote session {} at {}", session_id, addr);
 
@@ -306,22 +302,16 @@ impl Tui {
         );
 
         // Start streaming (session already active)
-        let event_rx = client.start_streaming().await?;
-        // Create command sender that forwards to the gRPC client
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<AppCommand>(32);
+        client.start_streaming().await?;
 
-        // Spawn task to forward commands to gRPC client
-        tokio::spawn(async move {
-            while let Some(command) = cmd_rx.recv().await {
-                if let Err(e) = client.send_command(command).await {
-                    error!("Failed to send command to gRPC server: {}", e);
-                }
-            }
-            info!("Command forwarding task ended for session: {}", session_id);
-        });
+        // Get the event receiver before wrapping in Arc
+        let event_rx = client.subscribe().await;
 
-        // Initialize TUI with the command sender
-        let mut tui = Self::new(cmd_tx, initial_model)?;
+        // Wrap client in Arc
+        let client = Arc::new(client);
+
+        // Initialize TUI with the gRPC client as command sink
+        let mut tui = Self::new(client, initial_model)?;
         tui.restore_messages(messages);
 
         // TODO: Restore approved tools
@@ -567,7 +557,7 @@ impl Tui {
             messages: &mut self.view_model.messages,
             message_list_state: &mut self.view_model.message_list_state,
             tool_registry: &mut self.view_model.tool_registry,
-            command_tx: &self.command_tx,
+            command_sink: &self.command_sink,
             is_processing: &mut self.is_processing,
             progress_message: &mut self.progress_message,
             spinner_state: &mut self.spinner_state,
@@ -1353,8 +1343,8 @@ impl Tui {
         let mut should_exit = false;
         match action {
             InputAction::SendMessage(input) => {
-                self.command_tx
-                    .send(AppCommand::ProcessUserInput(input))
+                self.command_sink
+                    .send_command(AppCommand::ProcessUserInput(input))
                     .await?;
                 // Clear any selection and reset manual scroll when user sends a message
                 self.view_model.message_list_state.selected = None;
@@ -1362,8 +1352,8 @@ impl Tui {
                 debug!(target: "tui.dispatch_input_action", "Sent UserInput command, reset user_scrolled");
             }
             InputAction::ExecuteBashCommand(command) => {
-                self.command_tx
-                    .send(AppCommand::ExecuteBashCommand { command })
+                self.command_sink
+                    .send_command(AppCommand::ExecuteBashCommand { command })
                     .await?;
                 // Clear any selection and reset manual scroll when user executes a command
                 self.view_model.message_list_state.selected = None;
@@ -1375,8 +1365,8 @@ impl Tui {
                 // The widget system handles this internally
             }
             InputAction::ApproveToolNormal(id) => {
-                self.command_tx
-                    .send(AppCommand::HandleToolResponse {
+                self.command_sink
+                    .send_command(AppCommand::HandleToolResponse {
                         id,
                         approved: true,
                         always: false,
@@ -1385,8 +1375,8 @@ impl Tui {
                 self.activate_next_approval();
             }
             InputAction::ApproveToolAlways(id) => {
-                self.command_tx
-                    .send(AppCommand::HandleToolResponse {
+                self.command_sink
+                    .send_command(AppCommand::HandleToolResponse {
                         id,
                         approved: true,
                         always: true,
@@ -1395,8 +1385,8 @@ impl Tui {
                 self.activate_next_approval();
             }
             InputAction::DenyTool(id) => {
-                self.command_tx
-                    .send(AppCommand::HandleToolResponse {
+                self.command_sink
+                    .send_command(AppCommand::HandleToolResponse {
                         id,
                         approved: false,
                         always: false,
@@ -1405,7 +1395,7 @@ impl Tui {
                 self.activate_next_approval();
             }
             InputAction::CancelProcessing => {
-                self.command_tx.send(AppCommand::CancelProcessing).await?;
+                self.command_sink.send_command(AppCommand::CancelProcessing).await?;
             }
             InputAction::Exit => {
                 should_exit = true;

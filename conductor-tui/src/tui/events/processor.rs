@@ -4,11 +4,11 @@
 //! Each processor handles a specific category of events and can be composed
 //! into a pipeline for modular event handling.
 
-use tokio::sync::mpsc;
+use std::sync::Arc;
 
 use crate::api::Model;
 use crate::app::AppEvent;
-use crate::app::command::AppCommand;
+use crate::app::io::AppCommandSink;
 use crate::tui::state::{MessageStore, ToolCallRegistry};
 use crate::tui::widgets::message_list::MessageListState;
 use tools::schema::ToolCall;
@@ -34,8 +34,8 @@ pub struct ProcessingContext<'a> {
     pub message_list_state: &'a mut MessageListState,
     /// Tool call registry for tracking tool lifecycle
     pub tool_registry: &'a mut ToolCallRegistry,
-    /// Command sender for dispatching app commands
-    pub command_tx: &'a mpsc::Sender<AppCommand>,
+    /// Command sink for dispatching app commands
+    pub command_sink: &'a Arc<dyn AppCommandSink>,
     /// Current processing state
     pub is_processing: &'a mut bool,
     /// Current progress message being displayed

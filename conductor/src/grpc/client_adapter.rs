@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
-use tokio::sync::mpsc;
+use async_trait::async_trait;
+use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
@@ -7,23 +8,25 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use crate::app::{AppCommand, AppEvent};
+use crate::app::io::{AppCommandSink, AppEventSource};
 use crate::app::conversation::Message;
 use crate::grpc::conversions::{session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto};
 use crate::grpc::error::GrpcError;
 use crate::grpc::proto::{
     ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
     DeleteSessionRequest, GetSessionRequest, GetConversationRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
-    SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse, ActivateSessionRequest,
+    SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse,
     agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
 };
 use crate::session::{SessionConfig, ToolApprovalPolicy};
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming
 pub struct GrpcClientAdapter {
-    client: AgentServiceClient<Channel>,
-    session_id: Option<String>,
-    command_tx: Option<mpsc::Sender<ClientMessage>>,
-    stream_handle: Option<JoinHandle<()>>,
+    client: Mutex<AgentServiceClient<Channel>>,
+    session_id: Mutex<Option<String>>,
+    command_tx: Mutex<Option<mpsc::Sender<ClientMessage>>>,
+    event_rx: Mutex<Option<mpsc::Receiver<AppEvent>>>,
+    stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl GrpcClientAdapter {
@@ -38,15 +41,16 @@ impl GrpcClientAdapter {
         info!("Successfully connected to gRPC server");
 
         Ok(Self {
-            client,
-            session_id: None,
-            command_tx: None,
-            stream_handle: None,
+            client: Mutex::new(client),
+            session_id: Mutex::new(None),
+            command_tx: Mutex::new(None),
+            stream_handle: Mutex::new(None),
+            event_rx: Mutex::new(None),
         })
     }
 
     /// Create a new session on the server
-    pub async fn create_session(&mut self, config: SessionConfig) -> Result<String> {
+    pub async fn create_session(&self, config: SessionConfig) -> Result<String> {
         debug!("Creating new session with gRPC server");
 
         let tool_policy = tool_approval_policy_to_proto(&config.tool_config.approval_policy);
@@ -61,21 +65,23 @@ impl GrpcClientAdapter {
             system_prompt: config.system_prompt,
         });
 
-        let response = self.client.create_session(request).await?;
+        let response = self.client.lock().await.create_session(request).await?;
         let session_info = response.into_inner();
 
-        self.session_id = Some(session_info.id.clone());
+        *self.session_id.lock().await = Some(session_info.id.clone());
 
         info!("Created session: {}", session_info.id);
         Ok(session_info.id)
     }
 
     /// Activate (load) an existing dormant session and get its state
-    pub async fn activate_session(&mut self, session_id: String) -> Result<(Vec<Message>, Vec<String>)> {
+    pub async fn activate_session(&self, session_id: String) -> Result<(Vec<Message>, Vec<String>)> {
         info!("Activating remote session: {}", session_id);
 
         let response = self
             .client
+            .lock()
+            .await
             .activate_session(crate::grpc::proto::ActivateSessionRequest {
                 session_id: session_id.clone(),
             })
@@ -96,13 +102,13 @@ impl GrpcClientAdapter {
             }
         }
 
-        self.session_id = Some(session_id);
+        *self.session_id.lock().await = Some(session_id);
         Ok((messages, response.approved_tools))
     }
 
     /// Start bidirectional streaming with the server
-    pub async fn start_streaming(&mut self) -> Result<mpsc::Receiver<AppEvent>> {
-        let session_id = self.session_id.as_ref().ok_or_else(|| {
+    pub async fn start_streaming(&self) -> Result<()> {
+        let session_id = self.session_id.lock().await.as_ref().cloned().ok_or_else(|| {
             anyhow!("No session ID - call create_session or activate_session first")
         })?;
 
@@ -116,7 +122,7 @@ impl GrpcClientAdapter {
         let outbound_stream = ReceiverStream::new(cmd_rx);
         let request = Request::new(outbound_stream);
 
-        let response = self.client.stream_session(request).await?;
+        let response = self.client.lock().await.stream_session(request).await?;
         let mut inbound_stream = response.into_inner();
 
         // Send initial subscribe message
@@ -170,30 +176,37 @@ impl GrpcClientAdapter {
         });
 
         // Store the handles
-        self.command_tx = Some(cmd_tx);
-        self.stream_handle = Some(stream_handle);
-        // Don't store evt_rx, return it directly
+        *self.command_tx.lock().await = Some(cmd_tx);
+        *self.stream_handle.lock().await = Some(stream_handle);
+        // store receiver
+        *self.event_rx.lock().await = Some(evt_rx);
 
         info!(
             "Bidirectional streaming started for session: {}",
             session_id
         );
-        Ok(evt_rx)
+        Ok(())
     }
 
     /// Send a command to the server
     pub async fn send_command(&self, command: AppCommand) -> Result<()> {
         let session_id = self
             .session_id
+            .lock()
+            .await
             .as_ref()
+            .cloned()
             .ok_or_else(|| anyhow!("No active session"))?;
 
         let command_tx = self
             .command_tx
+            .lock()
+            .await
             .as_ref()
+            .cloned()
             .ok_or_else(|| anyhow!("Streaming not started - call start_streaming first"))?;
 
-        let message = convert_app_command_to_client_message(command, session_id)?;
+        let message = convert_app_command_to_client_message(command, &session_id)?;
 
         if let Some(message) = message {
             command_tx
@@ -206,12 +219,12 @@ impl GrpcClientAdapter {
     }
 
     /// Get the current session ID
-    pub fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    pub async fn session_id(&self) -> Option<String> {
+        self.session_id.lock().await.clone()
     }
 
     /// List sessions on the remote server
-    pub async fn list_sessions(&mut self) -> Result<Vec<SessionInfo>> {
+    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         debug!("Listing sessions from gRPC server");
 
         let request = Request::new(ListSessionsRequest {
@@ -220,21 +233,21 @@ impl GrpcClientAdapter {
             page_token: None,
         });
 
-        let response = self.client.list_sessions(request).await?;
+        let response = self.client.lock().await.list_sessions(request).await?;
         let sessions_response = response.into_inner();
 
         Ok(sessions_response.sessions)
     }
 
     /// Get session details from the remote server
-    pub async fn get_session(&mut self, session_id: &str) -> Result<Option<SessionState>> {
+    pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionState>> {
         debug!("Getting session {} from gRPC server", session_id);
 
         let request = Request::new(GetSessionRequest {
             session_id: session_id.to_string(),
         });
 
-        match self.client.get_session(request).await {
+        match self.client.lock().await.get_session(request).await {
             Ok(response) => {
                 let session_state = response.into_inner();
                 Ok(Some(session_state))
@@ -245,14 +258,14 @@ impl GrpcClientAdapter {
     }
 
     /// Delete a session on the remote server
-    pub async fn delete_session(&mut self, session_id: &str) -> Result<bool> {
+    pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
         debug!("Deleting session {} from gRPC server", session_id);
 
         let request = Request::new(DeleteSessionRequest {
             session_id: session_id.to_string(),
         });
 
-        match self.client.delete_session(request).await {
+        match self.client.lock().await.delete_session(request).await {
             Ok(_) => {
                 info!("Successfully deleted session: {}", session_id);
                 Ok(true)
@@ -263,11 +276,13 @@ impl GrpcClientAdapter {
     }
 
     /// Get the current conversation for a session
-    pub async fn get_conversation(&mut self, session_id: &str) -> Result<(Vec<Message>, Vec<String>)> {
+    pub async fn get_conversation(&self, session_id: &str) -> Result<(Vec<Message>, Vec<String>)> {
         info!("Client adapter getting conversation for session: {}", session_id);
         
         let response = self
             .client
+            .lock()
+            .await
             .get_conversation(GetConversationRequest {
                 session_id: session_id.to_string(),
             })
@@ -299,15 +314,35 @@ impl GrpcClientAdapter {
     }
 
     /// Shutdown the adapter and clean up resources
-    pub async fn shutdown(mut self) {
-        if let Some(handle) = self.stream_handle.take() {
+    pub async fn shutdown(self) {
+        if let Some(handle) = self.stream_handle.lock().await.take() {
             handle.abort();
             let _ = handle.await;
         }
 
-        if let Some(session_id) = &self.session_id {
+        if let Some(session_id) = &*self.session_id.lock().await {
             info!("GrpcClientAdapter shut down for session: {}", session_id);
         }
+    }
+}
+
+#[async_trait]
+impl AppCommandSink for GrpcClientAdapter {
+    async fn send_command(&self, command: AppCommand) -> Result<()> {
+        self.send_command(command).await
+    }
+}
+
+#[async_trait]
+impl AppEventSource for GrpcClientAdapter {
+    async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
+        // This is a blocking operation in a trait that doesn't support async
+        // We need to use block_on here
+        self.event_rx
+            .lock()
+            .await
+            .take()
+            .expect("Event receiver already taken - GrpcClientAdapter only supports single subscription")
     }
 }
 
