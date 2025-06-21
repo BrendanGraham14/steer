@@ -91,7 +91,7 @@ flowchart LR
 2. Extract conversion code from conductor-core into conductor-grpc ✅
 3. Remove the conductor_grpc::conversions import from core ✅
 4. **Move RemoteBackend / RemoteWorkspace into conductor-core (depend on conductor-proto)** ✅
-5. Replace in-process mode with in-memory gRPC channel
+5. **Replace in-process mode with in-memory gRPC channel** ✅
 6. **Ensure workspace compiles after migration** ✅
 
 ### Follow-up

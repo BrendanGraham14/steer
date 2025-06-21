@@ -627,6 +627,7 @@ dependencies = [
  "chrono",
  "conductor-core",
  "conductor-proto",
+ "futures",
  "prost",
  "prost-types",
  "serde_json",
@@ -635,6 +636,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
+ "tower 0.5.2",
  "tracing",
  "uuid",
 ]

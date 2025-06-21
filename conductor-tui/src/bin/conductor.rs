@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
+use conductor_tui::tui::cleanup_terminal;
 
 use conductor_core::api::Model;
 use conductor_core::app::AppConfig;
@@ -15,7 +16,6 @@ use conductor::commands::{
 };
 use conductor_core::config::LlmConfig;
 use conductor_core::events::StreamEventWithMetadata;
-use conductor_core::session::{SessionManager, SessionManagerConfig};
 use conductor_core::utils;
 use conductor_core::utils::session::{create_default_session_config, create_session_store};
 
@@ -124,58 +124,71 @@ async fn run_local_mode(model: Model, system_prompt: Option<String>) -> Result<(
     let llm_config = LlmConfig::from_env()
         .expect("Failed to load LLM configuration from environment variables.");
 
-    // Create session manager with SQLite store
-    let session_store = create_session_store().await?;
-    let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
+    info!(target: "main", "Starting local mode with in-memory gRPC");
 
-    let session_manager_config = SessionManagerConfig {
-        max_concurrent_sessions: 10,
-        default_model: model,
-        auto_persist: true,
-    };
+    // Set up the in-memory gRPC server and get a channel
+    let channel = conductor_grpc::in_memory::setup_local_grpc(llm_config, model).await?;
 
-    let session_manager =
-        SessionManager::new(session_store, session_manager_config, global_event_tx);
+    // Now use the same remote mode code path but with the in-memory channel
+    // Create a fake address for logging purposes
+    let addr = "in-memory://localhost";
+    
+    // Set panic hook for terminal cleanup
+    conductor_tui::tui::setup_panic_hook();
 
-    // Create a new interactive session
-    let mut session_config = create_default_session_config();
+    // Create session config with system prompt if provided
+    let session_config = system_prompt.map(|prompt| {
+        let mut config = create_default_session_config();
+        config.system_prompt = Some(prompt);
+        config
+    });
 
-    // Set system prompt if provided
-    if let Some(prompt) = system_prompt {
-        session_config.system_prompt = Some(prompt);
-    }
+    // Use the new_remote method but with our in-memory channel
+    // We need to modify new_remote to accept an optional channel
+    // For now, let's create the client directly
+    use conductor_grpc::GrpcClientAdapter;
+    use conductor_core::session::{SessionConfig, SessionToolConfig};
+    use conductor_core::app::io::AppEventSource;
+    use std::collections::HashMap;
 
-    let app_config = AppConfig { llm_config };
+    info!("Creating gRPC client for in-memory channel");
 
-    // Add the initial model to session metadata so it can be set in the App
+    // Create client from the in-memory channel
+    let mut client = GrpcClientAdapter::from_channel(channel).await?;
+
+    // Create or use provided session config
+    let session_config = session_config.unwrap_or_else(|| SessionConfig {
+        workspace: conductor_core::session::state::WorkspaceConfig::default(),
+        tool_config: SessionToolConfig::default(),
+        system_prompt: None,
+        metadata: HashMap::new(),
+    });
+
+    // Add the initial model to session metadata
     let mut session_config_with_model = session_config;
     session_config_with_model
         .metadata
         .insert("initial_model".to_string(), model.to_string());
 
-    let (session_id, command_tx) = session_manager
-        .create_session(session_config_with_model, app_config)
-        .await
-        .map_err(|e| anyhow!("Failed to create session: {}", e))?;
-
-    // Get the event receiver
-    let event_rx = session_manager
-        .take_event_receiver(&session_id)
-        .await
-        .map_err(|e| anyhow!("Failed to get event receiver for new session: {}", e))?;
-
-    info!(target: "main", "Created new session: {}", session_id);
+    // Create session on server
+    let session_id = client.create_session(session_config_with_model).await?;
+    info!("Created local session via gRPC: {}", session_id);
     println!("Session ID: {}", session_id);
 
-    // Set panic hook for terminal cleanup
-    conductor_tui::tui::setup_panic_hook();
+    // Start streaming
+    client.start_streaming().await?;
 
-    // Create LocalAdapter
-    let local_adapter = Arc::new(conductor_core::app::adapters::LocalAdapter::new(command_tx, event_rx));
+    // Get the event receiver before wrapping in Arc
+    let event_rx = client.subscribe().await;
 
-    // Create and run the TUI
-    let mut tui = conductor_tui::tui::Tui::new(local_adapter.clone(), model)?;
-    tui.run(local_adapter.subscribe().await).await?;
+    // Wrap client in Arc
+    let client = Arc::new(client);
+
+    // Initialize TUI with the gRPC client as command sink
+    let mut tui = conductor_tui::tui::Tui::new(client, model)?;
+
+    // Run the TUI
+    tui.run(event_rx).await?;
 
     Ok(())
 }
@@ -197,16 +210,9 @@ async fn setup_signal_handlers() {
             sigterm.recv().await;
 
             // Clean up terminal if in raw mode
-            if sigterm_terminal.load(Ordering::SeqCst) {
-                let _ = crossterm::terminal::disable_raw_mode();
-                let _ = crossterm::execute!(
-                    std::io::stdout(),
-                    crossterm::terminal::LeaveAlternateScreen,
-                    crossterm::event::DisableMouseCapture
-                );
-                info!(target: "signal_handler", "Received SIGTERM, terminal cleaned up");
+            if sigterm_terminal.load(Ordering::Relaxed) {
+                cleanup_terminal();
             }
-
             std::process::exit(0);
         });
 
@@ -217,17 +223,25 @@ async fn setup_signal_handlers() {
             sigint.recv().await;
 
             // Clean up terminal if in raw mode
-            if sigint_terminal.load(Ordering::SeqCst) {
-                let _ = crossterm::terminal::disable_raw_mode();
-                let _ = crossterm::execute!(
-                    std::io::stdout(),
-                    crossterm::terminal::LeaveAlternateScreen,
-                    crossterm::event::DisableMouseCapture
-                );
-                info!(target: "signal_handler", "Received SIGINT, terminal cleaned up");
+            if sigint_terminal.load(Ordering::Relaxed) {
+                cleanup_terminal();
             }
+            std::process::exit(130); // Standard exit code for SIGINT
+        });
+    }
 
-            std::process::exit(0);
+    #[cfg(windows)]
+    {
+        let windows_terminal = terminal_clone;
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            if windows_terminal.load(Ordering::Relaxed) {
+                cleanup_terminal();
+            }
+            std::process::exit(130);
         });
     }
 }
+
+// Re-export setup_panic_hook so it can be used by main
+pub use conductor_tui::tui::setup_panic_hook;
