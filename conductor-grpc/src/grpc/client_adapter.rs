@@ -1,24 +1,28 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
-use conductor_core::app::{AppCommand, AppEvent};
-use conductor_core::app::io::{AppCommandSink, AppEventSource};
-use conductor_core::app::conversation::Message;
-use crate::grpc::conversions::{session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto};
+use crate::grpc::conversions::{
+    server_event_to_app_event, session_tool_config_to_proto, tool_approval_policy_to_proto,
+    workspace_config_to_proto,
+};
 use crate::grpc::error::GrpcError;
+use conductor_core::app::conversation::Message;
+use conductor_core::app::io::{AppCommandSink, AppEventSource};
+use conductor_core::app::{AppCommand, AppEvent};
+use conductor_core::session::{SessionConfig, ToolApprovalPolicy};
 use conductor_proto::agent::{
     ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
-    DeleteSessionRequest, GetSessionRequest, GetConversationRequest, ListSessionsRequest, SendMessageRequest, ServerEvent,
-    SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse,
-    agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
+    DeleteSessionRequest, GetConversationRequest, GetSessionRequest, ListSessionsRequest,
+    SendMessageRequest, ServerEvent, SessionInfo, SessionState, SubscribeRequest,
+    ToolApprovalResponse, agent_service_client::AgentServiceClient,
+    client_message::Message as ClientMessageType,
 };
-use conductor_core::session::{SessionConfig, ToolApprovalPolicy};
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming
 pub struct GrpcClientAdapter {
@@ -100,7 +104,10 @@ impl GrpcClientAdapter {
     }
 
     /// Activate (load) an existing dormant session and get its state
-    pub async fn activate_session(&self, session_id: String) -> Result<(Vec<Message>, Vec<String>)> {
+    pub async fn activate_session(
+        &self,
+        session_id: String,
+    ) -> Result<(Vec<Message>, Vec<String>)> {
         info!("Activating remote session: {}", session_id);
 
         let response = self
@@ -122,7 +129,8 @@ impl GrpcClientAdapter {
                     return Err(GrpcError::MessageConversionFailed {
                         index: i,
                         reason: "Failed to convert proto message to app message".to_string(),
-                    }.into());
+                    }
+                    .into());
                 }
             }
         }
@@ -133,9 +141,15 @@ impl GrpcClientAdapter {
 
     /// Start bidirectional streaming with the server
     pub async fn start_streaming(&self) -> Result<()> {
-        let session_id = self.session_id.lock().await.as_ref().cloned().ok_or_else(|| {
-            anyhow!("No session ID - call create_session or activate_session first")
-        })?;
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!("No session ID - call create_session or activate_session first")
+            })?;
 
         debug!("Starting bidirectional stream for session: {}", session_id);
 
@@ -180,7 +194,7 @@ impl GrpcClientAdapter {
                             server_event.sequence_num
                         );
 
-                        if let Some(app_event) = convert_server_event_to_app_event(server_event) {
+                        if let Some(app_event) = server_event_to_app_event(server_event) {
                             if let Err(e) = evt_tx.send(app_event).await {
                                 warn!("Failed to forward event to TUI: {}", e);
                                 break;
@@ -302,8 +316,11 @@ impl GrpcClientAdapter {
 
     /// Get the current conversation for a session
     pub async fn get_conversation(&self, session_id: &str) -> Result<(Vec<Message>, Vec<String>)> {
-        info!("Client adapter getting conversation for session: {}", session_id);
-        
+        info!(
+            "Client adapter getting conversation for session: {}",
+            session_id
+        );
+
         let response = self
             .client
             .lock()
@@ -314,8 +331,11 @@ impl GrpcClientAdapter {
             .await?
             .into_inner();
 
-        info!("Received GetConversation response with {} messages and {} approved tools", 
-            response.messages.len(), response.approved_tools.len());
+        info!(
+            "Received GetConversation response with {} messages and {} approved tools",
+            response.messages.len(),
+            response.approved_tools.len()
+        );
 
         // Convert proto messages to app messages with explicit error handling
         let proto_message_count = response.messages.len();
@@ -327,13 +347,17 @@ impl GrpcClientAdapter {
                     return Err(GrpcError::MessageConversionFailed {
                         index: i,
                         reason: "Failed to convert proto message to app message".to_string(),
-                    }.into());
+                    }
+                    .into());
                 }
             }
         }
-        
-        info!("Converted {} proto messages to {} app messages", 
-            proto_message_count, messages.len());
+
+        info!(
+            "Converted {} proto messages to {} app messages",
+            proto_message_count,
+            messages.len()
+        );
 
         Ok((messages, response.approved_tools))
     }
@@ -363,11 +387,9 @@ impl AppEventSource for GrpcClientAdapter {
     async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
         // This is a blocking operation in a trait that doesn't support async
         // We need to use block_on here
-        self.event_rx
-            .lock()
-            .await
-            .take()
-            .expect("Event receiver already taken - GrpcClientAdapter only supports single subscription")
+        self.event_rx.lock().await.take().expect(
+            "Event receiver already taken - GrpcClientAdapter only supports single subscription",
+        )
     }
 }
 
@@ -426,28 +448,29 @@ fn convert_app_command_to_client_message(
     }))
 }
 
-/// Convert gRPC ServerEvent to TUI AppEvent
-fn convert_server_event_to_app_event(event: ServerEvent) -> Option<AppEvent> {
-    use crate::grpc::events::server_event_to_app_event;
-
-    // Use the existing conversion function from grpc/events.rs
-    server_event_to_app_event(event)
-}
-
 /// Convert proto Message to app Message
 fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> Option<Message> {
-    use conductor_core::app::conversation::{AssistantContent, UserContent, ToolResult as ConversationToolResult};
-    use conductor_proto::agent::{message, user_content, assistant_content, tool_result};
     use conductor_core::api::ToolCall;
-    
-    let message_type = proto_msg.message.as_ref().map(|m| match m {
-        message::Message::User(_) => "User",
-        message::Message::Assistant(_) => "Assistant",
-        message::Message::Tool(_) => "Tool",
-    }).unwrap_or("Unknown");
-    
-    debug!("Converting proto message {} of type {}", proto_msg.id, message_type);
-    
+    use conductor_core::app::conversation::{
+        AssistantContent, ToolResult as ConversationToolResult, UserContent,
+    };
+    use conductor_proto::agent::{assistant_content, message, tool_result, user_content};
+
+    let message_type = proto_msg
+        .message
+        .as_ref()
+        .map(|m| match m {
+            message::Message::User(_) => "User",
+            message::Message::Assistant(_) => "Assistant",
+            message::Message::Tool(_) => "Tool",
+        })
+        .unwrap_or("Unknown");
+
+    debug!(
+        "Converting proto message {} of type {}",
+        proto_msg.id, message_type
+    );
+
     match proto_msg.message? {
         message::Message::User(user_msg) => {
             let content = user_msg.content.into_iter().filter_map(|user_content| {
@@ -458,7 +481,7 @@ fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> O
                     user_content::Content::AppCommand(app_cmd) => {
                         use conductor_core::app::conversation::{AppCommandType as AppCmdType, CommandResponse as AppCmdResponse};
                         use conductor_proto::agent::{app_command_type, command_response};
-                        
+
                         let command = app_cmd.command.as_ref().and_then(|cmd| {
                             cmd.command_type.as_ref().map(|ct| match ct {
                                 app_command_type::CommandType::Model(model) => {
@@ -473,7 +496,7 @@ fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> O
                                 }
                             })
                         });
-                        
+
                         let response = app_cmd.response.as_ref().and_then(|resp| {
                             resp.response.as_ref().map(|rt| match rt {
                                 command_response::Response::Text(text) => {
@@ -496,7 +519,7 @@ fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> O
                                 }
                             })
                         });
-                        
+
                         command.map(|cmd| UserContent::AppCommand { command: cmd, response })
                     }
                     user_content::Content::CommandExecution(cmd) => {
@@ -509,56 +532,59 @@ fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> O
                     }
                 }
             }).collect();
-            Some(Message::User { 
-                content, 
-                timestamp: user_msg.timestamp, 
+            Some(Message::User {
+                content,
+                timestamp: user_msg.timestamp,
                 id: proto_msg.id,
             })
         }
         message::Message::Assistant(assistant_msg) => {
-            let content = assistant_msg.content.into_iter().filter_map(|assistant_content| {
-                match assistant_content.content? {
-                    assistant_content::Content::Text(text) => {
-                        Some(AssistantContent::Text { text })
-                    }
+            let content = assistant_msg
+                .content
+                .into_iter()
+                .filter_map(|assistant_content| match assistant_content.content? {
+                    assistant_content::Content::Text(text) => Some(AssistantContent::Text { text }),
                     assistant_content::Content::ToolCall(tool_call) => {
                         let params = serde_json::from_str(&tool_call.parameters_json)
                             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                        
-                        Some(AssistantContent::ToolCall { 
+
+                        Some(AssistantContent::ToolCall {
                             tool_call: ToolCall {
                                 id: tool_call.id,
                                 name: tool_call.name,
                                 parameters: params,
-                            }
+                            },
                         })
                     }
                     assistant_content::Content::Thought(thought) => {
                         use conductor_core::app::conversation::ThoughtContent;
-                        use conductor_proto::agent::{thought_content, SimpleThought, SignedThought, RedactedThought};
-                        
+                        use conductor_proto::agent::{
+                            RedactedThought, SignedThought, SimpleThought, thought_content,
+                        };
+
                         let thought_content = thought.thought_type.as_ref().and_then(|t| match t {
                             thought_content::ThoughtType::Simple(SimpleThought { text }) => {
                                 Some(ThoughtContent::Simple { text: text.clone() })
                             }
-                            thought_content::ThoughtType::Signed(SignedThought { text, signature }) => {
-                                Some(ThoughtContent::Signed { 
-                                    text: text.clone(), 
-                                    signature: signature.clone() 
-                                })
-                            }
+                            thought_content::ThoughtType::Signed(SignedThought {
+                                text,
+                                signature,
+                            }) => Some(ThoughtContent::Signed {
+                                text: text.clone(),
+                                signature: signature.clone(),
+                            }),
                             thought_content::ThoughtType::Redacted(RedactedThought { data }) => {
                                 Some(ThoughtContent::Redacted { data: data.clone() })
                             }
                         });
-                        
+
                         thought_content.map(|thought| AssistantContent::Thought { thought })
                     }
-                }
-            }).collect();
-            Some(Message::Assistant { 
-                content, 
-                timestamp: assistant_msg.timestamp, 
+                })
+                .collect();
+            Some(Message::Assistant {
+                content,
+                timestamp: assistant_msg.timestamp,
                 id: proto_msg.id,
             })
         }
@@ -568,9 +594,7 @@ fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> O
                     tool_result::Result::Success(output) => {
                         ConversationToolResult::Success { output }
                     }
-                    tool_result::Result::Error(error) => {
-                        ConversationToolResult::Error { error }
-                    }
+                    tool_result::Result::Error(error) => ConversationToolResult::Error { error },
                 };
                 Some(Message::Tool {
                     tool_use_id: tool_msg.tool_use_id,
@@ -588,10 +612,13 @@ fn proto_message_to_app_message(proto_msg: conductor_proto::agent::Message) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grpc::conversions::{tool_approval_policy_to_proto, message_to_proto};
-    use conductor_proto::agent::tool_approval_policy::Policy;
-    use conductor_core::app::conversation::{AppCommandType, CommandResponse, CompactResult, ThoughtContent, AssistantContent, UserContent};
+    use crate::grpc::conversions::{message_to_proto, tool_approval_policy_to_proto};
     use conductor_core::api::ToolCall;
+    use conductor_core::app::conversation::{
+        AppCommandType, AssistantContent, CommandResponse, CompactResult, ThoughtContent,
+        UserContent,
+    };
+    use conductor_proto::agent::tool_approval_policy::Policy;
 
     #[test]
     fn test_convert_tool_approval_policy() {
@@ -622,16 +649,20 @@ mod tests {
     #[test]
     fn test_proto_message_conversion_assistant_thought() {
         // Test simple thought
-        let thought_content = ThoughtContent::Simple { text: "Test thought".to_string() };
+        let thought_content = ThoughtContent::Simple {
+            text: "Test thought".to_string(),
+        };
         let assistant_msg = Message::Assistant {
-            content: vec![AssistantContent::Thought { thought: thought_content }],
+            content: vec![AssistantContent::Thought {
+                thought: thought_content,
+            }],
             timestamp: 1234567890,
             id: "test-id".to_string(),
         };
-        
+
         let proto_msg = message_to_proto(assistant_msg.clone());
         let converted_back = proto_message_to_app_message(proto_msg);
-        
+
         assert!(converted_back.is_some());
         if let Some(Message::Assistant { content, .. }) = converted_back {
             assert_eq!(content.len(), 1);
@@ -648,19 +679,21 @@ mod tests {
     #[test]
     fn test_proto_message_conversion_user_app_command() {
         // Test app command conversion
-        let app_command = AppCommandType::Model { target: Some("claude-3-opus".to_string()) };
+        let app_command = AppCommandType::Model {
+            target: Some("claude-3-opus".to_string()),
+        };
         let user_msg = Message::User {
-            content: vec![UserContent::AppCommand { 
+            content: vec![UserContent::AppCommand {
                 command: app_command.clone(),
-                response: Some(CommandResponse::Text("claude-3-opus".to_string()))
+                response: Some(CommandResponse::Text("claude-3-opus".to_string())),
             }],
             timestamp: 1234567890,
             id: "test-id".to_string(),
         };
-        
+
         let proto_msg = message_to_proto(user_msg.clone());
         let converted_back = proto_message_to_app_message(proto_msg);
-        
+
         assert!(converted_back.is_some());
         if let Some(Message::User { content, .. }) = converted_back {
             assert_eq!(content.len(), 1);
@@ -683,20 +716,25 @@ mod tests {
             name: "bash".to_string(),
             parameters: serde_json::json!({"command": "ls -la"}),
         };
-        
+
         let assistant_msg = Message::Assistant {
-            content: vec![AssistantContent::ToolCall { tool_call: tool_call.clone() }],
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
             timestamp: 1234567890,
             id: "test-id".to_string(),
         };
-        
+
         let proto_msg = message_to_proto(assistant_msg.clone());
         let converted_back = proto_message_to_app_message(proto_msg);
-        
+
         assert!(converted_back.is_some());
         if let Some(Message::Assistant { content, .. }) = converted_back {
             assert_eq!(content.len(), 1);
-            if let AssistantContent::ToolCall { tool_call: converted_tool } = &content[0] {
+            if let AssistantContent::ToolCall {
+                tool_call: converted_tool,
+            } = &content[0]
+            {
                 assert_eq!(converted_tool.id, tool_call.id);
                 assert_eq!(converted_tool.name, tool_call.name);
                 assert_eq!(converted_tool.parameters, tool_call.parameters);

@@ -411,9 +411,14 @@ message Usage {
   optional double cost_usd = 4;
 }
 
+message ActiveToolInfo {
+  string name = 1;
+  string id = 2;
+}
+
 message CancellationInfo {
   bool api_call_in_progress = 1;
-  repeated string active_tools = 2;
+  repeated ActiveToolInfo active_tools = 2;
   bool pending_tool_approvals = 3;
 }
 
@@ -421,6 +426,25 @@ message CancellationInfo {
 message SessionToolConfig {
   repeated BackendConfig backends = 1;
   map<string, string> metadata = 2;
+  ToolVisibility visibility = 3;
+  ToolApprovalPolicy approval_policy = 4;
+}
+
+message ToolVisibility {
+  oneof visibility {
+    bool all = 1;
+    bool read_only = 2;
+    ToolWhitelist whitelist = 3;
+    ToolBlacklist blacklist = 4;
+  }
+}
+
+message ToolWhitelist {
+  repeated string tools = 1;
+}
+
+message ToolBlacklist {
+  repeated string tools = 1;
 }
 
 message BackendConfig {

@@ -263,7 +263,7 @@ pub enum RemoteAuth {
 }
 
 /// Tool filtering configuration for backends
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolFilter {
     /// Include all available tools

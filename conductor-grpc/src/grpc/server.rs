@@ -153,7 +153,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                 while let Some(app_event) = event_rx.recv().await {
                     event_sequence += 1;
                     let server_event =
-                        crate::grpc::events::app_event_to_server_event(app_event, event_sequence);
+                        crate::grpc::conversions::app_event_to_server_event(app_event, event_sequence);
 
                     if let Err(e) = tx_clone.send(Ok(server_event)).await {
                         warn!("Failed to send event to client: {}", e);
