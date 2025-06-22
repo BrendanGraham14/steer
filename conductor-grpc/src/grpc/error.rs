@@ -20,3 +20,21 @@ pub enum GrpcError {
     #[error("Stream error: {0}")]
     StreamError(String),
 }
+
+#[derive(Error, Debug)]
+pub enum ConversionError {
+    #[error("Missing required field: {field}")]
+    MissingField { field: String },
+
+    #[error("Invalid enum value: {value} for {enum_name}")]
+    InvalidEnumValue { value: i32, enum_name: String },
+
+    #[error("JSON serialization error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("Invalid variant: expected {expected}, got {actual}")]
+    InvalidVariant { expected: String, actual: String },
+
+    #[error("Missing oneof variant in {message}")]
+    MissingOneofVariant { message: String },
+}
