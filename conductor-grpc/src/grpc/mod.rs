@@ -5,6 +5,9 @@ pub mod events;
 pub mod server;
 pub mod session_manager_ext;
 
+#[cfg(test)]
+mod conversion_tests;
+
 // Re-export protobuf modules from conductor-proto crate
 pub use conductor_proto::{agent, remote_workspace};
 
