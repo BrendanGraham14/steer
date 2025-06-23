@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use tools::ToolCall;
-use tui_widgets::scrollview::{ScrollView, ScrollViewState};
+use tui_widgets::scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use super::content_renderer::{ContentRenderer, DefaultContentRenderer};
 use super::styles;
@@ -554,7 +554,9 @@ impl<'a> StatefulWidget for MessageList<'a> {
         // The scroll view will update the state automatically during render
 
         // Create ScrollView and render messages into it
-        let mut scroll_view = ScrollView::new(content_size);
+        // Disable built-in scrollbars – we draw our own vertical bar
+        let mut scroll_view = ScrollView::new(content_size)
+            .scrollbars_visibility(ScrollbarVisibility::Never);
 
         // Create a custom widget that renders all messages
         let messages_widget = MessagesRenderer {
@@ -576,11 +578,15 @@ impl<'a> StatefulWidget for MessageList<'a> {
 
         // Render scrollbar if needed
         if total_height > messages_area.height {
+            // Custom scrollbar: use full-height track with no arrows so the thumb can reach the ends
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
+                .begin_symbol(None)
+                .end_symbol(None);
+            let scroll_offset = state.scroll_state.offset().y as usize;
+            let last_visible_line = scroll_offset.saturating_add(messages_area.height.saturating_sub(1) as usize);
             let mut scrollbar_state = ScrollbarState::new(total_height as usize)
-                .position(state.scroll_state.offset().y as usize);
+                .position(last_visible_line.min(total_height.saturating_sub(1) as usize))
+                .viewport_content_length(messages_area.height as usize);
 
             scrollbar.render(messages_area, buf, &mut scrollbar_state);
         }
