@@ -76,9 +76,58 @@ impl ToolCallRegistry {
         Self::default()
     }
 
-    /// Register a new tool call
+    /// Register a new tool call (if not already present)
     pub fn register_call(&mut self, call: ToolCall) {
         let id = call.id.clone();
+        
+        tracing::debug!(
+            target: "tool_registry",
+            "register_call: id={}, name={}, params={}",
+            id, call.name, call.parameters
+        );
+        
+        if !self.pending_calls.contains_key(&id)
+            && !self.active_calls.contains_key(&id)
+            && !self.completed_calls.contains_key(&id)
+        {
+            self.pending_calls.insert(id, call);
+        } else {
+            tracing::debug!(
+                target: "tool_registry",
+                "register_call: Tool call {} already exists, skipping",
+                id
+            );
+        }
+    }
+
+    /// Upsert a tool call – replaces existing call metadata in any stage
+    /// without touching timing / status, or inserts as pending if not present.
+    pub fn upsert_call(&mut self, call: ToolCall) {
+        let id = call.id.clone();
+        
+        tracing::debug!(
+            target: "tool_registry",
+            "Upsert call: id={}, name={}, params={}",
+            id, call.name, call.parameters
+        );
+        
+        if let Some(p) = self.pending_calls.get_mut(&id) {
+            tracing::debug!(target: "tool_registry", "Updating pending call {}", id);
+            *p = call;
+            return;
+        }
+        if let Some(state) = self.active_calls.get_mut(&id) {
+            tracing::debug!(target: "tool_registry", "Updating active call {}", id);
+            state.call = call;
+            return;
+        }
+        if let Some(comp) = self.completed_calls.get_mut(&id) {
+            tracing::debug!(target: "tool_registry", "Updating completed call {}", id);
+            comp.call = call;
+            return;
+        }
+        // Not present – register as new pending
+        tracing::debug!(target: "tool_registry", "Inserting new pending call {}", id);
         self.pending_calls.insert(id, call);
     }
 
@@ -185,9 +234,25 @@ impl ToolCallRegistry {
 
     /// Get a tool call from any stage (for backwards compatibility)
     pub fn get_tool_call(&self, id: &str) -> Option<&ToolCall> {
-        self.pending_calls.get(id)
+        let result = self.pending_calls.get(id)
             .or_else(|| self.active_calls.get(id).map(|s| &s.call))
-            .or_else(|| self.completed_calls.get(id).map(|c| &c.call))
+            .or_else(|| self.completed_calls.get(id).map(|c| &c.call));
+            
+        if let Some(call) = result {
+            tracing::debug!(
+                target: "tool_registry",
+                "Found tool call {}: name={}, params={}",
+                id, call.name, call.parameters
+            );
+        } else {
+            tracing::debug!(
+                target: "tool_registry",
+                "Tool call {} not found in registry",
+                id
+            );
+        }
+        
+        result
     }
 
     /// Set the message index for a tool call (for rendering)
@@ -244,6 +309,42 @@ impl ToolCallRegistry {
             pending_count: self.pending_calls.len(),
             active_count: self.active_calls.len(),
             completed_count: self.completed_calls.len(),
+        }
+    }
+    
+    /// Debug helper to dump registry state
+    pub fn debug_dump(&self, prefix: &str) {
+        tracing::debug!(
+            target: "tool_registry",
+            "{}: Registry state - pending: {}, active: {}, completed: {}",
+            prefix,
+            self.pending_calls.len(),
+            self.active_calls.len(),
+            self.completed_calls.len()
+        );
+        
+        for (id, call) in &self.pending_calls {
+            tracing::debug!(
+                target: "tool_registry",
+                "{}: Pending - id={}, name={}, params={}",
+                prefix, id, call.name, call.parameters
+            );
+        }
+        
+        for (id, state) in &self.active_calls {
+            tracing::debug!(
+                target: "tool_registry",
+                "{}: Active - id={}, name={}, params={}",
+                prefix, id, state.call.name, state.call.parameters
+            );
+        }
+        
+        for (id, comp) in &self.completed_calls {
+            tracing::debug!(
+                target: "tool_registry",
+                "{}: Completed - id={}, name={}, params={}",
+                prefix, id, comp.call.name, comp.call.parameters
+            );
         }
     }
 }
