@@ -142,48 +142,6 @@ impl Tui {
         })
     }
 
-    /// Create a new TUI that connects to a remote gRPC server
-    pub async fn new_remote(
-        addr: &str,
-        initial_model: Model,
-        session_config: Option<crate::session::SessionConfig>,
-    ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
-        use conductor_grpc::GrpcClientAdapter;
-        use crate::session::{SessionConfig, SessionToolConfig};
-        use crate::app::io::AppEventSource;
-        use std::collections::HashMap;
-
-        info!("Creating TUI in remote mode, connecting to {}", addr);
-
-        // Connect to the gRPC server
-        let mut client = GrpcClientAdapter::connect(addr).await?;
-
-        // Create or use provided session config
-        let session_config = session_config.unwrap_or_else(|| SessionConfig {
-            workspace: crate::session::state::WorkspaceConfig::default(),
-            tool_config: SessionToolConfig::default(),
-            system_prompt: None,
-            metadata: HashMap::new(),
-        });
-
-        // Create session on server
-        let session_id = client.create_session(session_config).await?;
-        info!("Created remote session: {}", session_id);
-
-        // Start streaming
-        client.start_streaming().await?;
-
-        // Get the event receiver before wrapping in Arc
-        let event_rx = client.subscribe().await;
-
-        // Wrap client in Arc
-        let client = Arc::new(client);
-
-        // Initialize TUI with the gRPC client as command sink
-        let tui = Self::new(client, initial_model)?;
-
-        Ok((tui, event_rx))
-    }
 
     /// Create a TUI with restored conversation state for local sessions
     pub fn new_with_conversation(
@@ -279,46 +237,6 @@ impl Tui {
         self.view_model.message_list_state.scroll_to_bottom();
     }
 
-    /// Resume an existing remote session
-    pub async fn resume_remote(
-        addr: &str,
-        session_id: String,
-        initial_model: Model,
-    ) -> Result<(Self, mpsc::Receiver<AppEvent>)> {
-        use conductor_grpc::GrpcClientAdapter;
-        use crate::app::io::AppEventSource;
-
-        info!("Resuming remote session {} at {}", session_id, addr);
-
-        // Connect to the gRPC server
-        let mut client = GrpcClientAdapter::connect(addr).await?;
-
-        // Activate the session synchronously
-        let (messages, approved_tools) = client.activate_session(session_id.clone()).await?;
-        info!(
-            "Activated remote session: {} with {} messages",
-            session_id,
-            messages.len()
-        );
-
-        // Start streaming (session already active)
-        client.start_streaming().await?;
-
-        // Get the event receiver before wrapping in Arc
-        let event_rx = client.subscribe().await;
-
-        // Wrap client in Arc
-        let client = Arc::new(client);
-
-        // Initialize TUI with the gRPC client as command sink
-        let mut tui = Self::new(client, initial_model)?;
-        tui.restore_messages(messages);
-
-        // TODO: Restore approved tools
-        // This would require sending them through a command or storing them in the TUI state
-
-        Ok((tui, event_rx))
-    }
 
     fn cleanup_terminal(&mut self) -> Result<()> {
         execute!(
@@ -339,7 +257,7 @@ impl Tui {
             self.view_model.messages.len()
         );
 
-        // No need to request current conversation - messages are restored in resume_remote
+        // No need to request current conversation - messages are restored in the constructor
 
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let _input_handle: JoinHandle<()> = tokio::spawn(async move {
@@ -1466,14 +1384,27 @@ mod tests {
     use crate::tui::widgets::formatters::view::ViewFormatter;
     use crate::tui::widgets::formatters::ToolFormatter;
     use serde_json::json;
-    use tokio::sync::mpsc;
+    use async_trait::async_trait;
+    use anyhow::Result;
+    use crate::app::io::AppCommandSink;
+    use crate::app::AppCommand;
+
+    // Mock command sink for tests
+    struct MockCommandSink;
+
+    #[async_trait]
+    impl AppCommandSink for MockCommandSink {
+        async fn send_command(&self, _command: AppCommand) -> Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_restore_messages_preserves_tool_call_params() {
         // Create a TUI instance for testing
-        let (cmd_tx, _) = mpsc::channel(1);
+        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let model = crate::api::Model::Claude3_5Sonnet20241022;
-        let mut tui = Tui::new(cmd_tx, model).unwrap();
+        let mut tui = Tui::new(command_sink, model).unwrap();
 
         // Build test messages: Assistant with ToolCall, then Tool result
         let tool_id = "test_tool_123".to_string();
@@ -1541,9 +1472,9 @@ mod tests {
     #[test]
     fn test_restore_messages_handles_tool_result_before_assistant() {
         // Test edge case where Tool result arrives before Assistant message
-        let (cmd_tx, _) = mpsc::channel(1);
+        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let model = crate::api::Model::Claude3_5Sonnet20241022;
-        let mut tui = Tui::new(cmd_tx, model).unwrap();
+        let mut tui = Tui::new(command_sink, model).unwrap();
 
         let tool_id = "test_tool_456".to_string();
         let real_params = json!({
