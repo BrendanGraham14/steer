@@ -6,6 +6,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(version, about, long_about = None, author)]
 pub struct Cli {
+    /// Resume an existing session instead of starting a new one (local or remote modes)
+    #[arg(long)]
+    pub session: Option<String>,
     /// Optional directory to work in
     #[arg(short, long)]
     pub directory: Option<std::path::PathBuf>,

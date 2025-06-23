@@ -2,22 +2,17 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tracing::info;
 use conductor_tui::tui::cleanup_terminal;
 
 use conductor_core::api::Model;
-use conductor_core::app::AppConfig;
-use conductor_core::app::io::AppEventSource;
 use conductor::cli::{Cli, Commands};
 use conductor::commands::{
     Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
 };
 use conductor_core::config::LlmConfig;
-use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::utils;
-use conductor_core::utils::session::{create_default_session_config, create_session_store};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,9 +42,43 @@ async fn main() -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
-    match &cli.remote {
-        Some(remote_addr) => run_remote_mode(remote_addr, cli.model, cli.system_prompt).await,
-        None => run_local_mode(cli.model, cli.system_prompt).await,
+    // Set panic hook for terminal cleanup
+    conductor_tui::tui::setup_panic_hook();
+
+    // Create the gRPC client (remote or local)
+    use conductor_grpc::GrpcClientAdapter;
+    
+    let client = match &cli.remote {
+        Some(remote_addr) => {
+            info!("Connecting to remote server at {}", remote_addr);
+            Arc::new(GrpcClientAdapter::connect(remote_addr).await?)
+        }
+        None => {
+            let llm_config = LlmConfig::from_env()
+                .expect("Failed to load LLM configuration from environment variables.");
+            info!(target: "main", "Starting local mode with in-memory gRPC");
+            let channel = conductor_grpc::in_memory::setup_local_grpc(llm_config, cli.model).await?;
+            Arc::new(GrpcClientAdapter::from_channel(channel).await?)
+        }
+    };
+
+    // Either resume existing session (explicit id or "latest") or create new one
+    let session_arg = cli.session.clone();
+
+    let session_id_to_resume = if let Some(ref s) = session_arg {
+        if s == "latest" {
+            Some(fetch_latest_session_id(&client).await?)
+        } else {
+            Some(s.clone())
+        }
+    } else {
+        None
+    };
+
+    if let Some(session_id) = session_id_to_resume {
+        resume_session(client, session_id, cli.model).await
+    } else {
+        run_new_session(client, cli.model, cli.system_prompt).await
     }
 }
 
@@ -94,95 +123,75 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
     }
 }
 
-async fn run_remote_mode(
-    remote_addr: &str,
+async fn fetch_latest_session_id(client: &Arc<conductor_grpc::GrpcClientAdapter>) -> Result<String> {
+    let sessions = client.list_sessions().await?;
+    let latest = sessions
+        .into_iter()
+        .max_by_key(|s| s.updated_at.as_ref().map(|ts| ts.seconds).unwrap_or(0))
+        .ok_or_else(|| anyhow!("No sessions found"))?;
+    Ok(latest.id)
+}
+
+async fn resume_session(
+    client: Arc<conductor_grpc::GrpcClientAdapter>,
+    session_id: String,
     model: Model,
-    system_prompt: Option<String>,
 ) -> Result<()> {
-    info!("Connecting to remote server at {}", remote_addr);
+    use conductor_core::app::io::AppEventSource;
+    
+    // Activate the existing session
+    let client_ref = Arc::clone(&client);
+    let (messages, approved_tools) = client_ref.activate_session(session_id.clone()).await?;
+    info!("Activated session: {} with {} messages", session_id, messages.len());
+    println!("Session ID: {}", session_id);
 
-    // Set panic hook for terminal cleanup
-    conductor_tui::tui::setup_panic_hook();
+    // Start streaming
+    client_ref.start_streaming().await?;
 
-    // Create TUI in remote mode
-    let session_config = system_prompt.map(|prompt| {
-        let mut config = create_default_session_config();
-        config.system_prompt = Some(prompt);
-        config
-    });
-    let (mut tui, event_rx) = conductor_tui::tui::Tui::new_remote(remote_addr, model, session_config).await?;
+    // Get the event receiver
+    let event_rx = client_ref.subscribe().await;
 
-    println!("Connected to remote server at {}", remote_addr);
+    // Initialize TUI with the gRPC client as command sink and restored messages
+    let mut tui = conductor_tui::tui::Tui::new_with_conversation(client, model, messages, approved_tools)?;
 
-    // Run the TUI with events from the remote server
+    // Run the TUI
     tui.run(event_rx).await?;
 
     Ok(())
 }
 
-async fn run_local_mode(model: Model, system_prompt: Option<String>) -> Result<()> {
-    let llm_config = LlmConfig::from_env()
-        .expect("Failed to load LLM configuration from environment variables.");
-
-    info!(target: "main", "Starting local mode with in-memory gRPC");
-
-    // Set up the in-memory gRPC server and get a channel
-    let channel = conductor_grpc::in_memory::setup_local_grpc(llm_config, model).await?;
-
-    // Now use the same remote mode code path but with the in-memory channel
-    // Create a fake address for logging purposes
-    let addr = "in-memory://localhost";
-    
-    // Set panic hook for terminal cleanup
-    conductor_tui::tui::setup_panic_hook();
-
-    // Create session config with system prompt if provided
-    let session_config = system_prompt.map(|prompt| {
-        let mut config = create_default_session_config();
-        config.system_prompt = Some(prompt);
-        config
-    });
-
-    // Use the new_remote method but with our in-memory channel
-    // We need to modify new_remote to accept an optional channel
-    // For now, let's create the client directly
-    use conductor_grpc::GrpcClientAdapter;
+async fn run_new_session(
+    client: Arc<conductor_grpc::GrpcClientAdapter>,
+    model: Model,
+    system_prompt: Option<String>,
+) -> Result<()> {
     use conductor_core::session::{SessionConfig, SessionToolConfig};
     use conductor_core::app::io::AppEventSource;
     use std::collections::HashMap;
 
-    info!("Creating gRPC client for in-memory channel");
-
-    // Create client from the in-memory channel
-    let mut client = GrpcClientAdapter::from_channel(channel).await?;
-
-    // Create or use provided session config
-    let session_config = session_config.unwrap_or_else(|| SessionConfig {
+    // Create session config
+    let mut session_config = SessionConfig {
         workspace: conductor_core::session::state::WorkspaceConfig::default(),
         tool_config: SessionToolConfig::default(),
-        system_prompt: None,
+        system_prompt,
         metadata: HashMap::new(),
-    });
+    };
 
     // Add the initial model to session metadata
-    let mut session_config_with_model = session_config;
-    session_config_with_model
+    session_config
         .metadata
         .insert("initial_model".to_string(), model.to_string());
 
     // Create session on server
-    let session_id = client.create_session(session_config_with_model).await?;
-    info!("Created local session via gRPC: {}", session_id);
+    let session_id = client.create_session(session_config).await?;
+    info!("Created session: {}", session_id);
     println!("Session ID: {}", session_id);
 
     // Start streaming
     client.start_streaming().await?;
 
-    // Get the event receiver before wrapping in Arc
+    // Get the event receiver
     let event_rx = client.subscribe().await;
-
-    // Wrap client in Arc
-    let client = Arc::new(client);
 
     // Initialize TUI with the gRPC client as command sink
     let mut tui = conductor_tui::tui::Tui::new(client, model)?;

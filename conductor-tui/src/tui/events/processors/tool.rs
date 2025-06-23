@@ -164,14 +164,28 @@ mod tests {
     use crate::tui::state::{MessageStore, ToolCallRegistry};
     use crate::tui::widgets::message_list::{MessageContent, MessageListState};
     use serde_json::json;
-    use tokio::sync::mpsc;
     use tools::schema::ToolCall;
+    use async_trait::async_trait;
+    use anyhow::Result;
+    use crate::app::io::AppCommandSink;
+    use crate::app::AppCommand;
+    use std::sync::Arc;
+
+    // Mock command sink for tests
+    struct MockCommandSink;
+
+    #[async_trait]
+    impl AppCommandSink for MockCommandSink {
+        async fn send_command(&self, _command: AppCommand) -> Result<()> {
+            Ok(())
+        }
+    }
 
     fn create_test_context() -> (
         MessageStore,
         MessageListState,
         ToolCallRegistry,
-        mpsc::Sender<crate::app::command::AppCommand>,
+        Arc<dyn AppCommandSink>,
         bool,
         Option<String>,
         usize,
@@ -182,7 +196,7 @@ mod tests {
         let messages = MessageStore::new();
         let message_list_state = MessageListState::new();
         let tool_registry = ToolCallRegistry::new();
-        let (cmd_tx, _) = mpsc::channel(1);
+        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let is_processing = false;
         let progress_message = None;
         let spinner_state = 0;
@@ -194,7 +208,7 @@ mod tests {
             messages,
             message_list_state,
             tool_registry,
-            cmd_tx,
+            command_sink,
             is_processing,
             progress_message,
             spinner_state,
@@ -212,7 +226,7 @@ mod tests {
             mut messages,
             mut message_list_state,
             mut tool_registry,
-            cmd_tx,
+            command_sink,
             mut is_processing,
             mut progress_message,
             mut spinner_state,
@@ -244,7 +258,7 @@ mod tests {
                 messages: &mut messages,
                 message_list_state: &mut message_list_state,
                 tool_registry: &mut tool_registry,
-                command_tx: &cmd_tx,
+                command_sink: &command_sink,
                 is_processing: &mut is_processing,
                 progress_message: &mut progress_message,
                 spinner_state: &mut spinner_state,
@@ -267,7 +281,7 @@ mod tests {
                 messages: &mut messages,
                 message_list_state: &mut message_list_state,
                 tool_registry: &mut tool_registry,
-                command_tx: &cmd_tx,
+                command_sink: &command_sink,
                 is_processing: &mut is_processing,
                 progress_message: &mut progress_message,
                 spinner_state: &mut spinner_state,
