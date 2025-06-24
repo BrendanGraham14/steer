@@ -40,4 +40,10 @@ pub enum ConversionError {
 
     #[error("Missing oneof variant in {message}")]
     MissingOneofVariant { message: String },
+
+    #[error("Invalid value '{value}' for field '{field}'")]
+    InvalidValue { field: String, value: String },
+
+    #[error("Invalid JSON for field '{field}': {error}")]
+    InvalidJson { field: String, error: String },
 }

@@ -84,7 +84,6 @@ impl ProcessingContext<'_> {
         &self,
         message: crate::app::Message,
     ) -> crate::tui::widgets::message_list::MessageContent {
-        
         use crate::tui::widgets::message_list::MessageContent;
 
         match message {

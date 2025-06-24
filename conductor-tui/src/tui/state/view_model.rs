@@ -5,7 +5,6 @@
 //! `tui::Tui` previously carried so downstream call-sites can be migrated with a
 //! simple prefix change ( `self.message_list_state` → `self.view_model.message_list_state`,
 //! `self.messages` → `self.view_model.messages` ).  No behaviour change.
-
 use super::content_cache::ContentCache;
 use super::message_store::MessageStore;
 use super::tool_registry::ToolCallRegistry;

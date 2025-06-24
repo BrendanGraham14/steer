@@ -8,8 +8,8 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use crate::grpc::conversions::{
-    proto_to_message, server_event_to_app_event, session_tool_config_to_proto,
-    tool_approval_policy_to_proto, workspace_config_to_proto,
+    convert_app_command_to_client_message, proto_to_message, server_event_to_app_event,
+    session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 use conductor_core::app::conversation::Message;
@@ -17,10 +17,11 @@ use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::{AppCommand, AppEvent};
 use conductor_core::session::SessionConfig;
 use conductor_proto::agent::{
-    ApprovalDecision, CancelOperationRequest, ClientMessage, CreateSessionRequest,
+    ClientMessage, CreateSessionRequest,
     DeleteSessionRequest, GetConversationRequest, GetSessionRequest, ListSessionsRequest,
-    SendMessageRequest, SessionInfo, SessionState, SubscribeRequest, ToolApprovalResponse,
-    agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
+    SessionInfo, SessionState,
+    SubscribeRequest, agent_service_client::AgentServiceClient,
+    client_message::Message as ClientMessageType,
 };
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming
@@ -189,10 +190,16 @@ impl GrpcClientAdapter {
                             server_event.sequence_num
                         );
 
-                        if let Some(app_event) = server_event_to_app_event(server_event) {
-                            if let Err(e) = evt_tx.send(app_event).await {
-                                warn!("Failed to forward event to TUI: {}", e);
-                                break;
+                        match server_event_to_app_event(server_event) {
+                            Ok(app_event) => {
+                                if let Err(e) = evt_tx.send(app_event).await {
+                                    warn!("Failed to forward event to TUI: {}", e);
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to convert server event: {}", e);
+                                // Continue processing other events instead of breaking
                             }
                         }
                     }
@@ -382,61 +389,6 @@ impl AppEventSource for GrpcClientAdapter {
             "Event receiver already taken - GrpcClientAdapter only supports single subscription",
         )
     }
-}
-
-/// Convert TUI AppCommand to gRPC ClientMessage
-fn convert_app_command_to_client_message(
-    command: AppCommand,
-    session_id: &str,
-) -> Result<Option<ClientMessage>> {
-    let message = match command {
-        AppCommand::ProcessUserInput(text) => {
-            Some(ClientMessageType::SendMessage(SendMessageRequest {
-                session_id: session_id.to_string(),
-                message: text,
-                attachments: vec![],
-            }))
-        }
-
-        AppCommand::HandleToolResponse {
-            id,
-            approved,
-            always,
-        } => {
-            let decision = if always {
-                ApprovalDecision::AlwaysApprove
-            } else if approved {
-                ApprovalDecision::Approve
-            } else {
-                ApprovalDecision::Deny
-            };
-
-            Some(ClientMessageType::ToolApproval(ToolApprovalResponse {
-                tool_call_id: id,
-                decision: decision as i32,
-            }))
-        }
-
-        AppCommand::CancelProcessing => {
-            Some(ClientMessageType::Cancel(CancelOperationRequest {
-                session_id: session_id.to_string(),
-                operation_id: String::new(), // Server will cancel current operation
-            }))
-        }
-
-        // These commands don't map to gRPC messages
-        AppCommand::ExecuteCommand(_) => None,
-        AppCommand::ExecuteBashCommand { .. } => None,
-        AppCommand::Shutdown => None,
-        AppCommand::RequestToolApprovalInternal { .. } => None,
-        AppCommand::RestoreConversation { .. } => None,
-        AppCommand::GetCurrentConversation => None,
-    };
-
-    Ok(message.map(|msg| ClientMessage {
-        session_id: session_id.to_string(),
-        message: Some(msg),
-    }))
 }
 
 #[cfg(test)]

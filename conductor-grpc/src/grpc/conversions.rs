@@ -1,10 +1,10 @@
 use crate::grpc::error::ConversionError;
 use conductor_core::api::ToolCall;
-use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, CompactResult,
     Message as ConversationMessage, ThoughtContent, ToolResult, UserContent,
 };
+use conductor_core::app::{AppCommand, AppEvent};
 use conductor_core::session::state::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, ToolVisibility, WorkspaceConfig,
@@ -660,25 +660,24 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                             }
                         }
                         assistant_content::Content::Thought(thought) => {
-                            let thought_content =
-                                thought.thought_type.as_ref().map(|t| match t {
-                                    thought_content::ThoughtType::Simple(simple) => {
-                                        ThoughtContent::Simple {
-                                            text: simple.text.clone(),
-                                        }
+                            let thought_content = thought.thought_type.as_ref().map(|t| match t {
+                                thought_content::ThoughtType::Simple(simple) => {
+                                    ThoughtContent::Simple {
+                                        text: simple.text.clone(),
                                     }
-                                    thought_content::ThoughtType::Signed(signed) => {
-                                        ThoughtContent::Signed {
-                                            text: signed.text.clone(),
-                                            signature: signed.signature.clone(),
-                                        }
+                                }
+                                thought_content::ThoughtType::Signed(signed) => {
+                                    ThoughtContent::Signed {
+                                        text: signed.text.clone(),
+                                        signature: signed.signature.clone(),
                                     }
-                                    thought_content::ThoughtType::Redacted(redacted) => {
-                                        ThoughtContent::Redacted {
-                                            data: redacted.data.clone(),
-                                        }
+                                }
+                                thought_content::ThoughtType::Redacted(redacted) => {
+                                    ThoughtContent::Redacted {
+                                        data: redacted.data.clone(),
                                     }
-                                });
+                                }
+                            });
 
                             thought_content.map(|thought| AssistantContent::Thought { thought })
                         }
@@ -727,29 +726,10 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> prot
 
     let event = match app_event {
         AppEvent::MessageAdded { message, model } => {
-            // Use shared conversion logic to avoid duplication
-            let proto_wrapper = message_to_proto(message.clone());
-            // This expect is safe because message_to_proto always returns a message with Some(message_variant)
-            let msg_variant = proto_wrapper
-                .message
-                .expect("Missing message variant after conversion");
-
-            let proto_message = match msg_variant {
-                proto::message::Message::User(user_msg) => {
-                    proto::message_added_event::Message::User(user_msg)
-                }
-                proto::message::Message::Assistant(assistant_msg) => {
-                    proto::message_added_event::Message::Assistant(assistant_msg)
-                }
-                proto::message::Message::Tool(tool_msg) => {
-                    proto::message_added_event::Message::Tool(tool_msg)
-                }
-            };
-
+            let proto_message = message_to_proto(message);
             Some(proto::server_event::Event::MessageAdded(
                 proto::MessageAddedEvent {
                     message: Some(proto_message),
-                    id: message.id().to_string(),
                     model: model.to_string(),
                 },
             ))
@@ -968,137 +948,54 @@ fn proto_command_response_response_to_command_response(
 }
 
 /// Convert protobuf ServerEvent to AppEvent
-pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<AppEvent> {
+pub fn server_event_to_app_event(
+    server_event: proto::ServerEvent,
+) -> Result<AppEvent, ConversionError> {
     use conductor_core::app::cancellation::ActiveTool;
+    let event = server_event
+        .event
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "server_event.event".to_string(),
+        })?;
 
-    match server_event.event? {
+    match event {
         proto::server_event::Event::MessageAdded(e) => {
-            let message = match e.message? {
-                proto::message_added_event::Message::User(user_msg) => {
-                    let content = user_msg
-                        .content
-                        .into_iter()
-                        .filter_map(|user_content| match user_content.content? {
-                            proto::user_content::Content::Text(text) => {
-                                Some(UserContent::Text { text })
-                            }
-                            proto::user_content::Content::CommandExecution(cmd) => {
-                                Some(UserContent::CommandExecution {
-                                    command: cmd.command,
-                                    stdout: cmd.stdout,
-                                    stderr: cmd.stderr,
-                                    exit_code: cmd.exit_code,
-                                })
-                            }
-                            proto::user_content::Content::AppCommand(app_cmd) => {
-                                let command = app_cmd.command.as_ref().and_then(|cmd| {
-                                    cmd.command_type
-                                        .as_ref()
-                                        .map(proto_app_command_type_to_app_command_type)
-                                });
+            let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {
+                field: "message_added_event.message".to_string(),
+            })?;
 
-                                let response = app_cmd.response.as_ref().and_then(|resp| {
-                                    resp.response.as_ref().map(|rt| match rt {
-                                        proto::command_response::Response::Text(text) => {
-                                            CommandResponse::Text(text.clone())
-                                        }
-                                        proto::command_response::Response::Compact(result) => {
-                                            let compact_result = result
-                                                .result_type
-                                                .as_ref()
-                                                .map(proto_compact_result_type_to_compact_result)
-                                                .unwrap_or(CompactResult::Cancelled);
-                                            CommandResponse::Compact(compact_result)
-                                        }
-                                    })
-                                });
-
-                                command.map(|cmd| UserContent::AppCommand {
-                                    command: cmd,
-                                    response,
-                                })
-                            }
-                        })
-                        .collect();
-                    ConversationMessage::User {
-                        content,
-                        timestamp: user_msg.timestamp,
-                        id: e.id.clone(),
-                    }
-                }
-                proto::message_added_event::Message::Assistant(assistant_msg) => {
-                    let content = assistant_msg
-                        .content
-                        .into_iter()
-                        .filter_map(|assistant_content| {
-                            match assistant_content.content? {
-                                proto::assistant_content::Content::Text(text) => {
-                                    Some(AssistantContent::Text { text })
-                                }
-                                proto::assistant_content::Content::ToolCall(tool_call) => {
-                                    match proto_tool_call_to_core(&tool_call) {
-                                        Ok(core_tool_call) => Some(AssistantContent::ToolCall {
-                                            tool_call: core_tool_call,
-                                        }),
-                                        Err(_) => None, // Skip invalid tool calls
-                                    }
-                                }
-                                proto::assistant_content::Content::Thought(_) => {
-                                    // TODO: Handle thoughts properly when we implement them
-                                    None
-                                }
-                            }
-                        })
-                        .collect();
-                    ConversationMessage::Assistant {
-                        content,
-                        timestamp: assistant_msg.timestamp,
-                        id: e.id.clone(),
-                    }
-                }
-                proto::message_added_event::Message::Tool(tool_msg) => {
-                    if let Some(result) = tool_msg.result {
-                        let tool_result = match result.result? {
-                            proto::tool_result::Result::Success(output) => {
-                                ToolResult::Success { output }
-                            }
-                            proto::tool_result::Result::Error(error) => ToolResult::Error { error },
-                        };
-                        ConversationMessage::Tool {
-                            tool_use_id: tool_msg.tool_use_id,
-                            result: tool_result,
-                            timestamp: tool_msg.timestamp,
-                            id: e.id.clone(),
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-            };
-
+            let message = proto_to_message(proto_message)?;
             let model = {
                 use std::str::FromStr;
-                conductor_core::api::Model::from_str(&e.model)
-                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model).map_err(|_| {
+                    ConversionError::InvalidValue {
+                        field: "model".to_string(),
+                        value: e.model.clone(),
+                    }
+                })?
             };
 
-            Some(AppEvent::MessageAdded { message, model })
+            Ok(AppEvent::MessageAdded { message, model })
         }
-        proto::server_event::Event::MessageUpdated(e) => Some(AppEvent::MessageUpdated {
+        proto::server_event::Event::MessageUpdated(e) => Ok(AppEvent::MessageUpdated {
             id: e.id,
             content: e.content,
         }),
-        proto::server_event::Event::MessagePart(e) => Some(AppEvent::MessagePart {
+        proto::server_event::Event::MessagePart(e) => Ok(AppEvent::MessagePart {
             id: e.id,
             delta: e.delta,
         }),
         proto::server_event::Event::ToolCallStarted(e) => {
             let model = {
                 use std::str::FromStr;
-                conductor_core::api::Model::from_str(&e.model)
-                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model).map_err(|_| {
+                    ConversionError::InvalidValue {
+                        field: "model".to_string(),
+                        value: e.model.clone(),
+                    }
+                })?
             };
-            Some(AppEvent::ToolCallStarted {
+            Ok(AppEvent::ToolCallStarted {
                 name: e.name,
                 id: e.id,
                 model,
@@ -1107,10 +1004,14 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
         proto::server_event::Event::ToolCallCompleted(e) => {
             let model = {
                 use std::str::FromStr;
-                conductor_core::api::Model::from_str(&e.model)
-                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model).map_err(|_| {
+                    ConversionError::InvalidValue {
+                        field: "model".to_string(),
+                        value: e.model.clone(),
+                    }
+                })?
             };
-            Some(AppEvent::ToolCallCompleted {
+            Ok(AppEvent::ToolCallCompleted {
                 name: e.name,
                 result: e.result,
                 id: e.id,
@@ -1120,46 +1021,54 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
         proto::server_event::Event::ToolCallFailed(e) => {
             let model = {
                 use std::str::FromStr;
-                conductor_core::api::Model::from_str(&e.model)
-                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model).map_err(|_| {
+                    ConversionError::InvalidValue {
+                        field: "model".to_string(),
+                        value: e.model.clone(),
+                    }
+                })?
             };
-            Some(AppEvent::ToolCallFailed {
+            Ok(AppEvent::ToolCallFailed {
                 name: e.name,
                 error: e.error,
                 id: e.id,
                 model,
             })
         }
-        proto::server_event::Event::ThinkingStarted(_) => Some(AppEvent::ThinkingStarted),
-        proto::server_event::Event::ThinkingCompleted(_) => Some(AppEvent::ThinkingCompleted),
+        proto::server_event::Event::ThinkingStarted(_) => Ok(AppEvent::ThinkingStarted),
+        proto::server_event::Event::ThinkingCompleted(_) => Ok(AppEvent::ThinkingCompleted),
         proto::server_event::Event::RequestToolApproval(e) => {
-            let parameters = serde_json::from_str(&e.parameters_json)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            Some(AppEvent::RequestToolApproval {
+            let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
+                ConversionError::InvalidJson {
+                    field: "parameters_json".to_string(),
+                    error: err.to_string(),
+                }
+            })?;
+            Ok(AppEvent::RequestToolApproval {
                 name: e.name,
                 parameters,
                 id: e.id,
             })
         }
         proto::server_event::Event::OperationCancelled(e) => {
-            if let Some(info) = e.info {
-                Some(AppEvent::OperationCancelled {
-                    info: conductor_core::app::cancellation::CancellationInfo {
-                        api_call_in_progress: info.api_call_in_progress,
-                        active_tools: info
-                            .active_tools
-                            .into_iter()
-                            .map(|tool_info| ActiveTool {
-                                name: tool_info.name,
-                                id: tool_info.id,
-                            })
-                            .collect(),
-                        pending_tool_approvals: info.pending_tool_approvals,
-                    },
-                })
-            } else {
-                None
-            }
+            let info = e.info.ok_or_else(|| ConversionError::MissingField {
+                field: "operation_cancelled.info".to_string(),
+            })?;
+
+            Ok(AppEvent::OperationCancelled {
+                info: conductor_core::app::cancellation::CancellationInfo {
+                    api_call_in_progress: info.api_call_in_progress,
+                    active_tools: info
+                        .active_tools
+                        .into_iter()
+                        .map(|tool_info| ActiveTool {
+                            name: tool_info.name,
+                            id: tool_info.id,
+                        })
+                        .collect(),
+                    pending_tool_approvals: info.pending_tool_approvals,
+                },
+            })
         }
         proto::server_event::Event::CommandResponse(e) => {
             // Convert proto command to app command
@@ -1171,9 +1080,9 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
                         .as_ref()
                         .map(proto_app_command_type_to_app_command_type)
                 })
-                .unwrap_or(AppCommandType::Unknown {
-                    command: e.content.clone(),
-                });
+                .ok_or_else(|| ConversionError::MissingField {
+                    field: "command_response.command".to_string(),
+                })?;
 
             // Convert proto response to app response
             let response = e
@@ -1184,9 +1093,11 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
                         .as_ref()
                         .map(proto_command_response_response_to_command_response)
                 })
-                .unwrap_or(CommandResponse::Text(e.content.clone()));
+                .ok_or_else(|| ConversionError::MissingField {
+                    field: "command_response.response".to_string(),
+                })?;
 
-            Some(AppEvent::CommandResponse {
+            Ok(AppEvent::CommandResponse {
                 command,
                 response,
                 id: e.id,
@@ -1195,11 +1106,86 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
         proto::server_event::Event::ModelChanged(e) => {
             let model = {
                 use std::str::FromStr;
-                conductor_core::api::Model::from_str(&e.model)
-                    .unwrap_or(conductor_core::api::Model::Claude3_7Sonnet20250219)
+                conductor_core::api::Model::from_str(&e.model).map_err(|_| {
+                    ConversionError::InvalidValue {
+                        field: "model".to_string(),
+                        value: e.model.clone(),
+                    }
+                })?
             };
-            Some(AppEvent::ModelChanged { model })
+            Ok(AppEvent::ModelChanged { model })
         }
-        proto::server_event::Event::Error(e) => Some(AppEvent::Error { message: e.message }),
+        proto::server_event::Event::Error(e) => Ok(AppEvent::Error { message: e.message }),
     }
+}
+
+/// Convert TUI AppCommand to gRPC ClientMessage
+pub fn convert_app_command_to_client_message(
+    command: AppCommand,
+    session_id: &str,
+) -> Result<Option<proto::ClientMessage>, ConversionError> {
+    use proto::client_message::Message as ClientMessageType;
+
+    let message = match command {
+        AppCommand::ProcessUserInput(text) => {
+            Some(ClientMessageType::SendMessage(proto::SendMessageRequest {
+                session_id: session_id.to_string(),
+                message: text,
+                attachments: vec![],
+            }))
+        }
+
+        AppCommand::HandleToolResponse {
+            id,
+            approved,
+            always,
+        } => {
+            let decision = if always {
+                proto::ApprovalDecision::AlwaysApprove
+            } else if approved {
+                proto::ApprovalDecision::Approve
+            } else {
+                proto::ApprovalDecision::Deny
+            };
+
+            Some(ClientMessageType::ToolApproval(
+                proto::ToolApprovalResponse {
+                    tool_call_id: id,
+                    decision: decision as i32,
+                },
+            ))
+        }
+
+        AppCommand::CancelProcessing => {
+            Some(ClientMessageType::Cancel(proto::CancelOperationRequest {
+                session_id: session_id.to_string(),
+                operation_id: String::new(), // Server will cancel current operation
+            }))
+        }
+
+        // ExecuteCommand and ExecuteBashCommand map to specific gRPC messages
+        AppCommand::ExecuteCommand(command) => Some(ClientMessageType::ExecuteCommand(
+            proto::ExecuteCommandRequest {
+                session_id: session_id.to_string(),
+                command,
+            },
+        )),
+        AppCommand::ExecuteBashCommand { command } => Some(ClientMessageType::ExecuteBashCommand(
+            proto::ExecuteBashCommandRequest {
+                session_id: session_id.to_string(),
+                command,
+            },
+        )),
+
+        // These commands don't map to gRPC messages
+        AppCommand::Shutdown => None,
+        AppCommand::RequestToolApprovalInternal { .. } => None,
+        AppCommand::RestoreConversation { .. } => None,
+        AppCommand::GetCurrentConversation => None,
+    };
+
+    Ok(message.map(|msg| proto::ClientMessage {
+        session_id: session_id.to_string(),
+        message: Some(msg),
+    }))
 }
