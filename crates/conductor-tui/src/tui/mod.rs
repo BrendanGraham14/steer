@@ -354,10 +354,11 @@ impl Tui {
                                     // The widget will handle recalculating sizes internally
                                 }
                                 Event::Paste(data) => {
-                                    if matches!(self.input_mode, InputMode::Editing) {
+                                    // Handle paste in any mode that accepts text input
+                                    if matches!(self.input_mode, InputMode::Editing | InputMode::BashCommand) {
                                         let normalized_data = data.replace("\r\n", "\n").replace("\r", "\n");
                                         self.textarea.insert_str(&normalized_data);
-                                        debug!(target:"tui.run", "Pasted {} chars", normalized_data.len());
+                                        debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
                                         needs_redraw = true;
                                     }
                                 }
