@@ -1,3 +1,5 @@
 [workspace]
-members = ["conductor-cli", "macros", "tools", "remote-backend", "conductor-proto", "conductor-grpc", "conductor-core", "conductor-tui"]
+members = [
+    "crates/*",
+]
 resolver = "3"

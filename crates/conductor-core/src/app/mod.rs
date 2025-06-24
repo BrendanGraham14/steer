@@ -1,0 +1,1328 @@
+use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
+use crate::app::conversation::{AssistantContent, CompactResult, ToolResult, UserContent};
+use crate::tools::ToolError;
+use anyhow::Result;
+use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+
+use tracing::{debug, error, info, warn};
+use uuid;
+
+pub mod adapters;
+mod agent_executor;
+pub mod cancellation;
+pub mod command;
+pub mod context;
+pub mod context_util;
+pub mod conversation;
+pub mod io;
+
+mod environment;
+
+mod tool_executor;
+pub mod validation;
+
+#[cfg(test)]
+mod tests;
+
+use crate::app::context::TaskOutcome;
+
+pub use cancellation::CancellationInfo;
+pub use command::AppCommand;
+pub use context::OpContext;
+pub use conversation::{Conversation, Message};
+pub use environment::EnvironmentInfo;
+pub use tool_executor::ToolExecutor;
+
+use crate::config::LlmConfig;
+pub use agent_executor::{
+    AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
+};
+
+#[derive(Debug, Clone)]
+pub enum AppEvent {
+    MessageAdded {
+        message: Message,
+        model: Model,
+    },
+    MessageUpdated {
+        id: String,
+        content: String,
+    },
+    MessagePart {
+        id: String,
+        delta: String,
+    },
+
+    ToolCallStarted {
+        name: String,
+        id: String,
+        model: Model,
+    },
+    ToolCallCompleted {
+        name: String,
+        result: String,
+        id: String,
+        model: Model,
+    },
+    ToolCallFailed {
+        name: String,
+        error: String,
+        id: String,
+        model: Model,
+    },
+    ThinkingStarted,
+    ThinkingCompleted,
+    CommandResponse {
+        command: conversation::AppCommandType,
+        response: conversation::CommandResponse,
+        id: String,
+    },
+    RequestToolApproval {
+        name: String,
+        parameters: serde_json::Value,
+        id: String,
+    },
+    OperationCancelled {
+        info: CancellationInfo,
+    },
+    ModelChanged {
+        model: Model,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Clone)]
+pub struct AppConfig {
+    pub llm_config: LlmConfig,
+}
+
+pub struct App {
+    pub config: AppConfig,
+    pub conversation: Arc<Mutex<Conversation>>,
+    pub tool_executor: Arc<ToolExecutor>,
+    pub api_client: ApiClient,
+    agent_executor: AgentExecutor,
+    event_sender: mpsc::Sender<AppEvent>,
+    approved_tools: HashSet<String>, // Tracks tools approved with "Always" for the session
+    current_op_context: Option<OpContext>,
+    current_model: Model,
+    session_config: Option<crate::session::state::SessionConfig>, // For tool visibility filtering
+    workspace: Option<Arc<dyn crate::workspace::Workspace>>, // Workspace for environment and tool execution
+}
+
+impl App {
+    pub fn new(
+        config: AppConfig,
+        event_tx: mpsc::Sender<AppEvent>,
+        initial_model: Model,
+        workspace: Arc<dyn crate::workspace::Workspace>,
+        tool_executor: Arc<ToolExecutor>,
+        session_config: Option<crate::session::state::SessionConfig>,
+    ) -> Result<Self> {
+        let conversation = Arc::new(Mutex::new(Conversation::new()));
+
+        let api_client = ApiClient::new(&config.llm_config);
+        let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
+
+        Ok(Self {
+            config,
+            conversation,
+            tool_executor,
+            api_client,
+            agent_executor,
+            event_sender: event_tx,
+            approved_tools: HashSet::new(),
+            current_op_context: None,
+            current_model: initial_model,
+            session_config,
+            workspace: Some(workspace),
+        })
+    }
+
+    pub(crate) fn emit_event(&self, event: AppEvent) {
+        match self.event_sender.try_send(event.clone()) {
+            Ok(_) => {
+                // Skip logging message parts for brevity
+                if !matches!(event, AppEvent::MessagePart { .. }) {
+                    debug!(target: "app.emit_event", "Sent event: {:?}", event);
+                }
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!(target: "app.emit_event", "Event channel full, discarding event: {:?}", event);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!(target: "app.emit_event", "Event channel closed, discarding event: {:?}", event);
+            }
+        }
+    }
+
+    pub fn get_current_model(&self) -> Model {
+        self.current_model
+    }
+
+    pub fn is_tool_approved(&self, tool_name: &str) -> bool {
+        self.approved_tools.contains(tool_name)
+    }
+
+    pub fn add_approved_tool(&mut self, tool_name: String) {
+        self.approved_tools.insert(tool_name);
+    }
+
+    pub fn set_model(&mut self, model: Model) -> Result<()> {
+        // Check if the provider is available (has API key)
+        let provider = model.provider();
+        if self.config.llm_config.key_for(provider).is_none() {
+            return Err(anyhow::anyhow!(
+                "Cannot set model to {}: missing API key for {} provider",
+                model.as_ref(),
+                match provider {
+                    ProviderKind::Anthropic => "Anthropic",
+                    ProviderKind::OpenAI => "OpenAI",
+                    ProviderKind::Google => "Google",
+                }
+            ));
+        }
+
+        // Set the model
+        self.current_model = model;
+
+        // Emit an event to notify UI of the change
+        self.emit_event(AppEvent::ModelChanged { model });
+
+        Ok(())
+    }
+
+    pub async fn add_message(&self, message: Message) {
+        let mut conversation_guard = self.conversation.lock().await;
+        conversation_guard.messages.push(message.clone());
+        drop(conversation_guard);
+
+        // Emit event only for non-tool messages
+        if !matches!(message, Message::Tool { .. }) {
+            self.emit_event(AppEvent::MessageAdded {
+                message,
+                model: self.current_model,
+            });
+        }
+    }
+
+    // Renamed from process_user_message to make it clear it starts an op
+    // Returns the event receiver if a standard agent operation was started
+    pub async fn process_user_message(
+        &mut self,
+        message: String,
+    ) -> Result<Option<mpsc::Receiver<AgentEvent>>> {
+        // Cancel any existing operations first
+        self.cancel_current_processing().await;
+
+        // Check for incomplete tool calls and inject cancelled tool results
+        self.inject_cancelled_tool_results().await;
+
+        // Create a new operation context
+        let op_context = OpContext::new();
+        self.current_op_context = Some(op_context);
+
+        // Add user message
+        self.add_message(Message::User {
+            content: vec![UserContent::Text {
+                text: message.clone(),
+            }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
+        })
+        .await;
+
+        // Start thinking and spawn agent operation
+        self.emit_event(AppEvent::ThinkingStarted);
+        match self.spawn_agent_operation().await {
+            Ok(maybe_receiver) => Ok(maybe_receiver), // Return the receiver
+            Err(e) => {
+                error!(target:
+                    "App.start_standard_operation",
+                    "Error spawning agent operation task: {}", e,
+                );
+                self.emit_event(AppEvent::ThinkingCompleted); // Stop thinking on spawn error
+                self.emit_event(AppEvent::Error {
+                    message: format!("Failed to start agent operation: {}", e),
+                });
+                self.current_op_context = None; // Clean up context
+                Err(e)
+            }
+        }
+    }
+
+    async fn spawn_agent_operation(&mut self) -> Result<Option<mpsc::Receiver<AgentEvent>>> {
+        debug!(target:
+            "app.spawn_agent_operation",
+            "Spawning agent operation task...",
+        );
+
+        // Get tools for the operation
+        // Always get all tools from the tool executor (includes workspace tools)
+        let mut tool_schemas = self.tool_executor.get_tool_schemas().await;
+
+        // Then apply visibility filtering if we have a session config
+        if let Some(session_config) = &self.session_config {
+            tool_schemas = session_config.filter_tools_by_visibility(tool_schemas);
+        }
+
+        // Get mutable access to OpContext and its token
+        let op_context = match &mut self.current_op_context {
+            Some(ctx) => ctx,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "No operation context available to spawn agent operation",
+                ));
+            }
+        };
+        let token = op_context.cancel_token.clone();
+
+        // Get messages (snapshot)
+        let api_messages = {
+            let conversation_guard = self.conversation.lock().await;
+            conversation_guard.messages.clone()
+        };
+
+        let current_model = self.current_model;
+        let agent_executor = self.agent_executor.clone();
+
+        // Create system prompt using workspace if available, otherwise fall back to local collection
+        let system_prompt = if let Some(workspace) = &self.workspace {
+            create_system_prompt_with_workspace(Some(current_model), workspace.as_ref()).await?
+        } else {
+            create_system_prompt(Some(current_model))?
+        };
+
+        // --- Updated Tool Executor Callback with Approval Logic ---
+        let tool_executor_for_callback = self.tool_executor.clone();
+        let approved_tools_clone = self.approved_tools.clone(); // Clone for capture
+
+        // Clone command_tx for the tool executor callback
+        // This allows the callback to send tool approval requests to the actor loop
+        let command_tx = OpContext::command_tx().clone();
+
+        let tool_executor_callback =
+            move |tool_call: ToolCall, callback_token: CancellationToken| {
+                // Clone items needed inside the async block
+                let executor = tool_executor_for_callback.clone();
+                let approved_tools = approved_tools_clone.clone();
+                let command_tx = command_tx.clone();
+                let tool_call_clone = tool_call.clone(); // Clone for approval request
+                let tool_name = tool_call.name.clone();
+                let tool_id = tool_call.id.clone();
+
+                async move {
+                    let requires_approval = match executor.requires_approval(&tool_name).await {
+                        Ok(req) => req,
+                        Err(e) => {
+                            return Err(ToolError::InternalError(format!(
+                                "Failed to check tool approval status for {}: {}",
+                                tool_name, e
+                            )));
+                        }
+                    };
+
+                    let decision = if !requires_approval || approved_tools.contains(&tool_name) {
+                        // Skip approval for tools that don't need it or are already approved
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn\'t require approval or already in approved_tools set");
+                        ApprovalDecision::Approved
+                    } else {
+                        // Needs interactive approval - create oneshot channel for receiving the decision
+                        let (tx, rx) = oneshot::channel();
+
+                        // Send approval request to the actor loop via command channel
+                        if let Err(e) = command_tx
+                            .send(AppCommand::RequestToolApprovalInternal {
+                                tool_call: tool_call_clone,
+                                responder: tx,
+                            })
+                            .await
+                        {
+                            // If we can't send the request, treat as an error
+                            error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
+                            return Err(ToolError::InternalError(format!(
+                                "Failed to request tool approval: {}",
+                                e
+                            )));
+                        }
+
+                        // Wait for the decision or cancellation
+                        tokio::select! {
+                            biased;
+                            _ = callback_token.cancelled() => {
+                                 info!(tool_id=%tool_id, tool_name=%tool_name, "Tool approval cancelled while waiting for user response.");
+                                 return Err(ToolError::Cancelled(tool_name));
+                            }
+                            decision_result = rx => {
+                                match decision_result {
+                                    Ok(d) => d, // User made a choice
+                                    Err(_) => {
+                                         // Responder was dropped (likely due to cancellation elsewhere or shutdown)
+                                         warn!(tool_id=%tool_id, tool_name=%tool_name, "Approval decision channel closed for tool.");
+                                         ApprovalDecision::Denied // Treat as denied
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    // --- Execute or Deny ---
+                    match decision {
+                        ApprovalDecision::Approved => {
+                            // Approval granted, execute the tool
+                            info!(tool_id=%tool_id, tool_name=%tool_name, "Executing approved tool via callback.");
+
+                            // NOTE: AgentExecutor now sends the ExecutingTool event after we return from this callback
+                            // to properly signal UI when a tool is being executed
+
+                            executor
+                                .execute_tool_with_cancellation(&tool_call, callback_token)
+                                .await
+                        }
+                        ApprovalDecision::Denied => {
+                            warn!(tool_id=%tool_id, tool_name=%tool_name, "Tool execution denied via callback.");
+                            Err(ToolError::DeniedByUser(tool_name))
+                        }
+                    }
+                }
+            };
+
+        let (agent_event_tx, agent_event_rx) = mpsc::channel(100);
+        op_context.tasks.spawn(async move {
+            debug!(target:
+                "spawn_agent_operation task",
+                "Agent operation task started.",
+            );
+            let request = AgentExecutorRunRequest {
+                model: current_model,
+                initial_messages: api_messages,
+                system_prompt: Some(system_prompt),
+                available_tools: tool_schemas,
+                tool_executor_callback,
+            };
+            let operation_result = agent_executor
+                .run(request, agent_event_tx, token)
+                .await;
+
+            debug!(target: "spawn_agent_operation task", "Agent operation task finished with result: {:?}", operation_result.is_ok());
+
+            TaskOutcome::AgentOperationComplete {
+                result: operation_result,
+            }
+        });
+
+        debug!(target:
+            "app.spawn_agent_operation",
+            "Agent operation task successfully spawned.",
+        );
+        Ok(Some(agent_event_rx))
+    }
+
+    // Modified handle_command to return only the response string (or None)
+    // It now starts tasks directly but doesn't return the receiver.
+    pub async fn handle_command(
+        &mut self,
+        command: &str,
+    ) -> Result<Option<conversation::CommandResponse>> {
+        let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
+        let command_name = parts[0];
+        let args = parts.get(1).unwrap_or(&"").trim();
+
+        // Cancel any previous operation before starting a command
+        // Note: This is also called by start_standard_operation if user input isn't a command
+        self.cancel_current_processing().await;
+
+        match command_name {
+            "clear" => {
+                self.conversation.lock().await.clear();
+                self.approved_tools.clear(); // Also clear tool approvals
+                Ok(Some(conversation::CommandResponse::Text(
+                    "Conversation and tool approvals cleared.".to_string(),
+                )))
+            }
+            "compact" => {
+                // Create OpContext for cancellable command
+                let op_context = OpContext::new();
+                self.current_op_context = Some(op_context);
+                let token = self
+                    .current_op_context
+                    .as_ref()
+                    .unwrap()
+                    .cancel_token
+                    .clone();
+
+                // Spawn the compaction task within the context
+                // TODO: Add TaskOutcome::CompactResult and handle in actor loop
+                // For now, await directly and clear context
+                warn!(target:
+                    "handle_command",
+                    "Compact command task spawning needs TaskOutcome handling in actor loop.",
+                );
+                let result = match self.compact_conversation(token).await {
+                    Ok(result) => Ok(Some(conversation::CommandResponse::Compact(result))),
+                    Err(e) => {
+                        error!(target:
+                            "App.handle_command",
+                            "Error during compact: {}", e,
+                        );
+                        Err(e) // Propagate actual errors
+                    }
+                }?;
+                self.current_op_context = None; // Clear context after command
+                Ok(result)
+            }
+            "help" => Ok(Some(conversation::CommandResponse::Text(build_help_text()))),
+            "model" => {
+                if args.is_empty() {
+                    // If no model specified, list available models
+                    use crate::api::Model;
+                    use strum::IntoEnumIterator;
+
+                    let current_model = self.get_current_model();
+                    let available_models: Vec<String> = Model::iter()
+                        .map(|m| {
+                            let model_str = m.as_ref();
+                            let aliases = m.aliases();
+                            let alias_str = if aliases.is_empty() {
+                                String::new()
+                            } else if aliases.len() == 1 {
+                                format!(" (alias: {})", aliases[0])
+                            } else {
+                                format!(" (aliases: {})", aliases.join(", "))
+                            };
+
+                            if m == current_model {
+                                format!("* {}{}", model_str, alias_str) // Mark current model with asterisk
+                            } else {
+                                format!("  {}{}", model_str, alias_str)
+                            }
+                        })
+                        .collect();
+
+                    Ok(Some(conversation::CommandResponse::Text(format!(
+                        "Current model: {}\nAvailable models:\n{}",
+                        current_model.as_ref(),
+                        available_models.join("\n")
+                    ))))
+                } else {
+                    // Try to set the model
+                    use crate::api::Model;
+                    use std::str::FromStr;
+
+                    match Model::from_str(args) {
+                        Ok(model) => match self.set_model(model) {
+                            Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!(
+                                "Model changed to {}",
+                                model.as_ref()
+                            )))),
+                            Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
+                                "Failed to set model: {}",
+                                e
+                            )))),
+                        },
+                        Err(_) => Ok(Some(conversation::CommandResponse::Text(format!(
+                            "Unknown model: {}",
+                            args
+                        )))),
+                    }
+                }
+            }
+            _ => Ok(Some(conversation::CommandResponse::Text(format!(
+                "Unknown command: {}",
+                command_name
+            )))),
+        }
+    }
+
+    pub async fn compact_conversation(
+        &mut self,
+        token: CancellationToken,
+    ) -> Result<CompactResult> {
+        info!(target:"App.compact_conversation", "Compacting conversation...");
+        let client = self.api_client.clone();
+        let conversation_arc = self.conversation.clone();
+
+        // Run directly but make it cancellable.
+        let result = tokio::select! {
+            biased;
+            res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res?,
+            _ = token.cancelled() => {
+                 info!(target:"App.compact_conversation", "Compaction cancelled.");
+                 return Ok(CompactResult::Cancelled);
+             }
+        };
+
+        info!(target:"App.compact_conversation", "Conversation compacted.");
+        Ok(result)
+    }
+
+    pub async fn cancel_current_processing(&mut self) {
+        // Use operation context for cancellation if available
+        if let Some(mut op_context) = self.current_op_context.take() {
+            info!(target:
+                "App.cancel_current_processing",
+                "Cancelling current operation via OpContext",
+            );
+
+            // Capture the current state for the cancellation info
+            let active_tools = op_context.active_tools.values().cloned().collect();
+            // TODO: Get accurate pending approval status from the actor loop's ApprovalState
+            let cancellation_info = CancellationInfo {
+                api_call_in_progress: false, // Handled by AgentExecutor now
+                active_tools,
+                pending_tool_approvals: false, // TODO: Update this based on actor state
+            };
+
+            op_context.cancel_and_shutdown().await;
+
+            self.emit_event(AppEvent::OperationCancelled {
+                info: cancellation_info,
+            });
+            // Don't return here, actor loop needs to clear receiver if present
+        } else {
+            warn!(target:
+                "App.cancel_current_processing",
+                "Attempted to cancel processing, but no active operation context was found.",
+            );
+        }
+        // Clearing the receiver is now handled in handle_app_command
+    }
+
+    /// Inject cancelled tool results for any incomplete tool calls in the conversation.
+    /// This ensures that the Anthropic API receives proper tool_result blocks for every tool_use block.
+    pub async fn inject_cancelled_tool_results(&mut self) {
+        let incomplete_tool_calls = {
+            let conversation_guard = self.conversation.lock().await;
+            self.find_incomplete_tool_calls(&conversation_guard)
+        };
+
+        if !incomplete_tool_calls.is_empty() {
+            info!(target: "App.inject_cancelled_tool_results",
+                  "Found {} incomplete tool calls, injecting cancellation results",
+                  incomplete_tool_calls.len());
+
+            for tool_call in incomplete_tool_calls {
+                let cancelled_result = Message::Tool {
+                    tool_use_id: tool_call.id.clone(),
+                    result: ToolResult::Error {
+                        error: "Tool execution was cancelled by user before completion."
+                            .to_string(),
+                    },
+                    timestamp: Message::current_timestamp(),
+                    id: Message::generate_id("tool", Message::current_timestamp()),
+                };
+
+                // Add the message using the standard add_message method to ensure proper event emission
+                self.add_message(cancelled_result).await;
+                debug!(target: "App.inject_cancelled_tool_results",
+                       "Injected cancellation result for tool call: {} ({})",
+                       tool_call.name, tool_call.id);
+            }
+        }
+    }
+
+    /// Find tool calls that don't have corresponding tool results
+    fn find_incomplete_tool_calls(&self, conversation: &Conversation) -> Vec<ToolCall> {
+        let mut tool_calls = Vec::new();
+        let mut tool_results = std::collections::HashSet::new();
+
+        // First pass: collect all tool results
+        for message in &conversation.messages {
+            if let Message::Tool { tool_use_id, .. } = message {
+                tool_results.insert(tool_use_id.clone());
+            }
+        }
+
+        // Second pass: find tool calls without results
+        for message in &conversation.messages {
+            if let Message::Assistant { content, .. } = message {
+                for block in content {
+                    if let AssistantContent::ToolCall { tool_call } = block {
+                        if !tool_results.contains(&tool_call.id) {
+                            tool_calls.push(tool_call.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        tool_calls
+    }
+}
+
+// Approval queue helper struct
+struct ApprovalQueue {
+    current: Option<(String, ToolCall, oneshot::Sender<ApprovalDecision>)>,
+    queued: std::collections::VecDeque<(String, ToolCall, oneshot::Sender<ApprovalDecision>)>,
+}
+
+impl ApprovalQueue {
+    fn new() -> Self {
+        Self {
+            current: None,
+            queued: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn add_request(
+        &mut self,
+        id: String,
+        tool_call: ToolCall,
+        responder: oneshot::Sender<ApprovalDecision>,
+    ) {
+        self.queued.push_back((id, tool_call, responder));
+    }
+
+    fn cancel_all(&mut self) {
+        // Drop current request responder to signal cancellation
+        if let Some((id, _, _)) = self.current.take() {
+            info!(target: "ApprovalQueue", "Cancelled active tool approval request for ID '{}'", id);
+        }
+        // Drop all queued responders
+        if !self.queued.is_empty() {
+            info!(target: "ApprovalQueue", "Clearing {} queued tool approval requests", self.queued.len());
+            self.queued.clear();
+        }
+    }
+}
+
+// Define the App actor loop function with minimal refactoring
+pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppCommand>) {
+    info!(target: "app_actor_loop", "App actor loop started.");
+
+    // Approval queue state
+    let mut approval_queue = ApprovalQueue::new();
+
+    // Active agent event receiver
+    let mut active_agent_event_rx: Option<mpsc::Receiver<AgentEvent>> = None;
+
+    // Track if the associated task for the active receiver has completed
+    let mut agent_task_completed = false;
+
+    loop {
+        tokio::select! {
+            // Handle incoming commands from the UI/Main thread
+            Some(command) = command_rx.recv() => {
+                if handle_app_command(
+                    &mut app,
+                    command,
+                    &mut approval_queue,
+                    &mut active_agent_event_rx,
+                )
+                .await
+                {
+                    break; // Exit loop if Shutdown command was received
+                }
+                // Reset task completion flag only if a new operation started
+                if active_agent_event_rx.is_some() {
+                    debug!(target: "app_actor_loop", "Resetting agent_task_completed flag due to new operation.");
+                    agent_task_completed = false;
+                }
+            }
+
+            // Poll for completed tasks (Agent Operations) from OpContext
+            // This arm MUST be polled *before* the event receiver arm
+            result = async {
+                if let Some(ctx) = app.current_op_context.as_mut() {
+                    if ctx.tasks.is_empty() { None } else { ctx.tasks.join_next().await }
+                } else {
+                    None
+                }
+            }, if app.current_op_context.is_some() => {
+                if let Some(join_result) = result {
+                    match join_result {
+                        Ok(task_outcome) => {
+                            let is_standard_op = matches!(task_outcome, TaskOutcome::AgentOperationComplete{..});
+
+                            handle_task_outcome(&mut app, task_outcome).await;
+
+                            if is_standard_op {
+                                debug!(target: "app_actor_loop", "Agent task completed flag set to true.");
+                                agent_task_completed = true;
+                            }
+
+                            // Check if we should signal ThinkingCompleted now
+                            if agent_task_completed && active_agent_event_rx.is_none() {
+                                debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (Task done, receiver drained).");
+                                app.emit_event(AppEvent::ThinkingCompleted);
+                                agent_task_completed = false;
+                            }
+                        }
+                        Err(join_err) => {
+                            error!(target: "app_actor_loop", "Task join error: {}", join_err);
+                            app.current_op_context = None;
+                            active_agent_event_rx = None;
+                            agent_task_completed = false;
+                            app.emit_event(AppEvent::ThinkingCompleted);
+                            app.emit_event(AppEvent::Error {
+                                message: format!("A task failed unexpectedly: {}", join_err)
+                            });
+                        }
+                    }
+                } else {
+                    // JoinSet returned None - all tasks finished
+                    if let Some(_ctx) = app.current_op_context.take() {
+                        debug!(target: "app_actor_loop", "JoinSet empty. Clearing context.");
+                        agent_task_completed = true;
+
+                        if agent_task_completed && active_agent_event_rx.is_none() {
+                            debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (JoinSet empty, receiver drained).");
+                            app.emit_event(AppEvent::ThinkingCompleted);
+                            agent_task_completed = false;
+                        }
+                    }
+                }
+            }
+
+            // Poll for incoming AgentEvents
+            // Poll this *after* task completion to ensure correct ordering
+            maybe_agent_event = async { active_agent_event_rx.as_mut().unwrap().recv().await },
+            if active_agent_event_rx.is_some() => {
+                match maybe_agent_event {
+                    Some(event) => {
+                        handle_agent_event(&mut app, event).await;
+                    }
+                    None => {
+                        // Channel closed
+                        debug!(target: "app_actor_loop", "Agent event channel closed.");
+                        active_agent_event_rx = None;
+
+                        if agent_task_completed {
+                            debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (Receiver closed, task completed).");
+                            app.emit_event(AppEvent::ThinkingCompleted);
+                            agent_task_completed = false;
+                        }
+                    }
+                }
+            }
+
+            // Default branch if no other arms are ready
+            else => {}
+        }
+    }
+    info!(target: "app_actor_loop", "App actor loop finished.");
+}
+
+// Process the next approval request from the queue
+async fn process_next_approval_request(app: &mut App, queue: &mut ApprovalQueue) {
+    if queue.current.is_some() {
+        debug!(target: "process_next_approval", "An approval request is already active.");
+        return;
+    }
+
+    while let Some((id, tool_call, responder)) = queue.queued.pop_front() {
+        if app.approved_tools.contains(&tool_call.name) {
+            info!(target: "process_next_approval", "Auto-approving tool '{}' (ID: {})", tool_call.name, id);
+            if responder.send(ApprovalDecision::Approved).is_err() {
+                warn!(target: "process_next_approval", "Failed to send auto-approval for tool ID '{}'", id);
+            }
+        } else {
+            // Not auto-approved, send to UI
+            info!(target: "process_next_approval", "Sending tool approval request to UI for '{}' (ID: {})", tool_call.name, id);
+            let parameters = tool_call.parameters.clone();
+            let name = tool_call.name.clone();
+
+            queue.current = Some((id.clone(), tool_call, responder));
+
+            app.emit_event(AppEvent::RequestToolApproval {
+                name,
+                parameters,
+                id,
+            });
+            return;
+        }
+    }
+    debug!(target: "process_next_approval", "Approval queue processed.");
+}
+
+// Handle app commands
+async fn handle_app_command(
+    app: &mut App,
+    command: AppCommand,
+    approval_queue: &mut ApprovalQueue,
+    active_agent_event_rx: &mut Option<mpsc::Receiver<AgentEvent>>,
+) -> bool {
+    debug!(target: "handle_app_command", "Received command: {:?}", command);
+
+    match command {
+        AppCommand::ProcessUserInput(message) => {
+            if message.starts_with('/') {
+                // Clear previous receiver if any before running command
+                if active_agent_event_rx.is_some() {
+                    warn!(target: "handle_app_command", "Clearing previous active agent event receiver due to new command input.");
+                    *active_agent_event_rx = None;
+                }
+                handle_slash_command(app, &message).await;
+            } else {
+                // Regular user message, start a standard operation
+                if active_agent_event_rx.is_some() {
+                    warn!(target: "handle_app_command", "Clearing previous active agent event receiver due to new user input.");
+                    *active_agent_event_rx = None;
+                }
+                match app.process_user_message(message).await {
+                    Ok(maybe_receiver) => {
+                        *active_agent_event_rx = maybe_receiver;
+                    }
+                    Err(e) => {
+                        error!(target: "handle_app_command", "Error starting standard operation: {}", e);
+                    }
+                }
+            }
+            false
+        }
+        AppCommand::RestoreConversation {
+            messages,
+            approved_tools,
+        } => {
+            // Atomically restore entire conversation state
+            debug!(target:"handle_app_command", "Restoring conversation with {} messages and {} approved tools",
+                messages.len(), approved_tools.len());
+
+            // Restore messages
+            let mut conversation_guard = app.conversation.lock().await;
+            conversation_guard.messages = messages;
+            drop(conversation_guard);
+
+            // Restore approved tools
+            app.approved_tools = approved_tools;
+
+            debug!(target:"handle_app_command", "Conversation restoration complete");
+            false
+        }
+
+        AppCommand::HandleToolResponse {
+            id,
+            approved,
+            always,
+        } => {
+            if let Some((current_id, current_tool_call, responder)) = approval_queue.current.take()
+            {
+                if current_id != id {
+                    error!(target: "handle_app_command", "Mismatched tool ID. Expected '{}', got '{}'", current_id, id);
+                    approval_queue
+                        .queued
+                        .push_front((current_id, current_tool_call, responder));
+                } else {
+                    let decision = if approved {
+                        ApprovalDecision::Approved
+                    } else {
+                        ApprovalDecision::Denied
+                    };
+
+                    let approved_tool_name = current_tool_call.name.clone();
+                    if approved && always {
+                        app.approved_tools.insert(approved_tool_name.clone());
+                        debug!(target: "handle_app_command", "Added tool '{}' to always-approved list.", approved_tool_name);
+                    }
+
+                    if responder.send(decision).is_err() {
+                        warn!(target: "handle_app_command", "Failed to send approval decision for tool ID '{}'", id);
+                    }
+                }
+            } else {
+                error!(target: "handle_app_command", "Received tool response for ID '{}' but no current approval request was active.", id);
+            }
+
+            process_next_approval_request(app, approval_queue).await;
+            false
+        }
+
+        AppCommand::CancelProcessing => {
+            debug!(target: "handle_app_command", "Handling CancelProcessing command.");
+            app.cancel_current_processing().await;
+            approval_queue.cancel_all();
+
+            if active_agent_event_rx.is_some() {
+                debug!(target: "handle_app_command", "Clearing active agent event receiver due to cancellation.");
+                *active_agent_event_rx = None;
+            }
+            app.emit_event(AppEvent::ThinkingCompleted);
+            false
+        }
+
+        AppCommand::ExecuteBashCommand { command } => {
+            debug!(target: "handle_app_command", "Executing bash command: {}", command);
+
+            // Create a tool call for the bash command
+            let tool_call = ToolCall {
+                id: format!("bash_{}", uuid::Uuid::new_v4()),
+                name: "bash".to_string(),
+                parameters: serde_json::json!({
+                    "command": command,
+                }),
+            };
+
+            // Create a cancellation token for the execution
+            let token = CancellationToken::new();
+
+            // Execute the bash tool directly (bypassing validation)
+            match app
+                .tool_executor
+                .execute_tool_direct(&tool_call, token)
+                .await
+            {
+                Ok(output) => {
+                    // Parse the output to extract stdout/stderr/exit code
+                    // The bash tool returns output in a specific format
+                    let (stdout, stderr, exit_code) = parse_bash_output(&output);
+
+                    // Add the command execution as a message
+                    let message = Message::User {
+                        content: vec![UserContent::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        }],
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("user", Message::current_timestamp()),
+                    };
+                    app.add_message(message).await;
+                }
+                Err(e) => {
+                    error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
+
+                    // Add error as a command execution with error output
+                    let message = Message::User {
+                        content: vec![UserContent::CommandExecution {
+                            command,
+                            stdout: String::new(),
+                            stderr: format!("Error executing command: {}", e),
+                            exit_code: -1,
+                        }],
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("user", Message::current_timestamp()),
+                    };
+                    app.add_message(message).await;
+                }
+            }
+            false
+        }
+        AppCommand::Shutdown => {
+            info!(target: "handle_app_command", "Received Shutdown command.");
+            app.cancel_current_processing().await;
+            approval_queue.cancel_all();
+            *active_agent_event_rx = None;
+            true
+        }
+        AppCommand::GetCurrentConversation => {
+            // This command is now handled synchronously via RPC
+            // Should not be called directly anymore
+            warn!(target:"handle_app_command", "GetCurrentConversation command received - this should use the sync RPC instead");
+            false
+        }
+        AppCommand::RequestToolApprovalInternal {
+            tool_call,
+            responder,
+        } => {
+            let tool_id = tool_call.id.clone();
+            let tool_name = tool_call.name.clone();
+
+            info!(target: "handle_app_command", "Received internal request for tool approval: '{}' (ID: {})", tool_name, tool_id);
+
+            approval_queue.add_request(tool_id, tool_call, responder);
+            process_next_approval_request(app, approval_queue).await;
+            false
+        }
+
+        AppCommand::ExecuteCommand(cmd) => {
+            warn!(target: "handle_app_command", "Received ExecuteCommand: {}", cmd);
+            if active_agent_event_rx.is_some() {
+                warn!(target: "handle_app_command", "Clearing previous active agent event receiver due to ExecuteCommand.");
+                *active_agent_event_rx = None;
+            }
+            handle_slash_command(app, &cmd).await;
+            false
+        }
+    }
+}
+
+// Handle slash commands
+async fn handle_slash_command(app: &mut App, command: &str) {
+    // Parse the command type
+    let command_type = conversation::AppCommandType::from_command_str(command);
+
+    match app.handle_command(command).await {
+        Ok(response_option) => {
+            if let Some(response) = response_option {
+                app.emit_event(AppEvent::CommandResponse {
+                    command: command_type,
+                    response,
+                    id: format!("cmd_resp_{}", uuid::Uuid::new_v4()),
+                });
+            }
+        }
+        Err(e) => {
+            error!(target: "handle_slash_command", "Error running command '{}': {}", command, e);
+            app.emit_event(AppEvent::Error {
+                message: format!("Command failed: {}", e),
+            });
+            app.emit_event(AppEvent::ThinkingCompleted);
+        }
+    }
+}
+// Handle agent events
+async fn handle_agent_event(app: &mut App, event: AgentEvent) {
+    debug!(target: "handle_agent_event", "Handling event: {:?}", event);
+    match event {
+        AgentEvent::AssistantMessagePart(delta) => {
+            // Find the ID of the last assistant message to append to
+            let maybe_msg_id = {
+                let conversation_guard = app.conversation.lock().await;
+                conversation_guard
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| matches!(m, Message::Assistant { .. }))
+                    .map(|m| m.id().to_string())
+            };
+            if let Some(msg_id) = maybe_msg_id {
+                app.emit_event(AppEvent::MessagePart { id: msg_id, delta });
+            } else {
+                warn!(target: "handle_agent_event", "Received MessagePart but no assistant message found to append to.");
+            }
+        }
+        AgentEvent::AssistantMessageFinal(app_message) => {
+            let msg_id = app_message.id().to_string();
+
+            // Add/Update message in conversation
+            let mut conversation_guard = app.conversation.lock().await;
+            if let Some(existing_msg) = conversation_guard
+                .messages
+                .iter_mut()
+                .find(|m| m.id() == msg_id)
+            {
+                // Replace the entire message
+                *existing_msg = app_message.clone();
+                drop(conversation_guard);
+
+                debug!(target: "handle_agent_event", "Updated existing message ID {} with final content.", msg_id);
+
+                // Extract text content for the event
+                let content = app_message.extract_text();
+
+                app.emit_event(AppEvent::MessageUpdated {
+                    id: msg_id.clone(),
+                    content,
+                });
+            } else {
+                drop(conversation_guard);
+                app.add_message(app_message).await;
+                debug!(target: "handle_agent_event", "Added new final message ID {}.", msg_id);
+            }
+        }
+        AgentEvent::ExecutingTool { tool_call_id, name } => {
+            app.emit_event(AppEvent::ToolCallStarted {
+                id: tool_call_id,
+                name,
+                model: app.current_model,
+            });
+        }
+        AgentEvent::ToolResultReceived(tool_result) => {
+            let tool_name = app
+                .conversation
+                .lock()
+                .await
+                .find_tool_name_by_id(&tool_result.tool_call_id)
+                .unwrap_or_else(|| "unknown_tool".to_string());
+
+            // Add result to conversation store
+            app.conversation
+                .lock()
+                .await
+                .add_tool_result(tool_result.tool_call_id.clone(), tool_result.output.clone());
+
+            // Emit the corresponding AppEvent based on is_error flag
+            if tool_result.is_error {
+                app.emit_event(AppEvent::ToolCallFailed {
+                    id: tool_result.tool_call_id,
+                    name: tool_name,
+                    error: tool_result.output,
+                    model: app.current_model,
+                });
+            } else {
+                app.emit_event(AppEvent::ToolCallCompleted {
+                    id: tool_result.tool_call_id,
+                    name: tool_name,
+                    result: tool_result.output,
+                    model: app.current_model,
+                });
+            }
+        }
+    }
+}
+
+// Handle task outcomes
+async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
+    match task_outcome {
+        TaskOutcome::AgentOperationComplete { result } => {
+            info!(target: "handle_task_outcome", "Standard agent operation task completed processing.");
+
+            match result {
+                Ok(_) => {
+                    info!(target: "handle_task_outcome", "Agent operation task reported success.");
+                }
+                Err(e) => {
+                    error!(target: "handle_task_outcome", "Agent operation task reported failure: {}", e);
+                    // Emit error event only if it wasn't a cancellation
+                    if !matches!(e, AgentExecutorError::Cancelled) {
+                        app.emit_event(AppEvent::Error {
+                            message: format!("Operation failed: {}", e),
+                        });
+                    }
+                }
+            }
+
+            // Clear the context
+            debug!(target: "handle_task_outcome", "Clearing OpContext for completed standard operation.");
+            app.current_op_context = None;
+        }
+        TaskOutcome::DispatchAgentResult { result } => {
+            info!(target: "handle_task_outcome", "Dispatch agent operation task completed.");
+
+            match result {
+                Ok(response_text) => {
+                    info!(target: "handle_task_outcome", "Dispatch agent successful.");
+                    app.add_message(Message::Assistant {
+                        content: vec![AssistantContent::Text {
+                            text: format!("Dispatch Agent Result:\n{}", response_text),
+                        }],
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("assistant", Message::current_timestamp()),
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    error!(target: "handle_task_outcome", "Dispatch agent failed: {}", e);
+                    app.emit_event(AppEvent::Error {
+                        message: format!("Dispatch agent failed: {}", e),
+                    });
+                }
+            }
+
+            // Clear context and stop thinking immediately for dispatch operations
+            debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ThinkingCompleted for dispatch operation.");
+            app.current_op_context = None;
+            app.emit_event(AppEvent::ThinkingCompleted);
+        }
+    }
+}
+
+fn create_system_prompt(model: Option<Model>) -> Result<String> {
+    let env_info = EnvironmentInfo::collect()?;
+
+    // Use model-specific prompt if available, otherwise use default
+    let system_prompt_body = if let Some(model) = model {
+        get_model_system_prompt(model)
+    } else {
+        include_str!("../../../../prompts/system_prompt.md")
+    };
+
+    let prompt = format!(
+        r#"{}
+
+{}"#,
+        system_prompt_body,
+        env_info.as_context()
+    );
+    Ok(prompt)
+}
+
+async fn create_system_prompt_with_workspace(
+    model: Option<Model>,
+    workspace: &dyn crate::workspace::Workspace,
+) -> Result<String> {
+    let env_info = workspace.environment().await?;
+
+    // Use model-specific prompt if available, otherwise use default
+    let system_prompt_body = if let Some(model) = model {
+        get_model_system_prompt(model)
+    } else {
+        include_str!("../../../../prompts/system_prompt.md")
+    };
+
+    let prompt = format!(
+        r#"{}
+
+{}"#,
+        system_prompt_body,
+        env_info.as_context()
+    );
+    Ok(prompt)
+}
+
+fn get_model_system_prompt(model: Model) -> &'static str {
+    match model {
+        Model::O3_20250416 => include_str!("../../../../prompts/models/o3.md"),
+        _ => include_str!("../../../../prompts/system_prompt.md"),
+    }
+}
+
+/// Parse the output from the bash tool
+/// The bash tool returns stdout on success, or a formatted error message on failure
+
+fn build_help_text() -> String {
+    "Available slash commands:\n\
+/help                        - Show this help message\n\
+/model [name]                - Show or set the current language model. Without args lists models.\n\
+/clear                       - Clear the current conversation history and tool approvals.\n\
+/compact                     - Summarize older messages to save context space.\n\
+/cancel                      - Cancel the current operation in progress.\n"
+        .to_string()
+}
+
+fn parse_bash_output(output: &str) -> (String, String, i32) {
+    // Check if this is an error output from the bash tool
+    if output.starts_with("Command failed with exit code") {
+        // Parse the error format:
+        // "Command failed with exit code {}\n--- STDOUT ---\n{}\n--- STDERR ---\n{}"
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = -1;
+
+        let lines: Vec<&str> = output.lines().collect();
+        let mut i = 0;
+
+        // Extract exit code from first line
+        if let Some(first_line) = lines.first() {
+            if let Some(code_str) = first_line.strip_prefix("Command failed with exit code ") {
+                exit_code = code_str.parse().unwrap_or(-1);
+            }
+        }
+
+        // Find stdout section
+        while i < lines.len() {
+            if lines[i] == "--- STDOUT ---" {
+                i += 1;
+                while i < lines.len() && lines[i] != "--- STDERR ---" {
+                    if !stdout.is_empty() {
+                        stdout.push('\n');
+                    }
+                    stdout.push_str(lines[i]);
+                    i += 1;
+                }
+            } else if lines[i] == "--- STDERR ---" {
+                i += 1;
+                while i < lines.len() {
+                    if !stderr.is_empty() {
+                        stderr.push('\n');
+                    }
+                    stderr.push_str(lines[i]);
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        (stdout, stderr, exit_code)
+    } else {
+        // Success case - output is just stdout
+        (output.to_string(), String::new(), 0)
+    }
+}
