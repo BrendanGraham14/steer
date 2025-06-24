@@ -1,11 +1,14 @@
-use conductor::api::ApiError;
-use conductor::api::{Client, Model};
-use conductor::app::conversation::{AssistantContent, Message, ToolCall, ToolResult, UserContent};
-use conductor::config::LlmConfig;
+use conductor_core::api::ApiError;
+use conductor_core::api::{Client, Model};
+use conductor_core::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
+use conductor_core::config::LlmConfig;
+use conductor_core::workspace::Workspace;
+use conductor_core::workspace::local::LocalWorkspace;
 use dotenv::dotenv;
 use serde_json::json;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tools::{InputSchema, ToolSchema as Tool};
+use tools::{InputSchema, ToolCall, ToolSchema as Tool};
 
 #[tokio::test]
 #[ignore]
@@ -127,15 +130,15 @@ async fn test_api_with_tools() {
 
     let mut tasks = Vec::new();
 
-    // Get tools once
-    let mut backend_registry = conductor::tools::BackendRegistry::new();
-    backend_registry.register(
-        "local".to_string(),
-        std::sync::Arc::new(conductor::tools::LocalBackend::full()),
+    // Get tools operation_cancelled
+    let workspace = Arc::new(
+        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+            .await
+            .unwrap(),
     );
-    let tool_executor_template =
-        conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
-    let tools = tool_executor_template.to_api_tools(); // Clone this Vec<Tool>
+
+    let tools = workspace.available_tools().await; // Get the Vec<Tool>
+    let pwd = std::env::current_dir().unwrap(); // Get current directory for test
 
     for model in models_to_test {
         let client = client.clone(); // Clone Arc
@@ -206,20 +209,19 @@ async fn test_api_with_tools() {
             //     serde_json::to_string_pretty(&first_tool_call.parameters).unwrap()
             // );
 
-            // Execute the tool using ToolExecutor with cancellation
-            let mut backend_registry = conductor::tools::BackendRegistry::new();
-            backend_registry.register(
-                "local".to_string(),
-                std::sync::Arc::new(conductor::tools::LocalBackend::full()),
+            // Execute the tool using workspace with cancellation
+            let workspace = Arc::new(
+                LocalWorkspace::with_path(std::env::current_dir().unwrap())
+                    .await
+                    .unwrap(),
             );
-            let tool_executor =
-                conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
-            let result = tool_executor
-                .execute_tool_with_cancellation(
-                    first_tool_call,
-                    tokio_util::sync::CancellationToken::new(), // Use a separate token for tool execution
-                )
-                .await;
+            let ctx = conductor_core::tools::ExecutionContext::new(
+                "test-session".to_string(),
+                "test-operation".to_string(),
+                first_tool_call.id.clone(),
+                tokio_util::sync::CancellationToken::new(),
+            );
+            let result = workspace.execute_tool(first_tool_call, ctx).await;
 
             // Assert tool execution success within the task
             assert!(
@@ -733,14 +735,13 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             required: vec!["location".to_string()],
         },
     };
-    // Assuming ToolExecutor provides 'ls' or similar standard tools
-    let mut backend_registry = conductor::tools::BackendRegistry::new();
-    backend_registry.register(
-        "local".to_string(),
-        std::sync::Arc::new(conductor::tools::LocalBackend::full()),
+    // Get available tools from workspace
+    let workspace = Arc::new(
+        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+            .await
+            .unwrap(),
     );
-    let tool_executor = conductor::app::ToolExecutor::new(std::sync::Arc::new(backend_registry));
-    let mut tools = tool_executor.to_api_tools();
+    let mut tools = workspace.available_tools().await;
     tools.push(weather_tool);
 
     let response = client
@@ -812,7 +813,8 @@ async fn test_api_with_cancelled_tool_execution() {
                 Message::Tool {
                     tool_use_id: tool_call_id.clone(),
                     result: ToolResult::Success {
-                        output: "Tool execution was cancelled by user before completion.".to_string(),
+                        output: "Tool execution was cancelled by user before completion."
+                            .to_string(),
                     },
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
@@ -840,7 +842,10 @@ async fn test_api_with_cancelled_tool_execution() {
 
             // Check response
             let response = response.map_err(|e| {
-                eprintln!("API call failed for model {:?} with cancelled tool: {:?}", model, e);
+                eprintln!(
+                    "API call failed for model {:?} with cancelled tool: {:?}",
+                    model, e
+                );
                 e
             })?;
 
@@ -854,15 +859,18 @@ async fn test_api_with_cancelled_tool_execution() {
 
             // The model should acknowledge the cancellation and answer about Rust
             assert!(
-                response_text.to_lowercase().contains("rust") ||
-                response_text.to_lowercase().contains("programming") ||
-                response_text.to_lowercase().contains("language"),
+                response_text.to_lowercase().contains("rust")
+                    || response_text.to_lowercase().contains("programming")
+                    || response_text.to_lowercase().contains("language"),
                 "Response for model {:?} should address the Rust question, got: '{}'",
                 model,
                 response_text
             );
 
-            println!("Cancelled tool execution test for {:?} passed successfully!", model);
+            println!(
+                "Cancelled tool execution test for {:?} passed successfully!",
+                model
+            );
             Ok::<_, ApiError>(model)
         });
         tasks.push(task);

@@ -1,17 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use conductor::app::{AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision};
-    use conductor::app::conversation::{AssistantContent, Message, ToolCall, UserContent};
-    use conductor::config::LlmConfig;
-    use conductor::tools::ToolError;
-    use conductor::api::{Client as ApiClient, Model};
+    use conductor_core::api::{Client, Model};
+    use conductor_core::app::conversation::{AssistantContent, Message, Role, UserContent};
+    use conductor_core::app::{
+        AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
+    };
+    use conductor_core::config::LlmConfig;
+    use conductor_core::tools::ToolError;
     use dotenv::dotenv;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
     use tokio_util::sync::CancellationToken;
-    use tools::{InputSchema, ToolSchema as Tool};
+    use tools::{InputSchema, ToolCall, ToolSchema as Tool};
 
     // Helper function to create a basic text message
     fn text_message(role: &str, content: &str) -> Message {
@@ -36,10 +38,10 @@ mod tests {
     }
 
     // Helper to get a real client (requires env vars)
-    fn get_real_client() -> Arc<ApiClient> {
+    fn get_real_client() -> Arc<Client> {
         dotenv().ok(); // Load .env file if present
         let config = LlmConfig::from_env().expect("LLM config failed to load");
-        Arc::new(ApiClient::new(&config))
+        Arc::new(Client::new(&config))
     }
 
     // Test Case 1: Basic text response without tools
@@ -78,10 +80,12 @@ mod tests {
         // Basic assertions for real calls
         assert!(final_message_result.is_ok());
         let final_message = final_message_result.unwrap();
-        assert_eq!(final_message.role, MessageRole::Assistant);
-        match &final_message.content {
-            MessageContent::Text { content } => assert!(!content.is_empty()),
-            MessageContent::StructuredContent { content } => assert!(!content.0.is_empty()),
+        assert_eq!(final_message.role(), Role::Assistant);
+        match &final_message {
+            Message::Assistant { content, .. } => {
+                assert!(!content.is_empty());
+            }
+            _ => panic!("Expected Assistant message"),
         }; // Should have *some* content
 
         // Check events (expect at least one part and one final)
@@ -96,9 +100,9 @@ mod tests {
         }
         assert!(
             has_part
-                || match &final_message.content {
-                    MessageContent::Text { content } => !content.is_empty(),
-                    MessageContent::StructuredContent { content } => !content.0.is_empty(),
+                || match &final_message {
+                    Message::Assistant { content, .. } => !content.is_empty(),
+                    _ => false,
                 }
         ); // Ensure we received text either via parts or final message
         assert!(has_final);
@@ -111,10 +115,7 @@ mod tests {
         let client = get_real_client();
         let executor = AgentExecutor::new(client.clone());
         let model = Model::Gpt4_1Nano20250414; // Use a fast model supporting tools
-        let initial_messages = vec![text_message(
-            MessageRole::User,
-            "What is the capital of France?",
-        )];
+        let initial_messages = vec![text_message("user", "What is the capital of France?")];
         // Provide a dummy tool definition that the LLM might try to call
         let available_tools = vec![Tool {
             name: "get_capital".to_string(),
@@ -167,14 +168,22 @@ mod tests {
         // --- Assertions ---
         assert!(final_message_result.is_ok());
         let final_message = final_message_result.unwrap();
-        assert_eq!(final_message.role, MessageRole::Assistant);
+        assert_eq!(final_message.role(), Role::Assistant);
         // Check if the response contains "Paris" (case-insensitive)
+        let response_text = match &final_message {
+            Message::Assistant { content, .. } => content
+                .iter()
+                .filter_map(|c| match c {
+                    AssistantContent::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => panic!("Expected Assistant message"),
+        };
         assert!(
-            final_message
-                .content
-                .extract_text()
-                .to_lowercase()
-                .contains("paris")
+            response_text.to_lowercase().contains("paris"),
+            "Response should contain 'Paris'"
         );
 
         // Check Events - Look for key events, order might vary slightly
@@ -187,9 +196,10 @@ mod tests {
                 AgentEvent::AssistantMessageFinal(msg) => {
                     // Check if we have tool calls in the assistant content
                     if let Message::Assistant { content, .. } = &msg {
-                        if content.iter().any(|c| {
-                            matches!(c, AssistantContent::ToolCall { .. })
-                        }) {
+                        if content
+                            .iter()
+                            .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
+                        {
                             saw_final_with_tool_call = true;
                         } else {
                             // If we have text without tool calls, consider it final text

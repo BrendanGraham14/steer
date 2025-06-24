@@ -502,7 +502,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "conductor"
+name = "conductor-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -514,6 +514,7 @@ dependencies = [
  "conductor-core",
  "conductor-grpc",
  "conductor-proto",
+ "conductor-tui",
  "crossterm",
  "dirs 5.0.1",
  "dotenv",
@@ -573,7 +574,6 @@ dependencies = [
  "async-stream",
  "async-trait",
  "chrono",
- "clap",
  "colored",
  "conductor-proto",
  "dirs 5.0.1",
@@ -660,7 +660,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
- "conductor",
  "conductor-core",
  "conductor-grpc",
  "crossterm",

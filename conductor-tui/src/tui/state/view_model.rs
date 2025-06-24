@@ -8,7 +8,7 @@
 use super::content_cache::ContentCache;
 use super::message_store::MessageStore;
 use super::tool_registry::ToolCallRegistry;
-use crate::app::conversation::AssistantContent;
+use conductor_core::app::conversation::AssistantContent;
 use crate::tui::widgets::message_list::{MessageContent, MessageListState, ViewMode};
 use std::sync::{Arc, RwLock};
 

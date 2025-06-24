@@ -7,7 +7,7 @@ use ratatui::{
 };
 use textwrap;
 
-use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
+use conductor_core::app::conversation::{AssistantContent, ToolResult, UserContent};
 use tools::ToolCall;
 
 use super::formatters;
@@ -57,9 +57,9 @@ impl DefaultContentRenderer {
                 }
                 UserContent::AppCommand { command, response } => {
                     // For compact commands with actual summaries, render a separator first
-                    if matches!(command, crate::app::conversation::AppCommandType::Compact) {
-                        if let Some(crate::app::conversation::CommandResponse::Compact(
-                            crate::app::conversation::CompactResult::Success(_),
+                    if matches!(command, conductor_core::app::conversation::AppCommandType::Compact) {
+                        if let Some(conductor_core::app::conversation::CommandResponse::Compact(
+                            conductor_core::app::conversation::CompactResult::Success(_),
                         )) = response
                         {
                             // Add a visual separator line
@@ -91,11 +91,11 @@ impl DefaultContentRenderer {
                     if let Some(resp) = response {
                         content.lines.push(Line::from(""));
                         let text = match resp {
-                            crate::app::conversation::CommandResponse::Text(msg) => msg,
-                            crate::app::conversation::CommandResponse::Compact(result) => match result {
-                                crate::app::conversation::CompactResult::Success(summary) => summary,
-                                crate::app::conversation::CompactResult::Cancelled => "Compact command cancelled.",
-                                crate::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).",
+                            conductor_core::app::conversation::CommandResponse::Text(msg) => msg,
+                            conductor_core::app::conversation::CommandResponse::Compact(result) => match result {
+                                conductor_core::app::conversation::CompactResult::Success(summary) => summary,
+                                conductor_core::app::conversation::CompactResult::Cancelled => "Compact command cancelled.",
+                                conductor_core::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).",
                             },
                         };
                         let wrapped = self.wrap_text(text, area.width.saturating_sub(2));
@@ -477,10 +477,10 @@ impl ContentRenderer for DefaultContentRenderer {
                         }
                         UserContent::AppCommand { command, response } => {
                             // Compact command separator
-                            if matches!(command, crate::app::conversation::AppCommandType::Compact)
+                            if matches!(command, conductor_core::app::conversation::AppCommandType::Compact)
                             {
-                                if let Some(crate::app::conversation::CommandResponse::Compact(
-                                    crate::app::conversation::CompactResult::Success(_),
+                                if let Some(conductor_core::app::conversation::CommandResponse::Compact(
+                                    conductor_core::app::conversation::CompactResult::Success(_),
                                 )) = response
                                 {
                                     height += 4; // Separator lines + "Conversation Compacted" + spacing
@@ -491,11 +491,11 @@ impl ContentRenderer for DefaultContentRenderer {
                             if let Some(resp) = response {
                                 height += 1; // Empty line
                                 let text = match resp {
-                                    crate::app::conversation::CommandResponse::Text(msg) => msg,
-                                    crate::app::conversation::CommandResponse::Compact(result) => match result {
-                                        crate::app::conversation::CompactResult::Success(summary) => summary,
-                                        crate::app::conversation::CompactResult::Cancelled => "Compact command cancelled.",
-                                        crate::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).",
+                                    conductor_core::app::conversation::CommandResponse::Text(msg) => msg,
+                                    conductor_core::app::conversation::CommandResponse::Compact(result) => match result {
+                                        conductor_core::app::conversation::CompactResult::Success(summary) => summary,
+                                        conductor_core::app::conversation::CompactResult::Cancelled => "Compact command cancelled.",
+                                        conductor_core::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).",
                                     },
                                 };
                                 height += text

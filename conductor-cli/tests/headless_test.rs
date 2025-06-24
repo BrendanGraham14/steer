@@ -1,7 +1,6 @@
-use conductor::api::Model;
-use conductor::app::conversation::{AssistantContent, Message, UserContent};
-use conductor::config::LlmConfig;
-use std::time::Duration;
+use conductor_core::api::Model;
+use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
+use conductor_core::config::LlmConfig;
 
 // This test requires real API keys and makes actual API calls
 // Run with: cargo test --test headless_test -- --ignored
@@ -21,13 +20,10 @@ async fn test_headless_mode_integration() {
     }];
 
     // Load config from environment
-    let config = LlmConfig::from_env().expect("Failed to load config from environment");
+    let _config = LlmConfig::from_env().expect("Failed to load config from environment");
 
-    // Set a reasonable timeout
-    let timeout = Some(Duration::from_secs(30));
-
-    // Call run_once
-    let result = conductor::run_once(messages, Model::Claude3_7Sonnet20250219, &config, timeout)
+    // Call run_once - note: new signature doesn't take config or timeout
+    let result = conductor_cli::run_once(messages, Model::Claude3_7Sonnet20250219)
         .await
         .expect("run_once should succeed");
 

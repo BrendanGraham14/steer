@@ -23,6 +23,8 @@ pub struct HeadlessCommand {
     pub session: Option<String>,
     pub tool_config: Option<PathBuf>,
     pub system_prompt: Option<String>,
+    pub remote: Option<String>,
+    pub directory: Option<PathBuf>,
 }
 
 #[async_trait]

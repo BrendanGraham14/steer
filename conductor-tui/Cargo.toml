@@ -2,16 +2,11 @@
 name = "conductor-tui"
 version = "0.1.0"
 edition = "2024"
-description = "Terminal UI frontend for Conductor"
-
-[[bin]]
-name = "conductor"
-path = "src/bin/conductor.rs"
+description = "Terminal UI library for Conductor"
 
 [dependencies]
 conductor-core = { path = "../conductor-core" }
 conductor-grpc = { path = "../conductor-grpc" }
-conductor = { path = "../conductor" }
 
 # CLI framework
 clap = { version = "4.4", features = ["derive", "env"] }

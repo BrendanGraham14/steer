@@ -1,30 +1,29 @@
 use anyhow::Result;
-use conductor::api::Model;
-use conductor::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
-use conductor::app::validation::ValidatorRegistry;
-use conductor::config::LlmConfig;
-use conductor::tools::{BackendRegistry, LocalBackend};
-use conductor::tools::edit::EditTool;
-use conductor::tools::traits::Tool;
-use conductor::tools::view::ViewTool;
+use conductor_core::api::Model;
+use conductor_core::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
+use conductor_core::config::LlmConfig;
+use conductor_core::workspace::local::LocalWorkspace;
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
+use tools::ToolCall;
+use tools::tools::edit::EditTool;
+use tools::tools::view::ViewTool;
+use tools::traits::Tool;
 use tracing::warn; // Added warn import
 
-fn create_test_tool_executor() -> Arc<ToolExecutor> {
-    let mut backend_registry = BackendRegistry::new();
-    backend_registry.register(
-        "local".to_string(),
-        Arc::new(LocalBackend::full()),
-    );
+async fn create_test_workspace() -> Arc<LocalWorkspace> {
+    Arc::new(
+        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+            .await
+            .unwrap(),
+    )
+}
 
-    Arc::new(ToolExecutor {
-        backend_registry: Arc::new(backend_registry),
-        validators: Arc::new(ValidatorRegistry::new()),
-    })
+fn create_test_tool_executor(workspace: Arc<LocalWorkspace>) -> Arc<ToolExecutor> {
+    Arc::new(ToolExecutor::with_workspace(workspace))
 }
 
 #[tokio::test]
@@ -47,21 +46,46 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     dotenv().ok();
     let llm_config = LlmConfig::from_env()?;
     let app_config = AppConfig { llm_config };
-    let (event_tx, _event_rx) = mpsc::channel(100);
-    // Changed Model::Default to a specific model
-    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219, create_test_tool_executor())?;
+    let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
+    let workspace = create_test_workspace().await;
+    let tool_executor = create_test_tool_executor(workspace.clone());
 
-    assert!(!app.tool_executor.requires_approval("read_file").unwrap());
-    assert!(!app.tool_executor.requires_approval("grep").unwrap());
-    assert!(!app.tool_executor.requires_approval("ls").unwrap());
-    assert!(!app.tool_executor.requires_approval("glob").unwrap());
-    assert!(app.tool_executor.requires_approval("web_fetch").unwrap());
-    assert!(app.tool_executor.requires_approval("edit_file").unwrap());
-    assert!(app.tool_executor.requires_approval("write_file").unwrap());
-    assert!(app.tool_executor.requires_approval("bash").unwrap());
+    // Changed Model::Default to a specific model
+    let app = App::new(
+        app_config,
+        event_tx,
+        Model::Claude3_7Sonnet20250219,
+        workspace,
+        tool_executor,
+        None,
+    )?;
+
+    assert!(
+        !app.tool_executor
+            .requires_approval("read_file")
+            .await
+            .unwrap()
+    );
+    assert!(!app.tool_executor.requires_approval("grep").await.unwrap());
+    assert!(!app.tool_executor.requires_approval("ls").await.unwrap());
+    assert!(!app.tool_executor.requires_approval("glob").await.unwrap());
+    assert!(
+        app.tool_executor
+            .requires_approval("edit_file")
+            .await
+            .unwrap()
+    );
+    assert!(
+        app.tool_executor
+            .requires_approval("write_file")
+            .await
+            .unwrap()
+    );
+    assert!(app.tool_executor.requires_approval("bash").await.unwrap());
     assert!(
         app.tool_executor
             .requires_approval("non_existent_tool")
+            .await
             .is_err()
     );
     Ok(())
@@ -75,17 +99,21 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
         llm_config: llm_config.clone(),
     };
 
-    let (event_tx, mut event_rx) = mpsc::channel(100);
-    let (command_tx_to_actor, command_rx_for_actor) = mpsc::channel(100);
+    let (event_tx, mut event_rx) = mpsc::channel::<AppEvent>(100);
+    let (command_tx_to_actor, command_rx_for_actor) = mpsc::channel::<AppCommand>(100);
 
+    let workspace = create_test_workspace().await;
+    let tool_executor = create_test_tool_executor(workspace.clone());
     // Changed Model::Default to a specific model
     let app_for_actor = App::new(
         app_config_for_actor,
         event_tx.clone(),
         Model::Claude3_7Sonnet20250219,
-        create_test_tool_executor(),
+        workspace,
+        tool_executor,
+        None,
     )?;
-    let actor_handle = tokio::spawn(conductor::app::app_actor_loop(
+    let actor_handle = tokio::spawn(conductor_core::app::app_actor_loop(
         app_for_actor,
         command_rx_for_actor,
     ));
@@ -94,7 +122,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
 
     // Tool Call 1
     let tool_call_id_1 = "test_tool_call_id_1".to_string();
-    let api_tool_call_1 = conductor::api::tools::ToolCall {
+    let api_tool_call_1 = ToolCall {
         id: tool_call_id_1.clone(),
         name: tool_name_to_approve.clone(),
         parameters: json!({"path": "/test/file1.txt", "content": "content1"}),
@@ -123,7 +151,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     // Tool Call 2 is sent to the app and queued, but no UI event is expected for it yet,
     // as the first one is still active at the UI.
     let tool_call_id_2 = "test_tool_call_id_2".to_string();
-    let api_tool_call_2 = conductor::api::tools::ToolCall {
+    let api_tool_call_2 = ToolCall {
         id: tool_call_id_2.clone(),
         name: tool_name_to_approve.clone(), // Same tool name
         parameters: json!({"path": "/test/file2.txt", "content": "content2"}),

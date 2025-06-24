@@ -23,11 +23,11 @@ fn hash_message_content(content: &MessageContent) -> u64 {
             "user".hash(&mut hasher);
             for block in blocks {
                 match block {
-                    crate::app::conversation::UserContent::Text { text } => {
+                    conductor_core::app::conversation::UserContent::Text { text } => {
                         "text".hash(&mut hasher);
                         text.hash(&mut hasher);
                     }
-                    crate::app::conversation::UserContent::CommandExecution {
+                    conductor_core::app::conversation::UserContent::CommandExecution {
                         command,
                         stdout,
                         stderr,
@@ -39,7 +39,7 @@ fn hash_message_content(content: &MessageContent) -> u64 {
                         stderr.hash(&mut hasher);
                         exit_code.hash(&mut hasher);
                     }
-                    crate::app::conversation::UserContent::AppCommand { command, response } => {
+                    conductor_core::app::conversation::UserContent::AppCommand { command, response } => {
                         "app_command".hash(&mut hasher);
                         format!("{:?}", command).hash(&mut hasher);
                         if let Some(resp) = response {
@@ -53,17 +53,17 @@ fn hash_message_content(content: &MessageContent) -> u64 {
             "assistant".hash(&mut hasher);
             for block in blocks {
                 match block {
-                    crate::app::conversation::AssistantContent::Text { text } => {
+                    conductor_core::app::conversation::AssistantContent::Text { text } => {
                         "text".hash(&mut hasher);
                         text.hash(&mut hasher);
                     }
-                    crate::app::conversation::AssistantContent::ToolCall { tool_call } => {
+                    conductor_core::app::conversation::AssistantContent::ToolCall { tool_call } => {
                         "tool_call".hash(&mut hasher);
                         tool_call.id.hash(&mut hasher);
                         tool_call.name.hash(&mut hasher);
                         tool_call.parameters.to_string().hash(&mut hasher);
                     }
-                    crate::app::conversation::AssistantContent::Thought { thought } => {
+                    conductor_core::app::conversation::AssistantContent::Thought { thought } => {
                         "thought".hash(&mut hasher);
                         thought.display_text().hash(&mut hasher);
                     }
@@ -77,11 +77,11 @@ fn hash_message_content(content: &MessageContent) -> u64 {
             call.parameters.to_string().hash(&mut hasher);
             if let Some(result) = result {
                 match result {
-                    crate::app::conversation::ToolResult::Success { output } => {
+                    conductor_core::app::conversation::ToolResult::Success { output } => {
                         "success".hash(&mut hasher);
                         output.hash(&mut hasher);
                     }
-                    crate::app::conversation::ToolResult::Error { error } => {
+                    conductor_core::app::conversation::ToolResult::Error { error } => {
                         "error".hash(&mut hasher);
                         error.hash(&mut hasher);
                     }
@@ -245,7 +245,7 @@ impl Default for ContentCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::UserContent;
+    use conductor_core::app::conversation::UserContent;
     use crate::tui::widgets::content_renderer::{ContentRenderer, DefaultContentRenderer};
 
     #[test]

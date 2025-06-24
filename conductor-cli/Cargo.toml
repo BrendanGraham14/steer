@@ -1,12 +1,12 @@
 [package]
-name = "conductor"
+name = "conductor-cli"
 version = "0.1.0"
 edition = "2024"
-description = "Coding agent utilities."
+description = "Command-line interface for Conductor coding agent."
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 
 [[bin]]
-name = "conductor-core"
+name = "conductor"
 path = "src/main.rs"
 
 
@@ -100,6 +100,11 @@ tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 lazy_static = "1.5.0"
 conductor-core = { version = "0.1.0", path = "../conductor-core" }
 conductor-grpc = { version = "0.1.0", path = "../conductor-grpc" }
+conductor-tui = { version = "0.1.0", path = "../conductor-tui", optional = true }
 
 [build-dependencies]
+
+[features]
+default = ["ui"]
+ui = ["conductor-tui"]
 

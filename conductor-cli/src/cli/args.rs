@@ -1,6 +1,39 @@
 use clap::{Parser, Subcommand};
 use conductor_core::api::Model;
 use std::path::PathBuf;
+use strum::IntoEnumIterator;
+
+// Wrapper to implement clap::ValueEnum for Model
+#[derive(Debug, Clone, Copy)]
+pub struct ModelArg(pub Model);
+
+impl From<ModelArg> for Model {
+    fn from(arg: ModelArg) -> Self {
+        arg.0
+    }
+}
+
+impl clap::ValueEnum for ModelArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        use once_cell::sync::Lazy;
+        static VARIANTS: Lazy<Vec<ModelArg>> = Lazy::new(|| {
+            Model::iter().map(ModelArg).collect()
+        });
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let s: &'static str = self.0.into();
+        let mut pv = clap::builder::PossibleValue::new(s);
+        
+        // Add all aliases from the Model enum
+        for alias in self.0.aliases() {
+            pv = pv.alias(alias);
+        }
+        
+        Some(pv)
+    }
+}
 
 /// An AI-powered agent and CLI tool that assists with software engineering tasks.
 #[derive(Parser)]
@@ -14,8 +47,8 @@ pub struct Cli {
     pub directory: Option<std::path::PathBuf>,
 
     /// Model to use
-    #[arg(short, long, value_enum, default_value_t = Model::ClaudeSonnet4_20250514)]
-    pub model: Model,
+    #[arg(short, long, value_enum, default_value_t = ModelArg(Model::ClaudeSonnet4_20250514))]
+    pub model: ModelArg,
 
     /// Connect to a remote gRPC server instead of running locally
     #[arg(long)]
@@ -32,6 +65,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Clone)]
 pub enum Commands {
+    /// Launch the interactive terminal UI (default)
+    Tui {
+        /// Connect to a remote gRPC server (overrides global --remote)
+        #[arg(long)]
+        remote: Option<String>,
+    },
     /// Initialize a new config file
     Init {
         /// Force overwrite of existing config
@@ -42,7 +81,7 @@ pub enum Commands {
     Headless {
         /// Model to use
         #[arg(long)]
-        model: Option<Model>,
+        model: Option<ModelArg>,
 
         /// JSON file containing a Vec<Message> to use. If not provided, reads prompt from stdin.
         #[arg(long)]
@@ -59,9 +98,13 @@ pub enum Commands {
         /// Custom system prompt to use instead of the default
         #[arg(long)]
         system_prompt: Option<String>,
+        
+        /// Connect to a remote gRPC server (overrides global --remote)
+        #[arg(long)]
+        remote: Option<String>,
     },
-    /// Start the gRPC server for client/server mode
-    Serve {
+    /// Start the gRPC server
+    Server {
         /// Port to listen on
         #[arg(long, default_value = "50051")]
         port: u16,
@@ -103,13 +146,6 @@ pub enum SessionCommands {
         #[arg(long)]
         system_prompt: Option<String>,
     },
-    /// Resume an existing session
-    Resume {
-        /// Session ID to resume
-        session_id: String,
-    },
-    /// Resume the latest (most recently updated) session
-    Latest,
     /// Delete a session
     Delete {
         /// Session ID to delete

@@ -5,7 +5,6 @@ pub mod openai;
 pub mod provider;
 
 use anyhow::{Result, anyhow};
-use clap::builder::PossibleValue;
 pub use claude::AnthropicClient;
 pub use error::ApiError;
 pub use gemini::GeminiClient;
@@ -141,25 +140,6 @@ impl Model {
 }
 
 static MODEL_VARIANTS: Lazy<Vec<Model>> = Lazy::new(|| Model::iter().collect());
-
-impl clap::ValueEnum for Model {
-    fn value_variants<'a>() -> &'a [Self] {
-        MODEL_VARIANTS.as_slice()
-    }
-
-    fn to_possible_value(&self) -> Option<PossibleValue> {
-        let s: &'static str = (*self).into();
-        let pv = PossibleValue::new(s);
-        match self {
-            Model::ClaudeSonnet4_20250514 => Some(pv.alias("sonnet")),
-            Model::ClaudeOpus4_20250514 => Some(pv.alias("opus")),
-            Model::O3_20250416 => Some(pv.alias("o3")),
-            Model::O3Pro20250610 => Some(pv.alias("o3-pro")),
-            Model::Gemini2_5ProPreview0605 => Some(pv.alias("gemini")),
-            _ => Some(pv),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct Client {
@@ -313,5 +293,19 @@ mod tests {
     fn test_model_from_str() {
         let model = Model::from_str("claude-3-7-sonnet-20250219").unwrap();
         assert_eq!(model, Model::Claude3_7Sonnet20250219);
+    }
+
+    #[test]
+    fn test_model_aliases() {
+        // Test short aliases
+        assert_eq!(Model::from_str("sonnet").unwrap(), Model::ClaudeSonnet4_20250514);
+        assert_eq!(Model::from_str("opus").unwrap(), Model::ClaudeOpus4_20250514);
+        assert_eq!(Model::from_str("o3").unwrap(), Model::O3_20250416);
+        assert_eq!(Model::from_str("o3-pro").unwrap(), Model::O3Pro20250610);
+        assert_eq!(Model::from_str("gemini").unwrap(), Model::Gemini2_5ProPreview0605);
+        
+        // Also test the full names work
+        assert_eq!(Model::from_str("claude-sonnet-4-20250514").unwrap(), Model::ClaudeSonnet4_20250514);
+        assert_eq!(Model::from_str("o3-2025-04-16").unwrap(), Model::O3_20250416);
     }
 }

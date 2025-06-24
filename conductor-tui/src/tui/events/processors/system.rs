@@ -3,7 +3,7 @@
 //! Processes events related to model changes, command responses, and other
 //! system-level state changes.
 
-use crate::app::{AppEvent, conversation::UserContent};
+use conductor_core::app::{AppEvent, conversation::UserContent};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::widgets::message_list::MessageContent;
 
@@ -18,8 +18,8 @@ impl SystemEventProcessor {
     /// Create a user command response message
     fn create_command_response(
         id: String,
-        command: crate::app::conversation::AppCommandType,
-        response: crate::app::conversation::CommandResponse,
+        command: conductor_core::app::conversation::AppCommandType,
+        response: conductor_core::app::conversation::CommandResponse,
     ) -> MessageContent {
         MessageContent::User {
             id,
