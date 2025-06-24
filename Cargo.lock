@@ -513,7 +513,9 @@ dependencies = [
  "colored",
  "conductor-core",
  "conductor-grpc",
+ "conductor-macros",
  "conductor-proto",
+ "conductor-tools",
  "conductor-tui",
  "crossterm",
  "dirs 5.0.1",
@@ -528,7 +530,6 @@ dependencies = [
  "home",
  "ignore",
  "lazy_static",
- "macros",
  "once_cell",
  "proc-macro2",
  "prost",
@@ -556,7 +557,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic",
- "tools",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -575,7 +575,9 @@ dependencies = [
  "async-trait",
  "chrono",
  "colored",
+ "conductor-macros",
  "conductor-proto",
+ "conductor-tools",
  "dirs 5.0.1",
  "dotenv",
  "futures",
@@ -588,7 +590,6 @@ dependencies = [
  "home",
  "ignore",
  "lazy_static",
- "macros",
  "once_cell",
  "prost",
  "prost-types",
@@ -611,7 +612,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic",
- "tools",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -643,6 +643,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "conductor-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "conductor-proto"
 version = "0.1.0"
 dependencies = [
@@ -650,6 +659,55 @@ dependencies = [
  "prost-types",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "conductor-remote-workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "conductor-grpc",
+ "conductor-tools",
+ "gethostname",
+ "prost",
+ "prost-types",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "conductor-tools"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "async-trait",
+ "conductor-macros",
+ "dirs 6.0.0",
+ "glob",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "hex",
+ "ignore",
+ "once_cell",
+ "regex",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]
@@ -662,6 +720,7 @@ dependencies = [
  "clap",
  "conductor-core",
  "conductor-grpc",
+ "conductor-tools",
  "crossterm",
  "lazy_static",
  "once_cell",
@@ -671,7 +730,6 @@ dependencies = [
  "similar",
  "textwrap",
  "tokio",
- "tools",
  "tracing",
  "tui-textarea",
  "tui-widgets",
@@ -2023,15 +2081,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
-]
-
-[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2771,25 +2820,6 @@ name = "relative-path"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
-
-[[package]]
-name = "remote-backend"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "conductor-grpc",
- "gethostname",
- "prost",
- "prost-types",
- "serde_json",
- "tokio",
- "tokio-util",
- "tonic",
- "tools",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "reqwest"
@@ -3965,36 +3995,6 @@ dependencies = [
  "prost-types",
  "quote",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "tools"
-version = "0.1.0"
-dependencies = [
- "ast-grep-core",
- "ast-grep-language",
- "async-trait",
- "dirs 6.0.0",
- "glob",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
- "hex",
- "ignore",
- "macros",
- "once_cell",
- "regex",
- "reqwest",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
