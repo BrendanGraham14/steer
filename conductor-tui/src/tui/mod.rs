@@ -38,7 +38,7 @@ use crate::tui::events::{EventPipeline, processors::*};
 use crate::tui::state::content_cache::ContentCache;
 use crate::tui::state::view_model::MessageViewModel;
 use crate::tui::widgets::{
-    CachedContentRenderer, MessageList, MessageListState, ViewMode,
+    CachedContentRenderer, CachedContentRendererRef, MessageList, MessageListState, ViewMode,
     content_renderer::ContentRenderer, message_list::MessageContent,
 };
 use widgets::styles;
@@ -69,6 +69,7 @@ pub struct Tui {
     current_tool_approval: Option<tools::ToolCall>,
     current_model: Model,
     event_pipeline: EventPipeline,
+    cached_renderer: Arc<CachedContentRenderer>,
 }
 
 #[derive(Debug)]
@@ -121,12 +122,15 @@ impl Tui {
         // Set cursor style to make it more visible
         textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
 
+        let view_model = MessageViewModel::new();
+        let cached_renderer = Arc::new(CachedContentRenderer::new(view_model.content_cache()));
+
         Ok(Self {
             terminal,
             terminal_size,
             textarea,
             input_mode: InputMode::Normal,
-            view_model: MessageViewModel::new(),
+            view_model,
             is_processing: false,
             progress_message: None,
             last_spinner_update: Instant::now(),
@@ -135,6 +139,7 @@ impl Tui {
             current_tool_approval: None,
             current_model: initial_model,
             event_pipeline: Self::create_event_pipeline(),
+            cached_renderer,
         })
     }
 
@@ -315,7 +320,6 @@ impl Tui {
 
                     // Get references separately to avoid borrow conflicts
                     let messages_slice = self.view_model.messages.as_slice();
-                    let content_cache = self.view_model.content_cache();
 
                     if let Err(e) = Tui::render_ui_static(
                         f,
@@ -325,7 +329,7 @@ impl Tui {
                         input_mode,
                         &current_model_owned,
                         current_approval_ref,
-                        content_cache,
+                        &self.cached_renderer,
                     ) {
                         error!(target:"tui.run.draw", "UI rendering failed: {}", e);
                     }
@@ -717,7 +721,7 @@ impl Tui {
         input_mode: InputMode,
         current_model: &str,
         current_approval_info: Option<&tools::ToolCall>,
-        content_cache: std::sync::Arc<std::sync::RwLock<ContentCache>>,
+        cached_renderer: &Arc<CachedContentRenderer>,
     ) -> Result<()> {
         let total_area = f.area();
         let input_height = (textarea.lines().len() as u16 + 2)
@@ -755,12 +759,11 @@ impl Tui {
             horizontal: 1,
             vertical: 1,
         });
-        let cached_renderer = CachedContentRenderer::new(content_cache);
         let visible_range = view_state.calculate_visible_range(
             messages,
             inner_area.height,
             inner_area.width,
-            &cached_renderer as &dyn ContentRenderer,
+            cached_renderer.as_ref() as &dyn ContentRenderer,
         );
 
         // Render Messages using the new widget with StatefulWidget pattern
@@ -780,7 +783,7 @@ impl Tui {
         };
 
         let message_widget = MessageList::new(messages)
-            .with_renderer(Box::new(cached_renderer))
+            .with_renderer(Box::new(CachedContentRendererRef::new(cached_renderer.clone())))
             .block(message_block);
         f.render_stateful_widget(message_widget, messages_area, view_state);
 

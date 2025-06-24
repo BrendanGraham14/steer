@@ -7,13 +7,35 @@ use super::content_renderer::{ContentRenderer, DefaultContentRenderer};
 use crate::tui::state::content_cache::ContentCache;
 use crate::tui::widgets::message_list::{MessageContent, ViewMode};
 
+// Wrapper struct that holds an Arc to the actual renderer
+pub struct CachedContentRendererRef {
+    inner: Arc<CachedContentRenderer>,
+}
+
+impl CachedContentRendererRef {
+    pub fn new(inner: Arc<CachedContentRenderer>) -> Self {
+        Self { inner }
+    }
+}
+
+impl ContentRenderer for CachedContentRendererRef {
+    fn render(&self, content: &MessageContent, mode: ViewMode, area: Rect, buf: &mut Buffer) {
+        self.inner.render(content, mode, area, buf)
+    }
+
+    fn calculate_height(&self, content: &MessageContent, mode: ViewMode, width: u16) -> u16 {
+        self.inner.calculate_height(content, mode, width)
+    }
+}
+
 // Key for caching rendered content
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RenderCacheKey {
     message_id: String,
     content_hash: u64,
     view_mode: ViewMode,
-    area: Rect,
+    width: u16,
+    height: u16,
 }
 
 impl RenderCacheKey {
@@ -51,7 +73,8 @@ impl RenderCacheKey {
             message_id: content.id().to_string(),
             content_hash: hasher.finish(),
             view_mode,
-            area,
+            width: area.width,
+            height: area.height,
         }
     }
 }
