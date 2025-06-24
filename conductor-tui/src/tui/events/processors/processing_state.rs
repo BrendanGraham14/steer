@@ -3,7 +3,7 @@
 //! Manages the overall processing state of the TUI, including thinking/processing
 //! indicators, spinner state, and progress messages.
 
-use crate::app::{
+use conductor_core::app::{
     AppEvent,
     conversation::{AppCommandType, UserContent},
 };
@@ -57,7 +57,7 @@ impl EventProcessor for ProcessingStateProcessor {
                         id: display_id,
                         blocks: vec![UserContent::AppCommand {
                             command: AppCommandType::Cancel,
-                            response: Some(crate::app::conversation::CommandResponse::Text(
+                            response: Some(conductor_core::app::conversation::CommandResponse::Text(
                                 format!("Operation cancelled: {}", info),
                             )),
                         }],

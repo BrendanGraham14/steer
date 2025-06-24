@@ -7,7 +7,7 @@ use anyhow::Result;
 use tracing::warn;
 
 use super::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::app::AppEvent;
+use conductor_core::app::AppEvent;
 
 /// Pipeline that orchestrates multiple event processors
 pub struct EventPipeline {

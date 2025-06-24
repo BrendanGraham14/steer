@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::app::conversation::ToolResult;
+use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::{
     style::Style,

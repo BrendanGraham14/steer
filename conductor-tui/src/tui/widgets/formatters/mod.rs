@@ -1,4 +1,4 @@
-use crate::app::conversation::ToolResult;
+use conductor_core::app::conversation::ToolResult;
 use lazy_static::lazy_static;
 use ratatui::text::Line;
 use serde_json::Value;

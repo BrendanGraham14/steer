@@ -48,7 +48,7 @@ pub fn init_tracing() -> io::Result<()> {
             .expect("Failed to set global default subscriber");
 
         tracing::debug!(
-            target: "conductor::utils::tracing",
+            target: "conductor_core::utils::tracing",
             path = %log_dir.join(format!("{}.log", timestamp)).display(),
             "Tracing initialized with file output. Filter configured via RUST_LOG env var."
         );
@@ -62,7 +62,7 @@ pub fn init_tracing() -> io::Result<()> {
             .expect("Failed to set global default subscriber");
 
         tracing::debug!(
-            target: "conductor::utils::tracing",
+            target: "conductor_core::utils::tracing",
             "Tracing initialized with stdout output. Filter configured via RUST_LOG env var."
         );
     }

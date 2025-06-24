@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use crate::api::Model;
-use crate::app::AppEvent;
-use crate::app::io::AppCommandSink;
+use conductor_core::api::Model;
+use conductor_core::app::AppEvent;
+use conductor_core::app::io::AppCommandSink;
 use crate::tui::state::{MessageStore, ToolCallRegistry};
 use crate::tui::widgets::message_list::MessageListState;
 use tools::schema::ToolCall;
@@ -82,12 +82,12 @@ impl ProcessingContext<'_> {
     /// Helper to convert app::Message to MessageContent
     pub fn convert_message(
         &self,
-        message: crate::app::Message,
+        message: conductor_core::app::Message,
     ) -> crate::tui::widgets::message_list::MessageContent {
         use crate::tui::widgets::message_list::MessageContent;
 
         match message {
-            crate::app::Message::User {
+            conductor_core::app::Message::User {
                 content,
                 timestamp,
                 id,
@@ -98,7 +98,7 @@ impl ProcessingContext<'_> {
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_else(|| timestamp.to_string()),
             },
-            crate::app::Message::Assistant {
+            conductor_core::app::Message::Assistant {
                 content,
                 timestamp,
                 id,
@@ -113,7 +113,7 @@ impl ProcessingContext<'_> {
                         .unwrap_or_else(|| timestamp.to_string()),
                 }
             }
-            crate::app::Message::Tool {
+            conductor_core::app::Message::Tool {
                 tool_use_id,
                 result,
                 timestamp,

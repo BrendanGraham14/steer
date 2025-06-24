@@ -1,4 +1,4 @@
-use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
+use conductor_core::app::conversation::{AssistantContent, ToolResult, UserContent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -720,7 +720,7 @@ pub type MessageViewState = MessageListState;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::UserContent;
+    use conductor_core::app::conversation::UserContent;
 
     #[test]
     fn test_visible_range_no_overflow() {

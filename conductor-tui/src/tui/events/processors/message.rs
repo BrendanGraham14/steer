@@ -3,8 +3,8 @@
 //! Processes events that add, update, or modify messages in the conversation,
 //! including streaming message parts and message restoration.
 
-use crate::app::AppEvent;
-use crate::app::conversation::AssistantContent;
+use conductor_core::app::AppEvent;
+use conductor_core::app::conversation::AssistantContent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::widgets::message_list::MessageContent;
 
@@ -86,9 +86,9 @@ impl EventProcessor for MessageEventProcessor {
 }
 
 impl MessageEventProcessor {
-    fn handle_message_added(&self, message: crate::app::Message, ctx: &mut ProcessingContext) {
+    fn handle_message_added(&self, message: conductor_core::app::Message, ctx: &mut ProcessingContext) {
         // First, extract tool calls from Assistant messages to register them
-        if let crate::app::Message::Assistant {
+        if let conductor_core::app::Message::Assistant {
             ref content,
             ref id,
             ..
@@ -162,9 +162,9 @@ impl Default for MessageEventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::AppCommand;
-    use crate::app::conversation::{AssistantContent, Message};
-    use crate::app::io::AppCommandSink;
+    use conductor_core::app::AppCommand;
+    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::io::AppCommandSink;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{MessageStore, ToolCallRegistry};
     use crate::tui::widgets::message_list::{MessageContent, MessageListState};
@@ -193,7 +193,7 @@ mod tests {
         Option<String>,
         usize,
         Option<ToolCall>,
-        crate::api::Model,
+        conductor_core::api::Model,
         bool,
     ) {
         let messages = MessageStore::new();
@@ -204,7 +204,7 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = crate::api::Model::Claude3_5Sonnet20241022;
+        let current_model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let messages_updated = false;
 
         (
@@ -295,9 +295,9 @@ mod tests {
 
         // Process the Assistant message
         let result = processor.process(
-            crate::app::AppEvent::MessageAdded {
+            conductor_core::app::AppEvent::MessageAdded {
                 message: assistant_message,
-                model: crate::api::Model::Claude3_5Sonnet20241022,
+                model: conductor_core::api::Model::Claude3_5Sonnet20241022,
             },
             &mut ctx,
         );

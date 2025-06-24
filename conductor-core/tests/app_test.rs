@@ -1,24 +1,23 @@
 use anyhow::Result;
-use conductor::api::{Model, ToolCall};
-use conductor::app::{App, AppConfig, ToolExecutor};
-use conductor::app::validation::ValidatorRegistry;
-use conductor::config::LlmConfig;
-use conductor::tools::{BackendRegistry, LocalBackend};
+use conductor_core::api::Model;
+use conductor_core::app::{App, AppConfig, AppEvent, ToolExecutor};
+use conductor_core::config::LlmConfig;
+use conductor_core::workspace::local::LocalWorkspace;
 use dotenv::dotenv;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tools::ToolCall;
 
-fn create_test_tool_executor() -> Arc<ToolExecutor> {
-    let mut backend_registry = BackendRegistry::new();
-    backend_registry.register(
-        "local".to_string(),
-        Arc::new(LocalBackend::full()),
-    );
+async fn create_test_workspace() -> Arc<LocalWorkspace> {
+    Arc::new(
+        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+            .await
+            .unwrap(),
+    )
+}
 
-    Arc::new(ToolExecutor {
-        backend_registry: Arc::new(backend_registry),
-        validators: Arc::new(ValidatorRegistry::new()),
-    })
+fn create_test_tool_executor(workspace: Arc<LocalWorkspace>) -> Arc<ToolExecutor> {
+    Arc::new(ToolExecutor::with_workspace(workspace))
 }
 
 #[tokio::test]
@@ -33,8 +32,17 @@ async fn test_tool_executor() -> Result<()> {
 
     // Initialize the app
     // Create a channel for app events
-    let (event_tx, _event_rx) = mpsc::channel(100);
-    let app = App::new(app_config, event_tx, Model::Claude3_7Sonnet20250219, create_test_tool_executor())?;
+    let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
+    let workspace = create_test_workspace().await;
+    let tool_executor = create_test_tool_executor(workspace.clone());
+    let app = App::new(
+        app_config,
+        event_tx,
+        Model::Claude3_7Sonnet20250219,
+        workspace,
+        tool_executor,
+        None, // No session config for test
+    )?;
 
     // Create a tool call for listing the current directory
     let parameters = serde_json::json!({

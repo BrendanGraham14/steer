@@ -2,8 +2,8 @@
 //!
 //! Manages tool execution state, approval requests, completion, and failure events.
 
-use crate::app::AppEvent;
-use crate::app::conversation::ToolResult;
+use conductor_core::app::AppEvent;
+use conductor_core::app::conversation::ToolResult;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::widgets::message_list::MessageContent;
 
@@ -158,9 +158,9 @@ impl Default for ToolEventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::AppCommand;
-    use crate::app::conversation::{AssistantContent, Message};
-    use crate::app::io::AppCommandSink;
+    use conductor_core::app::AppCommand;
+    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::io::AppCommandSink;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{MessageStore, ToolCallRegistry};
@@ -190,7 +190,7 @@ mod tests {
         Option<String>,
         usize,
         Option<ToolCall>,
-        crate::api::Model,
+        conductor_core::api::Model,
         bool,
     ) {
         let messages = MessageStore::new();
@@ -201,7 +201,7 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = crate::api::Model::Claude3_5Sonnet20241022;
+        let current_model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let messages_updated = false;
 
         (
@@ -267,7 +267,7 @@ mod tests {
                 messages_updated: &mut messages_updated,
             };
             msg_proc.process(
-                crate::app::AppEvent::MessageAdded {
+                conductor_core::app::AppEvent::MessageAdded {
                     message: assistant,
                     model,
                 },
@@ -290,7 +290,7 @@ mod tests {
                 messages_updated: &mut messages_updated,
             };
             tool_proc.process(
-                crate::app::AppEvent::ToolCallStarted {
+                conductor_core::app::AppEvent::ToolCallStarted {
                     name: "view".to_string(),
                     id: "id123".to_string(),
                     model,

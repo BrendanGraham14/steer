@@ -7,13 +7,11 @@ use crate::cli::SessionCommands;
 mod create;
 mod delete;
 mod list;
-mod resume;
 mod show;
 
 pub use create::CreateSessionCommand;
 pub use delete::DeleteSessionCommand;
 pub use list::ListSessionCommand;
-pub use resume::{LatestSessionCommand, ResumeSessionCommand};
 pub use show::ShowSessionCommand;
 
 pub struct SessionCommand {
@@ -46,19 +44,6 @@ impl Command for SessionCommand {
                     metadata: metadata.clone(),
                     remote: self.remote.clone(),
                     system_prompt: system_prompt.clone(),
-                };
-                cmd.execute().await
-            }
-            SessionCommands::Resume { session_id } => {
-                let cmd = ResumeSessionCommand {
-                    session_id: session_id.clone(),
-                    remote: self.remote.clone(),
-                };
-                cmd.execute().await
-            }
-            SessionCommands::Latest => {
-                let cmd = LatestSessionCommand {
-                    remote: self.remote.clone(),
                 };
                 cmd.execute().await
             }

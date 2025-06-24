@@ -1,6 +1,6 @@
 # Conductor
 
-Conductor is an AI-powered CLI assistant for software engineering tasks.  It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
+Conductor is an AI-powered CLI assistant for software engineering tasks. It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
 
 ---
 
@@ -39,11 +39,11 @@ conductor headless --tool-config tools.json < prompt.txt
 ### gRPC server / remote mode
 
 ```bash
-# Start a local server (default 127.0.0.1:50051)
-conductor serve --port 50051
+# Start a standalone server (default 127.0.0.1:50051)
+conductor server --port 50051
 
 # Connect to an already running server
-conductor --remote 192.168.1.10:50051
+conductor tui --remote 192.168.1.10:50051
 ```
 
 ### Session management
@@ -51,13 +51,6 @@ conductor --remote 192.168.1.10:50051
 ```bash
 # List saved sessions
 conductor session list --limit 20
-
-# Resume a session
-conductor session resume <SESSION_ID>
-
-# Create a new session with pre-approved tools
-conductor session create --tool-policy pre_approved \
-                    --pre-approved-tools view,grep,glob,ls
 
 # Delete a session
 conductor session delete <SESSION_ID> --force
@@ -108,17 +101,26 @@ cargo build
 cargo test
 ```
 
-Run `cargo run --` to launch the CLI in the current directory.
+Run `cargo run -p conductor-cli` to launch the CLI in the current directory.
 
 ---
 
-## Project layout (high-level)
+## Project layout (crates)
 
-* `conductor/src/api`    – provider abstractions (Anthropic, OpenAI, Gemini)
-* `conductor/src/app`    – core state machine and agent orchestration
-* `conductor/src/tools`  – implementation of builtin tools
-* `conductor/src/tui`    – ratatui-based terminal UI
-* `conductor/src/commands` – top-level CLI subcommand implementations
-* `remote-backend`   – gRPC server binary
+* `conductor-proto`     – Protocol buffer definitions and generated code
+* `conductor-core`      – Pure domain logic (LLM APIs, session management, tool execution)
+* `conductor-grpc`      – gRPC server/client implementation and core ↔ proto conversions
+* `conductor-tui`       – Terminal UI library (ratatui-based)
+* `conductor-cli`       – Command-line interface and main binary
+* `tools`               – Tool trait definitions and implementations
+* `macros`              – Procedural macros for tool definitions
+* `remote-backend`      – gRPC service for remote tool execution
+
+### Architecture principles
+
+1. **Clean dependency graph**: proto → core → grpc → cli/tui
+2. **Single API surface**: All clients (TUI, headless, etc.) go through gRPC
+3. **No in-process shortcuts**: Even local mode uses an in-memory gRPC channel
+4. **Clear boundaries**: Each crate has a single, well-defined responsibility
 
 Full details live in `ARCHITECTURE.md`.

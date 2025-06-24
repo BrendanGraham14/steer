@@ -22,18 +22,18 @@ use tui_textarea::TextArea;
 
 use tokio::select;
 
-use crate::api::Model;
-use crate::app::AppEvent;
-use crate::app::command::AppCommand;
-use crate::app::conversation::Message;
-use crate::app::io::AppCommandSink;
+use conductor_core::api::Model;
+use conductor_core::app::AppEvent;
+use conductor_core::app::command::AppCommand;
+use conductor_core::app::conversation::Message;
+use conductor_core::app::io::AppCommandSink;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, info, warn};
 pub mod events;
 pub mod state;
 pub mod widgets;
 
-use crate::app::conversation::AssistantContent;
+use conductor_core::app::conversation::AssistantContent;
 use crate::tui::events::{EventPipeline, processors::*};
 use crate::tui::state::content_cache::ContentCache;
 use crate::tui::state::view_model::MessageViewModel;
@@ -157,7 +157,7 @@ impl Tui {
 
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
-            if let crate::app::Message::Tool { tool_use_id, .. } = message {
+            if let conductor_core::app::Message::Tool { tool_use_id, .. } = message {
                 debug!(
                     target: "tui.restore",
                     "Found Tool message with tool_use_id={}",
@@ -168,7 +168,7 @@ impl Tui {
 
         // First pass: populate tool registry with tool calls from assistant messages
         for message in &messages {
-            if let crate::app::Message::Assistant { content, .. } = message {
+            if let conductor_core::app::Message::Assistant { content, .. } = message {
                 for item in content {
                     if let AssistantContent::ToolCall { tool_call } = item {
                         debug!(
@@ -503,11 +503,11 @@ impl Tui {
     }
 
     fn convert_message(
-        message: crate::app::Message,
+        message: conductor_core::app::Message,
         tool_registry: &crate::tui::state::tool_registry::ToolCallRegistry,
     ) -> MessageContent {
         match message {
-            crate::app::Message::User {
+            conductor_core::app::Message::User {
                 content,
                 timestamp,
                 id,
@@ -518,7 +518,7 @@ impl Tui {
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_else(|| timestamp.to_string()),
             },
-            crate::app::Message::Assistant {
+            conductor_core::app::Message::Assistant {
                 content,
                 timestamp,
                 id,
@@ -533,7 +533,7 @@ impl Tui {
                         .unwrap_or_else(|| timestamp.to_string()),
                 }
             }
-            crate::app::Message::Tool {
+            conductor_core::app::Message::Tool {
                 tool_use_id,
                 result,
                 timestamp,
@@ -1379,9 +1379,9 @@ pub fn setup_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::AppCommand;
-    use crate::app::conversation::{AssistantContent, Message, ToolResult};
-    use crate::app::io::AppCommandSink;
+    use conductor_core::app::AppCommand;
+    use conductor_core::app::conversation::{AssistantContent, Message, ToolResult};
+    use conductor_core::app::io::AppCommandSink;
     use crate::tui::widgets::formatters::ToolFormatter;
     use crate::tui::widgets::formatters::view::ViewFormatter;
     use anyhow::Result;
@@ -1402,7 +1402,7 @@ mod tests {
     fn test_restore_messages_preserves_tool_call_params() {
         // Create a TUI instance for testing
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let model = crate::api::Model::Claude3_5Sonnet20241022;
+        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let mut tui = Tui::new(command_sink, model).unwrap();
 
         // Build test messages: Assistant with ToolCall, then Tool result
@@ -1481,7 +1481,7 @@ mod tests {
     fn test_restore_messages_handles_tool_result_before_assistant() {
         // Test edge case where Tool result arrives before Assistant message
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let model = crate::api::Model::Claude3_5Sonnet20241022;
+        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let mut tui = Tui::new(command_sink, model).unwrap();
 
         let tool_id = "test_tool_456".to_string();
@@ -1531,3 +1531,74 @@ mod tests {
         assert_eq!(tool_call.name, "view");
     }
 }
+
+/// High-level entry point for running the TUI
+pub async fn run_tui(
+    client: Arc<conductor_grpc::GrpcClientAdapter>,
+    session_id: Option<String>,
+    model: Model,
+    directory: Option<std::path::PathBuf>,
+    system_prompt: Option<String>,
+) -> Result<()> {
+    use conductor_core::app::io::AppEventSource;
+    use conductor_core::session::{SessionConfig, SessionToolConfig};
+    use std::collections::HashMap;
+    
+    // If session_id is provided, resume that session
+    if let Some(session_id) = session_id {
+        // Activate the existing session
+        let (messages, approved_tools) = client.activate_session(session_id.clone()).await?;
+        info!("Activated session: {} with {} messages", session_id, messages.len());
+        println!("Session ID: {}", session_id);
+        
+        // Start streaming
+        client.start_streaming().await?;
+        
+        // Get the event receiver
+        let event_rx = client.subscribe().await;
+        
+        // Initialize TUI with restored conversation
+        let mut tui = Tui::new_with_conversation(client.clone() as Arc<dyn AppCommandSink>, model, messages, approved_tools)?;
+        
+        // Run the TUI
+        tui.run(event_rx).await?;
+    } else {
+        // Create a new session
+        let mut session_config = SessionConfig {
+            workspace: conductor_core::session::state::WorkspaceConfig::default(),
+            tool_config: SessionToolConfig::default(),
+            system_prompt,
+            metadata: HashMap::new(),
+        };
+        
+        // Add the initial model to session metadata
+        session_config.metadata.insert("initial_model".to_string(), model.to_string());
+        
+        // Set workspace directory if provided
+        if let Some(dir) = directory {
+            // Note: WorkspaceConfig doesn't have a root field in the default implementation
+            // You may need to adjust this based on your actual WorkspaceConfig definition
+            std::env::set_current_dir(dir)?;
+        }
+        
+        // Create session on server
+        let session_id = client.create_session(session_config).await?;
+        info!("Created session: {}", session_id);
+        println!("Session ID: {}", session_id);
+        
+        // Start streaming
+        client.start_streaming().await?;
+        
+        // Get the event receiver
+        let event_rx = client.subscribe().await;
+        
+        // Initialize TUI
+        let mut tui = Tui::new(client as Arc<dyn AppCommandSink>, model)?;
+        
+        // Run the TUI
+        tui.run(event_rx).await?;
+    }
+    
+    Ok(())
+}
+

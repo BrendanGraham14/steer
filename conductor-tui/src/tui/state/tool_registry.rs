@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::app::conversation::ToolResult;
+use conductor_core::app::conversation::ToolResult;
 use tools::schema::ToolCall;
 
 /// Status of a tool call in its lifecycle

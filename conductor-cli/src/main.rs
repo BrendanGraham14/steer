@@ -1,0 +1,218 @@
+use anyhow::Result;
+use clap::Parser;
+
+use conductor_cli::cli::{Cli, Commands, ModelArg};
+use conductor_cli::commands::{
+    Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
+    session::SessionCommand,
+};
+
+#[cfg(feature = "ui")]
+use conductor_tui::tui::{self, cleanup_terminal, setup_panic_hook};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Load .env file if it exists
+    conductor_cli::cli::config::load_env()?;
+
+    // Initialize tracing (level configured via RUST_LOG env var)
+    conductor_core::utils::tracing::init_tracing()?;
+
+    // Convert ModelArg to Model
+    let model: conductor_core::api::Model = cli.model.into();
+
+    // Set up signal handlers for terminal cleanup if using TUI
+    #[cfg(feature = "ui")]
+    if cli.command.is_none() || matches!(cli.command, Some(Commands::Tui { .. })) {
+        setup_signal_handlers().await;
+    }
+
+    // If no subcommand specified, default to TUI
+    let cmd = cli.command.clone().unwrap_or(Commands::Tui {
+        remote: None, // Will use global --remote if set
+    });
+
+    match cmd {
+        Commands::Tui { remote } => {
+            #[cfg(feature = "ui")]
+            {
+                // Use subcommand remote if provided, otherwise fall back to global
+                let remote_addr = remote.or(cli.remote.clone());
+
+                // Set panic hook for terminal cleanup
+                setup_panic_hook();
+
+                // Launch TUI with appropriate backend
+                if let Some(addr) = remote_addr {
+                    // Connect to remote server
+                    run_tui_remote(addr, cli.session, model, cli.directory, cli.system_prompt).await
+                } else {
+                    // Launch with in-process server
+                    run_tui_local(cli.session, model, cli.directory, cli.system_prompt).await
+                }
+            }
+            #[cfg(not(feature = "ui"))]
+            {
+                anyhow::bail!(
+                    "Terminal UI not available. This binary was compiled without the 'ui' feature."
+                );
+            }
+        }
+        Commands::Init { force } => {
+            let command = InitCommand { force };
+            command.execute().await
+        }
+        Commands::Headless {
+            model: headless_model,
+            messages_json,
+            session,
+            tool_config,
+            system_prompt,
+            remote,
+        } => {
+            // Use headless model if provided, otherwise global model
+            let effective_model = headless_model.map(Into::into).unwrap_or(model);
+            let remote_addr = remote.or(cli.remote.clone());
+
+            let command = HeadlessCommand {
+                model: Some(effective_model),
+                messages_json,
+                global_model: effective_model,
+                session,
+                tool_config,
+                system_prompt: system_prompt.or(cli.system_prompt),
+                remote: remote_addr,
+                directory: cli.directory,
+            };
+            command.execute().await
+        }
+        Commands::Server { port, bind } => {
+            let command = ServeCommand { port, bind, model };
+            command.execute().await
+        }
+        Commands::Session { session_command } => {
+            let command = SessionCommand {
+                command: session_command,
+                remote: cli.remote.clone(),
+            };
+            command.execute().await
+        }
+    }
+}
+
+#[cfg(feature = "ui")]
+async fn run_tui_local(
+    session_id: Option<String>,
+    model: conductor_core::api::Model,
+    directory: Option<std::path::PathBuf>,
+    system_prompt: Option<String>,
+) -> Result<()> {
+    use conductor_grpc::in_memory;
+    use std::sync::Arc;
+
+    // Set working directory if specified
+    if let Some(dir) = &directory {
+        std::env::set_current_dir(dir)?;
+    }
+
+    // Create LLM config
+    let llm_config = conductor_core::config::LlmConfig::from_env()
+        .expect("Failed to load LLM configuration from environment variables.");
+
+    // Create in-memory channel
+    let channel = in_memory::setup_local_grpc(llm_config, model).await?;
+
+    // Create gRPC client
+    let client = conductor_grpc::GrpcClientAdapter::from_channel(channel).await?;
+
+    // Run TUI with the client
+    tui::run_tui(
+        Arc::new(client),
+        session_id,
+        model,
+        directory,
+        system_prompt,
+    )
+    .await
+}
+
+#[cfg(feature = "ui")]
+async fn run_tui_remote(
+    remote_addr: String,
+    session_id: Option<String>,
+    model: conductor_core::api::Model,
+    directory: Option<std::path::PathBuf>,
+    system_prompt: Option<String>,
+) -> Result<()> {
+    use conductor_grpc::GrpcClientAdapter;
+    use std::sync::Arc;
+
+    // Connect to remote server
+    let client = GrpcClientAdapter::connect(&remote_addr).await?;
+
+    // Run TUI with the client
+    tui::run_tui(
+        Arc::new(client),
+        session_id,
+        model,
+        directory,
+        system_prompt,
+    )
+    .await
+}
+
+#[cfg(feature = "ui")]
+async fn setup_signal_handlers() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Set up a flag to track terminal state for signal handlers
+    let terminal_in_raw_mode = Arc::new(AtomicBool::new(false));
+    let terminal_clone = terminal_in_raw_mode.clone();
+
+    // Set up signal handler for SIGINT, SIGTERM
+    #[cfg(not(windows))]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let sigterm_terminal = terminal_clone.clone();
+        tokio::spawn(async move {
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to set up SIGTERM handler");
+            sigterm.recv().await;
+
+            // Clean up terminal if in raw mode
+            if sigterm_terminal.load(Ordering::Relaxed) {
+                cleanup_terminal();
+            }
+            std::process::exit(0);
+        });
+
+        let sigint_terminal = terminal_clone.clone();
+        tokio::spawn(async move {
+            let mut sigint =
+                signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+            sigint.recv().await;
+
+            // Clean up terminal if in raw mode
+            if sigint_terminal.load(Ordering::Relaxed) {
+                cleanup_terminal();
+            }
+            std::process::exit(130); // Standard exit code for SIGINT
+        });
+    }
+
+    #[cfg(windows)]
+    {
+        let windows_terminal = terminal_clone;
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            if windows_terminal.load(Ordering::Relaxed) {
+                cleanup_terminal();
+            }
+            std::process::exit(130);
+        });
+    }
+}
