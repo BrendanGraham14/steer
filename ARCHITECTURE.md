@@ -4,49 +4,61 @@ This document outlines the architecture of Conductor, an AI-powered CLI assistan
 
 ## Overview
 
-Conductor can operate in three modes:
+Conductor implements a clean client/server architecture where all clients communicate through gRPC:
 
-1. **Local Interactive**: Terminal UI runs directly with a local App instance
-2. **Headless**: One-shot execution that outputs JSON (for scripting/automation)
-3. **Client/Server**: Terminal UI connects to a gRPC server that hosts the App instances
+1. **Local Interactive**: Terminal UI connects to a localhost gRPC server
+2. **Remote Interactive**: Terminal UI connects to a remote gRPC server
+3. **Headless**: One-shot execution that outputs JSON (also uses gRPC internally)
+
+This design ensures:
+- Single API surface for all clients
+- No in-process shortcuts or special cases
+- Clear separation between UI and core logic
+- Easier testing and debugging
 
 ## High-Level Architecture
 
-```
-┌─────────────────┐       ┌─────────────────-─┐       ┌─────────────────┐
-│   Terminal UI   │       │  gRPC Client      │       │ Headless Runner │
-│    (ratatui)    │       │   (--remote)      │       │  (JSON output)  │
-└────────┬────────┘       └────────┬──────────┘       └────────┬────────┘
-         │                         │                           │
-         │ AppCommand              │ gRPC/Protobuf             │
-         │ AppEvent                │                           │
-         ▼                         ▼                           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Session Manager                           │
-│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐                │
-│  │   Session   │   │   Session   │   │   Session   │    SQLite      │
-│  │  (App + ID) │   │  (App + ID) │   │  (App + ID) │    Storage     │
-│  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘                │
-└─────────┼─────────────────┼─────────────────┼───────────────────────┘
-          │                 │                 │
-          ▼                 ▼                 ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                          App Actor Loop                                │
-│   - Message processing    - Tool execution    - Event emission         │
-│   - LLM orchestration    - Approval handling  - State management       │
-└────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    TUI1[Terminal UI<br/>local mode]
+    TUI2[Terminal UI<br/>remote mode]
+    HL[Headless Runner<br/>JSON output]
+
+    subgraph GRPC["gRPC Server (conductor-grpc)"]
+        SM[Session Manager]
+        S1[Session<br/>App + ID]
+        S2[Session<br/>App + ID]
+        S3[Session<br/>App + ID]
+
+        SM --> S1
+        SM --> S2
+        SM --> S3
+    end
+
+    subgraph CORE["conductor-core"]
+        APP[Message processing<br/>Tool execution<br/>Event emission<br/>LLM orchestration<br/>Approval handling<br/>State management]
+    end
+
+    TUI1 -->|gRPC<br/>localhost| SM
+    TUI2 -->|gRPC<br/>network| SM
+    HL -->|gRPC<br/>localhost| SM
+
+    S1 --> APP
+    S2 --> APP
+    S3 --> APP
 ```
 
 ## Core Components
 
-### 1. Terminal UI (`conductor/src/tui`)
+### 1. Terminal UI (`conductor-tui`)
 - **ratatui-based** terminal interface
-- Sends `AppCommand` messages to control the App
-- Receives `AppEvent` messages for display updates
+- Always communicates through gRPC (even in local mode)
+- Uses `GrpcClientAdapter` to translate between UI events and gRPC messages
 - Handles user input, text editing, and tool approval prompts
-- Can connect to local App or remote gRPC server
+- In local mode: connects to localhost gRPC server (random port)
+- In remote mode: connects to network gRPC server
 
-### 2. App Actor Loop (`conductor/src/app`)
+### 2. App Actor Loop (`conductor-core/src/app`)
 The heart of Conductor - an event-driven actor that:
 - Manages conversation state
 - Coordinates with LLM providers (Anthropic, OpenAI, Gemini)
@@ -59,13 +71,13 @@ Key structures:
 - `OpContext`: Tracks active operations and enables cancellation
 - `AgentExecutor`: Manages LLM API calls and streaming responses
 
-### 3. Session Manager (`conductor/src/session`)
+### 3. Session Manager (`conductor-core/src/session`)
 - Multiplexes multiple App instances (sessions)
 - Persists conversations to SQLite (`~/.conductor/conductor.sqlite`)
 - Handles session lifecycle (create, resume, delete)
 - Manages tool approval policies per session
 
-### 4. Tool System (`conductor/src/tools`, `tools/`)
+### 4. Tool System (`conductor-tools`, `conductor-core/src/tools`)
 Tools are implemented as async functions that can:
 - Read/write files (`view`, `edit`, `replace`)
 - Search code (`grep`, `glob`)
@@ -79,46 +91,113 @@ Tool execution flow:
 4. Tool runs on selected backend (local, remote, container)
 5. Result returned to LLM as `Message::Tool`
 
-### 5. Workspace Abstraction (`conductor/src/workspace`)
-- **Local**: Tools execute in current directory
-- **Remote**: Tools execute on remote machine via gRPC
-- Provides environment context for system prompt
+### 5. Workspace Abstraction (`conductor-core/src/workspace`)
+
+Workspaces provide a unified interface for tool execution and environment information, abstracting over different execution contexts:
+
+#### Workspace Types
+
+1. **LocalWorkspace**: Executes tools in the current directory
+   - Direct filesystem access
+   - Environment info collected from local machine
+   - Tools run in the same process
+
+2. **RemoteWorkspace**: Executes tools on a remote machine via gRPC
+   - Connects to a `conductor-remote-workspace` service
+   - Environment info fetched via RPC
+   - Tools executed on the remote host
+   - Supports authentication (basic auth, bearer tokens)
+
+3. **ContainerWorkspace** (planned): Execute tools in Docker containers
+   - Isolated execution environment
+   - Consistent tool behavior across platforms
+
+#### Workspace Interface
+
+```rust
+#[async_trait]
+trait Workspace {
+    // Get environment info (working directory, git status, etc.)
+    async fn environment(&self) -> Result<EnvironmentInfo>;
+
+    // Execute a tool in this workspace
+    async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext) -> Result<String>;
+
+    // List available tools
+    async fn available_tools(&self) -> Vec<ToolSchema>;
+
+    // Check if a tool requires approval
+    async fn requires_approval(&self, tool_name: &str) -> Result<bool>;
+}
+```
+
+#### Environment Caching
+
+- Environment info is cached with a TTL (5 minutes default)
+- Cache can be invalidated on-demand
+- Reduces overhead for frequently accessed info
+
+#### Remote Workspace Protocol
+
+Remote workspaces use a dedicated gRPC service (`RemoteWorkspaceService`):
+
+```proto
+service RemoteWorkspaceService {
+  rpc GetEnvironmentInfo(...) returns (EnvironmentInfo);
+  rpc ExecuteTool(stream ExecuteToolRequest) returns (stream ExecuteToolResponse);
+  rpc GetAvailableTools(...) returns (ToolSchemasResponse);
+}
+```
+
+This enables:
+- Secure remote code execution
+- Tool output streaming
+- Cancellation support
+- Authentication and authorization
 
 ## gRPC Protocol
 
 The gRPC protocol enables client/server separation using bidirectional streaming:
 
-### Server Side (`conductor serve`)
-```
-┌─────────────────────────┐
-│    gRPC Server          │
-│  ┌──────────────────┐   │
-│  │ AgentServiceImpl │   │
-│  └────────┬─────────┘   │
-│           │             │
-│  ┌────────▼─────────┐   │
-│  │ SessionManager   │   │
-│  └──────────────────┘   │
-└─────────────────────────┘
+### Server Side
+
+The gRPC server can run in two modes:
+
+1. **Standalone** (`conductor serve`):
+   - Listens on a network port (default 50051)
+   - Accepts connections from remote clients
+   - Persistent across client connections
+
+2. **Local** (used by local TUI and headless):
+   - Binds to localhost with a random port
+   - Client and server run in the same process
+   - Uses TCP over loopback interface (127.0.0.1)
+   - Lifetime tied to the client process
+
+```mermaid
+graph TB
+    subgraph SERVER["gRPC Server"]
+        AS[AgentServiceImpl]
+        SM[SessionManager]
+        AS --> SM
+    end
 ```
 
 The server:
-- Listens on a port (default 50051)
 - Hosts SessionManager with multiple App instances
 - Streams events to connected clients
 - Handles session persistence
+- Manages concurrent sessions
 
 ### Client Side (`conductor --remote`)
-```
-┌─────────────────────────┐
-│   Terminal UI           │
-│  ┌──────────────────┐   │
-│  │ GrpcClientAdapter│   │
-│  └────────┬─────────┘   │
-│           │             │
-│      gRPC │ Stream      │
-│           ▼             │
-└─────────────────────────┘
+```mermaid
+graph TB
+    subgraph CLIENT["Terminal UI"]
+        TUI[UI Components]
+        GCA[GrpcClientAdapter]
+        TUI --> GCA
+        GCA -->|gRPC Stream| NET[Network/Localhost]
+    end
 ```
 
 The client:
@@ -130,25 +209,25 @@ The client:
 ### Protocol Flow
 
 1. **Session Creation**:
-   ```
-   Client                          Server
-     |----CreateSessionRequest----->|
-     |<-----SessionInfo-------------|
+   ```mermaid
+   sequenceDiagram
+       Client->>Server: CreateSessionRequest
+       Server-->>Client: SessionInfo
    ```
 
 2. **Bidirectional Streaming**:
-   ```
-   Client                          Server
-     |----StreamSession(stream)---->|
-     |----Subscribe---------------->|
-     |<----MessageAddedEvent--------|
-     |----SendMessage-------------->|
-     |<----ThinkingStartedEvent-----|
-     |<----MessagePartEvent---------|
-     |<----RequestToolApproval------|
-     |----ToolApprovalResponse----->|
-     |<----ToolCallStartedEvent-----|
-     |<----ToolCallCompletedEvent---|
+   ```mermaid
+   sequenceDiagram
+       Client->>Server: StreamSession(stream)
+       Client->>Server: Subscribe
+       Server-->>Client: MessageAddedEvent
+       Client->>Server: SendMessage
+       Server-->>Client: ThinkingStartedEvent
+       Server-->>Client: MessagePartEvent
+       Server-->>Client: RequestToolApproval
+       Client->>Server: ToolApprovalResponse
+       Server-->>Client: ToolCallStartedEvent
+       Server-->>Client: ToolCallCompletedEvent
    ```
 
 3. **Message Types**:
@@ -169,29 +248,50 @@ service RemoteWorkspaceService {
 
 ## Event Flow
 
-### Local Mode
-```
-User Input → TUI → AppCommand → App Actor → LLM API
-                                    ↓
-Display ← AppEvent ← Tool Result ← Tool Execution
+Since all clients communicate through gRPC, the event flow is unified:
+
+### All Modes (Local and Remote)
+```mermaid
+sequenceDiagram
+    participant User
+    participant TUI
+    participant gRPC Client
+    participant gRPC Server
+    participant Session Manager
+    participant App Actor
+    participant LLM API
+    participant Tool Execution
+    
+    User->>TUI: Input
+    TUI->>gRPC Client: Command
+    gRPC Client->>gRPC Server: Request
+    gRPC Server->>Session Manager: Process
+    Session Manager->>App Actor: Execute
+    App Actor->>LLM API: Call
+    LLM API-->>App Actor: Response
+    App Actor->>Tool Execution: Execute tool
+    Tool Execution-->>App Actor: Result
+    App Actor-->>Session Manager: Events
+    Session Manager-->>gRPC Server: Events
+    gRPC Server-->>gRPC Client: Stream
+    gRPC Client-->>TUI: Update
+    TUI-->>User: Display
 ```
 
-### Remote Mode
-```
-User Input → TUI → AppCommand → gRPC Client → Network → gRPC Server
-                                                            ↓
-                                                        App Actor
-                                                            ↓
-Display ← AppEvent ← gRPC Events ← Network ← Server Events
-```
+The difference between local and remote modes:
+- **Local**: gRPC uses localhost TCP connection (127.0.0.1 with random port)
+- **Remote**: gRPC uses TCP/IP network connection to specified host/port
 
 ## Key Design Decisions
 
-1. **Actor Model**: The App runs as an async actor with message passing, avoiding shared mutable state
-2. **Event Sourcing**: All UI updates driven by events, making the system debuggable and testable
-3. **Tool Abstraction**: Tools are provider-agnostic and can run on different backends
-4. **Session Persistence**: SQLite provides reliable storage without external dependencies
-5. **Streaming gRPC**: Enables real-time updates and interactive tool approval flows
+1. **Unified gRPC Interface**: All clients (local TUI, remote TUI, headless) communicate through the same gRPC API, ensuring consistency and eliminating special cases
+2. **Actor Model**: The App runs as an async actor with message passing, avoiding shared mutable state
+3. **Event Sourcing**: All UI updates driven by events, making the system debuggable and testable
+4. **Tool Abstraction**: Tools are provider-agnostic and can run on different backends
+5. **Workspace Abstraction**: Unified interface for local/remote/container execution environments
+6. **Session Persistence**: SQLite provides reliable storage without external dependencies
+7. **Streaming gRPC**: Enables real-time updates and interactive tool approval flows
+8. **Clean Crate Separation**: Each crate has a single responsibility with clear dependency boundaries
 
 ## Data Flow Examples
 
@@ -217,16 +317,50 @@ Display ← AppEvent ← gRPC Events ← Network ← Server Events
 
 ```
 conductor/
-├── src/
-│   ├── api/          # LLM provider clients
-│   ├── app/          # Core App actor and logic
-│   ├── cli/          # Command-line argument parsing
-│   ├── commands/     # CLI subcommand implementations
-│   ├── grpc/         # gRPC server and client
-│   ├── session/      # Session management
-│   ├── tools/        # Tool execution infrastructure
-│   ├── tui/          # Terminal UI
-│   └── workspace/    # Workspace abstractions
-├── tools/            # Tool implementations
-└── proto/           # Protocol buffer definitions
+├── crates/
+│   ├── conductor-cli/          # Command-line interface and main binary
+│   ├── conductor-core/         # Core domain logic (LLM APIs, session management)
+│   ├── conductor-grpc/         # gRPC server/client implementation
+│   ├── conductor-macros/       # Procedural macros for tool definitions
+│   ├── conductor-proto/        # Protocol buffer definitions and generated code
+│   ├── conductor-remote-workspace/  # gRPC service for remote tool execution
+│   ├── conductor-tools/        # Tool trait definitions and implementations
+│   └── conductor-tui/          # Terminal UI library (ratatui-based)
+├── migrations/                 # Database migration files
+├── prompts/                    # System prompts for various models
+├── proto/                      # Protocol buffer source files
+└── scripts/                    # Build and development scripts
 ```
+
+## Crate Dependency Graph
+
+The crates maintain a strict acyclic dependency graph:
+
+```mermaid
+graph TD
+    proto[conductor-proto]
+    tools[conductor-tools]
+    macros[conductor-macros]
+    core[conductor-core]
+    grpc[conductor-grpc]
+    cli[conductor-cli]
+    remote[conductor-remote-workspace]
+    tui["conductor-tui<br/>(optional feature)"]
+    
+    proto --> core
+    tools --> core
+    macros --> core
+    core --> grpc
+    grpc --> cli
+    grpc --> remote
+    cli --> tui
+    
+    style core fill:#bbf,stroke:#333,stroke-width:2px
+    style grpc fill:#bfb,stroke:#333,stroke-width:2px
+```
+
+Key principles:
+- **conductor-proto**: No dependencies on other conductor crates
+- **conductor-core**: Can import proto, tools, and macros, but NOT grpc
+- **conductor-grpc**: The ONLY crate that converts between core and proto types
+- **Client crates** (cli, tui): Must use grpc, never import core directly

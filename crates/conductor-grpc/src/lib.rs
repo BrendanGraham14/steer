@@ -1,5 +1,5 @@
 pub mod grpc;
-pub mod in_memory;
+pub mod local_server;
 pub mod service_host;
 
 // Re-export everything from grpc module at the top level for backward compatibility

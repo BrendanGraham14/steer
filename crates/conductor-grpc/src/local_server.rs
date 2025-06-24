@@ -7,9 +7,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tonic::transport::{Channel, Server};
 
-/// Creates an in-memory gRPC server and client channel
-/// This allows running both server and client in the same process without network overhead
-pub async fn create_in_memory_channel(session_manager: Arc<SessionManager>) -> Result<Channel> {
+/// Creates a localhost gRPC server and client channel
+/// This runs both server and client in the same process using localhost TCP
+pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Result<Channel> {
     // Create a channel for the server's bound address
     let (tx, rx) = oneshot::channel();
 
@@ -32,7 +32,7 @@ pub async fn create_in_memory_channel(session_manager: Arc<SessionManager>) -> R
             .add_service(svc)
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
-            .expect("Failed to run in-memory server");
+            .expect("Failed to run localhost server");
     });
 
     // Wait for the server to be ready and get its address
@@ -46,7 +46,7 @@ pub async fn create_in_memory_channel(session_manager: Arc<SessionManager>) -> R
     Ok(channel)
 }
 
-/// Creates a complete in-memory gRPC setup for local mode
+/// Creates a complete localhost gRPC setup for local mode
 /// Returns the channel for use by the TUI
 pub async fn setup_local_grpc(
     _llm_config: conductor_core::config::LlmConfig,
@@ -70,8 +70,8 @@ pub async fn setup_local_grpc(
         global_event_tx,
     ));
 
-    // Create in-memory channel
-    let channel = create_in_memory_channel(session_manager).await?;
+    // Create localhost channel
+    let channel = create_local_channel(session_manager).await?;
 
     Ok(channel)
 }
