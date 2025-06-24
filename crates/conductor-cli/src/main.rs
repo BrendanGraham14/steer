@@ -109,7 +109,7 @@ async fn run_tui_local(
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
 ) -> Result<()> {
-    use conductor_grpc::in_memory;
+    use conductor_grpc::local_server;
     use std::sync::Arc;
 
     // Set working directory if specified
@@ -122,7 +122,7 @@ async fn run_tui_local(
         .expect("Failed to load LLM configuration from environment variables.");
 
     // Create in-memory channel
-    let channel = in_memory::setup_local_grpc(llm_config, model).await?;
+    let channel = local_server::setup_local_grpc(llm_config, model).await?;
 
     // Create gRPC client
     let client = conductor_grpc::GrpcClientAdapter::from_channel(channel).await?;

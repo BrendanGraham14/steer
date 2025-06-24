@@ -68,12 +68,12 @@ impl GrpcClientAdapter {
         })
     }
 
-    /// Convenience constructor: spin up an in-memory gRPC server and return a ready client.
-    pub async fn in_memory(
+    /// Convenience constructor: spin up a localhost gRPC server and return a ready client.
+    pub async fn local(
         llm_config: conductor_core::config::LlmConfig,
         default_model: conductor_core::api::Model,
     ) -> Result<Self> {
-        use crate::in_memory::setup_local_grpc;
+        use crate::local_server::setup_local_grpc;
         let channel = setup_local_grpc(llm_config, default_model).await?;
         Self::from_channel(channel).await
     }
