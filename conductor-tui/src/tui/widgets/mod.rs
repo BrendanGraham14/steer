@@ -5,6 +5,6 @@ pub mod formatters;
 pub mod message_list;
 pub mod styles;
 
-pub use cached_renderer::CachedContentRenderer;
+pub use cached_renderer::{CachedContentRenderer, CachedContentRendererRef};
 pub use content_renderer::{ContentRenderer, DefaultContentRenderer};
 pub use message_list::{MessageContent, MessageList, MessageListState, ViewMode, ViewPreferences};
