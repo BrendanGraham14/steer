@@ -1,7 +1,7 @@
 # Commands
 
 cargo test
-cargo run
+cargo run -p conductor-cli
 cargo build
 
 
@@ -15,9 +15,20 @@ Follow the conventional commits format.
 - You generally should not implement the `Default` trait for structs unless explicitly instructed.
 - DO NOT unwrap errors. Use the try operator `?` and propagate errors appropriately.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
+- The workspace Cargo.toml uses glob pattern `crates/*` to include all crates in the workspace.
 
 
 # Crate Architecture
+
+All crates are organized under the `crates/` directory:
+- `crates/conductor-proto/` - Protocol buffer definitions and generated code
+- `crates/conductor-core/` - Core domain logic (LLM APIs, session management, tool execution)
+- `crates/conductor-grpc/` - gRPC server/client implementation
+- `crates/conductor-cli/` - Command-line interface and main binary
+- `crates/conductor-tui/` - Terminal UI library (ratatui-based)
+- `crates/conductor-tools/` - Tool trait definitions and implementations
+- `crates/conductor-macros/` - Procedural macros for tool definitions
+- `crates/conductor-remote-workspace/` - gRPC service for remote tool execution
 
 ## Dependency Graph
 The crates must maintain a strict acyclic dependency graph:
@@ -59,5 +70,6 @@ conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc
 2. **All conversions in grpc**: Any function converting between core and proto types belongs in conductor-grpc
 3. **No in-process shortcuts**: Clients must always use the gRPC interface, even for local operations
 4. **Clean boundaries**: Each crate has a single, clear responsibility
+5. **Path references**: When referencing files outside crates (e.g., `include_str!`), remember to account for the extra directory level: `../../` becomes `../../../` or `../../../../`
 
 See docs/grpc_architecture.md for full details.
