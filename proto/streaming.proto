@@ -34,6 +34,8 @@ message ClientMessage {
     CancelOperationRequest cancel = 4;
     SubscribeRequest subscribe = 5;
     UpdateConfigRequest update_config = 6;
+    ExecuteCommandRequest execute_command = 7;
+    ExecuteBashCommandRequest execute_bash_command = 8;
   }
 }
 
@@ -61,26 +63,8 @@ message ServerEvent {
 
 // Event message definitions
 message MessageAddedEvent {
-  oneof message {
-    UserMessage user = 1;
-    AssistantMessage assistant = 2;
-    ToolMessage tool = 3;
-  }
-  string id = 4;
-  string model = 5;
-}
-
-message UserMessage {
-  repeated UserContent content = 1;
-  uint64 timestamp = 2;
-}
-
-message UserContent {
-  oneof content {
-    string text = 1;
-    CommandExecution command_execution = 2;
-    AppCommand app_command = 3;
-  }
+  Message message = 1;
+  string model = 2;
 }
 
 message CommandExecution {
@@ -126,6 +110,19 @@ message CompactResult {
     string success = 1;
     bool cancelled = 2;
     bool insufficient_messages = 3;
+  }
+}
+
+message UserMessage {
+  repeated UserContent content = 1;
+  uint64 timestamp = 2;
+}
+
+message UserContent {
+  oneof content {
+    string text = 1;
+    CommandExecution command_execution = 2;
+    AppCommand app_command = 3;
   }
 }
 
@@ -374,8 +371,6 @@ message Message {
   map<string, string> metadata = 6;
 }
 
-
-
 message ToolCall {
   string id = 1;
   string name = 2;
@@ -576,7 +571,6 @@ enum ApprovalDecision {
   APPROVAL_DECISION_ALWAYS_APPROVE = 3;
 }
 
-
 enum ContainerRuntime {
   CONTAINER_RUNTIME_UNSPECIFIED = 0;
   CONTAINER_RUNTIME_DOCKER = 1;
@@ -608,4 +602,14 @@ message RemoteWorkspaceConfig {
 message ContainerWorkspaceConfig {
   string image = 1;
   ContainerRuntime runtime = 2;
+}
+
+message ExecuteCommandRequest {
+  string session_id = 1;
+  string command = 2;
+}
+
+message ExecuteBashCommandRequest {
+  string session_id = 1;
+  string command = 2;
 }

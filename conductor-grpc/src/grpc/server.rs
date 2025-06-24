@@ -553,7 +553,7 @@ async fn try_resume_session(
 
     // Attempt to resume the session
     match session_manager.resume_session(session_id, app_config).await {
-        Ok((true, command_tx)) => {
+        Ok((true, _command_tx)) => {
             info!("Successfully resumed session: {}", session_id);
             // TUI will call GetCurrentConversation when it connects
             Ok(())
@@ -649,6 +649,25 @@ async fn handle_client_message(
                 // TODO: Implement config updates
                 debug!("Config update not yet implemented: {:?}", update_config);
             }
+
+            client_message::Message::ExecuteCommand(execute_command) => {
+                let app_command =
+                    conductor_core::app::AppCommand::ExecuteCommand(execute_command.command);
+                session_manager
+                    .send_command(&client_message.session_id, app_command)
+                    .await
+                    .map_err(|e| format!("Failed to execute command: {}", e))?;
+            }
+
+            client_message::Message::ExecuteBashCommand(execute_bash_command) => {
+                let app_command = conductor_core::app::AppCommand::ExecuteBashCommand {
+                    command: execute_bash_command.command,
+                };
+                session_manager
+                    .send_command(&client_message.session_id, app_command)
+                    .await
+                    .map_err(|e| format!("Failed to execute bash command: {}", e))?;
+            }
         }
     }
 
@@ -663,9 +682,7 @@ mod tests {
     use conductor_core::events::StreamEventWithMetadata;
     use conductor_core::session::state::WorkspaceConfig;
     use conductor_core::session::stores::sqlite::SqliteSessionStore;
-    use conductor_core::session::{
-        SessionConfig, SessionManagerConfig, SessionToolConfig,
-    };
+    use conductor_core::session::{SessionConfig, SessionManagerConfig, SessionToolConfig};
     use conductor_proto::agent::agent_service_client::AgentServiceClient;
     use conductor_proto::agent::{SendMessageRequest, SubscribeRequest};
     use std::collections::HashMap;

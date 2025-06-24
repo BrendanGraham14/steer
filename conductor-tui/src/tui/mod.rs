@@ -69,14 +69,12 @@ pub struct Tui {
     current_tool_approval: Option<tools::ToolCall>,
     current_model: Model,
     event_pipeline: EventPipeline,
-    render_count: usize,
 }
 
 #[derive(Debug)]
 enum InputAction {
     SendMessage(String),
     ExecuteBashCommand(String),
-    ToggleMessageTruncation(String),
     ApproveToolNormal(String),
     ApproveToolAlways(String),
     DenyTool(String),
@@ -137,7 +135,6 @@ impl Tui {
             current_tool_approval: None,
             current_model: initial_model,
             event_pipeline: Self::create_event_pipeline(),
-            render_count: 0,
         })
     }
 
@@ -315,8 +312,6 @@ impl Tui {
                 self.terminal.draw(|f| {
                     let textarea_ref = &self.textarea;
                     let current_approval_ref = self.current_tool_approval.as_ref();
-
-                    debug!(target:"tui.run.draw", "Drawing UI with {} messages", self.view_model.messages.len());
 
                     // Get references separately to avoid borrow conflicts
                     let messages_slice = self.view_model.messages.as_slice();
@@ -1278,10 +1273,6 @@ impl Tui {
                 self.view_model.message_list_state.selected = None;
                 self.view_model.message_list_state.user_scrolled = false;
                 debug!(target: "tui.dispatch_input_action", "Sent ExecuteBashCommand, reset user_scrolled");
-            }
-            InputAction::ToggleMessageTruncation(_target_id) => {
-                // This is now handled by expanding/collapsing messages
-                // The widget system handles this internally
             }
             InputAction::ApproveToolNormal(id) => {
                 self.command_sink

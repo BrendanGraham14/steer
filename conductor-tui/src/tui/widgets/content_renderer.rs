@@ -116,7 +116,7 @@ impl DefaultContentRenderer {
     fn render_assistant_message(
         &self,
         blocks: &[AssistantContent],
-        mode: ViewMode,
+        _mode: ViewMode,
         area: Rect,
         buf: &mut Buffer,
     ) {

@@ -4,11 +4,11 @@
 use super::conversions::*;
 use conductor_core::api::ToolCall;
 use conductor_core::app::conversation::{
-    AppCommandType, AssistantContent, CommandResponse,
-    Message as ConversationMessage, ThoughtContent, ToolResult, UserContent,
+    AppCommandType, AssistantContent, CommandResponse, Message as ConversationMessage,
+    ThoughtContent, ToolResult, UserContent,
 };
 use conductor_core::app::{
-    AppEvent,
+    AppCommand, AppEvent,
     cancellation::{ActiveTool, CancellationInfo},
 };
 use conductor_core::session::state::{
@@ -227,6 +227,25 @@ prop_compose! {
     }
 }
 
+prop_compose! {
+    fn arb_app_command()(
+        variant in 0..4usize,
+        user_input in ".*",
+        command in "[a-z ]+",
+        bash_command in "[a-z ]+",
+        tool_id in "[a-zA-Z0-9-]+",
+        approved in prop::bool::ANY,
+        always in prop::bool::ANY,
+    ) -> AppCommand {
+        match variant {
+            0 => AppCommand::ProcessUserInput(user_input),
+            1 => AppCommand::ExecuteCommand(command),
+            2 => AppCommand::ExecuteBashCommand { command: bash_command },
+            _ => AppCommand::HandleToolResponse { id: tool_id, approved, always },
+        }
+    }
+}
+
 // Property tests
 proptest! {
     #[test]
@@ -438,9 +457,9 @@ proptest! {
         // Convert back
         let roundtrip = server_event_to_app_event(proto_event);
 
-        prop_assert!(roundtrip.is_some());
+        prop_assert!(roundtrip.is_ok());
 
-        if let Some(AppEvent::OperationCancelled { info: roundtrip_info }) = roundtrip {
+        if let Ok(AppEvent::OperationCancelled { info: roundtrip_info }) = roundtrip {
             prop_assert_eq!(info.api_call_in_progress, roundtrip_info.api_call_in_progress);
             prop_assert_eq!(info.pending_tool_approvals, roundtrip_info.pending_tool_approvals);
 
@@ -452,6 +471,99 @@ proptest! {
             }
         } else {
             prop_assert!(false, "Expected OperationCancelled event");
+        }
+    }
+
+    #[test]
+    fn prop_app_command_conversion(command in arb_app_command()) {
+        let session_id = "test-session-123";
+
+        // Extract expected values before moving command
+        enum ExpectedResult {
+            ProcessUserInput(String),
+            ExecuteCommand(String),
+            ExecuteBashCommand(String),
+            HandleToolResponse { id: String, approved: bool, always: bool },
+            NoMessage,
+        }
+
+        let expected = match &command {
+            AppCommand::ProcessUserInput(text) => ExpectedResult::ProcessUserInput(text.clone()),
+            AppCommand::ExecuteCommand(cmd) => ExpectedResult::ExecuteCommand(cmd.clone()),
+            AppCommand::ExecuteBashCommand { command } => ExpectedResult::ExecuteBashCommand(command.clone()),
+            AppCommand::HandleToolResponse { id, approved, always } => ExpectedResult::HandleToolResponse {
+                id: id.clone(),
+                approved: *approved,
+                always: *always,
+            },
+            _ => ExpectedResult::NoMessage,
+        };
+
+        // Now convert the command (moving it)
+        let result = convert_app_command_to_client_message(command, session_id);
+
+        // Verify the result
+        match expected {
+            ExpectedResult::ProcessUserInput(text) => {
+                prop_assert!(result.is_ok());
+                if let Ok(Some(client_msg)) = result {
+                    prop_assert_eq!(client_msg.session_id, session_id);
+                    if let Some(conductor_proto::agent::client_message::Message::SendMessage(msg)) = client_msg.message {
+                        prop_assert_eq!(msg.message, text);
+                        prop_assert_eq!(msg.session_id, session_id);
+                    } else {
+                        prop_assert!(false, "Expected SendMessage variant");
+                    }
+                }
+            }
+            ExpectedResult::ExecuteCommand(cmd) => {
+                prop_assert!(result.is_ok());
+                if let Ok(Some(client_msg)) = result {
+                    prop_assert_eq!(client_msg.session_id, session_id);
+                    if let Some(conductor_proto::agent::client_message::Message::ExecuteCommand(msg)) = client_msg.message {
+                        prop_assert_eq!(msg.command, cmd);
+                        prop_assert_eq!(msg.session_id, session_id);
+                    } else {
+                        prop_assert!(false, "Expected ExecuteCommand variant");
+                    }
+                }
+            }
+            ExpectedResult::ExecuteBashCommand(bash_cmd) => {
+                prop_assert!(result.is_ok());
+                if let Ok(Some(client_msg)) = result {
+                    prop_assert_eq!(client_msg.session_id, session_id);
+                    if let Some(conductor_proto::agent::client_message::Message::ExecuteBashCommand(msg)) = client_msg.message {
+                        prop_assert_eq!(msg.command, bash_cmd);
+                        prop_assert_eq!(msg.session_id, session_id);
+                    } else {
+                        prop_assert!(false, "Expected ExecuteBashCommand variant");
+                    }
+                }
+            }
+            ExpectedResult::HandleToolResponse { id, approved, always } => {
+                prop_assert!(result.is_ok());
+                if let Ok(Some(client_msg)) = result {
+                    prop_assert_eq!(client_msg.session_id, session_id);
+                    if let Some(conductor_proto::agent::client_message::Message::ToolApproval(msg)) = client_msg.message {
+                        prop_assert_eq!(msg.tool_call_id, id);
+                        // Verify decision conversion
+                        let expected_decision = if always {
+                            conductor_proto::agent::ApprovalDecision::AlwaysApprove as i32
+                        } else if approved {
+                            conductor_proto::agent::ApprovalDecision::Approve as i32
+                        } else {
+                            conductor_proto::agent::ApprovalDecision::Deny as i32
+                        };
+                        prop_assert_eq!(msg.decision, expected_decision);
+                    } else {
+                        prop_assert!(false, "Expected ToolApproval variant");
+                    }
+                }
+            }
+            ExpectedResult::NoMessage => {
+                prop_assert!(result.is_ok());
+                prop_assert!(result.unwrap().is_none());
+            }
         }
     }
 }
