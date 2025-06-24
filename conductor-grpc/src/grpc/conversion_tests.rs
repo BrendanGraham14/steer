@@ -4,7 +4,7 @@
 use super::conversions::*;
 use conductor_core::api::ToolCall;
 use conductor_core::app::conversation::{
-    AppCommandType, AssistantContent, CommandResponse, CompactResult,
+    AppCommandType, AssistantContent, CommandResponse,
     Message as ConversationMessage, ThoughtContent, ToolResult, UserContent,
 };
 use conductor_core::app::{
@@ -314,17 +314,11 @@ proptest! {
                         }
                         (UserContent::AppCommand { command: cmd1, response: resp1 },
                          UserContent::AppCommand { command: cmd2, response: resp2 }) => {
-                            match (cmd1, cmd2) {
-                                (AppCommandType::Model { target: t1 }, AppCommandType::Model { target: t2 }) => {
-                                    prop_assert_eq!(t1, t2);
-                                }
-                                _ => {}
+                            if let (AppCommandType::Model { target: t1 }, AppCommandType::Model { target: t2 }) = (cmd1, cmd2) {
+                                prop_assert_eq!(t1, t2);
                             }
-                            match (resp1, resp2) {
-                                (Some(CommandResponse::Text(t1)), Some(CommandResponse::Text(t2))) => {
-                                    prop_assert_eq!(t1, t2);
-                                }
-                                _ => {}
+                            if let (Some(CommandResponse::Text(t1)), Some(CommandResponse::Text(t2))) = (resp1, resp2) {
+                                prop_assert_eq!(t1, t2);
                             }
                         }
                         _ => prop_assert!(false, "Content type mismatch"),

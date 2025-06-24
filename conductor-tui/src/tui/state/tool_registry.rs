@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use tools::schema::ToolCall;
 use crate::app::conversation::ToolResult;
+use tools::schema::ToolCall;
 
 /// Status of a tool call in its lifecycle
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +55,7 @@ pub struct CompletedToolCall {
 }
 
 /// Centralized registry for tracking tool call lifecycle.
-/// 
+///
 /// This façade initially wraps the existing HashMap-based tracking but provides
 /// a clean API for managing tool calls through their complete lifecycle.
 #[derive(Debug, Default)]
@@ -79,13 +79,13 @@ impl ToolCallRegistry {
     /// Register a new tool call (if not already present)
     pub fn register_call(&mut self, call: ToolCall) {
         let id = call.id.clone();
-        
+
         tracing::debug!(
             target: "tool_registry",
             "register_call: id={}, name={}, params={}",
             id, call.name, call.parameters
         );
-        
+
         if !self.pending_calls.contains_key(&id)
             && !self.active_calls.contains_key(&id)
             && !self.completed_calls.contains_key(&id)
@@ -104,13 +104,13 @@ impl ToolCallRegistry {
     /// without touching timing / status, or inserts as pending if not present.
     pub fn upsert_call(&mut self, call: ToolCall) {
         let id = call.id.clone();
-        
+
         tracing::debug!(
             target: "tool_registry",
             "Upsert call: id={}, name={}, params={}",
             id, call.name, call.parameters
         );
-        
+
         if let Some(p) = self.pending_calls.get_mut(&id) {
             tracing::debug!(target: "tool_registry", "Updating pending call {}", id);
             *p = call;
@@ -148,11 +148,17 @@ impl ToolCallRegistry {
     }
 
     /// Complete execution of a tool call with a result
-    pub fn complete_execution(&mut self, id: &str, result: ToolResult) -> Option<CompletedToolCall> {
+    pub fn complete_execution(
+        &mut self,
+        id: &str,
+        result: ToolResult,
+    ) -> Option<CompletedToolCall> {
         if let Some(state) = self.active_calls.remove(id) {
             let completed_at = Instant::now();
-            let duration = state.started_at.map(|started| completed_at.duration_since(started));
-            
+            let duration = state
+                .started_at
+                .map(|started| completed_at.duration_since(started));
+
             let completed = CompletedToolCall {
                 call: state.call,
                 result,
@@ -161,8 +167,9 @@ impl ToolCallRegistry {
                 completed_at,
                 duration,
             };
-            
-            self.completed_calls.insert(id.to_string(), completed.clone());
+
+            self.completed_calls
+                .insert(id.to_string(), completed.clone());
             Some(completed)
         } else {
             None
@@ -173,8 +180,10 @@ impl ToolCallRegistry {
     pub fn fail_execution(&mut self, id: &str, error: String) -> Option<CompletedToolCall> {
         if let Some(state) = self.active_calls.remove(id) {
             let completed_at = Instant::now();
-            let duration = state.started_at.map(|started| completed_at.duration_since(started));
-            
+            let duration = state
+                .started_at
+                .map(|started| completed_at.duration_since(started));
+
             let completed = CompletedToolCall {
                 call: state.call,
                 result: ToolResult::Error { error },
@@ -183,8 +192,9 @@ impl ToolCallRegistry {
                 completed_at,
                 duration,
             };
-            
-            self.completed_calls.insert(id.to_string(), completed.clone());
+
+            self.completed_calls
+                .insert(id.to_string(), completed.clone());
             Some(completed)
         } else {
             None
@@ -234,10 +244,12 @@ impl ToolCallRegistry {
 
     /// Get a tool call from any stage (for backwards compatibility)
     pub fn get_tool_call(&self, id: &str) -> Option<&ToolCall> {
-        let result = self.pending_calls.get(id)
+        let result = self
+            .pending_calls
+            .get(id)
             .or_else(|| self.active_calls.get(id).map(|s| &s.call))
             .or_else(|| self.completed_calls.get(id).map(|c| &c.call));
-            
+
         if let Some(call) = result {
             tracing::debug!(
                 target: "tool_registry",
@@ -251,14 +263,14 @@ impl ToolCallRegistry {
                 id
             );
         }
-        
+
         result
     }
 
     /// Set the message index for a tool call (for rendering)
     pub fn set_message_index(&mut self, id: &str, index: usize) {
         self.tool_message_index.insert(id.to_string(), index);
-        
+
         // Update active call state if it exists
         if let Some(state) = self.active_calls.get_mut(id) {
             state.message_index = Some(index);
@@ -311,7 +323,7 @@ impl ToolCallRegistry {
             completed_count: self.completed_calls.len(),
         }
     }
-    
+
     /// Debug helper to dump registry state
     pub fn debug_dump(&self, prefix: &str) {
         tracing::debug!(
@@ -322,7 +334,7 @@ impl ToolCallRegistry {
             self.active_calls.len(),
             self.completed_calls.len()
         );
-        
+
         for (id, call) in &self.pending_calls {
             tracing::debug!(
                 target: "tool_registry",
@@ -330,7 +342,7 @@ impl ToolCallRegistry {
                 prefix, id, call.name, call.parameters
             );
         }
-        
+
         for (id, state) in &self.active_calls {
             tracing::debug!(
                 target: "tool_registry",
@@ -338,7 +350,7 @@ impl ToolCallRegistry {
                 prefix, id, state.call.name, state.call.parameters
             );
         }
-        
+
         for (id, comp) in &self.completed_calls {
             tracing::debug!(
                 target: "tool_registry",

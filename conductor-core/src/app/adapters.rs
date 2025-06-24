@@ -1,10 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::{mpsc, Mutex};
 use std::sync::Arc;
+use tokio::sync::{Mutex, mpsc};
 
+use crate::app::AppEvent;
 use crate::app::command::AppCommand;
-use crate::app::{AppEvent};
 use crate::app::io::{AppCommandSink, AppEventSource};
 
 /// Local adapter that implements AppCommandSink and AppEventSource for in-process communication

@@ -1,4 +1,4 @@
-use super::{helpers::*, ToolFormatter};
+use super::{ToolFormatter, helpers::*};
 use crate::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::{
@@ -18,13 +18,16 @@ impl ToolFormatter for AstGrepFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<AstGrepParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid astgrep params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid astgrep params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
+
         let path_display = params.path.as_deref().unwrap_or(".");
-        
+
         let info = if let Some(ToolResult::Success { output }) = result {
             let match_count = output.lines().count();
             if match_count == 0 {
@@ -37,14 +40,14 @@ impl ToolFormatter for AstGrepFormatter {
         } else {
             "searching...".to_string()
         };
-        
+
         lines.push(Line::from(vec![
             Span::styled("ASTGREP ", styles::DIM_TEXT),
             Span::styled(format!("pattern='{}' ", params.pattern), Style::default()),
             Span::styled(format!("path={} ", path_display), styles::DIM_TEXT),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));
-        
+
         lines
     }
 
@@ -55,17 +58,23 @@ impl ToolFormatter for AstGrepFormatter {
         wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<AstGrepParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid astgrep params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid astgrep params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
-        lines.push(Line::from(Span::styled("Search Parameters:", styles::TOOL_HEADER)));
+
+        lines.push(Line::from(Span::styled(
+            "Search Parameters:",
+            styles::TOOL_HEADER,
+        )));
         lines.push(Line::from(Span::styled(
             format!("  Pattern: {}", params.pattern),
             Style::default(),
         )));
-        
+
         if let Some(lang) = &params.lang {
             lines.push(Line::from(Span::styled(
                 format!("  Lang: {}", lang),
@@ -90,12 +99,12 @@ impl ToolFormatter for AstGrepFormatter {
                 Style::default(),
             )));
         }
-        
+
         // Render matches if result success
         if let Some(ToolResult::Success { output }) = result {
             if !output.trim().is_empty() {
                 lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-                
+
                 const MAX_LINES: usize = 20;
                 let matches: Vec<&str> = output.lines().collect();
                 for m in matches.iter().take(MAX_LINES) {
@@ -103,7 +112,7 @@ impl ToolFormatter for AstGrepFormatter {
                         lines.push(Line::from(Span::raw(wrapped.to_string())));
                     }
                 }
-                
+
                 if matches.len() > MAX_LINES {
                     lines.push(Line::from(Span::styled(
                         format!("... ({} more matches)", matches.len() - MAX_LINES),
@@ -111,10 +120,13 @@ impl ToolFormatter for AstGrepFormatter {
                     )));
                 }
             } else {
-                lines.push(Line::from(Span::styled("No matches found", styles::ITALIC_GRAY)));
+                lines.push(Line::from(Span::styled(
+                    "No matches found",
+                    styles::ITALIC_GRAY,
+                )));
             }
         }
-        
+
         lines
     }
 }

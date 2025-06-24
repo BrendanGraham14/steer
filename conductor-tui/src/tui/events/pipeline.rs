@@ -4,10 +4,10 @@
 //! to handle AppEvents in a modular, composable way.
 
 use anyhow::Result;
-use tracing::{debug, warn};
+use tracing::warn;
 
-use crate::app::AppEvent;
 use super::processor::{EventProcessor, ProcessingContext, ProcessingResult};
+use crate::app::AppEvent;
 
 /// Pipeline that orchestrates multiple event processors
 pub struct EventPipeline {
@@ -36,7 +36,7 @@ impl EventPipeline {
             if !processor.can_handle(&event) {
                 continue;
             }
-            
+
             match processor.process(event.clone(), ctx) {
                 ProcessingResult::Handled => {
                     continue; // Try next processor
@@ -49,7 +49,11 @@ impl EventPipeline {
                 }
                 ProcessingResult::Failed(error) => {
                     warn!(target: "tui.pipeline", "Processor {} failed: {}", processor.name(), error);
-                    return Err(anyhow::anyhow!("Event processing failed in {}: {}", processor.name(), error));
+                    return Err(anyhow::anyhow!(
+                        "Event processing failed in {}: {}",
+                        processor.name(),
+                        error
+                    ));
                 }
             }
         }

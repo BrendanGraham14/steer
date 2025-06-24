@@ -19,9 +19,7 @@ pub struct ExecutionContext {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecutionEnvironment {
     /// Execute tools locally in the current process
-    Local {
-        working_directory: PathBuf,
-    },
+    Local { working_directory: PathBuf },
 
     /// Execute tools on a remote machine via an agent
     Remote {

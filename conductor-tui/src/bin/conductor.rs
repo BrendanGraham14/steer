@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tracing::info;
 use conductor_tui::tui::cleanup_terminal;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::info;
 
-use conductor_core::api::Model;
 use conductor::cli::{Cli, Commands};
 use conductor::commands::{
     Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
 };
+use conductor_core::api::Model;
 use conductor_core::config::LlmConfig;
 use conductor_core::utils;
 
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
 
     // Create the gRPC client (remote or local)
     use conductor_grpc::GrpcClientAdapter;
-    
+
     let client = match &cli.remote {
         Some(remote_addr) => {
             info!("Connecting to remote server at {}", remote_addr);
@@ -57,7 +57,8 @@ async fn main() -> Result<()> {
             let llm_config = LlmConfig::from_env()
                 .expect("Failed to load LLM configuration from environment variables.");
             info!(target: "main", "Starting local mode with in-memory gRPC");
-            let channel = conductor_grpc::in_memory::setup_local_grpc(llm_config, cli.model).await?;
+            let channel =
+                conductor_grpc::in_memory::setup_local_grpc(llm_config, cli.model).await?;
             Arc::new(GrpcClientAdapter::from_channel(channel).await?)
         }
     };
@@ -123,7 +124,9 @@ async fn execute_command(cmd: Commands, cli: &Cli) -> Result<()> {
     }
 }
 
-async fn fetch_latest_session_id(client: &Arc<conductor_grpc::GrpcClientAdapter>) -> Result<String> {
+async fn fetch_latest_session_id(
+    client: &Arc<conductor_grpc::GrpcClientAdapter>,
+) -> Result<String> {
     let sessions = client.list_sessions().await?;
     let latest = sessions
         .into_iter()
@@ -138,11 +141,15 @@ async fn resume_session(
     model: Model,
 ) -> Result<()> {
     use conductor_core::app::io::AppEventSource;
-    
+
     // Activate the existing session
     let client_ref = Arc::clone(&client);
     let (messages, approved_tools) = client_ref.activate_session(session_id.clone()).await?;
-    info!("Activated session: {} with {} messages", session_id, messages.len());
+    info!(
+        "Activated session: {} with {} messages",
+        session_id,
+        messages.len()
+    );
     println!("Session ID: {}", session_id);
 
     // Start streaming
@@ -152,7 +159,8 @@ async fn resume_session(
     let event_rx = client_ref.subscribe().await;
 
     // Initialize TUI with the gRPC client as command sink and restored messages
-    let mut tui = conductor_tui::tui::Tui::new_with_conversation(client, model, messages, approved_tools)?;
+    let mut tui =
+        conductor_tui::tui::Tui::new_with_conversation(client, model, messages, approved_tools)?;
 
     // Run the TUI
     tui.run(event_rx).await?;
@@ -165,8 +173,8 @@ async fn run_new_session(
     model: Model,
     system_prompt: Option<String>,
 ) -> Result<()> {
-    use conductor_core::session::{SessionConfig, SessionToolConfig};
     use conductor_core::app::io::AppEventSource;
+    use conductor_core::session::{SessionConfig, SessionToolConfig};
     use std::collections::HashMap;
 
     // Create session config
@@ -210,7 +218,7 @@ async fn setup_signal_handlers() {
     // Set up signal handler for SIGINT, SIGTERM
     #[cfg(not(windows))]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let sigterm_terminal = terminal_clone.clone();
         tokio::spawn(async move {

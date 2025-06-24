@@ -8,7 +8,7 @@ use crate::api::Model;
 use crate::app::Message;
 use crate::tools::{BackendRegistry, LocalBackend, ToolBackend};
 use tools::ToolCall;
-use tools::tools::{read_only_workspace_tools, workspace_tools};
+use tools::tools::read_only_workspace_tools;
 
 /// Defines the primary execution environment for a session's workspace
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -634,10 +634,9 @@ impl From<&Session> for SessionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{Message, Role, UserContent};
+    use crate::app::conversation::{Message, UserContent};
     use tools::tools::{
-        BASH_TOOL_NAME, EDIT_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME, read_only_workspace_tools,
-        workspace_tools,
+        BASH_TOOL_NAME, EDIT_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME,
     };
 
     #[test]

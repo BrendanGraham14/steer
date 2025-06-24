@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing::{info, warn};
 
-use remote_backend::remote_backend_service::RemoteWorkspaceService;
 use remote_backend::proto::remote_workspace_service_server::RemoteWorkspaceServiceServer;
+use remote_backend::remote_backend_service::RemoteWorkspaceService;
 
 #[derive(Parser)]
 #[command(name = "remote-backend")]

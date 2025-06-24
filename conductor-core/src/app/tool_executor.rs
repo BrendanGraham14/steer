@@ -21,6 +21,12 @@ pub struct ToolExecutor {
     pub(crate) validators: Arc<ValidatorRegistry>,
 }
 
+impl Default for ToolExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolExecutor {
     /// Create a ToolExecutor with a workspace for workspace tools
     pub fn with_workspace(workspace: Arc<dyn Workspace>) -> Self {
@@ -153,12 +159,15 @@ impl ToolExecutor {
                 return workspace
                     .execute_tool(tool_call, context)
                     .await
-                    .map_err(|e| ToolError::InternalError(format!("Workspace execution failed: {}", e)));
+                    .map_err(|e| {
+                        ToolError::InternalError(format!("Workspace execution failed: {}", e))
+                    });
             }
         }
 
         // Otherwise check external backends
-        let backend = self.backend_registry
+        let backend = self
+            .backend_registry
             .get_backend_for_tool(tool_name)
             .cloned()
             .ok_or_else(|| {
@@ -197,7 +206,7 @@ impl ToolExecutor {
         // Create execution context
         let context = ExecutionContext::new(
             "direct".to_string(), // Mark as direct execution
-            "direct".to_string(), 
+            "direct".to_string(),
             tool_call.id.clone(),
             token,
         );
@@ -215,12 +224,15 @@ impl ToolExecutor {
                 return workspace
                     .execute_tool(tool_call, context)
                     .await
-                    .map_err(|e| ToolError::InternalError(format!("Workspace execution failed: {}", e)));
+                    .map_err(|e| {
+                        ToolError::InternalError(format!("Workspace execution failed: {}", e))
+                    });
             }
         }
 
         // Otherwise check external backends
-        let backend = self.backend_registry
+        let backend = self
+            .backend_registry
             .get_backend_for_tool(tool_name)
             .cloned()
             .ok_or_else(|| {

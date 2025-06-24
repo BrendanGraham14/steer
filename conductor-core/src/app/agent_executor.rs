@@ -198,7 +198,7 @@ impl AgentExecutor {
     {
         info!("Processing tool calls via provided callback.");
         let futures: Vec<_> = tool_calls
-                    .into_iter()
+                    .iter()
                     .map(|call| {
                         // Clone necessary items for the async block
                         let call_id = call.id.clone();

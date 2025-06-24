@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 use super::{Session, SessionConfig, SessionInfo};
 use crate::app::Message;
-use tools::ToolCall;
 use crate::events::StreamEvent;
+use tools::ToolCall;
 
 /// Database-agnostic session store trait
 #[async_trait]

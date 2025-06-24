@@ -7,9 +7,8 @@ use tools::tools::workspace_tools;
 use tools::{ExecutionContext, Tool, ToolError};
 
 use crate::proto::{
-    AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus,
-    ToolSchema as GrpcToolSchema, ToolSchemasResponse,
-    GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
+    AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus, ToolSchema as GrpcToolSchema,
+    ToolSchemasResponse,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
 };
 
@@ -85,10 +84,10 @@ impl RemoteWorkspaceService {
     fn get_directory_structure(&self) -> Result<String, std::io::Error> {
         let current_dir = std::env::current_dir()?;
         let mut structure = vec![current_dir.display().to_string()];
-        
+
         // Simple directory traversal (limited depth to avoid huge responses)
         self.collect_directory_paths(&current_dir, &mut structure, 0, 3)?;
-        
+
         structure.sort();
         Ok(structure.join("\n"))
     }
@@ -137,7 +136,10 @@ impl RemoteWorkspaceService {
         let mut result = String::new();
 
         // Get current branch
-        if let Ok(output) = Command::new("git").args(["branch", "--show-current"]).output() {
+        if let Ok(output) = Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+        {
             if output.status.success() {
                 let branch_output = String::from_utf8_lossy(&output.stdout);
                 let branch = branch_output.trim().to_string();
@@ -161,7 +163,10 @@ impl RemoteWorkspaceService {
         }
 
         // Get recent commits
-        if let Ok(output) = Command::new("git").args(["log", "--oneline", "-n", "5"]).output() {
+        if let Ok(output) = Command::new("git")
+            .args(["log", "--oneline", "-n", "5"])
+            .output()
+        {
             if output.status.success() {
                 let log_output = String::from_utf8_lossy(&output.stdout);
                 let log = log_output.trim().to_string();
@@ -351,7 +356,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         use std::process::Command;
 
         let req = request.into_inner();
-        
+
         // Use the provided working directory or current directory
         let working_directory = if let Some(dir) = req.working_directory {
             dir
@@ -389,14 +394,18 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             "linux"
         } else {
             "unknown"
-        }.to_string();
+        }
+        .to_string();
 
         // Get current date (simplified)
         let date = "2025-06-17".to_string(); // TODO: Use proper date formatting
 
         // Get directory structure (simplified for now)
         let directory_structure = self.get_directory_structure().unwrap_or_else(|_| {
-            format!("Failed to read directory structure from {}", working_directory)
+            format!(
+                "Failed to read directory structure from {}",
+                working_directory
+            )
         });
 
         // Get git status if it's a git repo

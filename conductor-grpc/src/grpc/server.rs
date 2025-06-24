@@ -1,7 +1,7 @@
-use conductor_proto::agent::*;
 use crate::grpc::conversions::message_to_proto;
 use crate::grpc::session_manager_ext::SessionManagerExt;
 use conductor_core::session::manager::SessionManager;
+use conductor_proto::agent::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -17,8 +17,6 @@ impl AgentServiceImpl {
         Self { session_manager }
     }
 }
-
-
 
 #[tonic::async_trait]
 impl agent_service_server::AgentService for AgentServiceImpl {
@@ -152,8 +150,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             let event_task = tokio::spawn(async move {
                 while let Some(app_event) = event_rx.recv().await {
                     event_sequence += 1;
-                    let server_event =
-                        crate::grpc::conversions::app_event_to_server_event(app_event, event_sequence);
+                    let server_event = crate::grpc::conversions::app_event_to_server_event(
+                        app_event,
+                        event_sequence,
+                    );
 
                     if let Err(e) = tx_clone.send(Ok(server_event)).await {
                         warn!("Failed to send event to client: {}", e);
@@ -337,21 +337,32 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         request: Request<GetConversationRequest>,
     ) -> Result<Response<GetConversationResponse>, Status> {
         let req = request.into_inner();
-        
+
         info!("GetConversation called for session: {}", req.session_id);
 
-        match self.session_manager.get_session_state(&req.session_id).await {
+        match self
+            .session_manager
+            .get_session_state(&req.session_id)
+            .await
+        {
             Ok(Some(session_state)) => {
-                info!("Found session state with {} messages and {} approved tools", 
-                    session_state.messages.len(), session_state.approved_tools.len());
-                
+                info!(
+                    "Found session state with {} messages and {} approved tools",
+                    session_state.messages.len(),
+                    session_state.approved_tools.len()
+                );
+
                 // Convert messages to proto format
-                let messages: Vec<_> = session_state.messages.iter().map(|msg| {
-                    let proto_msg = message_to_proto(msg.clone());
-                    debug!("Converted message {} to proto", msg.id());
-                    proto_msg
-                }).collect();
-                
+                let messages: Vec<_> = session_state
+                    .messages
+                    .iter()
+                    .map(|msg| {
+                        let proto_msg = message_to_proto(msg.clone());
+                        debug!("Converted message {} to proto", msg.id());
+                        proto_msg
+                    })
+                    .collect();
+
                 info!("Converted {} messages to proto format", messages.len());
 
                 Ok(Response::new(GetConversationResponse {
@@ -368,7 +379,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }
             Err(e) => {
                 error!("Failed to get conversation: {}", e);
-                Err(Status::internal(format!("Failed to get conversation: {}", e)))
+                Err(Status::internal(format!(
+                    "Failed to get conversation: {}",
+                    e
+                )))
             }
         }
     }
@@ -450,21 +464,20 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         info!("ActivateSession called for {}", req.session_id);
 
         // If already active, return state directly
-        if let Ok(Some(state)) = self.session_manager.get_session_state(&req.session_id).await {
+        if let Ok(Some(state)) = self
+            .session_manager
+            .get_session_state(&req.session_id)
+            .await
+        {
             return Ok(Response::new(ActivateSessionResponse {
-                messages: state
-                    .messages
-                    .into_iter()
-                    .map(message_to_proto)
-                    .collect(),
+                messages: state.messages.into_iter().map(message_to_proto).collect(),
                 approved_tools: state.approved_tools.into_iter().collect(),
             }));
         }
 
         // Load LLM config
-        let llm_config = conductor_core::config::LlmConfig::from_env().map_err(|e| {
-            Status::internal(format!("Failed to load LLM config: {}", e))
-        })?;
+        let llm_config = conductor_core::config::LlmConfig::from_env()
+            .map_err(|e| Status::internal(format!("Failed to load LLM config: {}", e)))?;
         let app_config = conductor_core::app::AppConfig { llm_config };
 
         match self
@@ -474,20 +487,28 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         {
             Ok((true, _)) => {
                 // Fetch state now active
-                if let Ok(Some(state)) = self.session_manager.get_session_state(&req.session_id).await {
+                if let Ok(Some(state)) = self
+                    .session_manager
+                    .get_session_state(&req.session_id)
+                    .await
+                {
                     return Ok(Response::new(ActivateSessionResponse {
-                        messages: state
-                            .messages
-                            .into_iter()
-                            .map(message_to_proto)
-                            .collect(),
+                        messages: state.messages.into_iter().map(message_to_proto).collect(),
                         approved_tools: state.approved_tools.into_iter().collect(),
                     }));
                 }
-                Err(Status::internal("Activation succeeded but state unavailable"))
+                Err(Status::internal(
+                    "Activation succeeded but state unavailable",
+                ))
             }
-            Ok((false, _)) => Err(Status::not_found(format!("Session not found: {}", req.session_id))),
-            Err(e) => Err(Status::internal(format!("Failed to activate session: {}", e))),
+            Ok((false, _)) => Err(Status::not_found(format!(
+                "Session not found: {}",
+                req.session_id
+            ))),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to activate session: {}",
+                e
+            ))),
         }
     }
 
@@ -544,7 +565,10 @@ async fn try_resume_session(
                 session_id
             )))
         }
-        Err(conductor_core::session::manager::SessionManagerError::CapacityExceeded { current, max }) => {
+        Err(conductor_core::session::manager::SessionManagerError::CapacityExceeded {
+            current,
+            max,
+        }) => {
             warn!(
                 "Cannot resume session {}: server at capacity ({}/{})",
                 session_id, current, max
@@ -574,7 +598,8 @@ async fn handle_client_message(
         match message {
             client_message::Message::SendMessage(send_msg) => {
                 // Convert to AppCommand - just process user input since that's what exists
-                let app_command = conductor_core::app::AppCommand::ProcessUserInput(send_msg.message);
+                let app_command =
+                    conductor_core::app::AppCommand::ProcessUserInput(send_msg.message);
 
                 session_manager
                     .send_command(&client_message.session_id, app_command)
@@ -636,13 +661,13 @@ mod tests {
     use conductor_core::api::Model;
     use conductor_core::config::LlmConfig;
     use conductor_core::events::StreamEventWithMetadata;
+    use conductor_core::session::state::WorkspaceConfig;
+    use conductor_core::session::stores::sqlite::SqliteSessionStore;
+    use conductor_core::session::{
+        SessionConfig, SessionManagerConfig, SessionToolConfig,
+    };
     use conductor_proto::agent::agent_service_client::AgentServiceClient;
     use conductor_proto::agent::{SendMessageRequest, SubscribeRequest};
-    use conductor_core::session::stores::sqlite::SqliteSessionStore;
-    use conductor_core::session::state::{WorkspaceConfig, ToolVisibility};
-    use conductor_core::session::{
-        SessionConfig, SessionManagerConfig, SessionToolConfig, ToolApprovalPolicy,
-    };
     use std::collections::HashMap;
     use tempfile::TempDir;
     use tokio::sync::mpsc;

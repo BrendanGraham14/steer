@@ -33,14 +33,13 @@ pub mod events;
 pub mod state;
 pub mod widgets;
 
-use crate::app::conversation::{AssistantContent};
+use crate::app::conversation::AssistantContent;
 use crate::tui::events::{EventPipeline, processors::*};
 use crate::tui::state::content_cache::ContentCache;
 use crate::tui::state::view_model::MessageViewModel;
 use crate::tui::widgets::{
     CachedContentRenderer, MessageList, MessageListState, ViewMode,
-    content_renderer::ContentRenderer,
-    message_list::MessageContent,
+    content_renderer::ContentRenderer, message_list::MessageContent,
 };
 use widgets::styles;
 
@@ -142,7 +141,6 @@ impl Tui {
         })
     }
 
-
     /// Create a TUI with restored conversation state for local sessions
     pub fn new_with_conversation(
         command_sink: Arc<dyn AppCommandSink>,
@@ -170,27 +168,25 @@ impl Tui {
                 );
             }
         }
-        
+
         // First pass: populate tool registry with tool calls from assistant messages
         for message in &messages {
             if let crate::app::Message::Assistant { content, .. } = message {
                 for item in content {
                     if let AssistantContent::ToolCall { tool_call } = item {
                         debug!(
-                            target: "tui.restore", 
-                            "Registering tool call: id={}, name={}, params={}", 
-                            tool_call.id, 
+                            target: "tui.restore",
+                            "Registering tool call: id={}, name={}, params={}",
+                            tool_call.id,
                             tool_call.name,
                             tool_call.parameters
                         );
-                        self.view_model
-                            .tool_registry
-                            .upsert_call(tool_call.clone());
+                        self.view_model.tool_registry.upsert_call(tool_call.clone());
                     }
                 }
             }
         }
-        
+
         // Debug dump the registry state after first pass
         self.view_model.tool_registry.debug_dump("After first pass");
 
@@ -210,10 +206,17 @@ impl Tui {
             }
 
             match &content {
-                MessageContent::Tool { id, call, result, .. } => {
+                MessageContent::Tool {
+                    id, call, result, ..
+                } => {
                     // Merge with existing placeholder or create new
                     let idx = self.get_or_create_tool_index(id, Some(call.name.clone()));
-                    if let MessageContent::Tool { call: existing_call, result: existing_result, .. } = &mut self.view_model.messages[idx] {
+                    if let MessageContent::Tool {
+                        call: existing_call,
+                        result: existing_result,
+                        ..
+                    } = &mut self.view_model.messages[idx]
+                    {
                         // Always keep latest call params (they should be identical)
                         *existing_call = call.clone();
                         // Attach result if we didn't have it yet
@@ -236,7 +239,6 @@ impl Tui {
         // Reset scroll to bottom after restoring messages
         self.view_model.message_list_state.scroll_to_bottom();
     }
-
 
     fn cleanup_terminal(&mut self) -> Result<()> {
         execute!(
@@ -543,23 +545,22 @@ impl Tui {
                 id: _,
             } => {
                 debug!(
-                    target: "tui.convert", 
-                    "Converting Tool message: tool_use_id={}", 
+                    target: "tui.convert",
+                    "Converting Tool message: tool_use_id={}",
                     tool_use_id
                 );
-                
+
                 // Try to find the corresponding ToolCall that we cached earlier
                 let tool_call = tool_registry
                     .get_tool_call(&tool_use_id)
                     .cloned()
-                    .map(|tc| {
+                    .inspect(|tc| {
                         debug!(
                             target: "tui.convert",
                             "Found tool call in registry: name={}, params={}",
                             tc.name,
                             tc.parameters
                         );
-                        tc
                     })
                     .unwrap_or_else(|| {
                         warn!(target:"tui.convert_message", "Tool message {} has no associated tool call info", tool_use_id);
@@ -596,7 +597,7 @@ impl Tui {
             "get_or_create_tool_index called for id={}, name_hint={:?}",
             id, name_hint
         );
-        
+
         if let Some(idx) = self.view_model.tool_registry.get_message_index(id) {
             debug!(target: "tui.tool_index", "Found existing message at index {}", idx);
             return idx;
@@ -604,7 +605,7 @@ impl Tui {
 
         // Try to reuse any existing ToolCall info from registry (may already have parameters)
         let existing = self.view_model.tool_registry.get_tool_call(id).cloned();
-        
+
         if let Some(ref call) = existing {
             debug!(
                 target: "tui.tool_index",
@@ -625,7 +626,7 @@ impl Tui {
             name: name_hint.unwrap_or_else(|| "unknown".to_string()),
             parameters: serde_json::Value::Null,
         });
-        
+
         debug!(
             target: "tui.tool_index",
             "Creating Tool message with call: name={}, params={}",
@@ -1313,7 +1314,9 @@ impl Tui {
                 self.activate_next_approval();
             }
             InputAction::CancelProcessing => {
-                self.command_sink.send_command(AppCommand::CancelProcessing).await?;
+                self.command_sink
+                    .send_command(AppCommand::CancelProcessing)
+                    .await?;
             }
             InputAction::Exit => {
                 should_exit = true;
@@ -1347,8 +1350,13 @@ impl Drop for Tui {
 
 /// Free function for best-effort terminal cleanup (raw mode, alt screen, mouse, etc.)
 pub fn cleanup_terminal() {
-    use ratatui::crossterm::{execute, terminal::{LeaveAlternateScreen, disable_raw_mode}};
-    use ratatui::crossterm::event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags};
+    use ratatui::crossterm::event::{
+        DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags,
+    };
+    use ratatui::crossterm::{
+        execute,
+        terminal::{LeaveAlternateScreen, disable_raw_mode},
+    };
     let _ = disable_raw_mode();
     let _ = execute!(
         std::io::stdout(),
@@ -1380,14 +1388,14 @@ pub fn setup_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{AssistantContent, Message, ToolResult};
-    use crate::tui::widgets::formatters::view::ViewFormatter;
-    use crate::tui::widgets::formatters::ToolFormatter;
-    use serde_json::json;
-    use async_trait::async_trait;
-    use anyhow::Result;
-    use crate::app::io::AppCommandSink;
     use crate::app::AppCommand;
+    use crate::app::conversation::{AssistantContent, Message, ToolResult};
+    use crate::app::io::AppCommandSink;
+    use crate::tui::widgets::formatters::ToolFormatter;
+    use crate::tui::widgets::formatters::view::ViewFormatter;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use serde_json::json;
 
     // Mock command sink for tests
     struct MockCommandSink;
@@ -1440,7 +1448,10 @@ mod tests {
         tui.restore_messages(messages);
 
         // Assert we have exactly one Tool message in the view model
-        let tool_messages: Vec<_> = tui.view_model.messages.iter()
+        let tool_messages: Vec<_> = tui
+            .view_model
+            .messages
+            .iter()
             .filter_map(|msg| match msg {
                 MessageContent::Tool { call, .. } => Some(call),
                 _ => None,
@@ -1459,12 +1470,18 @@ mod tests {
         // Verify the formatter can parse these parameters without error
         let formatter = ViewFormatter;
         let lines = formatter.compact(&tool_call.parameters, &None, 80);
-        
-        let text = lines.iter()
-            .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+
+        let text = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("");
-        
+
         assert!(!text.contains("Invalid view params"));
         assert!(text.contains("file.rs"));
     }
@@ -1493,12 +1510,12 @@ mod tests {
             },
             Message::Assistant {
                 id: "msg_456".to_string(),
-                content: vec![AssistantContent::ToolCall { 
+                content: vec![AssistantContent::ToolCall {
                     tool_call: tools::schema::ToolCall {
                         id: tool_id.clone(),
                         name: "view".to_string(),
                         parameters: real_params.clone(),
-                    }
+                    },
                 }],
                 timestamp: 1234567891,
             },
@@ -1507,7 +1524,10 @@ mod tests {
         tui.restore_messages(messages);
 
         // Should still have proper parameters
-        let tool_messages: Vec<_> = tui.view_model.messages.iter()
+        let tool_messages: Vec<_> = tui
+            .view_model
+            .messages
+            .iter()
             .filter_map(|msg| match msg {
                 MessageContent::Tool { call, .. } => Some(call),
                 _ => None,

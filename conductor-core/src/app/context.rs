@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::conversation::Message;
 use crate::app::agent_executor::AgentExecutorError;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::AppCommand;
-use tools::ToolError;
+use crate::app::conversation::Message;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tools::ToolError;
 
 // Global command sender for tool approval requests
 static COMMAND_TX: OnceCell<Arc<mpsc::Sender<AppCommand>>> = OnceCell::new();

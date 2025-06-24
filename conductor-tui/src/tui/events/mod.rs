@@ -6,9 +6,9 @@
 //! Each processor handles a specific category of events (messages, tools, etc.)
 //! and can be easily tested and modified independently.
 
-pub mod processor;
 pub mod pipeline;
+pub mod processor;
 pub mod processors;
 
-pub use processor::{EventProcessor, ProcessingContext, ProcessingResult};
 pub use pipeline::EventPipeline;
+pub use processor::{EventProcessor, ProcessingContext, ProcessingResult};

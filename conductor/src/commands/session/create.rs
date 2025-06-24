@@ -29,7 +29,7 @@ impl Command for CreateSessionCommand {
         // TODO: Allow customizing from CLI args, a file, and/or env vars
         let mut tool_config = SessionToolConfig::default();
         tool_config.approval_policy = policy;
-        
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -43,7 +43,9 @@ impl Command for CreateSessionCommand {
 
             // TODO: The TUI functionality has been moved to conductor-tui crate
             // For now, just create the session without launching the TUI
-            return Err(anyhow!("Remote session creation with TUI is not available in this command. Use the conductor-tui binary instead."));
+            return Err(anyhow!(
+                "Remote session creation with TUI is not available in this command. Use the conductor-tui binary instead."
+            ));
         }
 
         // Local session handling

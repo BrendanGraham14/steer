@@ -110,12 +110,15 @@ impl ToolBackend for LocalBackend {
 
         // Extract working directory from execution environment
         let working_directory = match &context.environment {
-            crate::tools::ExecutionEnvironment::Local { working_directory } => working_directory.clone(),
-            crate::tools::ExecutionEnvironment::Remote { working_directory, .. } => {
-                working_directory.as_ref()
-                    .map(|p| std::path::PathBuf::from(p))
-                    .unwrap_or_else(crate::utils::default_working_directory)
+            crate::tools::ExecutionEnvironment::Local { working_directory } => {
+                working_directory.clone()
             }
+            crate::tools::ExecutionEnvironment::Remote {
+                working_directory, ..
+            } => working_directory
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(crate::utils::default_working_directory),
         };
 
         // Create execution context for conductor-tools

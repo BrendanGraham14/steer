@@ -69,12 +69,16 @@ impl Workspace for LocalWorkspace {
         Ok(env_info)
     }
 
-    async fn execute_tool(&self, tool_call: &ToolCall, mut ctx: ExecutionContext) -> Result<String> {
+    async fn execute_tool(
+        &self,
+        tool_call: &ToolCall,
+        mut ctx: ExecutionContext,
+    ) -> Result<String> {
         // Set the working directory for local execution
         ctx.environment = crate::tools::ExecutionEnvironment::Local {
             working_directory: self.root_path.clone(),
         };
-        
+
         self.tool_backend
             .execute(tool_call, &ctx)
             .await
@@ -113,7 +117,7 @@ mod tests {
         let metadata = workspace.metadata();
 
         assert!(matches!(metadata.workspace_type, WorkspaceType::Local));
-        assert!(metadata.location.len() > 0);
+        assert!(!metadata.location.is_empty());
     }
 
     #[tokio::test]

@@ -3,12 +3,12 @@
 //! Each processor handles a specific category of events, extracted from the
 //! original monolithic `handle_app_event` method.
 
-pub mod processing_state;
 pub mod message;
-pub mod tool;
+pub mod processing_state;
 pub mod system;
+pub mod tool;
 
-pub use processing_state::ProcessingStateProcessor;
 pub use message::MessageEventProcessor;
-pub use tool::ToolEventProcessor;
+pub use processing_state::ProcessingStateProcessor;
 pub use system::SystemEventProcessor;
+pub use tool::ToolEventProcessor;

@@ -51,7 +51,7 @@ impl MessageStore {
         self.messages.push(message);
         idx
     }
-    
+
     /// Clear all messages
     pub fn clear(&mut self) {
         self.messages.clear();

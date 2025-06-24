@@ -158,18 +158,18 @@ impl Default for ToolEventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::AppCommand;
     use crate::app::conversation::{AssistantContent, Message};
+    use crate::app::io::AppCommandSink;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{MessageStore, ToolCallRegistry};
     use crate::tui::widgets::message_list::{MessageContent, MessageListState};
-    use serde_json::json;
-    use tools::schema::ToolCall;
-    use async_trait::async_trait;
     use anyhow::Result;
-    use crate::app::io::AppCommandSink;
-    use crate::app::AppCommand;
+    use async_trait::async_trait;
+    use serde_json::json;
     use std::sync::Arc;
+    use tools::schema::ToolCall;
 
     // Mock command sink for tests
     struct MockCommandSink;

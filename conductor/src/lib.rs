@@ -2,9 +2,7 @@ pub mod cli;
 pub mod commands;
 
 // Re-export modules from conductor-core
-pub use conductor_core::{
-    api, app, config, events, runners, session, tools, utils, workspace
-};
+pub use conductor_core::{api, app, config, events, runners, session, tools, utils, workspace};
 
 use conductor_core::api::Model;
 use conductor_core::app::Message;
