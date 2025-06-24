@@ -1,7 +1,7 @@
-use std::collections::{HashMap, VecDeque, hash_map::RandomState};
-use std::hash::{Hash, Hasher, BuildHasher};
-use tracing::debug;
 use once_cell::sync::Lazy;
+use std::collections::{HashMap, VecDeque, hash_map::RandomState};
+use std::hash::{BuildHasher, Hash, Hasher};
+use tracing::debug;
 
 use crate::tui::widgets::message_list::{MessageContent, ViewMode};
 
@@ -17,7 +17,7 @@ fn quantize_width(width: u16) -> u16 {
 /// Hash the content of a message to detect changes
 fn hash_message_content(content: &MessageContent) -> u64 {
     let mut hasher = HASHER_BUILDER.build_hasher();
-    
+
     match content {
         MessageContent::User { blocks, .. } => {
             "user".hash(&mut hasher);
@@ -27,7 +27,12 @@ fn hash_message_content(content: &MessageContent) -> u64 {
                         "text".hash(&mut hasher);
                         text.hash(&mut hasher);
                     }
-                    crate::app::conversation::UserContent::CommandExecution { command, stdout, stderr, exit_code } => {
+                    crate::app::conversation::UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => {
                         "command_exec".hash(&mut hasher);
                         command.hash(&mut hasher);
                         stdout.hash(&mut hasher);
@@ -84,7 +89,7 @@ fn hash_message_content(content: &MessageContent) -> u64 {
             }
         }
     }
-    
+
     hasher.finish()
 }
 
@@ -139,7 +144,7 @@ impl ContentCache {
         F: FnOnce(&MessageContent, ViewMode, u16) -> u16,
     {
         let key = CacheKey::new(content, view_mode, width);
-        
+
         // Check cache first
         if let Some(&height) = self.cache.get(&key) {
             self.hits += 1;
@@ -147,35 +152,37 @@ impl ContentCache {
             debug!(target: "content_cache", "🎯 CACHE HIT for {}", content.id());
             return height;
         }
-        
+
         // Cache miss - calculate fresh
         self.misses += 1;
         debug!(target: "content_cache", "❌ CACHE MISS #{} for {} (cache size: {})", 
               self.misses, content.id(), self.cache.len());
-        
+
         let height = calculator(content, view_mode, width);
-        
+
         // Store in cache
         self.insert(key, height);
-        
+
         height
     }
-    
+
     /// Invalidate cache entries for a specific message
     pub fn invalidate_message(&mut self, message_id: &str) {
-        let keys_to_remove: Vec<_> = self.cache.keys()
+        let keys_to_remove: Vec<_> = self
+            .cache
+            .keys()
             .filter(|k| k.message_id == message_id)
             .cloned()
             .collect();
-        
+
         for key in keys_to_remove {
             self.cache.remove(&key);
             self.access_order.retain(|k| k != &key);
         }
-        
+
         debug!(target: "content_cache", "Invalidated cache for message {}", message_id);
     }
-    
+
     /// Clear all cache entries (e.g., on major UI changes)
     pub fn clear(&mut self) {
         let old_size = self.cache.len();
@@ -183,14 +190,18 @@ impl ContentCache {
         self.access_order.clear();
         debug!(target: "content_cache", "Cleared {} cache entries", old_size);
     }
-    
+
     /// Get cache statistics
     pub fn stats(&self) -> (usize, usize, f64) {
         let total = self.hits + self.misses;
-        let hit_rate = if total > 0 { self.hits as f64 / total as f64 } else { 0.0 };
+        let hit_rate = if total > 0 {
+            self.hits as f64 / total as f64
+        } else {
+            0.0
+        };
         (self.hits, self.misses, hit_rate)
     }
-    
+
     /// Log a performance summary
     pub fn log_summary(&self) {
         let (hits, misses, hit_rate) = self.stats();
@@ -200,16 +211,16 @@ impl ContentCache {
                   total, self.cache.len(), hit_rate * 100.0);
         }
     }
-    
+
     fn insert(&mut self, key: CacheKey, value: u16) {
         // Remove if already exists to update position
         if self.cache.contains_key(&key) {
             self.access_order.retain(|k| k != &key);
         }
-        
+
         self.cache.insert(key.clone(), value);
         self.access_order.push_front(key);
-        
+
         // Evict LRU if over capacity
         while self.cache.len() > self.max_size {
             if let Some(lru_key) = self.access_order.pop_back() {
@@ -217,7 +228,7 @@ impl ContentCache {
             }
         }
     }
-    
+
     fn update_access_order(&mut self, key: &CacheKey) {
         // Move to front
         self.access_order.retain(|k| k != key);
@@ -235,38 +246,44 @@ impl Default for ContentCache {
 mod tests {
     use super::*;
     use crate::app::conversation::UserContent;
-    use crate::tui::widgets::content_renderer::{DefaultContentRenderer, ContentRenderer};
+    use crate::tui::widgets::content_renderer::{ContentRenderer, DefaultContentRenderer};
 
     #[test]
     fn test_cache_key_equality() {
         let message = MessageContent::User {
             id: "test-1".to_string(),
-            blocks: vec![UserContent::Text { 
-                text: "Hello world".to_string() 
+            blocks: vec![UserContent::Text {
+                text: "Hello world".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         let key1 = CacheKey::new(&message, ViewMode::Compact, 80);
         let key2 = CacheKey::new(&message, ViewMode::Compact, 80);
-        
-        assert_eq!(key1, key2, "Cache keys should be equal for identical inputs");
-        assert_eq!(key1.content_hash, key2.content_hash, "Content hashes should match");
+
+        assert_eq!(
+            key1, key2,
+            "Cache keys should be equal for identical inputs"
+        );
+        assert_eq!(
+            key1.content_hash, key2.content_hash,
+            "Content hashes should match"
+        );
     }
 
     #[test]
     fn test_cache_key_hash_consistency() {
         let message = MessageContent::User {
             id: "test-1".to_string(),
-            blocks: vec![UserContent::Text { 
-                text: "Hello world".to_string() 
+            blocks: vec![UserContent::Text {
+                text: "Hello world".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         let hash1 = hash_message_content(&message);
         let hash2 = hash_message_content(&message);
-        
+
         assert_eq!(hash1, hash2, "Content hash should be consistent");
     }
 
@@ -274,38 +291,30 @@ mod tests {
     fn test_cache_hit_after_insert() {
         let mut cache = ContentCache::new();
         let renderer = DefaultContentRenderer;
-        
+
         let message = MessageContent::User {
             id: "test-1".to_string(),
-            blocks: vec![UserContent::Text { 
-                text: "Test message".to_string() 
+            blocks: vec![UserContent::Text {
+                text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         // First access - should be a miss
-        let height1 = cache.get_or_parse_height(
-            &message,
-            ViewMode::Compact,
-            80,
-            |msg, mode, width| {
+        let height1 =
+            cache.get_or_parse_height(&message, ViewMode::Compact, 80, |msg, mode, width| {
                 renderer.calculate_height(msg, mode, width)
-            },
-        );
-        
+            });
+
         assert_eq!(cache.hits, 0, "First access should be a miss");
         assert_eq!(cache.misses, 1, "Should have one miss");
-        
+
         // Second access with EXACT same parameters - should be a hit
-        let height2 = cache.get_or_parse_height(
-            &message,
-            ViewMode::Compact,
-            80,
-            |msg, mode, width| {
+        let height2 =
+            cache.get_or_parse_height(&message, ViewMode::Compact, 80, |msg, mode, width| {
                 panic!("Calculator should not be called on cache hit!");
-            },
-        );
-        
+            });
+
         assert_eq!(cache.hits, 1, "Second access should be a hit");
         assert_eq!(cache.misses, 1, "Should still have only one miss");
         assert_eq!(height1, height2, "Cached height should match");
@@ -315,27 +324,27 @@ mod tests {
     fn test_cache_miss_on_different_mode() {
         let mut cache = ContentCache::new();
         let renderer = DefaultContentRenderer;
-        
+
         let message = MessageContent::User {
             id: "test-1".to_string(),
-            blocks: vec![UserContent::Text { 
-                text: "Test message".to_string() 
+            blocks: vec![UserContent::Text {
+                text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         // First access with Compact mode
         cache.get_or_parse_height(&message, ViewMode::Compact, 80, |msg, mode, width| {
             renderer.calculate_height(msg, mode, width)
         });
-        
+
         assert_eq!(cache.misses, 1);
-        
+
         // Second access with Detailed mode - should be a miss
         cache.get_or_parse_height(&message, ViewMode::Detailed, 80, |msg, mode, width| {
             renderer.calculate_height(msg, mode, width)
         });
-        
+
         assert_eq!(cache.misses, 2, "Different mode should cause cache miss");
         assert_eq!(cache.hits, 0, "Should have no hits");
     }
@@ -344,27 +353,27 @@ mod tests {
     fn test_cache_with_width_quantization() {
         let mut cache = ContentCache::new();
         let renderer = DefaultContentRenderer;
-        
+
         let message = MessageContent::User {
             id: "test-1".to_string(),
-            blocks: vec![UserContent::Text { 
-                text: "Test message".to_string() 
+            blocks: vec![UserContent::Text {
+                text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         // Access with width 78
         cache.get_or_parse_height(&message, ViewMode::Compact, 78, |msg, mode, width| {
             renderer.calculate_height(msg, mode, width)
         });
-        
+
         assert_eq!(cache.misses, 1);
-        
+
         // Access with width 82 - should hit cache due to quantization (both round to 80)
         cache.get_or_parse_height(&message, ViewMode::Compact, 82, |msg, mode, width| {
             panic!("Should hit cache due to width quantization!");
         });
-        
+
         assert_eq!(cache.hits, 1, "Width quantization should enable cache hit");
         assert_eq!(cache.misses, 1, "Should still have only one miss");
     }
@@ -373,29 +382,29 @@ mod tests {
     fn test_cache_eviction_with_many_messages() {
         let mut cache = ContentCache::new();
         let renderer = DefaultContentRenderer;
-        
+
         // Create more messages than old cache capacity (but less than new 10K)
         let mut messages = Vec::new();
         for i in 0..250 {
             messages.push(MessageContent::User {
                 id: format!("test-{}", i),
-                blocks: vec![UserContent::Text { 
-                    text: format!("Message {}", i)
+                blocks: vec![UserContent::Text {
+                    text: format!("Message {}", i),
                 }],
                 timestamp: "2023-01-01T00:00:00Z".to_string(),
             });
         }
-        
+
         // First pass - cache all messages
         for msg in &messages {
             cache.get_or_parse_height(msg, ViewMode::Compact, 80, |m, mode, width| {
                 renderer.calculate_height(m, mode, width)
             });
         }
-        
+
         // Cache should contain all messages (250 < 10000)
         assert_eq!(cache.cache.len(), 250, "Cache should contain all messages");
-        
+
         // Access first 50 messages again - they should NOT have been evicted
         let mut evicted_count = 0;
         for msg in messages.iter().take(50) {
@@ -404,55 +413,66 @@ mod tests {
                 renderer.calculate_height(m, mode, width)
             });
             let stats_after = cache.stats();
-            
+
             if stats_after.1 > stats_before.1 {
                 evicted_count += 1;
             }
         }
-        
+
         // Most early messages should NOT have been evicted with larger cache
-        assert!(evicted_count == 0, "Expected no messages to be evicted with larger cache, but {} were", evicted_count);
-        
-        println!("Cache thrashing test: {} of 50 early messages were evicted", evicted_count);
+        assert!(
+            evicted_count == 0,
+            "Expected no messages to be evicted with larger cache, but {} were",
+            evicted_count
+        );
+
+        println!(
+            "Cache thrashing test: {} of 50 early messages were evicted",
+            evicted_count
+        );
         cache.log_summary();
     }
-    
+
     #[test]
     fn test_cache_eviction_at_capacity() {
         let mut cache = ContentCache::new();
         cache.max_size = 10; // Small cache for testing
         let renderer = DefaultContentRenderer;
-        
+
         // Create more messages than small cache capacity
         let mut messages = Vec::new();
         for i in 0..20 {
             messages.push(MessageContent::User {
                 id: format!("test-{}", i),
-                blocks: vec![UserContent::Text { 
-                    text: format!("Message {}", i)
+                blocks: vec![UserContent::Text {
+                    text: format!("Message {}", i),
                 }],
                 timestamp: "2023-01-01T00:00:00Z".to_string(),
             });
         }
-        
+
         // Cache all messages
         for msg in &messages {
             cache.get_or_parse_height(msg, ViewMode::Compact, 80, |m, mode, width| {
                 renderer.calculate_height(m, mode, width)
             });
         }
-        
+
         // Cache should be at small capacity
         assert_eq!(cache.cache.len(), 10, "Cache should be at capacity");
-        
+
         // Early messages should have been evicted
         let stats_before = cache.stats();
         cache.get_or_parse_height(&messages[0], ViewMode::Compact, 80, |m, mode, width| {
             renderer.calculate_height(m, mode, width)
         });
         let stats_after = cache.stats();
-        
-        assert_eq!(stats_after.1, stats_before.1 + 1, "First message should have been evicted");
+
+        assert_eq!(
+            stats_after.1,
+            stats_before.1 + 1,
+            "First message should have been evicted"
+        );
     }
 
     #[test]
@@ -462,20 +482,20 @@ mod tests {
         assert_eq!(quantize_width(85), 90);
         assert_eq!(quantize_width(83), 80);
     }
-    
+
     #[test]
     fn test_no_overflow_with_large_values() {
         let mut cache = ContentCache::new();
         let renderer = DefaultContentRenderer;
-        
+
         let message = MessageContent::User {
             id: "test-overflow".to_string(),
-            blocks: vec![UserContent::Text { 
-                text: "Test message".to_string() 
+            blocks: vec![UserContent::Text {
+                text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
         };
-        
+
         // Test with very large width that could cause overflow
         let height = cache.get_or_parse_height(
             &message,
@@ -486,7 +506,7 @@ mod tests {
                 10u16
             },
         );
-        
+
         assert_eq!(height, 10, "Height should be calculated without overflow");
     }
 }

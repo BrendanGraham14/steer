@@ -1,8 +1,6 @@
 use crate::api::Model;
-use crate::app::conversation::{AssistantContent, UserContent};
 use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
-use crate::session::state::ToolFilter;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate,
@@ -88,10 +86,10 @@ impl ManagedSession {
 
         // Build backend registry from session tool config
         let backend_registry = session.config.build_registry().await?;
-        
+
         // Build workspace from session config
         let workspace = session.build_workspace().await?;
-        
+
         let tool_executor = Arc::new(crate::app::ToolExecutor::with_components(
             Some(workspace.clone()),
             Arc::new(backend_registry),
@@ -401,7 +399,7 @@ impl SessionManager {
         // Restore conversation history and approved tools atomically
         if !session.state.messages.is_empty() || !session.state.approved_tools.is_empty() {
             info!(
-                session_id = %session_id, 
+                session_id = %session_id,
                 message_count = session.state.messages.len(),
                 tool_count = session.state.approved_tools.len(),
                 "Restoring conversation state"
@@ -701,12 +699,15 @@ impl SessionManager {
         session_id: &str,
     ) -> Result<Option<crate::session::SessionState>, SessionManagerError> {
         info!("get_session_state called for session: {}", session_id);
-        
+
         // Always load from store to get the most up-to-date state
         // The in-memory state in ManagedSession may be stale
         match self.store.get_session(session_id).await {
             Ok(Some(session)) => {
-                info!("Loaded session from store with {} messages", session.state.messages.len());
+                info!(
+                    "Loaded session from store with {} messages",
+                    session.state.messages.len()
+                );
                 Ok(Some(session.state))
             }
             Ok(None) => {
@@ -843,7 +844,7 @@ async fn update_session_state_for_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::Role;
+    use crate::app::conversation::{AssistantContent, Role, UserContent};
     use crate::config::LlmConfig;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use tempfile::TempDir;

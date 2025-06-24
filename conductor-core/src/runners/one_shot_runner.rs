@@ -4,8 +4,8 @@ use tools::ToolResult;
 use tracing::{error, info};
 
 use crate::api::Model;
-use crate::app::{AppCommand, AppConfig, Message};
 use crate::app::conversation::UserContent;
+use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfig;
 use crate::session::state::WorkspaceConfig;
 use crate::session::{
@@ -106,7 +106,7 @@ impl OneShotRunner {
         if let Some(policy) = tool_policy {
             final_tool_config.approval_policy = policy;
         }
-        
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config: final_tool_config,
@@ -267,7 +267,7 @@ impl OneShotRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{Message, Role, AssistantContent, UserContent, ToolResult};
+    use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
@@ -324,7 +324,9 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         let messages = vec![Message::User {
-            content: vec![UserContent::Text { text: "What is 2 + 2?".to_string() }],
+            content: vec![UserContent::Text {
+                text: "What is 2 + 2?".to_string(),
+            }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
         }];
@@ -375,7 +377,7 @@ mod tests {
         // Create a session with custom config
         let mut tool_config = SessionToolConfig::read_only();
         tool_config.approval_policy = create_test_tool_approval_policy();
-        
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -405,7 +407,10 @@ mod tests {
             Some(&"value".to_string())
         );
         assert_eq!(session.config.tool_config.backends.len(), 0); // read_only() uses default backends
-        assert!(matches!(session.config.tool_config.visibility, ToolVisibility::ReadOnly));
+        assert!(matches!(
+            session.config.tool_config.visibility,
+            ToolVisibility::ReadOnly
+        ));
     }
 
     #[tokio::test]
@@ -416,7 +421,7 @@ mod tests {
         // Create a session
         let mut tool_config = SessionToolConfig::read_only();
         tool_config.approval_policy = create_test_tool_approval_policy();
-        
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -533,7 +538,9 @@ mod tests {
 
         let messages = vec![Message::Tool {
             tool_use_id: "test".to_string(),
-            result: ToolResult::Success { output: "test".to_string() },
+            result: ToolResult::Success {
+                output: "test".to_string(),
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
         }];
@@ -564,8 +571,10 @@ mod tests {
 
         // Create a session
         let mut tool_config = SessionToolConfig::read_only();
-        tool_config.approval_policy = ToolApprovalPolicy::PreApproved { tools: HashSet::new() };
-        
+        tool_config.approval_policy = ToolApprovalPolicy::PreApproved {
+            tools: HashSet::new(),
+        };
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -619,18 +628,23 @@ mod tests {
 
         let messages = vec![
             Message::User {
-                content: vec![UserContent::Text { text: "What is 2+2? Don't give me the answer yet.".to_string() }],
+                content: vec![UserContent::Text {
+                    text: "What is 2+2? Don't give me the answer yet.".to_string(),
+                }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
             },
             Message::Assistant {
-                content: vec![AssistantContent::Text { text:
-                "Ok, I'll give you the answer once you're ready.".to_string() }],
+                content: vec![AssistantContent::Text {
+                    text: "Ok, I'll give you the answer once you're ready.".to_string(),
+                }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("assistant", Message::current_timestamp()),
             },
             Message::User {
-                content: vec![UserContent::Text { text: "I'm ready. What is the answer?".to_string() }],
+                content: vec![UserContent::Text {
+                    text: "I'm ready. What is the answer?".to_string(),
+                }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
             },
@@ -655,8 +669,10 @@ mod tests {
 
         // Create a session
         let mut tool_config = SessionToolConfig::read_only();
-        tool_config.approval_policy = ToolApprovalPolicy::PreApproved { tools: HashSet::new() };
-        
+        tool_config.approval_policy = ToolApprovalPolicy::PreApproved {
+            tools: HashSet::new(),
+        };
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -704,7 +720,7 @@ mod tests {
                 let first_msg = &updated_state.messages[0];
                 assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
                 if let Message::User { content, .. } = first_msg {
-                    if let Some(UserContent::Text { text }) = content.get(0) {
+                    if let Some(UserContent::Text { text }) = content.first() {
                         assert_eq!(text, "Test");
                     } else {
                         panic!("Expected text content");
@@ -731,8 +747,10 @@ mod tests {
 
         // Create a session
         let mut tool_config = SessionToolConfig::read_only();
-        tool_config.approval_policy = ToolApprovalPolicy::PreApproved { tools: HashSet::new() };
-        
+        tool_config.approval_policy = ToolApprovalPolicy::PreApproved {
+            tools: HashSet::new(),
+        };
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,
@@ -781,7 +799,7 @@ mod tests {
         let first_msg = &state_after.messages[0];
         assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
         if let Message::User { content, .. } = first_msg {
-            if let Some(UserContent::Text { text }) = content.get(0) {
+            if let Some(UserContent::Text { text }) = content.first() {
                 assert_eq!(text, "What is my name?");
             } else {
                 panic!("Expected text content for user message");
@@ -798,7 +816,9 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         let messages = vec![Message::User {
-            content: vec![UserContent::Text { text: "List the files in the current directory".to_string() }],
+            content: vec![UserContent::Text {
+                text: "List the files in the current directory".to_string(),
+            }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
         }];
@@ -842,7 +862,7 @@ mod tests {
         // Create a session
         let mut tool_config = SessionToolConfig::read_only();
         tool_config.approval_policy = create_test_tool_approval_policy();
-        
+
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
             tool_config,

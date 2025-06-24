@@ -19,6 +19,9 @@ pub enum GrpcError {
 
     #[error("Stream error: {0}")]
     StreamError(String),
+
+    #[error("Conversion error: {0}")]
+    ConversionError(#[from] ConversionError),
 }
 
 #[derive(Error, Debug)]

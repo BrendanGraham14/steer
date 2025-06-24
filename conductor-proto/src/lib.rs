@@ -4,4 +4,3 @@ pub mod agent {
 pub mod remote_workspace {
     tonic::include_proto!("conductor.remote_workspace.v1");
 }
-

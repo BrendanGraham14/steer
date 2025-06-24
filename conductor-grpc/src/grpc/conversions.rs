@@ -1,3 +1,4 @@
+use crate::grpc::error::ConversionError;
 use conductor_core::api::ToolCall;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::{
@@ -9,7 +10,6 @@ use conductor_core::session::state::{
     ToolApprovalPolicy, ToolFilter, ToolVisibility, WorkspaceConfig,
 };
 use conductor_proto::agent as proto;
-use crate::grpc::error::ConversionError;
 
 /// Convert internal Message to protobuf
 pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
@@ -445,11 +445,15 @@ pub fn proto_to_tool_visibility(proto_visibility: Option<proto::ToolVisibility>)
 }
 
 /// Convert from protobuf ToolApprovalPolicy to internal ToolApprovalPolicy
-pub fn proto_to_tool_approval_policy(proto_policy: Option<proto::ToolApprovalPolicy>) -> ToolApprovalPolicy {
+pub fn proto_to_tool_approval_policy(
+    proto_policy: Option<proto::ToolApprovalPolicy>,
+) -> ToolApprovalPolicy {
     match proto_policy {
         Some(policy) => {
             match policy.policy {
-                Some(proto::tool_approval_policy::Policy::AlwaysAsk(_)) => ToolApprovalPolicy::AlwaysAsk,
+                Some(proto::tool_approval_policy::Policy::AlwaysAsk(_)) => {
+                    ToolApprovalPolicy::AlwaysAsk
+                }
                 Some(proto::tool_approval_policy::Policy::PreApproved(pre_approved)) => {
                     ToolApprovalPolicy::PreApproved {
                         tools: pre_approved.tools.into_iter().collect(),
@@ -553,9 +557,11 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
         assistant_content, message, thought_content, tool_result, user_content,
     };
 
-    let message_variant = proto_msg.message.ok_or_else(|| ConversionError::MissingField {
-        field: "message".to_string(),
-    })?;
+    let message_variant = proto_msg
+        .message
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "message".to_string(),
+        })?;
 
     match message_variant {
         message::Message::User(user_msg) => {
@@ -655,22 +661,22 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                         }
                         assistant_content::Content::Thought(thought) => {
                             let thought_content =
-                                thought.thought_type.as_ref().and_then(|t| match t {
+                                thought.thought_type.as_ref().map(|t| match t {
                                     thought_content::ThoughtType::Simple(simple) => {
-                                        Some(ThoughtContent::Simple {
+                                        ThoughtContent::Simple {
                                             text: simple.text.clone(),
-                                        })
+                                        }
                                     }
                                     thought_content::ThoughtType::Signed(signed) => {
-                                        Some(ThoughtContent::Signed {
+                                        ThoughtContent::Signed {
                                             text: signed.text.clone(),
                                             signature: signed.signature.clone(),
-                                        })
+                                        }
                                     }
                                     thought_content::ThoughtType::Redacted(redacted) => {
-                                        Some(ThoughtContent::Redacted {
+                                        ThoughtContent::Redacted {
                                             data: redacted.data.clone(),
-                                        })
+                                        }
                                     }
                                 });
 
@@ -697,7 +703,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                     None => {
                         return Err(ConversionError::MissingField {
                             field: "tool_result.result".to_string(),
-                        })
+                        });
                     }
                 };
                 Ok(ConversationMessage::Tool {
@@ -1163,7 +1169,7 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
                 .and_then(|cmd| {
                     cmd.command_type
                         .as_ref()
-                        .map(|ct| proto_app_command_type_to_app_command_type(ct))
+                        .map(proto_app_command_type_to_app_command_type)
                 })
                 .unwrap_or(AppCommandType::Unknown {
                     command: e.content.clone(),
@@ -1176,7 +1182,7 @@ pub fn server_event_to_app_event(server_event: proto::ServerEvent) -> Option<App
                 .and_then(|resp| {
                     resp.response
                         .as_ref()
-                        .map(|rt| proto_command_response_response_to_command_response(rt))
+                        .map(proto_command_response_response_to_command_response)
                 })
                 .unwrap_or(CommandResponse::Text(e.content.clone()));
 

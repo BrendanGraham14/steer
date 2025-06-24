@@ -1,5 +1,5 @@
 use ratatui::{
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 use textwrap;
@@ -17,7 +17,11 @@ pub fn truncate_lines(text: &str, max_lines: usize) -> (Vec<&str>, bool) {
 /// Wrap lines to fit within a maximum width
 pub fn wrap_lines<'a>(lines: impl Iterator<Item = &'a str>, width: usize) -> Vec<String> {
     lines
-        .flat_map(|line| textwrap::wrap(line, width).into_iter().map(|s| s.to_string()))
+        .flat_map(|line| {
+            textwrap::wrap(line, width)
+                .into_iter()
+                .map(|s| s.to_string())
+        })
         .collect()
 }
 
@@ -25,12 +29,12 @@ pub fn wrap_lines<'a>(lines: impl Iterator<Item = &'a str>, width: usize) -> Vec
 pub fn json_preview(value: &serde_json::Value, max_len: usize) -> String {
     let mut preview = serde_json::to_string(value).unwrap_or_default();
     preview.retain(|c| !c.is_whitespace());
-    
+
     if preview.len() > max_len {
         preview.truncate(max_len.saturating_sub(3));
         preview.push_str("...");
     }
-    
+
     preview
 }
 

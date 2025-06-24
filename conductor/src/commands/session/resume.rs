@@ -34,7 +34,9 @@ impl Command for ResumeSessionCommand {
 
             // TODO: The TUI functionality has been moved to conductor-tui crate
             // For now, just return an error
-            return Err(anyhow!("Remote session resumption with TUI is not available in this command. Use the conductor-tui binary instead."));
+            return Err(anyhow!(
+                "Remote session resumption with TUI is not available in this command. Use the conductor-tui binary instead."
+            ));
         }
 
         // Local session handling
@@ -89,7 +91,10 @@ impl Command for ResumeSessionCommand {
 
                 // TODO: The TUI functionality has been moved to conductor-tui crate
                 // For now, just print session info
-                println!("Session resumed successfully. Session ID: {}", self.session_id);
+                println!(
+                    "Session resumed successfully. Session ID: {}",
+                    self.session_id
+                );
                 println!("Model: {}", model);
                 println!("To interact with the session, use the conductor-tui binary.");
             }
@@ -194,7 +199,10 @@ impl Command for LatestSessionCommand {
 
                 // TODO: The TUI functionality has been moved to conductor-tui crate
                 // For now, just print session info
-                println!("Session created from snapshot successfully. Session ID: {}", session_id);
+                println!(
+                    "Session created from snapshot successfully. Session ID: {}",
+                    session_id
+                );
                 println!("Model: {}", model);
                 println!("To interact with the session, use the conductor-tui binary.");
             }
@@ -215,7 +223,7 @@ impl LatestSessionCommand {
         use conductor_grpc::GrpcClientAdapter;
 
         // Connect to the gRPC server
-        let mut client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
+        let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
             anyhow!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,
@@ -265,7 +273,9 @@ impl LatestSessionCommand {
 
         // TODO: The TUI functionality has been moved to conductor-tui crate
         // For now, just return an error
-        return Err(anyhow!("Remote session resumption with TUI is not available in this command. Use the conductor-tui binary instead."));
+        return Err(anyhow!(
+            "Remote session resumption with TUI is not available in this command. Use the conductor-tui binary instead."
+        ));
 
         Ok(())
     }

@@ -552,7 +552,7 @@ impl Provider for OpenAIClient {
             .json(&request)
             .send()
             .await
-            .map_err(|e| ApiError::Network(e))?;
+            .map_err(ApiError::Network)?;
 
         if !response.status().is_success() {
             let status = response.status();

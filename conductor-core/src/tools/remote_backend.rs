@@ -394,7 +394,7 @@ mod tests {
         > {
             unimplemented!()
         }
-        
+
         async fn get_environment_info(
             &self,
             _request: Request<conductor_proto::remote_workspace::GetEnvironmentInfoRequest>,

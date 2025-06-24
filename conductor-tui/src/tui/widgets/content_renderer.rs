@@ -10,9 +10,9 @@ use textwrap;
 use crate::app::conversation::{AssistantContent, ToolResult, UserContent};
 use tools::ToolCall;
 
+use super::formatters;
 use super::message_list::{MessageContent, ViewMode};
 use super::styles;
-use super::formatters;
 
 /// Trait for rendering message content in different view modes
 pub trait ContentRenderer {
@@ -285,7 +285,7 @@ impl DefaultContentRenderer {
         // Render the paragraph
         paragraph.render(area, buf);
     }
-    
+
     fn format_command_execution(
         &self,
         command: &str,
@@ -477,7 +477,8 @@ impl ContentRenderer for DefaultContentRenderer {
                         }
                         UserContent::AppCommand { command, response } => {
                             // Compact command separator
-                            if matches!(command, crate::app::conversation::AppCommandType::Compact) {
+                            if matches!(command, crate::app::conversation::AppCommandType::Compact)
+                            {
                                 if let Some(crate::app::conversation::CommandResponse::Compact(
                                     crate::app::conversation::CompactResult::Success(_),
                                 )) = response
@@ -564,13 +565,13 @@ impl ContentRenderer for DefaultContentRenderer {
             MessageContent::Tool { call, result, .. } => {
                 // Get the formatter for this tool
                 let formatter = formatters::get_formatter(&call.name);
-                
+
                 // Format the content
                 let lines = match mode {
                     ViewMode::Compact => formatter.compact(&call.parameters, result, wrap_width),
                     ViewMode::Detailed => formatter.detailed(&call.parameters, result, wrap_width),
                 };
-                
+
                 // Height is lines + 2 for borders
                 (lines.len() as u16) + 2
             }

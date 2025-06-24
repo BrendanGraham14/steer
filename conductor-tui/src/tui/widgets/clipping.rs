@@ -9,7 +9,7 @@ pub struct ClippedRender<'a, W: Widget> {
     _phantom: std::marker::PhantomData<&'a ()>,
 }
 
-impl<'a, W: Widget> ClippedRender<'a, W> {
+impl<W: Widget> ClippedRender<'_, W> {
     pub fn new(widget: W, vertical_offset: u16) -> Self {
         Self {
             widget,
@@ -19,7 +19,7 @@ impl<'a, W: Widget> ClippedRender<'a, W> {
     }
 }
 
-impl<'a, W: Widget> Widget for ClippedRender<'a, W> {
+impl<W: Widget> Widget for ClippedRender<'_, W> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if self.vertical_offset == 0 {
             // No offset, render normally

@@ -130,7 +130,7 @@ fn grep_search_internal(
 
         // Check include pattern if specified
         if let Some(ref pattern) = include_pattern {
-            if !path_matches_glob(path, pattern, &base_path) {
+            if !path_matches_glob(path, pattern, base_path) {
                 continue;
             }
         }
@@ -239,7 +239,7 @@ mod tests {
         )
         .unwrap();
         // A file with non-utf8 content to test robustness
-        fs::write(dir.join("binary.dat"), &[0, 159, 146, 150]).unwrap();
+        fs::write(dir.join("binary.dat"), [0, 159, 146, 150]).unwrap();
     }
 
     fn create_test_context(temp_dir: &tempfile::TempDir) -> ExecutionContext {

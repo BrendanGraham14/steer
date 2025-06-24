@@ -1,4 +1,4 @@
-use super::{helpers::*, ToolFormatter};
+use super::{ToolFormatter, helpers::*};
 use crate::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::text::{Line, Span};
@@ -14,13 +14,14 @@ impl ToolFormatter for DefaultFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let preview = json_preview(params, 60);
-        
-        lines.push(Line::from(vec![
-            Span::styled(format!("Tool: {}", preview), styles::DIM_TEXT),
-        ]));
-        
+
+        lines.push(Line::from(vec![Span::styled(
+            format!("Tool: {}", preview),
+            styles::DIM_TEXT,
+        )]));
+
         lines
     }
 
@@ -31,7 +32,7 @@ impl ToolFormatter for DefaultFormatter {
         wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         // Show parameters
         if let Ok(json) = serde_json::to_string_pretty(params) {
             for line in json.lines() {
@@ -44,11 +45,11 @@ impl ToolFormatter for DefaultFormatter {
                 }
             }
         }
-        
+
         // Show result if available
         if let Some(result) = result {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-            
+
             match result {
                 ToolResult::Success { output } => {
                     if output.trim().is_empty() {
@@ -56,13 +57,13 @@ impl ToolFormatter for DefaultFormatter {
                     } else {
                         const MAX_LINES: usize = 10;
                         let (output_lines, truncated) = truncate_lines(output, MAX_LINES);
-                        
+
                         for line in output_lines {
                             for wrapped in textwrap::wrap(line, wrap_width) {
                                 lines.push(Line::from(Span::raw(wrapped.to_string())));
                             }
                         }
-                        
+
                         if truncated {
                             lines.push(Line::from(Span::styled(
                                 format!("... ({} more lines)", output.lines().count() - MAX_LINES),
@@ -79,7 +80,7 @@ impl ToolFormatter for DefaultFormatter {
                 }
             }
         }
-        
+
         lines
     }
 }

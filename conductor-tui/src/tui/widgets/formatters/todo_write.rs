@@ -1,4 +1,4 @@
-use super::{helpers::*, ToolFormatter};
+use super::{ToolFormatter, helpers::*};
 use crate::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::{
@@ -18,11 +18,14 @@ impl ToolFormatter for TodoWriteFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<TodoWriteParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid todo write params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid todo write params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
+
         let todo_count = params.todos.len();
         let (completed_count, in_progress_count, pending_count) = params.todos.iter().fold(
             (0, 0, 0),
@@ -32,7 +35,7 @@ impl ToolFormatter for TodoWriteFormatter {
                 tools::tools::todo::TodoStatus::Pending => (completed, in_progress, pending + 1),
             },
         );
-        
+
         lines.push(Line::from(vec![
             Span::styled("TODO WRITE ", styles::DIM_TEXT),
             Span::styled(
@@ -43,7 +46,7 @@ impl ToolFormatter for TodoWriteFormatter {
                 styles::ITALIC_GRAY,
             ),
         ]));
-        
+
         lines
     }
 
@@ -54,16 +57,19 @@ impl ToolFormatter for TodoWriteFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<TodoWriteParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid todo write params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid todo write params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
+
         lines.push(Line::from(Span::styled(
             format!("Updating {} todo items:", params.todos.len()),
             Style::default(),
         )));
-        
+
         for todo in &params.todos {
             let status_icon = match todo.status {
                 tools::tools::todo::TodoStatus::Pending => "⏳",
@@ -84,7 +90,7 @@ impl ToolFormatter for TodoWriteFormatter {
                 Span::styled(todo.content.clone(), Style::default()),
             ]));
         }
-        
+
         if let Some(ToolResult::Error { error }) = result {
             lines.push(separator_line(40, styles::DIM_TEXT));
             lines.push(Line::from(Span::styled(
@@ -92,7 +98,7 @@ impl ToolFormatter for TodoWriteFormatter {
                 styles::ERROR_TEXT,
             )));
         }
-        
+
         lines
     }
 }

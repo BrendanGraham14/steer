@@ -1,10 +1,8 @@
-use conductor_core::session::{SessionManager, SessionManagerError, SessionConfig};
-use conductor_core::app::conversation::Message;
-use conductor_proto::agent as proto;
 use crate::grpc::conversions::{
-    message_to_proto, proto_to_tool_config, proto_to_workspace_config,
-    session_config_to_proto,
+    message_to_proto, proto_to_tool_config, proto_to_workspace_config, session_config_to_proto,
 };
+use conductor_core::session::{SessionConfig, SessionManager, SessionManagerError};
+use conductor_proto::agent as proto;
 
 /// Extension trait for SessionManager that adds gRPC-specific functionality
 #[async_trait::async_trait]
@@ -37,16 +35,19 @@ impl SessionManagerExt for SessionManager {
                 // Convert internal SessionState to protobuf SessionState
                 let proto_state = proto::SessionState {
                     id: session_id.to_string(),
-                    created_at: Some(prost_types::Timestamp::from(
-                        std::time::SystemTime::from(session.created_at)
-                    )),
-                    updated_at: Some(prost_types::Timestamp::from(
-                        std::time::SystemTime::from(session.updated_at)
-                    )),
+                    created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::from(
+                        session.created_at,
+                    ))),
+                    updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::from(
+                        session.updated_at,
+                    ))),
                     config: Some(config),
-                    messages: session.state.messages.into_iter().map(|msg| {
-                        message_to_proto(msg)
-                    }).collect(),
+                    messages: session
+                        .state
+                        .messages
+                        .into_iter()
+                        .map(message_to_proto)
+                        .collect(),
                     tool_calls: std::collections::HashMap::new(), // TODO: Convert tool calls
                     approved_tools: session.state.approved_tools.into_iter().collect(),
                     last_event_sequence: session.state.last_event_sequence,
@@ -65,7 +66,7 @@ impl SessionManagerExt for SessionManager {
         app_config: conductor_core::app::AppConfig,
     ) -> Result<(String, proto::SessionInfo), SessionManagerError> {
         use conductor_core::session::ToolApprovalPolicy;
-        
+
         // Convert protobuf config to internal SessionConfig
         let tool_policy = config
             .tool_policy
@@ -73,11 +74,11 @@ impl SessionManagerExt for SessionManager {
                 Some(proto::tool_approval_policy::Policy::AlwaysAsk(_)) => {
                     ToolApprovalPolicy::AlwaysAsk
                 }
-                Some(proto::tool_approval_policy::Policy::PreApproved(
-                    pre_approved,
-                )) => ToolApprovalPolicy::PreApproved {
-                    tools: pre_approved.tools.into_iter().collect(),
-                },
+                Some(proto::tool_approval_policy::Policy::PreApproved(pre_approved)) => {
+                    ToolApprovalPolicy::PreApproved {
+                        tools: pre_approved.tools.into_iter().collect(),
+                    }
+                }
                 Some(proto::tool_approval_policy::Policy::Mixed(mixed)) => {
                     ToolApprovalPolicy::Mixed {
                         pre_approved: mixed.pre_approved_tools.into_iter().collect(),

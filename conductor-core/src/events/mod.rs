@@ -335,7 +335,7 @@ impl EventFilter {
 mod tests {
     use super::*;
     use crate::app::Message;
-    use crate::app::conversation::{AssistantContent};
+    use crate::app::conversation::AssistantContent;
 
     #[test]
     fn test_stream_event_serialization() {
@@ -475,7 +475,9 @@ mod tests {
     #[test]
     fn test_message_complete_event() {
         let message = Message::Assistant {
-            content: vec![AssistantContent::Text { text: "Hello world".to_string() }],
+            content: vec![AssistantContent::Text {
+                text: "Hello world".to_string(),
+            }],
             timestamp: 0,
             id: "msg_123".to_string(),
         };

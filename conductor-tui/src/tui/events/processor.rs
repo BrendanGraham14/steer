@@ -50,7 +50,7 @@ pub struct ProcessingContext<'a> {
     pub messages_updated: &'a mut bool,
 }
 
-impl<'a> ProcessingContext<'a> {
+impl ProcessingContext<'_> {
     /// Helper to get or create a tool message index
     pub fn get_or_create_tool_index(&mut self, id: &str, name_hint: Option<String>) -> usize {
         if let Some(idx) = self.tool_registry.get_message_index(id) {
@@ -80,8 +80,11 @@ impl<'a> ProcessingContext<'a> {
     }
 
     /// Helper to convert app::Message to MessageContent
-    pub fn convert_message(&self, message: crate::app::Message) -> crate::tui::widgets::message_list::MessageContent {
-        use crate::app::conversation::AssistantContent;
+    pub fn convert_message(
+        &self,
+        message: crate::app::Message,
+    ) -> crate::tui::widgets::message_list::MessageContent {
+        
         use crate::tui::widgets::message_list::MessageContent;
 
         match message {
@@ -154,7 +157,7 @@ pub trait EventProcessor: Send + Sync {
     fn can_handle(&self, event: &AppEvent) -> bool;
 
     /// Process the event with access to the processing context
-    /// 
+    ///
     /// Processors should be deterministic and side-effect-free except through
     /// the provided context. They should not directly call external APIs or
     /// perform I/O operations.

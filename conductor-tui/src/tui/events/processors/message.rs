@@ -88,7 +88,12 @@ impl EventProcessor for MessageEventProcessor {
 impl MessageEventProcessor {
     fn handle_message_added(&self, message: crate::app::Message, ctx: &mut ProcessingContext) {
         // First, extract tool calls from Assistant messages to register them
-        if let crate::app::Message::Assistant { ref content, ref id, .. } = message {
+        if let crate::app::Message::Assistant {
+            ref content,
+            ref id,
+            ..
+        } = message
+        {
             tracing::debug!(
                 target: "tui.message_event",
                 "Processing Assistant message id={}",
@@ -101,11 +106,10 @@ impl MessageEventProcessor {
                         "Found ToolCall in Assistant message: id={}, name={}, params={}",
                         tool_call.id, tool_call.name, tool_call.parameters
                     );
-                    
+
                     // already handled above
                     // Update registry entry with full parameters too
                     ctx.tool_registry.upsert_call(tool_call.clone());
-
 
                     // If we already created a placeholder Tool message for this id (e.g. via
                     // ToolCallStarted that arrived earlier) then update the placeholder with the
@@ -158,17 +162,17 @@ impl Default for MessageEventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::AppCommand;
     use crate::app::conversation::{AssistantContent, Message};
+    use crate::app::io::AppCommandSink;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{MessageStore, ToolCallRegistry};
     use crate::tui::widgets::message_list::{MessageContent, MessageListState};
-    use serde_json::json;
-    use tools::schema::ToolCall;
-    use async_trait::async_trait;
     use anyhow::Result;
-    use crate::app::io::AppCommandSink;
-    use crate::app::AppCommand;
+    use async_trait::async_trait;
+    use serde_json::json;
     use std::sync::Arc;
+    use tools::schema::ToolCall;
 
     // Mock command sink for tests
     struct MockCommandSink;

@@ -139,6 +139,12 @@ pub struct MessageListState {
     last_viewport_height: u16,
 }
 
+impl Default for MessageListState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageListState {
     pub fn new() -> Self {
         Self {
@@ -327,7 +333,12 @@ impl MessageListState {
 
     /// Simplified scroll down method that handles all the boilerplate
     /// Returns true if the scroll position changed
-    pub fn simple_scroll_down(&mut self, amount: u16, messages: &[MessageContent], terminal_size: Option<(u16, u16)>) -> bool {
+    pub fn simple_scroll_down(
+        &mut self,
+        amount: u16,
+        messages: &[MessageContent],
+        terminal_size: Option<(u16, u16)>,
+    ) -> bool {
         // Use cached viewport height if available, otherwise use terminal size or default
         let viewport_height = if self.last_viewport_height > 0 {
             self.last_viewport_height
@@ -338,7 +349,9 @@ impl MessageListState {
         };
 
         // Use actual terminal width if provided, otherwise use default
-        let width = terminal_size.map(|(w, _)| w.saturating_sub(2)).unwrap_or(80);
+        let width = terminal_size
+            .map(|(w, _)| w.saturating_sub(2))
+            .unwrap_or(80);
 
         // Use the default renderer
         let renderer = DefaultContentRenderer;
@@ -348,7 +361,12 @@ impl MessageListState {
 
     /// Simplified scroll up method that handles all the boilerplate
     /// Returns true if the scroll position changed
-    pub fn simple_scroll_up(&mut self, amount: u16, messages: &[MessageContent], terminal_size: Option<(u16, u16)>) -> bool {
+    pub fn simple_scroll_up(
+        &mut self,
+        amount: u16,
+        messages: &[MessageContent],
+        terminal_size: Option<(u16, u16)>,
+    ) -> bool {
         // Use cached viewport height if available, otherwise use terminal size or default
         let viewport_height = if self.last_viewport_height > 0 {
             self.last_viewport_height
@@ -358,7 +376,9 @@ impl MessageListState {
             30 // Fallback only when absolutely necessary
         };
 
-        let width = terminal_size.map(|(w, _)| w.saturating_sub(2)).unwrap_or(80);
+        let width = terminal_size
+            .map(|(w, _)| w.saturating_sub(2))
+            .unwrap_or(80);
         let renderer = DefaultContentRenderer;
 
         self.scroll_up_by(messages, viewport_height, width, &renderer, amount)
@@ -508,7 +528,7 @@ impl<'a> MessageList<'a> {
     }
 }
 
-impl<'a> StatefulWidget for MessageList<'a> {
+impl StatefulWidget for MessageList<'_> {
     type State = MessageListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -555,8 +575,8 @@ impl<'a> StatefulWidget for MessageList<'a> {
 
         // Create ScrollView and render messages into it
         // Disable built-in scrollbars – we draw our own vertical bar
-        let mut scroll_view = ScrollView::new(content_size)
-            .scrollbars_visibility(ScrollbarVisibility::Never);
+        let mut scroll_view =
+            ScrollView::new(content_size).scrollbars_visibility(ScrollbarVisibility::Never);
 
         // Create a custom widget that renders all messages
         let messages_widget = MessagesRenderer {
@@ -583,7 +603,8 @@ impl<'a> StatefulWidget for MessageList<'a> {
                 .begin_symbol(None)
                 .end_symbol(None);
             let scroll_offset = state.scroll_state.offset().y as usize;
-            let last_visible_line = scroll_offset.saturating_add(messages_area.height.saturating_sub(1) as usize);
+            let last_visible_line =
+                scroll_offset.saturating_add(messages_area.height.saturating_sub(1) as usize);
             let mut scrollbar_state = ScrollbarState::new(total_height as usize)
                 .position(last_visible_line.min(total_height.saturating_sub(1) as usize))
                 .viewport_content_length(messages_area.height as usize);
@@ -593,7 +614,7 @@ impl<'a> StatefulWidget for MessageList<'a> {
 
         // --- Update user_scrolled flag based on current position ---
         // Determine the maximum vertical offset (0 when content fits the view).
-        let max_offset = total_height.saturating_sub(messages_area.height) as u16;
+        let max_offset = total_height.saturating_sub(messages_area.height);
         let current_offset = state.scroll_state.offset().y;
         // If we're at (or past, due to clamping) the bottom, clear the manual scroll flag.
         // Otherwise, mark that the user has scrolled away.
@@ -612,7 +633,7 @@ struct MessagesRenderer<'a> {
     visible_range: Option<VisibleRange>,
 }
 
-impl<'a> Widget for MessagesRenderer<'a> {
+impl Widget for MessagesRenderer<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // If no visible range, render nothing
         let visible_range = match &self.visible_range {
@@ -648,9 +669,9 @@ impl<'a> Widget for MessagesRenderer<'a> {
             // Calculate the actual area for this message
             let message_area = Rect {
                 x: area.x,
-                y: y,
+                y,
                 width: area.width,
-                height: height,
+                height,
             };
 
             // Only render if the message area intersects with the visible area
@@ -687,7 +708,7 @@ impl<'a> Widget for MessagesRenderer<'a> {
     }
 }
 
-impl<'a> MessagesRenderer<'a> {
+impl MessagesRenderer<'_> {
     fn determine_view_mode(&self, content: &MessageContent) -> ViewMode {
         self.state.view_prefs.determine_mode(content)
     }
@@ -742,67 +763,51 @@ mod tests {
     fn test_scroll_by_integer_overflow_protection() {
         let mut state = MessageListState::new();
         let renderer = DefaultContentRenderer;
-        
+
         // Create test messages
-        let messages = vec![
-            MessageContent::User {
-                id: "test-1".to_string(),
-                blocks: vec![UserContent::Text {
-                    text: "Message 1".to_string(),
-                }],
-                timestamp: "2023-01-01T00:00:00Z".to_string(),
-            },
-        ];
-        
+        let messages = vec![MessageContent::User {
+            id: "test-1".to_string(),
+            blocks: vec![UserContent::Text {
+                text: "Message 1".to_string(),
+            }],
+            timestamp: "2023-01-01T00:00:00Z".to_string(),
+        }];
+
         // Test with extremely large positive amount
-        let result = state.scroll_by(
-            &messages,
-            200,
-            80,
-            &renderer,
-            i32::MAX,
-        );
-        
+        let result = state.scroll_by(&messages, 200, 80, &renderer, i32::MAX);
+
         // Should handle without panic
-        assert!(result == true || result == false); // Either is fine, just no panic
-        
-        // Test with extremely large negative amount  
-        let result = state.scroll_by(
-            &messages,
-            200,
-            80,
-            &renderer,
-            i32::MIN,
-        );
-        
+        assert!(result || !result); // Either is fine, just no panic
+
+        // Test with extremely large negative amount
+        let result = state.scroll_by(&messages, 200, 80, &renderer, i32::MIN);
+
         // Should handle without panic
-        assert!(result == true || result == false); // Either is fine, just no panic
+        assert!(result || !result); // Either is fine, just no panic
     }
 
     #[test]
     fn test_simple_scroll_with_terminal_size() {
         let mut state = MessageListState::new();
-        
+
         // Create test messages
-        let messages = vec![
-            MessageContent::User {
-                id: "test-1".to_string(),
-                blocks: vec![UserContent::Text {
-                    text: "Message 1".to_string(),
-                }],
-                timestamp: "2023-01-01T00:00:00Z".to_string(),
-            },
-        ];
-        
+        let messages = vec![MessageContent::User {
+            id: "test-1".to_string(),
+            blocks: vec![UserContent::Text {
+                text: "Message 1".to_string(),
+            }],
+            timestamp: "2023-01-01T00:00:00Z".to_string(),
+        }];
+
         // Test with provided terminal size
         let terminal_size = Some((100, 50));
         let result = state.simple_scroll_down(5, &messages, terminal_size);
-        
+
         // Should not panic and should use the provided terminal size
-        assert!(result == true || result == false);
-        
+        assert!(result || !result);
+
         // Test without terminal size (fallback)
         let result = state.simple_scroll_up(5, &messages, None);
-        assert!(result == true || result == false);
+        assert!(result || !result);
     }
 }

@@ -253,7 +253,7 @@ fn find_matches(
         results.push(AstGrepMatch {
             file: path.display().to_string(),
             line: start_pos.line() + 1, // Convert 0-based to 1-based
-            column: start_pos.column(&node) + 1,
+            column: start_pos.column(node) + 1,
             matched_code: matched_code.to_string(),
             context: context.to_string(),
         });

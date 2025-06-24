@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use uuid;
 
+pub mod adapters;
 mod agent_executor;
 pub mod cancellation;
 pub mod command;
@@ -17,7 +18,6 @@ pub mod context;
 pub mod context_util;
 pub mod conversation;
 pub mod io;
-pub mod adapters;
 
 mod environment;
 
@@ -1289,7 +1289,7 @@ fn parse_bash_output(output: &str) -> (String, String, i32) {
         let mut i = 0;
 
         // Extract exit code from first line
-        if let Some(first_line) = lines.get(0) {
+        if let Some(first_line) = lines.first() {
             if let Some(code_str) = first_line.strip_prefix("Command failed with exit code ") {
                 exit_code = code_str.parse().unwrap_or(-1);
             }

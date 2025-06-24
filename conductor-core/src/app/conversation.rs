@@ -71,7 +71,7 @@ impl AppCommandType {
     /// Parse a command string into an AppCommandType
     pub fn from_command_str(command: &str) -> Self {
         let parts: Vec<&str> = command.trim_start_matches('/').split_whitespace().collect();
-        match parts.first().map(|s| *s) {
+        match parts.first().copied() {
             Some("model") => AppCommandType::Model {
                 target: parts.get(1).map(|s| s.to_string()),
             },
@@ -265,8 +265,13 @@ impl Message {
                                 CommandResponse::Text(msg) => msg.clone(),
                                 CommandResponse::Compact(result) => match result {
                                     CompactResult::Success(summary) => summary.clone(),
-                                    CompactResult::Cancelled => "Compact command cancelled.".to_string(),
-                                    CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).".to_string(),
+                                    CompactResult::Cancelled => {
+                                        "Compact command cancelled.".to_string()
+                                    }
+                                    CompactResult::InsufficientMessages => {
+                                        "Not enough messages to compact (minimum 10 required)."
+                                            .to_string()
+                                    }
                                 },
                             };
                             format!("/{}\n{}", command.as_command_str(), text)
@@ -313,14 +318,21 @@ impl Message {
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.clone()),
                     UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
-                    UserContent::AppCommand { response, .. } => response.as_ref().map(|r| match r {
-                        CommandResponse::Text(msg) => msg.clone(),
-                        CommandResponse::Compact(result) => match result {
-                            CompactResult::Success(summary) => summary.clone(),
-                            CompactResult::Cancelled => "Compact command cancelled.".to_string(),
-                            CompactResult::InsufficientMessages => "Not enough messages to compact (minimum 10 required).".to_string(),
-                        },
-                    }),
+                    UserContent::AppCommand { response, .. } => {
+                        response.as_ref().map(|r| match r {
+                            CommandResponse::Text(msg) => msg.clone(),
+                            CommandResponse::Compact(result) => match result {
+                                CompactResult::Success(summary) => summary.clone(),
+                                CompactResult::Cancelled => {
+                                    "Compact command cancelled.".to_string()
+                                }
+                                CompactResult::InsufficientMessages => {
+                                    "Not enough messages to compact (minimum 10 required)."
+                                        .to_string()
+                                }
+                            },
+                        })
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -513,17 +525,20 @@ impl Conversation {
                 return Ok(CompactResult::Cancelled);
             }
         };
-        
+
         let summary_text = summary.extract_text();
 
         // Clear messages and add compaction marker
         self.messages.clear();
         let timestamp = Message::current_timestamp();
-        
+
         // Add the summary as a user message with a clear marker
         self.add_message(Message::User {
             content: vec![UserContent::Text {
-                text: format!("[CONVERSATION COMPACTED]\n\nPrevious conversation summary:\n{}", summary_text),
+                text: format!(
+                    "[CONVERSATION COMPACTED]\n\nPrevious conversation summary:\n{}",
+                    summary_text
+                ),
             }],
             timestamp,
             id: Message::generate_id("user", timestamp),

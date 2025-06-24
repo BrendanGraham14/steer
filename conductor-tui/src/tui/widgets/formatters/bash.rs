@@ -1,4 +1,4 @@
-use super::{helpers::*, ToolFormatter};
+use super::{ToolFormatter, helpers::*};
 use crate::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::{
@@ -18,22 +18,25 @@ impl ToolFormatter for BashFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<BashParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid bash params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid bash params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
+
         let cmd_preview = if params.command.len() > 50 {
             format!("{}...", &params.command[..47])
         } else {
             params.command.clone()
         };
-        
+
         let mut spans = vec![
             Span::styled("$ ", styles::COMMAND_PROMPT),
             Span::styled(cmd_preview, styles::COMMAND_TEXT),
         ];
-        
+
         // Add exit code if error
         if let Some(ToolResult::Error { error }) = result {
             if let Some(exit_code) = extract_exit_code(error) {
@@ -43,7 +46,7 @@ impl ToolFormatter for BashFormatter {
                 ));
             }
         }
-        
+
         lines.push(Line::from(spans));
         lines
     }
@@ -55,11 +58,14 @@ impl ToolFormatter for BashFormatter {
         wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let Ok(params) = serde_json::from_value::<BashParams>(params.clone()) else {
-            return vec![Line::from(Span::styled("Invalid bash params", styles::ERROR_TEXT))];
+            return vec![Line::from(Span::styled(
+                "Invalid bash params",
+                styles::ERROR_TEXT,
+            ))];
         };
-        
+
         // Show full command
         for line in params.command.lines() {
             for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
@@ -69,18 +75,18 @@ impl ToolFormatter for BashFormatter {
                 )));
             }
         }
-        
+
         if let Some(timeout) = params.timeout {
             lines.push(Line::from(Span::styled(
                 format!("Timeout: {}ms", timeout),
                 styles::DIM_TEXT,
             )));
         }
-        
+
         // Show output if we have results
         if let Some(result) = result {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-            
+
             match result {
                 ToolResult::Success { output } => {
                     if output.trim().is_empty() {
@@ -91,16 +97,19 @@ impl ToolFormatter for BashFormatter {
                     } else {
                         const MAX_OUTPUT_LINES: usize = 20;
                         let (output_lines, truncated) = truncate_lines(output, MAX_OUTPUT_LINES);
-                        
+
                         for line in output_lines {
                             for wrapped in textwrap::wrap(line, wrap_width) {
                                 lines.push(Line::from(Span::raw(wrapped.to_string())));
                             }
                         }
-                        
+
                         if truncated {
                             lines.push(Line::from(Span::styled(
-                                format!("... ({} more lines)", output.lines().count() - MAX_OUTPUT_LINES),
+                                format!(
+                                    "... ({} more lines)",
+                                    output.lines().count() - MAX_OUTPUT_LINES
+                                ),
                                 styles::ITALIC_GRAY,
                             )));
                         }
@@ -110,7 +119,7 @@ impl ToolFormatter for BashFormatter {
                     // Show error output
                     const MAX_ERROR_LINES: usize = 10;
                     let (error_lines, truncated) = truncate_lines(error, MAX_ERROR_LINES);
-                    
+
                     for line in error_lines {
                         for wrapped in textwrap::wrap(line, wrap_width) {
                             lines.push(Line::from(Span::styled(
@@ -119,17 +128,20 @@ impl ToolFormatter for BashFormatter {
                             )));
                         }
                     }
-                    
+
                     if truncated {
                         lines.push(Line::from(Span::styled(
-                            format!("... ({} more lines)", error.lines().count() - MAX_ERROR_LINES),
+                            format!(
+                                "... ({} more lines)",
+                                error.lines().count() - MAX_ERROR_LINES
+                            ),
                             styles::ERROR_TEXT,
                         )));
                     }
                 }
             }
         }
-        
+
         lines
     }
 }

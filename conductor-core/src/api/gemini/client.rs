@@ -10,8 +10,7 @@ use crate::api::Model;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
 use crate::app::conversation::{
-    AssistantContent, Message as AppMessage, ThoughtContent, ToolResult,
-    UserContent,
+    AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
 use tools::ToolSchema;
 
@@ -438,7 +437,7 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                             // Try to parse as JSON, otherwise use as string
                             serde_json::from_str(&output)
                                 .ok()
-                                .unwrap_or_else(|| Value::String(output))
+                                .unwrap_or(Value::String(output))
                         }
                         ToolResult::Error { error } => Value::String(format!("Error: {}", error)),
                     };

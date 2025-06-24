@@ -1,5 +1,5 @@
-use conductor_core::api::Model;
 use clap::{Parser, Subcommand};
+use conductor_core::api::Model;
 use std::path::PathBuf;
 
 /// An AI-powered agent and CLI tool that assists with software engineering tasks.

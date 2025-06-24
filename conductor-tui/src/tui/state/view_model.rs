@@ -6,11 +6,11 @@
 //! simple prefix change ( `self.message_list_state` → `self.view_model.message_list_state`,
 //! `self.messages` → `self.view_model.messages` ).  No behaviour change.
 
-use crate::app::conversation::AssistantContent;
-use crate::tui::widgets::message_list::{MessageContent, MessageListState, ViewMode};
+use super::content_cache::ContentCache;
 use super::message_store::MessageStore;
 use super::tool_registry::ToolCallRegistry;
-use super::content_cache::ContentCache;
+use crate::app::conversation::AssistantContent;
+use crate::tui::widgets::message_list::{MessageContent, MessageListState, ViewMode};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug)]
@@ -25,6 +25,12 @@ pub struct MessageViewModel {
     content_cache: Arc<RwLock<ContentCache>>,
 }
 
+impl Default for MessageViewModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageViewModel {
     pub fn new() -> Self {
         Self {
@@ -34,7 +40,7 @@ impl MessageViewModel {
             content_cache: Arc::new(RwLock::new(ContentCache::new())),
         }
     }
-    
+
     /// Get access to the content cache for rendering
     pub fn content_cache(&self) -> Arc<RwLock<ContentCache>> {
         self.content_cache.clone()
@@ -92,10 +98,10 @@ impl MessageViewModel {
                 self.tool_registry.register_call(call.clone());
                 self.tool_registry.set_message_index(id, message_index);
             }
-            
+
             // Don't preload heights for bulk additions (restored messages)
         }
-        
+
         // Log summary after bulk loading
         if count > 0 {
             if let Ok(cache) = self.content_cache.read() {
@@ -108,23 +114,18 @@ impl MessageViewModel {
     /// Pre-calculate height for a message with common view modes and widths
     fn preload_message_height(&self, content: &MessageContent) {
         use crate::tui::widgets::content_renderer::{ContentRenderer, DefaultContentRenderer};
-        
+
         let renderer = DefaultContentRenderer;
         let common_widths = [80, 120, 160]; // Common terminal widths
         let view_modes = [ViewMode::Compact, ViewMode::Detailed];
-        
+
         for &width in &common_widths {
             for &mode in &view_modes {
                 if let Ok(mut cache) = self.content_cache.write() {
                     // Pre-calculate height for common configurations
-                    cache.get_or_parse_height(
-                        content,
-                        mode,
-                        width,
-                        |msg, view_mode, w| {
-                            renderer.calculate_height(msg, view_mode, w)
-                        },
-                    );
+                    cache.get_or_parse_height(content, mode, width, |msg, view_mode, w| {
+                        renderer.calculate_height(msg, view_mode, w)
+                    });
                 }
             }
         }
@@ -152,36 +153,35 @@ impl MessageViewModel {
             (0, 0, 0.0)
         }
     }
-    
+
     /// Preload heights for messages near the visible range
-    pub fn preload_near_visible(&mut self, visible_range: &crate::tui::widgets::message_list::VisibleRange, width: u16) {
+    pub fn preload_near_visible(
+        &mut self,
+        visible_range: &crate::tui::widgets::message_list::VisibleRange,
+        width: u16,
+    ) {
         use crate::tui::widgets::content_renderer::{ContentRenderer, DefaultContentRenderer};
-        
+
         let renderer = DefaultContentRenderer;
         let buffer_size = 10; // Preload 10 messages above and below
-        
+
         let start = visible_range.first_index.saturating_sub(buffer_size);
         let end = (visible_range.last_index + buffer_size).min(self.messages.len() - 1);
-        
+
         for idx in start..=end {
             if let Some(message) = self.messages.get(idx) {
                 let mode = self.message_list_state.view_prefs.determine_mode(message);
-                
+
                 if let Ok(mut cache) = self.content_cache.write() {
                     // Ensure height is cached
-                    cache.get_or_parse_height(
-                        message,
-                        mode,
-                        width,
-                        |msg, view_mode, w| {
-                            renderer.calculate_height(msg, view_mode, w)
-                        },
-                    );
+                    cache.get_or_parse_height(message, mode, width, |msg, view_mode, w| {
+                        renderer.calculate_height(msg, view_mode, w)
+                    });
                 }
             }
         }
     }
-    
+
     /// Log cache performance summary
     pub fn log_cache_performance(&self) {
         if let Ok(cache) = self.content_cache.read() {

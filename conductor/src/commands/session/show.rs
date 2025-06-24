@@ -81,7 +81,7 @@ impl ShowSessionCommand {
         use conductor_grpc::GrpcClientAdapter;
 
         // Connect to the gRPC server
-        let mut client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
+        let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
             anyhow!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,

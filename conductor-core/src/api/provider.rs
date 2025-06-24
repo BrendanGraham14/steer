@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::error::ApiError;
-use crate::app::conversation::{Message, AssistantContent};
+use crate::app::conversation::{AssistantContent, Message};
 use tools::{ToolCall, ToolSchema};
 
 use super::Model;

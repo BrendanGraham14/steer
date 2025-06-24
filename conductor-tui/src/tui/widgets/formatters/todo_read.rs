@@ -1,4 +1,4 @@
-use super::{helpers::*, ToolFormatter};
+use super::{ToolFormatter, helpers::*};
 use crate::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
 use ratatui::{
@@ -17,7 +17,7 @@ impl ToolFormatter for TodoReadFormatter {
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         let info = if let Some(ToolResult::Success { output }) = result {
             // Try to parse as JSON to show summary
             if let Ok(todos) = serde_json::from_str::<Vec<serde_json::Value>>(output) {
@@ -43,12 +43,12 @@ impl ToolFormatter for TodoReadFormatter {
         } else {
             "reading todos...".to_string()
         };
-        
+
         lines.push(Line::from(vec![
             Span::styled("TODO READ ", styles::DIM_TEXT),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));
-        
+
         lines
     }
 
@@ -59,10 +59,10 @@ impl ToolFormatter for TodoReadFormatter {
         wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        
+
         if let Some(ToolResult::Success { output }) = result {
             lines.push(Line::from(Span::styled("Todo List:", styles::TOOL_HEADER)));
-            
+
             if let Ok(todos) = serde_json::from_str::<Vec<serde_json::Value>>(output) {
                 for todo in &todos {
                     if let (Some(content), Some(status), Some(priority)) = (
@@ -96,13 +96,13 @@ impl ToolFormatter for TodoReadFormatter {
                 // Fallback to raw output
                 const MAX_LINES: usize = 20;
                 let (output_lines, truncated) = truncate_lines(output, MAX_LINES);
-                
+
                 for line in output_lines {
                     for wrapped in textwrap::wrap(line, wrap_width) {
                         lines.push(Line::from(Span::raw(wrapped.to_string())));
                     }
                 }
-                
+
                 if truncated {
                     lines.push(Line::from(Span::styled(
                         format!("... ({} more lines)", output.lines().count() - MAX_LINES),
@@ -118,7 +118,7 @@ impl ToolFormatter for TodoReadFormatter {
         } else {
             lines.push(Line::from(Span::styled("Read todo list", styles::DIM_TEXT)));
         }
-        
+
         lines
     }
 }

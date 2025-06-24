@@ -510,17 +510,27 @@ impl SessionStore for SqliteSessionStore {
         let (role, content_json) = match message {
             Message::User { content, .. } => {
                 let json = serde_json::to_string(&content).map_err(|e| {
-                    SessionStoreError::serialization(format!("Failed to serialize user content: {}", e))
+                    SessionStoreError::serialization(format!(
+                        "Failed to serialize user content: {}",
+                        e
+                    ))
                 })?;
                 ("user", json)
             }
             Message::Assistant { content, .. } => {
                 let json = serde_json::to_string(&content).map_err(|e| {
-                    SessionStoreError::serialization(format!("Failed to serialize assistant content: {}", e))
+                    SessionStoreError::serialization(format!(
+                        "Failed to serialize assistant content: {}",
+                        e
+                    ))
                 })?;
                 ("assistant", json)
             }
-            Message::Tool { tool_use_id, result, .. } => {
+            Message::Tool {
+                tool_use_id,
+                result,
+                ..
+            } => {
                 // Convert tool result to a format that can be stored
                 #[derive(serde::Serialize)]
                 struct StoredToolMessage {
@@ -532,7 +542,10 @@ impl SessionStore for SqliteSessionStore {
                     result: result.clone(),
                 };
                 let json = serde_json::to_string(&stored).map_err(|e| {
-                    SessionStoreError::serialization(format!("Failed to serialize tool message: {}", e))
+                    SessionStoreError::serialization(format!(
+                        "Failed to serialize tool message: {}",
+                        e
+                    ))
                 })?;
                 ("tool", json)
             }
@@ -600,9 +613,13 @@ impl SessionStore for SqliteSessionStore {
             // Deserialize based on role
             let message = match role.as_str() {
                 "user" => {
-                    let content: Vec<UserContent> = serde_json::from_str(&content).map_err(|e| {
-                        SessionStoreError::serialization(format!("Failed to deserialize user content: {}", e))
-                    })?;
+                    let content: Vec<UserContent> =
+                        serde_json::from_str(&content).map_err(|e| {
+                            SessionStoreError::serialization(format!(
+                                "Failed to deserialize user content: {}",
+                                e
+                            ))
+                        })?;
                     Message::User {
                         content,
                         timestamp: created_at.timestamp() as u64,
@@ -610,9 +627,13 @@ impl SessionStore for SqliteSessionStore {
                     }
                 }
                 "assistant" => {
-                    let content: Vec<AssistantContent> = serde_json::from_str(&content).map_err(|e| {
-                        SessionStoreError::serialization(format!("Failed to deserialize assistant content: {}", e))
-                    })?;
+                    let content: Vec<AssistantContent> =
+                        serde_json::from_str(&content).map_err(|e| {
+                            SessionStoreError::serialization(format!(
+                                "Failed to deserialize assistant content: {}",
+                                e
+                            ))
+                        })?;
                     Message::Assistant {
                         content,
                         timestamp: created_at.timestamp() as u64,
@@ -625,9 +646,13 @@ impl SessionStore for SqliteSessionStore {
                         tool_use_id: String,
                         result: crate::app::conversation::ToolResult,
                     }
-                    let stored: StoredToolMessage = serde_json::from_str(&content).map_err(|e| {
-                        SessionStoreError::serialization(format!("Failed to deserialize tool message: {}", e))
-                    })?;
+                    let stored: StoredToolMessage =
+                        serde_json::from_str(&content).map_err(|e| {
+                            SessionStoreError::serialization(format!(
+                                "Failed to deserialize tool message: {}",
+                                e
+                            ))
+                        })?;
                     Message::Tool {
                         tool_use_id: stored.tool_use_id,
                         result: stored.result,
@@ -636,7 +661,10 @@ impl SessionStore for SqliteSessionStore {
                     }
                 }
                 _ => {
-                    return Err(SessionStoreError::serialization(format!("Unknown message role: {}", role)));
+                    return Err(SessionStoreError::serialization(format!(
+                        "Unknown message role: {}",
+                        role
+                    )));
                 }
             };
 
@@ -897,10 +925,10 @@ impl SessionStore for SqliteSessionStore {
 #[cfg(test)]
 mod tests {
     use crate::api::{Model, ToolCall};
-    use crate::app::conversation::{Message, Role, AssistantContent, UserContent, ToolResult};
+    use crate::app::conversation::{AssistantContent, Message, Role, UserContent};
     use crate::events::SessionMetadata;
-    use crate::session::state::WorkspaceConfig;
     use crate::session::ToolVisibility;
+    use crate::session::state::WorkspaceConfig;
 
     use super::*;
     use tempfile::TempDir;
@@ -962,7 +990,9 @@ mod tests {
         let session = store.create_session(config).await.unwrap();
 
         let message = Message::User {
-            content: vec![UserContent::Text { text: "Hello".to_string() }],
+            content: vec![UserContent::Text {
+                text: "Hello".to_string(),
+            }],
             timestamp: 123456789,
             id: "msg1".to_string(),
         };
@@ -1069,7 +1099,9 @@ mod tests {
         let claude_model = Model::Claude3_5Sonnet20241022;
         let message_event = StreamEvent::MessageComplete {
             message: Message::Assistant {
-                content: vec![AssistantContent::Text { text: "Hello from Claude".to_string() }],
+                content: vec![AssistantContent::Text {
+                    text: "Hello from Claude".to_string(),
+                }],
                 timestamp: 123456789,
                 id: "msg1".to_string(),
             },

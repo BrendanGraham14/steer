@@ -7,8 +7,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::api::{CompletionResponse, Model, Provider, error::ApiError};
-use crate::app::conversation::{AssistantContent, Message as AppMessage, ThoughtContent, ToolResult,
-    UserContent,
+use crate::app::conversation::{
+    AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
 use tools::ToolSchema;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";

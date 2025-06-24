@@ -3,11 +3,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 use tools::{ToolCall, ToolSchema};
 
 use crate::app::EnvironmentInfo;
-use crate::session::state::{WorkspaceConfig};
+use crate::session::state::WorkspaceConfig;
 use crate::tools::ExecutionContext;
 
 pub mod local;
@@ -18,19 +17,19 @@ pub mod remote;
 pub trait Workspace: Send + Sync {
     /// Get environment information for this workspace
     async fn environment(&self) -> Result<EnvironmentInfo>;
-    
+
     /// Execute a tool in this workspace
     async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext) -> Result<String>;
-    
+
     /// Get available tools for this workspace
     async fn available_tools(&self) -> Vec<ToolSchema>;
-    
+
     /// Check if a tool requires approval in this workspace
     async fn requires_approval(&self, tool_name: &str) -> Result<bool>;
-    
+
     /// Get workspace metadata
     fn metadata(&self) -> WorkspaceMetadata;
-    
+
     /// Invalidate cached environment information (force refresh on next call)
     async fn invalidate_environment_cache(&self);
 }
@@ -40,7 +39,7 @@ pub trait Workspace: Send + Sync {
 pub struct WorkspaceMetadata {
     pub id: String,
     pub workspace_type: WorkspaceType,
-    pub location: String,  // local path, remote URL, or container ID
+    pub location: String, // local path, remote URL, or container ID
 }
 
 /// Type of workspace
@@ -75,7 +74,7 @@ impl CachedEnvironment {
             ttl,
         }
     }
-    
+
     pub fn is_expired(&self) -> bool {
         self.cached_at.elapsed() > self.ttl
     }
@@ -91,11 +90,15 @@ pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Worksp
         WorkspaceConfig::Remote { .. } => {
             // Remote workspaces are not supported in conductor-core
             // They must be created through conductor-grpc
-            Err(anyhow::anyhow!("Remote workspaces require conductor-grpc. Use conductor-grpc to create remote workspaces."))
+            Err(anyhow::anyhow!(
+                "Remote workspaces require conductor-grpc. Use conductor-grpc to create remote workspaces."
+            ))
         }
         WorkspaceConfig::Container { .. } => {
             // For now, container workspaces are not supported
-            Err(anyhow::anyhow!("Container workspaces are not yet supported."))
+            Err(anyhow::anyhow!(
+                "Container workspaces are not yet supported."
+            ))
         }
     }
 }
@@ -109,11 +112,11 @@ mod tests {
     async fn test_create_local_workspace() {
         let config = WorkspaceConfig::Local;
         let workspace = create_workspace(&config).await.unwrap();
-        
+
         let metadata = workspace.metadata();
         assert!(matches!(metadata.workspace_type, WorkspaceType::Local));
     }
-    
+
     #[tokio::test]
     async fn test_cached_environment_expiry() {
         let env_info = EnvironmentInfo {
@@ -126,10 +129,10 @@ mod tests {
             readme_content: None,
             claude_md_content: None,
         };
-        
+
         let cached = CachedEnvironment::new(env_info, Duration::from_millis(1));
         assert!(!cached.is_expired());
-        
+
         tokio::time::sleep(Duration::from_millis(2)).await;
         assert!(cached.is_expired());
     }

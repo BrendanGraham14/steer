@@ -8,7 +8,7 @@ use crate::session::stores::sqlite::SqliteSessionStore;
 use crate::session::{
     Session,
     state::{
-        SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility, WorkspaceConfig,
+        SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig,
     },
     store::SessionStore,
 };
