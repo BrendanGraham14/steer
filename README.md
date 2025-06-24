@@ -107,14 +107,14 @@ Run `cargo run -p conductor-cli` to launch the CLI in the current directory.
 
 ## Project layout (crates)
 
-* `conductor-proto`     – Protocol buffer definitions and generated code
-* `conductor-core`      – Pure domain logic (LLM APIs, session management, tool execution)
-* `conductor-grpc`      – gRPC server/client implementation and core ↔ proto conversions
-* `conductor-tui`       – Terminal UI library (ratatui-based)
-* `conductor-cli`       – Command-line interface and main binary
-* `tools`               – Tool trait definitions and implementations
-* `macros`              – Procedural macros for tool definitions
-* `remote-backend`      – gRPC service for remote tool execution
+* `crates/conductor-proto`     – Protocol buffer definitions and generated code
+* `crates/conductor-core`      – Pure domain logic (LLM APIs, session management, tool execution)
+* `crates/conductor-grpc`      – gRPC server/client implementation and core ↔ proto conversions
+* `crates/conductor-tui`       – Terminal UI library (ratatui-based)
+* `crates/conductor-cli`       – Command-line interface and main binary
+* `crates/conductor-tools`     – Tool trait definitions and implementations
+* `crates/conductor-macros`    – Procedural macros for tool definitions
+* `crates/conductor-remote-workspace` – gRPC service for remote tool execution
 
 ### Architecture principles
 
