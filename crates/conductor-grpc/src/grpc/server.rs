@@ -485,7 +485,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .resume_session(&req.session_id, app_config)
             .await
         {
-            Ok((true, _)) => {
+            Ok(_) => {
                 // Fetch state now active
                 if let Ok(Some(state)) = self
                     .session_manager
@@ -501,10 +501,6 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                     "Activation succeeded but state unavailable",
                 ))
             }
-            Ok((false, _)) => Err(Status::not_found(format!(
-                "Session not found: {}",
-                req.session_id
-            ))),
             Err(e) => Err(Status::internal(format!(
                 "Failed to activate session: {}",
                 e
@@ -553,17 +549,10 @@ async fn try_resume_session(
 
     // Attempt to resume the session
     match session_manager.resume_session(session_id, app_config).await {
-        Ok((true, _command_tx)) => {
+        Ok(_command_tx) => {
             info!("Successfully resumed session: {}", session_id);
             // TUI will call GetCurrentConversation when it connects
             Ok(())
-        }
-        Ok((false, _)) => {
-            warn!("Session not found in storage: {}", session_id);
-            Err(Status::not_found(format!(
-                "Session not found: {}",
-                session_id
-            )))
         }
         Err(conductor_core::session::manager::SessionManagerError::CapacityExceeded {
             current,

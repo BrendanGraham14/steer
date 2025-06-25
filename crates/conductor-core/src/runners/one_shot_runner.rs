@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 use conductor_tools::ToolResult;
+use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::api::Model;
@@ -52,7 +52,7 @@ impl OneShotRunner {
             llm_config: LlmConfig::from_env()?,
         };
 
-        let (_already_active, command_tx) = session_manager
+        let command_tx = session_manager
             .resume_session(&session_id, app_config)
             .await
             .map_err(|e| anyhow!("Failed to resume session {}: {}", session_id, e))?;
@@ -271,13 +271,13 @@ mod tests {
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
+    use conductor_tools::tools::read_only_workspace_tools;
     use dotenv::dotenv;
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
-    use conductor_tools::tools::read_only_workspace_tools;
 
     async fn create_test_session_manager() -> (SessionManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();

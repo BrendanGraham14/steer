@@ -6,12 +6,12 @@ use crate::session::{
     SessionStoreError, ToolCallUpdate,
 };
 use anyhow::Result;
+use conductor_tools::ToolCall;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
-use conductor_tools::ToolCall;
 use tracing::{debug, error, info, warn};
 
 /// Session manager specific errors
@@ -339,13 +339,13 @@ impl SessionManager {
         &self,
         session_id: &str,
         app_config: AppConfig,
-    ) -> Result<(bool, mpsc::Sender<AppCommand>), SessionManagerError> {
+    ) -> Result<mpsc::Sender<AppCommand>, SessionManagerError> {
         // Check if already active
         {
             let sessions = self.active_sessions.read().await;
             if let Some(managed_session) = sessions.get(session_id) {
                 debug!(session_id = %session_id, "Session already active");
-                return Ok((true, managed_session.command_tx.clone()));
+                return Ok(managed_session.command_tx.clone());
             }
         }
 
@@ -433,7 +433,7 @@ impl SessionManager {
         self.emit_event(session_id.to_string(), event).await;
 
         info!(session_id = %session_id, last_sequence = last_sequence, "Session resumed");
-        Ok((true, command_tx))
+        Ok(command_tx)
     }
 
     /// Suspend a session (save to storage and deactivate)
@@ -899,12 +899,11 @@ mod tests {
         assert!(manager.suspend_session(&session_id).await.unwrap());
         assert!(!manager.is_session_active(&session_id).await);
 
-        // Resume session
-        let (resumed, _command_tx) = manager
+        // Resume Session
+        let _command_tx = manager
             .resume_session(&session_id, app_config)
             .await
             .unwrap();
-        assert!(resumed);
         assert!(manager.is_session_active(&session_id).await);
     }
 
@@ -1121,11 +1120,10 @@ mod tests {
         }
 
         // Now test resuming the session - it should work without API errors
-        let (resumed, _command_tx) = manager
+        let _command_tx = manager
             .resume_session(&session_id, app_config)
             .await
             .unwrap();
-        assert!(resumed);
 
         // The session should be properly restored with all messages including tool results
         // If the bug were still present, trying to send a new message would fail with the
