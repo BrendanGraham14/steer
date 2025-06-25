@@ -91,6 +91,7 @@ impl ProcessingContext<'_> {
                 content,
                 timestamp,
                 id,
+                ..
             } => MessageContent::User {
                 id,
                 blocks: content,
@@ -102,6 +103,7 @@ impl ProcessingContext<'_> {
                 content,
                 timestamp,
                 id,
+                ..
             } => {
                 // Always keep tool calls as part of Assistant messages
                 // The Tool message will be handled separately
@@ -118,6 +120,7 @@ impl ProcessingContext<'_> {
                 result,
                 timestamp,
                 id: _,
+                ..
             } => {
                 // Try to find the corresponding ToolCall that we cached earlier
                 let tool_call = self.tool_registry

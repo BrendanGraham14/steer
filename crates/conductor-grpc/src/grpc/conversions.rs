@@ -18,6 +18,8 @@ pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
             content,
             timestamp,
             id: _,
+            thread_id,
+            parent_message_id,
         } => {
             let user_msg = proto::UserMessage {
                 content: content.iter().map(|user_content| match user_content {
@@ -87,6 +89,8 @@ pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
                     }
                 }).collect(),
                 timestamp: *timestamp,
+                thread_id: thread_id.as_bytes().to_vec(),
+                parent_message_id: parent_message_id.clone(),
             };
             (proto::message::Message::User(user_msg), *timestamp)
         }
@@ -94,6 +98,8 @@ pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
             content,
             timestamp,
             id: _,
+            thread_id,
+            parent_message_id,
         } => {
             let assistant_msg = proto::AssistantMessage {
                 content: content
@@ -143,6 +149,8 @@ pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
                     })
                     .collect(),
                 timestamp: *timestamp,
+                thread_id: thread_id.as_bytes().to_vec(),
+                parent_message_id: parent_message_id.clone(),
             };
             (
                 proto::message::Message::Assistant(assistant_msg),
@@ -154,6 +162,8 @@ pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
             result,
             timestamp,
             id: _,
+            thread_id,
+            parent_message_id,
         } => {
             let proto_result = match result {
                 ToolResult::Success { output } => {
@@ -167,6 +177,8 @@ pub fn message_to_proto(message: ConversationMessage) -> proto::Message {
                     result: Some(proto_result),
                 }),
                 timestamp: *timestamp,
+                thread_id: thread_id.as_bytes().to_vec(),
+                parent_message_id: parent_message_id.clone(),
             };
             (proto::message::Message::Tool(tool_msg), *timestamp)
         }
@@ -640,6 +652,11 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                 content,
                 timestamp: user_msg.timestamp,
                 id: proto_msg.id,
+                thread_id: uuid::Uuid::from_slice(&user_msg.thread_id)
+                    .map_err(|e| ConversionError::InvalidData {
+                        message: format!("Invalid thread_id UUID: {}", e),
+                    })?,
+                parent_message_id: user_msg.parent_message_id,
             })
         }
         message::Message::Assistant(assistant_msg) => {
@@ -688,6 +705,11 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                 content,
                 timestamp: assistant_msg.timestamp,
                 id: proto_msg.id,
+                thread_id: uuid::Uuid::from_slice(&assistant_msg.thread_id)
+                    .map_err(|e| ConversionError::InvalidData {
+                        message: format!("Invalid thread_id UUID: {}", e),
+                    })?,
+                parent_message_id: assistant_msg.parent_message_id,
             })
         }
         message::Message::Tool(tool_msg) => {
@@ -710,6 +732,11 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                     result: tool_result,
                     timestamp: tool_msg.timestamp,
                     id: proto_msg.id,
+                    thread_id: uuid::Uuid::from_slice(&tool_msg.thread_id)
+                        .map_err(|e| ConversionError::InvalidData {
+                            message: format!("Invalid thread_id UUID: {}", e),
+                        })?,
+                    parent_message_id: tool_msg.parent_message_id,
                 })
             } else {
                 Err(ConversionError::MissingField {

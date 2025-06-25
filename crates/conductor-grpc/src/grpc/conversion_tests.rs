@@ -17,6 +17,7 @@ use conductor_core::session::state::{
 };
 use serde_json::json;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 #[cfg(test)]
 use proptest::prelude::*;
@@ -155,9 +156,9 @@ prop_compose! {
         result in arb_tool_result(),
     ) -> ConversationMessage {
         match variant {
-            0 => ConversationMessage::User { content: user_content, timestamp, id },
-            1 => ConversationMessage::Assistant { content: assistant_content, timestamp, id },
-            _ => ConversationMessage::Tool { tool_use_id, result, timestamp, id },
+            0 => ConversationMessage::User { content: user_content, timestamp, id, thread_id: Uuid::new_v4(), parent_message_id: None },
+            1 => ConversationMessage::Assistant { content: assistant_content, timestamp, id, thread_id: Uuid::new_v4(), parent_message_id: None },
+            _ => ConversationMessage::Tool { tool_use_id, result, timestamp, id, thread_id: Uuid::new_v4(), parent_message_id: None },
         }
     }
 }

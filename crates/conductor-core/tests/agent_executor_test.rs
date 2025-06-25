@@ -14,10 +14,12 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
     use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
 
     // Helper function to create a basic text message
     fn text_message(role: &str, content: &str) -> Message {
         let timestamp = Message::current_timestamp();
+        let thread_id = Uuid::new_v4();
         match role {
             "user" => Message::User {
                 content: vec![UserContent::Text {
@@ -25,6 +27,8 @@ mod tests {
                 }],
                 timestamp,
                 id: Message::generate_id("user", timestamp),
+                thread_id,
+                parent_message_id: None,
             },
             "assistant" => Message::Assistant {
                 content: vec![AssistantContent::Text {
@@ -32,6 +36,8 @@ mod tests {
                 }],
                 timestamp,
                 id: Message::generate_id("assistant", timestamp),
+                thread_id,
+                parent_message_id: None,
             },
             _ => panic!("Invalid role: {}", role),
         }

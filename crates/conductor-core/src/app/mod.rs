@@ -228,12 +228,22 @@ impl App {
         self.current_op_context = Some(op_context);
 
         // Add user message
+        let (thread_id, parent_id) = {
+            let conv = self.conversation.lock().await;
+            (
+                conv.current_thread_id,
+                conv.messages.last().map(|m| m.id().to_string()),
+            )
+        };
+        
         self.add_message(Message::User {
             content: vec![UserContent::Text {
                 text: message.clone(),
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
+            thread_id,
+            parent_message_id: parent_id,
         })
         .await;
 
@@ -607,6 +617,14 @@ impl App {
                   incomplete_tool_calls.len());
 
             for tool_call in incomplete_tool_calls {
+                let (thread_id, parent_id) = {
+                    let conv = self.conversation.lock().await;
+                    (
+                        conv.current_thread_id,
+                        conv.messages.last().map(|m| m.id().to_string()),
+                    )
+                };
+                
                 let cancelled_result = Message::Tool {
                     tool_use_id: tool_call.id.clone(),
                     result: ToolResult::Error {
@@ -615,6 +633,8 @@ impl App {
                     },
                     timestamp: Message::current_timestamp(),
                     id: Message::generate_id("tool", Message::current_timestamp()),
+                    thread_id,
+                    parent_message_id: parent_id,
                 };
 
                 // Add the message using the standard add_message method to ensure proper event emission
@@ -972,6 +992,14 @@ async fn handle_app_command(
                     let (stdout, stderr, exit_code) = parse_bash_output(&output);
 
                     // Add the command execution as a message
+                    let (thread_id, parent_id) = {
+                        let conv = app.conversation.lock().await;
+                        (
+                            conv.current_thread_id,
+                            conv.messages.last().map(|m| m.id().to_string()),
+                        )
+                    };
+                    
                     let message = Message::User {
                         content: vec![UserContent::CommandExecution {
                             command,
@@ -981,6 +1009,8 @@ async fn handle_app_command(
                         }],
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("user", Message::current_timestamp()),
+                        thread_id,
+                        parent_message_id: parent_id,
                     };
                     app.add_message(message).await;
                 }
@@ -988,6 +1018,14 @@ async fn handle_app_command(
                     error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
 
                     // Add error as a command execution with error output
+                    let (thread_id, parent_id) = {
+                        let conv = app.conversation.lock().await;
+                        (
+                            conv.current_thread_id,
+                            conv.messages.last().map(|m| m.id().to_string()),
+                        )
+                    };
+                    
                     let message = Message::User {
                         content: vec![UserContent::CommandExecution {
                             command,
@@ -997,6 +1035,8 @@ async fn handle_app_command(
                         }],
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("user", Message::current_timestamp()),
+                        thread_id,
+                        parent_message_id: parent_id,
                     };
                     app.add_message(message).await;
                 }
@@ -1188,12 +1228,22 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             match result {
                 Ok(response_text) => {
                     info!(target: "handle_task_outcome", "Dispatch agent successful.");
+                    let (thread_id, parent_id) = {
+                        let conv = app.conversation.lock().await;
+                        (
+                            conv.current_thread_id,
+                            conv.messages.last().map(|m| m.id().to_string()),
+                        )
+                    };
+                    
                     app.add_message(Message::Assistant {
                         content: vec![AssistantContent::Text {
                             text: format!("Dispatch Agent Result:\n{}", response_text),
                         }],
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("assistant", Message::current_timestamp()),
+                        thread_id,
+                        parent_message_id: parent_id,
                     })
                     .await;
                 }

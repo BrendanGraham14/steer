@@ -480,6 +480,8 @@ mod tests {
             }],
             timestamp: 0,
             id: "msg_123".to_string(),
+            thread_id: uuid::Uuid::now_v7(),
+            parent_message_id: None,
         };
 
         let event = StreamEvent::MessageComplete {

@@ -54,6 +54,8 @@ impl Command for HeadlessCommand {
                 content: vec![UserContent::Text { text: buffer }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
+                thread_id: uuid::Uuid::now_v7(),
+                parent_message_id: None,
             }]
         };
 

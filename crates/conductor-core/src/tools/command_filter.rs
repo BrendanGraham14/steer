@@ -90,6 +90,8 @@ pub async fn get_command_prefix(command: &str, token: CancellationToken) -> Resu
             "user",
             crate::app::conversation::Message::current_timestamp(),
         ),
+        thread_id: uuid::Uuid::now_v7(),
+        parent_message_id: None,
     }];
 
     let system_content = SYSTEM_MESSAGE;

@@ -109,6 +109,18 @@ impl AgentExecutor {
                 )
                 .await?;
             let tool_calls = completion_response.extract_tool_calls();
+            
+            // Get thread info from the last message
+            let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
+                (
+                    *last_msg.thread_id(),
+                    Some(last_msg.id().to_string()),
+                )
+            } else {
+                // This shouldn't happen, but provide a fallback
+                (Uuid::now_v7(), None)
+            };
+            
             let full_assistant_message = Message::Assistant {
                 content: completion_response.content,
                 timestamp: SystemTime::now()
@@ -116,6 +128,8 @@ impl AgentExecutor {
                     .unwrap()
                     .as_secs(),
                 id: Uuid::new_v4().to_string(),
+                thread_id,
+                parent_message_id: parent_id,
             };
 
             messages.push(full_assistant_message.clone());
@@ -165,6 +179,17 @@ impl AgentExecutor {
                         }
                     };
 
+                    // Get thread info from the last message
+                    let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
+                        (
+                            *last_msg.thread_id(),
+                            Some(last_msg.id().to_string()),
+                        )
+                    } else {
+                        // This shouldn't happen, but provide a fallback
+                        (Uuid::now_v7(), None)
+                    };
+
                     messages.push(Message::Tool {
                         tool_use_id: tool_result.tool_call_id.clone(),
                         result: conversation_result,
@@ -173,6 +198,8 @@ impl AgentExecutor {
                             .unwrap()
                             .as_secs(),
                         id: Uuid::new_v4().to_string(),
+                        thread_id,
+                        parent_message_id: parent_id,
                     });
                 }
 

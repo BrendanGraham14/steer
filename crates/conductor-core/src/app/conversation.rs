@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use conductor_tools::ToolCall;
+use uuid::Uuid;
 
 use crate::api::Client as ApiClient;
 use crate::api::Model;
@@ -184,17 +185,25 @@ pub enum Message {
         content: Vec<UserContent>,
         timestamp: u64,
         id: String,
+        /// Identifies which conversation branch/thread this message belongs to
+        thread_id: Uuid,
+        /// Links to the previous message in this branch (None for root messages)
+        parent_message_id: Option<String>,
     },
     Assistant {
         content: Vec<AssistantContent>,
         timestamp: u64,
         id: String,
+        thread_id: Uuid,
+        parent_message_id: Option<String>,
     },
     Tool {
         tool_use_id: String,
         result: ToolResult,
         timestamp: u64,
         id: String,
+        thread_id: Uuid,
+        parent_message_id: Option<String>,
     },
 }
 
@@ -223,6 +232,22 @@ impl Message {
         }
     }
 
+    pub fn thread_id(&self) -> &Uuid {
+        match self {
+            Message::User { thread_id, .. } => thread_id,
+            Message::Assistant { thread_id, .. } => thread_id,
+            Message::Tool { thread_id, .. } => thread_id,
+        }
+    }
+
+    pub fn parent_message_id(&self) -> Option<&str> {
+        match self {
+            Message::User { parent_message_id, .. } => parent_message_id.as_deref(),
+            Message::Assistant { parent_message_id, .. } => parent_message_id.as_deref(),
+            Message::Tool { parent_message_id, .. } => parent_message_id.as_deref(),
+        }
+    }
+
     /// Helper to get current timestamp
     pub fn current_timestamp() -> u64 {
         SystemTime::now()
@@ -232,9 +257,9 @@ impl Message {
     }
 
     /// Helper to generate unique IDs
-    pub fn generate_id(prefix: &str, timestamp: u64) -> String {
-        let random_suffix = format!("{:04x}", (timestamp % 10000));
-        format!("{}_{}{}", prefix, timestamp, random_suffix)
+    pub fn generate_id(prefix: &str, _timestamp: u64) -> String {
+        use uuid::Uuid;
+        format!("{}_{}", prefix, Uuid::now_v7())
     }
 
     /// Get a string representation of the message content
@@ -435,6 +460,8 @@ When you are using compact - please focus on test output and code changes. Inclu
 pub struct Conversation {
     pub messages: Vec<Message>,
     pub working_directory: PathBuf,
+    /// The currently active thread ID
+    pub current_thread_id: Uuid,
 }
 
 impl Default for Conversation {
@@ -448,7 +475,13 @@ impl Conversation {
         Self {
             messages: Vec::new(),
             working_directory: PathBuf::new(),
+            current_thread_id: Self::generate_thread_id(),
         }
+    }
+
+    /// Generate a new thread ID using UUID v7 (timestamp-based)
+    pub fn generate_thread_id() -> Uuid {
+        Uuid::now_v7()
     }
 
     pub fn add_message(&mut self, message: Message) {
@@ -460,20 +493,26 @@ impl Conversation {
     }
 
     pub fn add_tool_result(&mut self, tool_use_id: String, result: String) {
+        let parent_id = self.messages.last().map(|m| m.id().to_string());
         self.add_message(Message::Tool {
             tool_use_id,
             result: ToolResult::Success { output: result },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
+            thread_id: self.current_thread_id,
+            parent_message_id: parent_id,
         });
     }
 
     pub fn add_tool_error(&mut self, tool_use_id: String, error: String) {
+        let parent_id = self.messages.last().map(|m| m.id().to_string());
         self.add_message(Message::Tool {
             tool_use_id,
             result: ToolResult::Error { error },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
+            thread_id: self.current_thread_id,
+            parent_message_id: parent_id,
         });
     }
 
@@ -504,12 +543,15 @@ impl Conversation {
             return Ok(CompactResult::InsufficientMessages);
         }
         let mut prompt_messages = self.messages.clone();
+        let last_msg_id = self.messages.last().map(|m| m.id().to_string());
         prompt_messages.push(Message::User {
             content: vec![UserContent::Text {
                 text: SUMMARY_PROMPT.to_string(),
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
+            thread_id: self.current_thread_id,
+            parent_message_id: last_msg_id,
         });
 
         let summary = tokio::select! {
@@ -542,8 +584,71 @@ impl Conversation {
             }],
             timestamp,
             id: Message::generate_id("user", timestamp),
+            thread_id: self.current_thread_id,
+            parent_message_id: None, // New root message after compaction
         });
 
         Ok(CompactResult::Success(summary_text))
+    }
+
+    /// Edit a message and create a new thread branch
+    pub fn edit_message(&mut self, message_id: &str, new_content: Vec<UserContent>) -> Option<Uuid> {
+        // Find the message to edit
+        let message_to_edit = self.messages.iter()
+            .find(|m| m.id() == message_id)?;
+        
+        // Only allow editing user messages for now
+        if !matches!(message_to_edit, Message::User { .. }) {
+            return None;
+        }
+
+        // Get the parent_message_id from the original message
+        let parent_id = message_to_edit.parent_message_id().map(|s| s.to_string());
+        
+        // Create a new thread ID for this branch
+        let new_thread_id = Self::generate_thread_id();
+        
+        // Create the edited message with new thread ID
+        let edited_message = Message::User {
+            content: new_content,
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
+            thread_id: new_thread_id,
+            parent_message_id: parent_id,
+        };
+        
+        // Add the edited message
+        self.messages.push(edited_message);
+        
+        // Update current thread to the new branch
+        self.current_thread_id = new_thread_id;
+        
+        Some(new_thread_id)
+    }
+
+    /// Get messages in the current thread by following parent links
+    pub fn get_thread_messages(&self) -> Vec<&Message> {
+        let mut result = Vec::new();
+        
+        // Find the latest message in the current thread
+        let mut current_msg = self.messages.iter()
+            .filter(|m| m.thread_id() == &self.current_thread_id)
+            .max_by_key(|m| m.timestamp());
+        
+        // Follow parent links to build the chain
+        while let Some(msg) = current_msg {
+            result.push(msg);
+            
+            // Find parent message
+            current_msg = if let Some(parent_id) = msg.parent_message_id() {
+                self.messages.iter().find(|m| m.id() == parent_id)
+            } else {
+                None
+            };
+        }
+        
+        // Reverse to get chronological order
+        result.reverse();
+        result
     }
 }

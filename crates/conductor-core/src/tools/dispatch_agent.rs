@@ -88,6 +88,8 @@ Usage notes:
             content: vec![UserContent::Text { text: params.prompt }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
+            thread_id: uuid::Uuid::now_v7(),
+            parent_message_id: None,
         }];
 
         let system_prompt = create_dispatch_agent_system_prompt()
