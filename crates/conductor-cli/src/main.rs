@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
                     run_tui_remote(addr, cli.session, model, cli.directory, cli.system_prompt).await
                 } else {
                     // Launch with in-process server
-                    run_tui_local(cli.session, model, cli.directory, cli.system_prompt).await
+                    run_tui_local(cli.session, model, cli.directory, cli.system_prompt, cli.session_db).await
                 }
             }
             #[cfg(not(feature = "ui"))]
@@ -89,13 +89,19 @@ async fn main() -> Result<()> {
             command.execute().await
         }
         Commands::Server { port, bind } => {
-            let command = ServeCommand { port, bind, model };
+            let command = ServeCommand { 
+                port, 
+                bind, 
+                model,
+                session_db: cli.session_db.clone(),
+            };
             command.execute().await
         }
         Commands::Session { session_command } => {
             let command = SessionCommand {
                 command: session_command,
                 remote: cli.remote.clone(),
+                session_db: cli.session_db.clone(),
             };
             command.execute().await
         }
@@ -108,6 +114,7 @@ async fn run_tui_local(
     model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
+    session_db: Option<std::path::PathBuf>,
 ) -> Result<()> {
     use conductor_grpc::local_server;
     use std::sync::Arc;
@@ -122,7 +129,7 @@ async fn run_tui_local(
         .expect("Failed to load LLM configuration from environment variables.");
 
     // Create in-memory channel
-    let channel = local_server::setup_local_grpc(llm_config, model).await?;
+    let channel = local_server::setup_local_grpc(llm_config, model, session_db).await?;
 
     // Create gRPC client
     let client = conductor_grpc::GrpcClientAdapter::from_channel(channel).await?;

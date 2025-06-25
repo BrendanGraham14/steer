@@ -51,9 +51,11 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
 pub async fn setup_local_grpc(
     _llm_config: conductor_core::config::LlmConfig,
     default_model: conductor_core::api::Model,
+    session_db_path: Option<std::path::PathBuf>,
 ) -> Result<Channel> {
-    // Create session store
-    let session_store = conductor_core::utils::session::create_session_store().await?;
+    // Create session store with the provided configuration
+    let store_config = conductor_core::utils::session::resolve_session_store_config(session_db_path)?;
+    let session_store = conductor_core::utils::session::create_session_store_with_config(store_config).await?;
 
     // Create global event channel (not used in local mode but required)
     let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);

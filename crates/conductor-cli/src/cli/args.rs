@@ -58,6 +58,10 @@ pub struct Cli {
     #[arg(long)]
     pub system_prompt: Option<String>,
 
+    /// Path to the session database file (defaults to ~/.conductor/sessions.db)
+    #[arg(long, env = "CONDUCTOR_SESSION_DB")]
+    pub session_db: Option<PathBuf>,
+
     /// Subcommands
     #[command(subcommand)]
     pub command: Option<Commands>,

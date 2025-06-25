@@ -171,19 +171,11 @@ impl ServiceHost {
 
 /// Create a session store from the given database path
 async fn create_session_store(db_path: &std::path::Path) -> Result<Arc<dyn SessionStore>> {
-    use conductor_core::session::stores::sqlite::SqliteSessionStore;
+    use conductor_core::session::SessionStoreConfig;
+    use conductor_core::utils::session::create_session_store_with_config;
 
-    // Create directory if it doesn't exist
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow!("Failed to create database directory: {}", e))?;
-    }
-
-    let store = SqliteSessionStore::new(db_path)
-        .await
-        .map_err(|e| anyhow!("Failed to create session store: {}", e))?;
-
-    Ok(Arc::new(store))
+    let config = SessionStoreConfig::sqlite(db_path.to_path_buf());
+    create_session_store_with_config(config).await
 }
 
 #[cfg(test)]

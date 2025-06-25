@@ -7,12 +7,13 @@ use super::super::Command;
 use conductor_core::api::Model;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
-use conductor_core::utils::session::create_session_store;
+use conductor_core::utils::session::{resolve_session_store_config, create_session_store_with_config};
 
 pub struct DeleteSessionCommand {
     pub session_id: String,
     pub force: bool,
     pub remote: Option<String>,
+    pub session_db: Option<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -40,7 +41,8 @@ impl Command for DeleteSessionCommand {
             }
         }
 
-        let session_store = create_session_store().await?;
+        let store_config = resolve_session_store_config(self.session_db.clone())?;
+        let session_store = create_session_store_with_config(store_config).await?;
         let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
 
         let session_manager_config = SessionManagerConfig {

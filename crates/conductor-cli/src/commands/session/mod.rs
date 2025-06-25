@@ -17,6 +17,7 @@ pub use show::ShowSessionCommand;
 pub struct SessionCommand {
     pub command: SessionCommands,
     pub remote: Option<String>,
+    pub session_db: Option<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -29,6 +30,7 @@ impl Command for SessionCommand {
                     active: *active,
                     limit: *limit,
                     remote: self.remote.clone(),
+                    session_db: self.session_db.clone(),
                 };
                 cmd.execute().await
             }
@@ -44,6 +46,7 @@ impl Command for SessionCommand {
                     metadata: metadata.clone(),
                     remote: self.remote.clone(),
                     system_prompt: system_prompt.clone(),
+                    session_db: self.session_db.clone(),
                 };
                 cmd.execute().await
             }
@@ -52,6 +55,7 @@ impl Command for SessionCommand {
                     session_id: session_id.clone(),
                     force: *force,
                     remote: self.remote.clone(),
+                    session_db: self.session_db.clone(),
                 };
                 cmd.execute().await
             }
@@ -59,6 +63,7 @@ impl Command for SessionCommand {
                 let cmd = ShowSessionCommand {
                     session_id: session_id.clone(),
                     remote: self.remote.clone(),
+                    session_db: self.session_db.clone(),
                 };
                 cmd.execute().await
             }

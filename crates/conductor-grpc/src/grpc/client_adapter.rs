@@ -74,7 +74,7 @@ impl GrpcClientAdapter {
         default_model: conductor_core::api::Model,
     ) -> Result<Self> {
         use crate::local_server::setup_local_grpc;
-        let channel = setup_local_grpc(llm_config, default_model).await?;
+        let channel = setup_local_grpc(llm_config, default_model, None).await?;
         Self::from_channel(channel).await
     }
 

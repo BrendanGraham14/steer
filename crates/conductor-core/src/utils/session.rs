@@ -1,12 +1,10 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
-use std::fs;
-
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::session::stores::sqlite::SqliteSessionStore;
 use crate::session::{
-    Session,
+    Session, SessionStoreConfig,
     state::{
         SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig,
     },
@@ -19,21 +17,39 @@ pub fn create_session_store_path() -> Result<std::path::PathBuf> {
     Ok(db_path)
 }
 
-pub async fn create_session_store() -> Result<Arc<dyn SessionStore>> {
-    // Create SQLite session store in user's home directory
-    let db_path = create_session_store_path()?;
-
-    // Create directory if it doesn't exist
-    if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| anyhow!("Failed to create sessions directory: {}", e))?;
+/// Resolve session store configuration from an optional path
+/// If no path is provided, uses the default SQLite configuration
+pub fn resolve_session_store_config(session_db_path: Option<PathBuf>) -> Result<SessionStoreConfig> {
+    match session_db_path {
+        Some(path) => Ok(SessionStoreConfig::sqlite(path)),
+        None => SessionStoreConfig::default_sqlite(),
     }
+}
 
-    let store = SqliteSessionStore::new(&db_path)
-        .await
-        .map_err(|e| anyhow!("Failed to create session store: {}", e))?;
+pub async fn create_session_store() -> Result<Arc<dyn SessionStore>> {
+    let config = SessionStoreConfig::default();
+    create_session_store_with_config(config).await
+}
 
-    Ok(Arc::new(store))
+pub async fn create_session_store_with_config(config: SessionStoreConfig) -> Result<Arc<dyn SessionStore>> {
+    use crate::session::stores::sqlite::SqliteSessionStore;
+    
+    match config {
+        SessionStoreConfig::Sqlite { path } => {
+            // Create directory if it doesn't exist
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| anyhow!("Failed to create sessions directory: {}", e))?;
+            }
+
+            let store = SqliteSessionStore::new(&path)
+                .await
+                .map_err(|e| anyhow!("Failed to create session store: {}", e))?;
+
+            Ok(Arc::new(store))
+        }
+        _ => Err(anyhow!("Unsupported session store type")),
+    }
 }
 
 pub fn create_default_session_config() -> SessionConfig {
@@ -108,4 +124,82 @@ pub fn create_mock_session(id: &str, tool_policy: ToolApprovalPolicy) -> Session
         metadata: std::collections::HashMap::new(),
     };
     Session::new(id.to_string(), config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_session_store_config_with_path() {
+        let custom_path = PathBuf::from("/custom/path/sessions.db");
+        let config = resolve_session_store_config(Some(custom_path.clone())).unwrap();
+        
+        match config {
+            SessionStoreConfig::Sqlite { path } => {
+                assert_eq!(path, custom_path);
+            }
+            _ => panic!("Expected SQLite config"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_session_store_config_without_path() {
+        let config = resolve_session_store_config(None).unwrap();
+        
+        match config {
+            SessionStoreConfig::Sqlite { path } => {
+                assert!(path.to_string_lossy().contains("sessions.db"));
+            }
+            _ => panic!("Expected SQLite config"),
+        }
+    }
+
+    #[test]
+    fn test_parse_tool_policy() {
+        // Test always_ask
+        let policy = parse_tool_policy("always_ask", None).unwrap();
+        assert!(matches!(policy, ToolApprovalPolicy::AlwaysAsk));
+
+        // Test pre_approved
+        let policy = parse_tool_policy("pre_approved", Some("tool1,tool2")).unwrap();
+        match policy {
+            ToolApprovalPolicy::PreApproved { tools } => {
+                assert_eq!(tools.len(), 2);
+                assert!(tools.contains("tool1"));
+                assert!(tools.contains("tool2"));
+            }
+            _ => panic!("Expected PreApproved policy"),
+        }
+
+        // Test mixed
+        let policy = parse_tool_policy("mixed", Some("tool3,tool4")).unwrap();
+        match policy {
+            ToolApprovalPolicy::Mixed { pre_approved, .. } => {
+                assert_eq!(pre_approved.len(), 2);
+                assert!(pre_approved.contains("tool3"));
+                assert!(pre_approved.contains("tool4"));
+            }
+            _ => panic!("Expected Mixed policy"),
+        }
+
+        // Test invalid policy
+        assert!(parse_tool_policy("invalid", None).is_err());
+    }
+
+    #[test]
+    fn test_parse_metadata() {
+        // Test with metadata
+        let metadata = parse_metadata(Some("key1=value1,key2=value2")).unwrap();
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(metadata.get("key2"), Some(&"value2".to_string()));
+
+        // Test without metadata
+        let metadata = parse_metadata(None).unwrap();
+        assert!(metadata.is_empty());
+
+        // Test invalid format
+        assert!(parse_metadata(Some("invalid_format")).is_err());
+    }
 }

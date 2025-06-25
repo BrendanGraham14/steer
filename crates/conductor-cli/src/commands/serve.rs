@@ -10,6 +10,7 @@ pub struct ServeCommand {
     pub port: u16,
     pub bind: String,
     pub model: Model,
+    pub session_db: Option<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -21,8 +22,11 @@ impl Command for ServeCommand {
 
         info!("Starting gRPC server on {}", addr);
 
-        // Create session store path
-        let db_path = conductor_core::utils::session::create_session_store_path()?;
+        // Resolve session store path from config or use default
+        let db_path = match &self.session_db {
+            Some(path) => path.clone(),
+            None => conductor_core::utils::session::create_session_store_path()?,
+        };
 
         let config = conductor_grpc::ServiceHostConfig {
             db_path,
