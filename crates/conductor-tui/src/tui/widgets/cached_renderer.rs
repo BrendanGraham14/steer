@@ -177,7 +177,9 @@ impl ContentRenderer for CachedContentRenderer {
 
         // Not in cache - render normally
         // First, capture the current state of the area
-        let mut cells_before = Vec::with_capacity((area.width * area.height) as usize);
+        // Cast to usize before multiplication to avoid potential u16 overflow
+        let capacity = area.width as usize * area.height as usize;
+        let mut cells_before = Vec::with_capacity(capacity);
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
                 cells_before.push(buf[(x, y)].clone());
@@ -188,7 +190,7 @@ impl ContentRenderer for CachedContentRenderer {
         self.inner.render(content, mode, area, buf);
 
         // Capture the rendered cells
-        let mut rendered_cells = Vec::with_capacity((area.width * area.height) as usize);
+        let mut rendered_cells = Vec::with_capacity(capacity);
         for y in area.top()..area.bottom() {
             for x in area.left()..area.right() {
                 rendered_cells.push(buf[(x, y)].clone());
