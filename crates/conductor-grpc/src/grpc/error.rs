@@ -46,4 +46,7 @@ pub enum ConversionError {
 
     #[error("Invalid JSON for field '{field}': {error}")]
     InvalidJson { field: String, error: String },
+
+    #[error("Invalid data: {message}")]
+    InvalidData { message: String },
 }

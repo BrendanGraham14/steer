@@ -249,6 +249,8 @@ mod tests {
                 tool_call: full_call.clone(),
             }],
             timestamp: 0,
+            thread_id: uuid::Uuid::new_v4(),
+            parent_message_id: None,
         };
 
         let model = current_model;

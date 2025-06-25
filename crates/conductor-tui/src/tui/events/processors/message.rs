@@ -278,6 +278,8 @@ mod tests {
             id: "msg_123".to_string(),
             content: vec![AssistantContent::ToolCall { tool_call }],
             timestamp: 1234567890,
+            thread_id: uuid::Uuid::new_v4(),
+            parent_message_id: None,
         };
 
         let mut ctx = ProcessingContext {

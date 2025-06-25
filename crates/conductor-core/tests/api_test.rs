@@ -8,6 +8,7 @@ use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 
 #[tokio::test]
@@ -34,6 +35,8 @@ async fn test_api_basic() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
+        thread_id: Uuid::new_v4(),
+        parent_message_id: None,
     }];
 
     for model in models_to_test {
@@ -159,6 +162,8 @@ async fn test_api_with_tools() {
                 }],
                 timestamp,
                 id: Message::generate_id("user", timestamp),
+                thread_id: Uuid::new_v4(),
+                parent_message_id: None,
             }];
 
             let response = client
@@ -302,6 +307,8 @@ async fn test_api_with_tool_response() {
                     }],
                     timestamp: ts1,
                     id: Message::generate_id("user", ts1),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: None,
                 },
                 Message::Assistant {
                     content: vec![AssistantContent::ToolCall {
@@ -313,6 +320,8 @@ async fn test_api_with_tool_response() {
                     }],
                     timestamp: ts2,
                     id: Message::generate_id("assistant", ts2),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: Some(Message::generate_id("user", ts1)),
                 },
                 Message::Tool {
                     tool_use_id: tool_use_id.clone(),
@@ -321,6 +330,8 @@ async fn test_api_with_tool_response() {
                     },
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: Some(Message::generate_id("assistant", ts2)),
                 },
                 Message::User {
                     content: vec![UserContent::Text {
@@ -328,6 +339,8 @@ async fn test_api_with_tool_response() {
                     }],
                     timestamp: ts3 + 1,
                     id: Message::generate_id("user", ts3 + 1),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: Some(Message::generate_id("tool", ts3)),
                 },
             ];
 
@@ -412,6 +425,8 @@ async fn test_gemini_system_instructions() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
+        thread_id: Uuid::new_v4(),
+        parent_message_id: None,
     }];
 
     let system =
@@ -461,6 +476,8 @@ async fn test_gemini_api_tool_result_error() {
             }],
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: None,
         },
         Message::Assistant {
             content: vec![AssistantContent::ToolCall {
@@ -472,6 +489,8 @@ async fn test_gemini_api_tool_result_error() {
             }],
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         Message::Tool {
             tool_use_id: "tool-use-id-error".to_string(),
@@ -480,6 +499,8 @@ async fn test_gemini_api_tool_result_error() {
             },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::User {
             content: vec![UserContent::Text {
@@ -487,6 +508,8 @@ async fn test_gemini_api_tool_result_error() {
             }],
             timestamp: ts3 + 1,
             id: Message::generate_id("user", ts3 + 1),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("tool", ts3)),
         },
     ];
 
@@ -560,6 +583,8 @@ async fn test_gemini_api_complex_tool_schema() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
+        thread_id: Uuid::new_v4(),
+        parent_message_id: None,
     }];
 
     let response = client
@@ -609,6 +634,8 @@ async fn test_gemini_api_tool_result_json() {
             }],
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: None,
         },
         Message::Assistant {
             content: vec![AssistantContent::ToolCall {
@@ -620,6 +647,8 @@ async fn test_gemini_api_tool_result_json() {
             }],
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         Message::Tool {
             tool_use_id: "tool-use-id-json".to_string(),
@@ -628,6 +657,8 @@ async fn test_gemini_api_tool_result_json() {
             },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::User {
             content: vec![UserContent::Text {
@@ -635,6 +666,8 @@ async fn test_gemini_api_tool_result_json() {
             }],
             timestamp: ts3 + 1,
             id: Message::generate_id("user", ts3 + 1),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("tool", ts3)),
         },
     ];
 
@@ -674,6 +707,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             }],
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: None,
         },
         // Assistant makes two tool calls
         Message::Assistant {
@@ -695,6 +730,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             ],
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         // Provide results for both tool calls
         Message::Tool {
@@ -704,6 +741,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::Tool {
             tool_use_id: "tool-use-id-2".to_string(),
@@ -712,6 +751,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             },
             timestamp: ts4,
             id: Message::generate_id("tool", ts4),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::User {
             content: vec![UserContent::Text {
@@ -719,6 +760,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             }],
             timestamp: ts4 + 1,
             id: Message::generate_id("user", ts4 + 1),
+            thread_id: Uuid::new_v4(),
+            parent_message_id: Some(Message::generate_id("tool", ts4)),
         },
     ];
 
@@ -796,6 +839,8 @@ async fn test_api_with_cancelled_tool_execution() {
                     }],
                     timestamp: ts1,
                     id: Message::generate_id("user", ts1),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: None,
                 },
                 // Assistant requests a tool call
                 Message::Assistant {
@@ -808,6 +853,8 @@ async fn test_api_with_cancelled_tool_execution() {
                     }],
                     timestamp: ts2,
                     id: Message::generate_id("assistant", ts2),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: Some(Message::generate_id("user", ts1)),
                 },
                 // Tool execution was cancelled - this is what inject_cancelled_tool_results would add
                 Message::Tool {
@@ -818,6 +865,8 @@ async fn test_api_with_cancelled_tool_execution() {
                     },
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: Some(Message::generate_id("assistant", ts2)),
                 },
                 // User continues the conversation
                 Message::User {
@@ -826,6 +875,8 @@ async fn test_api_with_cancelled_tool_execution() {
                     }],
                     timestamp: ts4,
                     id: Message::generate_id("user", ts4),
+                    thread_id: Uuid::new_v4(),
+                    parent_message_id: Some(Message::generate_id("tool", ts3)),
                 },
             ];
 

@@ -516,6 +516,7 @@ impl Tui {
                 content,
                 timestamp,
                 id,
+                ..
             } => MessageContent::User {
                 id,
                 blocks: content,
@@ -527,6 +528,7 @@ impl Tui {
                 content,
                 timestamp,
                 id,
+                ..
             } => {
                 // Don't convert single tool calls to Tool messages during restore
                 // The actual Tool message will provide the complete information
@@ -543,6 +545,7 @@ impl Tui {
                 result,
                 timestamp,
                 id: _,
+                ..
             } => {
                 debug!(
                     target: "tui.convert",
@@ -1430,6 +1433,8 @@ mod tests {
                 id: "msg_123".to_string(),
                 content: vec![AssistantContent::ToolCall { tool_call }],
                 timestamp: 1234567890,
+                thread_id: uuid::Uuid::new_v4(),
+                parent_message_id: None,
             },
             Message::Tool {
                 tool_use_id: tool_id.clone(),
@@ -1438,6 +1443,8 @@ mod tests {
                 },
                 timestamp: 1234567891,
                 id: "tool_result_123".to_string(),
+                thread_id: uuid::Uuid::new_v4(),
+                parent_message_id: Some("msg_123".to_string()),
             },
         ];
 
@@ -1504,6 +1511,8 @@ mod tests {
                 },
                 timestamp: 1234567890,
                 id: "tool_result_456".to_string(),
+                thread_id: uuid::Uuid::new_v4(),
+                parent_message_id: None,
             },
             Message::Assistant {
                 id: "msg_456".to_string(),
@@ -1515,6 +1524,8 @@ mod tests {
                     },
                 }],
                 timestamp: 1234567891,
+                thread_id: uuid::Uuid::new_v4(),
+                parent_message_id: Some("tool_result_456".to_string()),
             },
         ];
 
