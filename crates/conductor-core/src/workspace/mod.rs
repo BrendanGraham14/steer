@@ -33,6 +33,14 @@ pub trait Workspace: Send + Sync {
 
     /// Invalidate cached environment information (force refresh on next call)
     async fn invalidate_environment_cache(&self);
+
+    /// List files in the workspace for fuzzy finding
+    /// Returns workspace-relative paths, filtered by optional query
+    async fn list_files(
+        &self,
+        query: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<String>>;
 }
 
 /// Metadata about a workspace

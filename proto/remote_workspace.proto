@@ -23,6 +23,9 @@ service RemoteWorkspaceService {
 
   // Get environment information for the remote workspace
   rpc GetEnvironmentInfo(GetEnvironmentInfoRequest) returns (GetEnvironmentInfoResponse);
+
+  // List files in the workspace for fuzzy finding
+  rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
 }
 
 message ExecuteToolRequest {
@@ -202,4 +205,14 @@ message GetEnvironmentInfoResponse {
   optional string git_status = 6;
   optional string readme_content = 7;
   optional string claude_md_content = 8;
+}
+
+// File listing for fuzzy finder
+message ListFilesRequest {
+  string query = 1;        // optional fuzzy query (empty = full list)
+  uint32 max_results = 2;  // 0 = unlimited
+}
+
+message ListFilesResponse {
+  repeated string paths = 1; // workspace-relative paths
 }

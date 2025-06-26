@@ -21,6 +21,7 @@ impl AgentServiceImpl {
 #[tonic::async_trait]
 impl agent_service_server::AgentService for AgentServiceImpl {
     type StreamSessionStream = ReceiverStream<Result<ServerEvent, Status>>;
+    type ListFilesStream = ReceiverStream<Result<ListFilesResponse, Status>>;
 
     async fn stream_session(
         &self,
@@ -549,6 +550,83 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                 )))
             }
         }
+    }
+
+    async fn list_files(
+        &self,
+        request: Request<ListFilesRequest>,
+    ) -> Result<Response<Self::ListFilesStream>, Status> {
+        let req = request.into_inner();
+
+        debug!("ListFiles called for session: {}", req.session_id);
+
+        // Get the session's workspace
+        let workspace = match self
+            .session_manager
+            .get_session_workspace(&req.session_id)
+            .await
+        {
+            Ok(Some(workspace)) => workspace,
+            Ok(None) => {
+                return Err(Status::not_found(format!(
+                    "Session not found: {}",
+                    req.session_id
+                )));
+            }
+            Err(e) => {
+                error!("Failed to get session workspace: {}", e);
+                return Err(Status::internal(format!(
+                    "Failed to get session workspace: {}",
+                    e
+                )));
+            }
+        };
+
+        // Create the response stream
+        let (tx, rx) = mpsc::channel(100);
+
+        // Spawn task to stream the files
+        tokio::spawn(async move {
+            // Get the file list from the workspace
+            let query = if req.query.is_empty() {
+                None
+            } else {
+                Some(req.query.as_str())
+            };
+
+            let max_results = if req.max_results == 0 {
+                None
+            } else {
+                Some(req.max_results as usize)
+            };
+
+            match workspace.list_files(query, max_results).await {
+                Ok(files) => {
+                    // Stream files in chunks of 1000
+                    for chunk in files.chunks(1000) {
+                        let response = ListFilesResponse {
+                            paths: chunk.to_vec(),
+                        };
+
+                        if let Err(e) = tx.send(Ok(response)).await {
+                            warn!("Failed to send file list chunk: {}", e);
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to list files: {}", e);
+                    let _ = tx
+                        .send(Err(Status::internal(format!(
+                            "Failed to list files: {}",
+                            e
+                        ))))
+                        .await;
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 }
 

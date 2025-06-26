@@ -935,6 +935,8 @@ impl SessionStore for SqliteSessionStore {
             StreamEvent::OperationCompleted { .. } => "operation_completed",
             StreamEvent::OperationCancelled { .. } => "operation_cancelled",
             StreamEvent::Error { .. } => "error",
+            StreamEvent::WorkspaceChanged => "workspace_changed",
+            StreamEvent::WorkspaceFiles { .. } => "workspace_files",
         };
 
         let event_data = serde_json::to_string(event).map_err(|e| {

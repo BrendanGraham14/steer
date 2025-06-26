@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use conductor_tools::tools::workspace_tools;
@@ -12,9 +14,10 @@ use crate::proto::{
     EditResult as ProtoEditResult, ExecuteToolRequest, ExecuteToolResponse,
     FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
     FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult, HealthResponse,
-    HealthStatus, SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult,
-    TodoItem as ProtoTodoItem, TodoListResult as ProtoTodoListResult,
-    TodoWriteResult as ProtoTodoWriteResult, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
+    HealthStatus, ListFilesRequest, ListFilesResponse, SearchMatch as ProtoSearchMatch,
+    SearchResult as ProtoSearchResult, TodoItem as ProtoTodoItem,
+    TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
+    ToolSchema as GrpcToolSchema, ToolSchemasResponse,
     execute_tool_response::Result as ProtoResult,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
 };
@@ -326,6 +329,7 @@ impl RemoteWorkspaceService {
 
 #[tonic::async_trait]
 impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
+    type ListFilesStream = ReceiverStream<Result<ListFilesResponse, Status>>;
     /// Get tool schemas
     async fn get_tool_schemas(
         &self,
@@ -586,5 +590,100 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         };
 
         Ok(Response::new(response))
+    }
+
+    /// List files in the workspace for fuzzy finding
+    async fn list_files(
+        &self,
+        request: Request<ListFilesRequest>,
+    ) -> Result<Response<Self::ListFilesStream>, Status> {
+        use fuzzy_matcher::FuzzyMatcher;
+        use fuzzy_matcher::skim::SkimMatcherV2;
+        use ignore::Walk;
+
+        let req = request.into_inner();
+
+        // Create the response stream
+        let (tx, rx) = mpsc::channel(100);
+
+        // Spawn task to stream the files
+        tokio::spawn(async move {
+            let mut files = Vec::new();
+
+            // Walk the current directory, respecting .gitignore
+            for entry in Walk::new(".") {
+                match entry {
+                    Ok(entry) => {
+                        // Skip hidden files/directories (those starting with .)
+                        if let Some(file_name) = entry.file_name().to_str() {
+                            if file_name.starts_with('.') && entry.path() != Path::new(".") {
+                                continue;
+                            }
+                        }
+
+                        // Get the relative path from the root
+                        if let Ok(relative_path) = entry.path().strip_prefix(".") {
+                            if let Some(path_str) = relative_path.to_str() {
+                                if !path_str.is_empty() {
+                                    // Add trailing slash for directories
+                                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                                        files.push(format!("{}/", path_str));
+                                    } else {
+                                        files.push(path_str.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error walking directory: {}", e);
+                    }
+                }
+            }
+
+            // Apply fuzzy filter if query is provided
+            let filtered_files = if !req.query.is_empty() {
+                let matcher = SkimMatcherV2::default();
+                let mut scored_files: Vec<(i64, String)> = files
+                    .into_iter()
+                    .filter_map(|file| {
+                        matcher
+                            .fuzzy_match(&file, &req.query)
+                            .map(|score| (score, file))
+                    })
+                    .collect();
+
+                // Sort by score (highest first)
+                scored_files.sort_by(|a, b| b.0.cmp(&a.0));
+
+                scored_files.into_iter().map(|(_, file)| file).collect()
+            } else {
+                files
+            };
+
+            // Apply max_results limit if specified
+            let limited_files = if req.max_results > 0 {
+                filtered_files
+                    .into_iter()
+                    .take(req.max_results as usize)
+                    .collect()
+            } else {
+                filtered_files
+            };
+
+            // Stream files in chunks of 1000
+            for chunk in limited_files.chunks(1000) {
+                let response = ListFilesResponse {
+                    paths: chunk.to_vec(),
+                };
+
+                if let Err(e) = tx.send(Ok(response)).await {
+                    eprintln!("Failed to send file list chunk: {}", e);
+                    break;
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 }

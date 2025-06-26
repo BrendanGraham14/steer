@@ -34,7 +34,7 @@ use ratatui::widgets::{
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tui_textarea::{Input, Key, TextArea};
 
 use crate::tui::events::pipeline::EventPipeline;
@@ -44,6 +44,7 @@ use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
 use crate::tui::state::view_model::MessageViewModel;
 use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
+use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderResult};
 use crate::tui::widgets::popup_list::PopupList;
 
 pub mod model;
@@ -146,6 +147,12 @@ pub struct Tui {
     edit_selection_messages: Vec<(String, String)>, // (id, content)
     /// ID of the message currently hovered in edit selection mode
     edit_selection_hovered_id: Option<String>,
+    /// File cache for fuzzy finder
+    file_cache: crate::tui::state::file_cache::FileCache,
+    /// Fuzzy finder widget
+    fuzzy_finder: FuzzyFinder,
+    /// Session ID
+    session_id: String,
 }
 
 impl Tui {
@@ -155,6 +162,7 @@ impl Tui {
         _event_source: Arc<dyn AppEventSource>,
         current_model: Model,
         models: Vec<Model>,
+        session_id: String,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -210,6 +218,9 @@ impl Tui {
             edit_selection_index: 0,
             edit_selection_messages: Vec::new(),
             edit_selection_hovered_id: None,
+            file_cache: crate::tui::state::file_cache::FileCache::new(session_id.clone()),
+            fuzzy_finder: FuzzyFinder::new(),
+            session_id,
         };
 
         // Restore messages using the public method
@@ -294,6 +305,9 @@ impl Tui {
             "Starting TUI run with {} messages in view model",
             self.view_model.chat_store.len()
         );
+
+        // Load the initial file list
+        self.load_file_cache().await;
 
         // No need to request current conversation - messages are restored in the constructor
 
@@ -472,6 +486,22 @@ impl Tui {
                 );
             }
 
+            // Render fuzzy finder popup if active
+            if self.fuzzy_finder.is_active() {
+                // Compute anchor area (input box position)
+                let total_area = f.area();
+                let textarea_lines = self.textarea.lines().len();
+                let preview_height = if self.current_tool_approval.is_some() {
+                    let max_preview = (total_area.height as f32 * 0.3) as u16;
+                    max_preview.clamp(1, 20)
+                } else {
+                    0
+                };
+                let anchor_area =
+                    Self::calculate_input_area(total_area, textarea_lines, preview_height);
+                self.fuzzy_finder.render(f, anchor_area);
+            }
+
             // Progress is now shown in the status bar, no overlay needed
         })?;
         Ok(())
@@ -488,6 +518,19 @@ impl Tui {
 
     async fn handle_app_event(&mut self, event: AppEvent) {
         let mut messages_updated = false;
+
+        // Handle workspace events before processing through pipeline
+        match &event {
+            AppEvent::WorkspaceChanged => {
+                self.load_file_cache().await;
+            }
+            AppEvent::WorkspaceFiles { files } => {
+                // Update file cache with the new file list
+                info!(target: "tui.handle_app_event", "Received workspace files event with {} files", files.len());
+                self.file_cache.update(files.clone()).await;
+            }
+            _ => {}
+        }
 
         // Create processing context
         let mut ctx = crate::tui::events::processor::ProcessingContext {
@@ -657,6 +700,34 @@ impl Tui {
     }
 
     async fn handle_insert_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        // Handle fuzzy finder input first if active
+        if self.fuzzy_finder.is_active() {
+            let previous_query = self.fuzzy_finder.query();
+
+            if let Some(result) = self.fuzzy_finder.handle_input(key) {
+                match result {
+                    FuzzyFinderResult::Close => {
+                        self.fuzzy_finder.deactivate();
+                        // Don't insert '@' - it's already there
+                    }
+                    FuzzyFinderResult::Select(path) => {
+                        // Insert just the path (@ is already in textarea)
+                        self.textarea.insert_str(&path);
+                        self.fuzzy_finder.deactivate();
+                    }
+                }
+            } else {
+                // Check if query changed (user typed something)
+                let current_query = self.fuzzy_finder.query();
+                if current_query != previous_query {
+                    // Update search results
+                    let results = self.file_cache.fuzzy_search(&current_query, Some(20)).await;
+                    self.fuzzy_finder.update_results(results);
+                }
+            }
+            return Ok(false);
+        }
+
         let input = Input::from(key);
 
         // Check for Ctrl+C
@@ -682,6 +753,24 @@ impl Tui {
                 self.textarea = TextArea::default(); // Clear after sending
                 self.input_mode = InputMode::Normal;
             }
+            return Ok(false);
+        }
+
+        // Check if we should trigger fuzzy finder
+        if key.code == KeyCode::Char('@') && !self.fuzzy_finder.is_active() {
+            // First, insert the @ character
+            self.textarea.input(input);
+
+            // Then activate fuzzy finder
+            self.fuzzy_finder.activate();
+
+            // Log cache status
+            let cache_size = self.file_cache.len().await;
+            info!(target: "tui.fuzzy_finder", "Activated fuzzy finder, cache has {} files", cache_size);
+
+            // Perform initial search with all files
+            let results = self.file_cache.fuzzy_search("", Some(20)).await;
+            self.fuzzy_finder.update_results(results);
             return Ok(false);
         }
 
@@ -841,25 +930,47 @@ impl Tui {
             return self.handle_slash_command(content).await;
         }
 
+        // Expand any @path references in the input
+        let expanded_content = match self.expand_file_references(&content).await {
+            Ok(expanded) => expanded,
+            Err(e) => {
+                warn!(target: "tui.send_message", "Failed to expand file references: {}", e);
+                content // Use original input if expansion fails
+            }
+        };
+
         // Check if we're editing a message
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
             // Send edit command which creates a new branch
             self.command_sink
                 .send_command(AppCommand::EditMessage {
                     message_id: message_id_to_edit,
-                    new_content: content,
+                    new_content: expanded_content,
                 })
                 .await?;
         } else {
             // Send regular message
             self.command_sink
-                .send_command(AppCommand::ProcessUserInput(content))
+                .send_command(AppCommand::ProcessUserInput(expanded_content))
                 .await?;
         }
         Ok(())
     }
 
     async fn handle_slash_command(&mut self, command: String) -> Result<()> {
+        // Handle special TUI-specific commands
+        if command.trim() == "/reload-files" {
+            // Clear the file cache to force a refresh
+            self.file_cache.clear().await;
+            info!(target: "tui.slash_command", "Cleared file cache, will reload on next access");
+            // Request workspace files again
+            self.command_sink
+                .send_command(AppCommand::RequestWorkspaceFiles)
+                .await?;
+            return Ok(());
+        }
+
+        // For other slash commands, pass them through to the backend
         self.command_sink
             .send_command(AppCommand::ExecuteCommand(command.trim().to_string()))
             .await?;
@@ -1310,6 +1421,46 @@ impl Tui {
 
         f.render_widget(popup, centered_rect(50, 70, area));
     }
+
+    /// Load file list into cache
+    async fn load_file_cache(&mut self) {
+        // Request workspace files from the server
+        info!(target: "tui.file_cache", "Requesting workspace files for session {}", self.session_id);
+        if let Err(e) = self
+            .command_sink
+            .send_command(AppCommand::RequestWorkspaceFiles)
+            .await
+        {
+            warn!(target: "tui.file_cache", "Failed to request workspace files: {}", e);
+        }
+    }
+
+    /// Parse and validate @path references in the input text
+    async fn expand_file_references(&self, input: &str) -> Result<String> {
+        // For now, we just pass through the input as-is
+        // The backend will handle the actual file expansion
+        // This method is here for future enhancement where we might
+        // validate paths or provide better error messages
+        Ok(input.to_string())
+    }
+
+    /// Calculate the input area for rendering
+    fn calculate_input_area(total_area: Rect, textarea_lines: usize, preview_height: u16) -> Rect {
+        // Reuse same layout computation as render_ui_static
+        let input_height = (textarea_lines as u16 + 2).min(10).min(total_area.height);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),                 // Messages
+                Constraint::Length(preview_height), // Preview
+                Constraint::Length(input_height),   // Input
+                Constraint::Length(1),              // Model info
+            ])
+            .split(total_area);
+
+        chunks[2]
+    }
 }
 
 /// Helper function to get spinner character
@@ -1405,6 +1556,7 @@ pub async fn run_tui(
             client.clone() as std::sync::Arc<dyn AppEventSource>,
             model,
             vec![model], // For now, just pass the single model
+            session_id,
         )
         .await?;
 
@@ -1451,6 +1603,7 @@ pub async fn run_tui(
             client.clone() as std::sync::Arc<dyn AppEventSource>,
             model,
             vec![model], // For now, just pass the single model
+            session_id,
         )
         .await?;
 
@@ -1501,7 +1654,8 @@ mod tests {
         let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
         let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let models = vec![model];
-        let mut tui = Tui::new(command_sink, event_source, model, models)
+        let session_id = "test_session_id".to_string();
+        let mut tui = Tui::new(command_sink, event_source, model, models, session_id)
             .await
             .unwrap();
 
@@ -1565,7 +1719,8 @@ mod tests {
         let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
         let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let models = vec![model];
-        let mut tui = Tui::new(command_sink, event_source, model, models)
+        let session_id = "test_session_id".to_string();
+        let mut tui = Tui::new(command_sink, event_source, model, models, session_id)
             .await
             .unwrap();
 

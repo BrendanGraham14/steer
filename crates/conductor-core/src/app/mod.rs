@@ -94,6 +94,10 @@ pub enum AppEvent {
     Error {
         message: String,
     },
+    WorkspaceChanged,
+    WorkspaceFiles {
+        files: Vec<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -158,6 +162,26 @@ impl App {
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 warn!(target: "app.emit_event", "Event channel closed, discarding event: {:?}", event);
             }
+        }
+    }
+
+    pub(crate) async fn emit_workspace_files(&self) {
+        if let Some(workspace) = &self.workspace {
+            info!(target: "app.emit_workspace_files", "Attempting to list workspace files...");
+            match workspace.list_files(None, Some(10000)).await {
+                Ok(files) => {
+                    info!(target: "app.emit_workspace_files", "Emitting workspace files event with {} files", files.len());
+                    if files.is_empty() {
+                        warn!(target: "app.emit_workspace_files", "No files found in workspace - check if directory is correct");
+                    }
+                    self.emit_event(AppEvent::WorkspaceFiles { files });
+                }
+                Err(e) => {
+                    warn!(target: "app.emit_workspace_files", "Failed to list workspace files: {}", e);
+                }
+            }
+        } else {
+            warn!(target: "app.emit_workspace_files", "No workspace available to list files");
         }
     }
 
@@ -712,6 +736,9 @@ impl ApprovalQueue {
 pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppCommand>) {
     info!(target: "app_actor_loop", "App actor loop started.");
 
+    // Emit initial workspace files for the UI
+    app.emit_workspace_files().await;
+
     // Approval queue state
     let mut approval_queue = ApprovalQueue::new();
 
@@ -1148,6 +1175,12 @@ async fn handle_app_command(
             handle_slash_command(app, &cmd).await;
             false
         }
+
+        AppCommand::RequestWorkspaceFiles => {
+            info!(target: "app.handle_app_command", "Received RequestWorkspaceFiles command");
+            app.emit_workspace_files().await;
+            false
+        }
     }
 }
 
@@ -1256,7 +1289,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 if let conductor_tools::result::ToolResult::Error(e) = result {
                     app.emit_event(AppEvent::ToolCallFailed {
                         id: tool_call_id,
-                        name: tool_name,
+                        name: tool_name.clone(),
                         error: e.to_string(),
                         model: app.current_model,
                     });
@@ -1264,10 +1297,18 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
             } else {
                 app.emit_event(AppEvent::ToolCallCompleted {
                     id: tool_call_id,
-                    name: tool_name,
+                    name: tool_name.clone(),
                     result,
                     model: app.current_model,
                 });
+
+                // Check if this was a mutating tool and emit WorkspaceChanged
+                let mutating_tools = ["edit", "replace", "bash", "write_file", "multi_edit_file"];
+                if mutating_tools.contains(&tool_name.as_str()) {
+                    app.emit_event(AppEvent::WorkspaceChanged);
+                    // Also emit the updated file list
+                    app.emit_workspace_files().await;
+                }
             }
         }
     }

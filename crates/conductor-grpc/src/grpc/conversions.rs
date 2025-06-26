@@ -1183,6 +1183,14 @@ pub fn app_event_to_server_event(
                 }),
             }),
         ),
+        AppEvent::WorkspaceChanged => Some(proto::server_event::Event::WorkspaceChanged(
+            proto::WorkspaceChangedEvent {},
+        )),
+        AppEvent::WorkspaceFiles { files } => Some(proto::server_event::Event::WorkspaceFiles(
+            proto::WorkspaceFilesEvent {
+                files: files.clone(),
+            },
+        )),
     };
 
     Ok(proto::ServerEvent {
@@ -1414,6 +1422,10 @@ pub fn server_event_to_app_event(
             Ok(AppEvent::ModelChanged { model })
         }
         proto::server_event::Event::Error(e) => Ok(AppEvent::Error { message: e.message }),
+        proto::server_event::Event::WorkspaceChanged(_) => Ok(AppEvent::WorkspaceChanged),
+        proto::server_event::Event::WorkspaceFiles(e) => Ok(AppEvent::WorkspaceFiles {
+            files: e.files.clone(),
+        }),
     }
 }
 
@@ -1489,6 +1501,7 @@ pub fn convert_app_command_to_client_message(
         AppCommand::RequestToolApprovalInternal { .. } => None,
         AppCommand::RestoreConversation { .. } => None,
         AppCommand::GetCurrentConversation => None,
+        AppCommand::RequestWorkspaceFiles => None,
     };
 
     Ok(message.map(|msg| proto::ClientMessage {

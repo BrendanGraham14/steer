@@ -830,6 +830,7 @@ dependencies = [
  "futures",
  "futures-core",
  "futures-util",
+ "fuzzy-matcher",
  "gethostname",
  "glob",
  "globset",
@@ -917,11 +918,14 @@ dependencies = [
  "clap",
  "conductor-grpc",
  "conductor-tools",
+ "fuzzy-matcher",
  "gethostname",
+ "ignore",
  "prost",
  "prost-types",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tonic",
  "tracing",
@@ -969,19 +973,26 @@ dependencies = [
  "clap",
  "conductor-core",
  "conductor-grpc",
+ "conductor-proto",
  "conductor-tools",
  "crossterm",
+ "fuzzy-matcher",
  "lazy_static",
  "notify-rust",
  "once_cell",
  "ratatui",
+ "regex",
  "serde",
  "serde_json",
  "similar",
+ "tempfile",
  "textwrap",
  "time",
  "tokio",
+ "tokio-stream",
+ "tonic",
  "tracing",
+ "tracing-subscriber",
  "tui-markdown",
  "tui-textarea",
  "tui-widgets",
@@ -1689,6 +1700,15 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
+]
+
+[[package]]
+name = "fuzzy-matcher"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
+dependencies = [
+ "thread_local",
 ]
 
 [[package]]

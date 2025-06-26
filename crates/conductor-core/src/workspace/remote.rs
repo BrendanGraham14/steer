@@ -12,7 +12,7 @@ use crate::tools::remote_backend::RemoteBackend;
 use crate::tools::{ExecutionContext, ToolBackend};
 use crate::workspace::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
 use conductor_proto::remote_workspace::{
-    GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
+    GetEnvironmentInfoRequest, GetEnvironmentInfoResponse, ListFilesRequest,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
 
@@ -144,6 +144,29 @@ impl Workspace for RemoteWorkspace {
     async fn invalidate_environment_cache(&self) {
         let mut cache = self.environment_cache.write().await;
         *cache = None;
+    }
+
+    async fn list_files(
+        &self,
+        query: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<String>> {
+        let mut client = self.client.clone();
+
+        let request = tonic::Request::new(ListFilesRequest {
+            query: query.unwrap_or("").to_string(),
+            max_results: max_results.unwrap_or(0) as u32,
+        });
+
+        let mut stream = client.list_files(request).await?.into_inner();
+        let mut all_files = Vec::new();
+
+        // Collect all files from the stream
+        while let Some(response) = stream.message().await? {
+            all_files.extend(response.paths);
+        }
+
+        Ok(all_files)
     }
 }
 

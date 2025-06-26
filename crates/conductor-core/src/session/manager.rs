@@ -334,6 +334,41 @@ impl SessionManager {
         }
     }
 
+    /// Get the workspace for a session
+    pub async fn get_session_workspace(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<dyn crate::workspace::Workspace>>, SessionManagerError> {
+        // First check if session is active
+        {
+            let active_sessions = self.active_sessions.read().await;
+            if let Some(managed_session) = active_sessions.get(session_id) {
+                // Session is active, rebuild workspace from config
+                return Ok(Some(
+                    managed_session
+                        .session
+                        .build_workspace()
+                        .await
+                        .map_err(|e| SessionManagerError::CreationFailed {
+                            message: format!("Failed to build workspace: {}", e),
+                        })?,
+                ));
+            }
+        }
+
+        // Session not active, try to load from store
+        if let Some(session_info) = self.store.get_session(session_id).await? {
+            let session = session_info;
+            Ok(Some(session.build_workspace().await.map_err(|e| {
+                SessionManagerError::CreationFailed {
+                    message: format!("Failed to build workspace: {}", e),
+                }
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Resume a session (load from storage and activate)
     pub async fn resume_session(
         &self,
@@ -772,6 +807,12 @@ fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamE
             error,
             metadata: std::collections::HashMap::new(),
             model,
+        }),
+
+        AppEvent::WorkspaceChanged => Some(StreamEvent::WorkspaceChanged),
+
+        AppEvent::WorkspaceFiles { files } => Some(StreamEvent::WorkspaceFiles {
+            files: files.clone(),
         }),
 
         // These events don't need to be streamed
