@@ -410,12 +410,9 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                                     },
                                 })
                             }
-                            AssistantContent::Thought { thought } => {
+                            AssistantContent::Thought { .. } => {
                                 // Gemini doesn't send thought blocks in requests
-                                // Convert to regular text for now
-                                Some(GeminiRequestPart::Text {
-                                    text: format!("[Thought: {}]", thought.display_text()),
-                                })
+                                None
                             }
                         })
                         .collect();
