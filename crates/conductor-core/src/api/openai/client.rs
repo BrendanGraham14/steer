@@ -371,7 +371,6 @@ impl OpenAIClient {
                     // Convert AssistantContent to OpenAI format
                     let mut text_parts = Vec::new();
                     let mut tool_calls = Vec::new();
-                    let mut _reasoning_content = None;
 
                     for content_block in content {
                         match content_block {
@@ -388,9 +387,9 @@ impl OpenAIClient {
                                     },
                                 });
                             }
-                            AssistantContent::Thought { thought } => {
-                                // For OpenAI models that support reasoning, convert to reasoning_content
-                                _reasoning_content = Some(thought.display_text());
+                            AssistantContent::Thought { .. } => {
+                                // Skip
+                                continue;
                             }
                         }
                     }
