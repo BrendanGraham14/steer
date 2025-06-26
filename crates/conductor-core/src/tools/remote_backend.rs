@@ -536,6 +536,16 @@ mod tests {
         > {
             unimplemented!()
         }
+
+        type ListFilesStream =
+            tonic::codec::Streaming<conductor_proto::remote_workspace::ListFilesResponse>;
+
+        async fn list_files(
+            &self,
+            _request: Request<conductor_proto::remote_workspace::ListFilesRequest>,
+        ) -> Result<tonic::Response<Self::ListFilesStream>, Status> {
+            unimplemented!()
+        }
     }
 
     async fn setup_mock_server(tool_names: Vec<String>) -> SocketAddr {

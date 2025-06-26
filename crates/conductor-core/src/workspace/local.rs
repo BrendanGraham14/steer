@@ -1,10 +1,13 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
+use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tracing::info;
 
 use super::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
 use crate::app::EnvironmentInfo;
@@ -104,6 +107,78 @@ impl Workspace for LocalWorkspace {
         let mut cache = self.environment_cache.write().await;
         *cache = None;
     }
+
+    async fn list_files(
+        &self,
+        query: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<String>> {
+        use ignore::Walk;
+
+        let mut files = Vec::new();
+
+        info!(target: "workspace.list_files", "Listing files in workspace: {:?}", self.root_path);
+
+        // Walk the workspace directory, respecting .gitignore
+        for entry in Walk::new(&self.root_path) {
+            let entry = entry?;
+
+            // Skip the root directory itself
+            if entry.path() == self.root_path {
+                continue;
+            }
+
+            // Skip hidden files/directories (those starting with .)
+            if let Some(file_name) = entry.file_name().to_str() {
+                if file_name.starts_with('.') && entry.path() != self.root_path {
+                    continue;
+                }
+            }
+
+            // Get the relative path from the root
+            if let Ok(relative_path) = entry.path().strip_prefix(&self.root_path) {
+                if let Some(path_str) = relative_path.to_str() {
+                    if !path_str.is_empty() {
+                        // Add trailing slash for directories
+                        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                            files.push(format!("{}/", path_str));
+                        } else {
+                            files.push(path_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Apply fuzzy filter if query is provided
+        let mut filtered_files = if let Some(query) = query {
+            if query.is_empty() {
+                files
+            } else {
+                let matcher = SkimMatcherV2::default();
+                let mut scored_files: Vec<(i64, String)> = files
+                    .into_iter()
+                    .filter_map(|file| matcher.fuzzy_match(&file, query).map(|score| (score, file)))
+                    .collect();
+
+                // Sort by score (highest first)
+                scored_files.sort_by(|a, b| b.0.cmp(&a.0));
+
+                scored_files.into_iter().map(|(_, file)| file).collect()
+            }
+        } else {
+            files
+        };
+
+        // Apply max_results limit if specified
+        if let Some(max) = max_results {
+            if max > 0 && filtered_files.len() > max {
+                filtered_files.truncate(max);
+            }
+        }
+
+        Ok(filtered_files)
+    }
 }
 
 #[cfg(test)]
@@ -193,5 +268,36 @@ mod tests {
             .unwrap_or(expected_path.clone());
 
         assert_eq!(actual_canonical, expected_canonical);
+    }
+
+    #[tokio::test]
+    async fn test_list_files() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create some test files
+        std::fs::write(temp_dir.path().join("test.rs"), "test").unwrap();
+        std::fs::write(temp_dir.path().join("main.rs"), "main").unwrap();
+        std::fs::create_dir(temp_dir.path().join("src")).unwrap();
+        std::fs::write(temp_dir.path().join("src/lib.rs"), "lib").unwrap();
+
+        // List all files
+        let files = workspace.list_files(None, None).await.unwrap();
+        assert_eq!(files.len(), 4); // 3 files + 1 directory
+        assert!(files.contains(&"test.rs".to_string()));
+        assert!(files.contains(&"main.rs".to_string()));
+        assert!(files.contains(&"src/".to_string())); // Directory with trailing slash
+        assert!(files.contains(&"src/lib.rs".to_string()));
+
+        // Test with query
+        let files = workspace.list_files(Some("test"), None).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], "test.rs");
+
+        // Test with max_results
+        let files = workspace.list_files(None, Some(2)).await.unwrap();
+        assert_eq!(files.len(), 2);
     }
 }

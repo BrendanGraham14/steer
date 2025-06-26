@@ -90,6 +90,12 @@ pub enum StreamEvent {
         message: String,
         error_type: ErrorType,
     },
+
+    // Workspace events
+    WorkspaceChanged,
+    WorkspaceFiles {
+        files: Vec<String>,
+    },
 }
 
 /// Event with metadata for persistence and replay
@@ -300,6 +306,8 @@ impl EventFilter {
                 StreamEvent::OperationCompleted { .. } => "operation_completed",
                 StreamEvent::OperationCancelled { .. } => "operation_cancelled",
                 StreamEvent::Error { .. } => "error",
+                StreamEvent::WorkspaceChanged => "workspace_changed",
+                StreamEvent::WorkspaceFiles { .. } => "workspace_files",
             };
             if !event_types.contains(&event_type.to_string()) {
                 return false;

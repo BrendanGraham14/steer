@@ -137,6 +137,17 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
 
     let event1_option = timeout(Duration::from_secs(2), event_rx.recv()).await?;
     let event1 = event1_option.expect("Event channel closed or no event for call 1");
+
+    // Skip the initial WorkspaceFiles event if present
+    let event1 = match event1 {
+        AppEvent::WorkspaceFiles { .. } => {
+            // Consume the WorkspaceFiles event and wait for the next one
+            let next_event_option = timeout(Duration::from_secs(2), event_rx.recv()).await?;
+            next_event_option.expect("Event channel closed or no event for call 1")
+        }
+        other => other,
+    };
+
     match event1 {
         AppEvent::RequestToolApproval { name, id, .. } => {
             assert_eq!(name, tool_name_to_approve);
@@ -169,22 +180,28 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     // Let's check that no immediate event comes for tool_call_id_2 to be sure.
     match timeout(Duration::from_millis(200), event_rx.recv()).await {
         Ok(Some(unexpected_event)) => {
-            if let AppEvent::RequestToolApproval {
-                id: unexpected_id, ..
-            } = &unexpected_event
-            {
-                if unexpected_id == &tool_call_id_2 {
-                    panic!(
-                        "Received RequestToolApproval for tool_call_id_2 prematurely: {:?}",
+            match &unexpected_event {
+                AppEvent::RequestToolApproval {
+                    id: unexpected_id, ..
+                } => {
+                    if unexpected_id == &tool_call_id_2 {
+                        panic!(
+                            "Received RequestToolApproval for tool_call_id_2 prematurely: {:?}",
+                            unexpected_event
+                        );
+                    }
+                }
+                AppEvent::WorkspaceFiles { .. } => {
+                    // Ignore WorkspaceFiles events
+                }
+                _ => {
+                    // Log if it's some other event, though still unexpected here
+                    warn!(
+                        "Received an unexpected event while tool_call_id_1 is active: {:?}",
                         unexpected_event
                     );
                 }
             }
-            // Log if it's some other event, though still unexpected here
-            warn!(
-                "Received an unexpected event while tool_call_id_1 is active: {:?}",
-                unexpected_event
-            );
         }
         Ok(None) => { /* Channel closed, unlikely but possible */ }
         Err(_) => { /* Timeout is expected, good. No event for tool_call_id_2 yet. */ }
@@ -218,10 +235,16 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     // After 'always' approval of tool_call_id_1, and subsequent auto-approval of tool_call_id_2,
     // there should be no more RequestToolApproval events.
     match timeout(Duration::from_millis(200), event_rx.recv()).await {
-        Ok(Some(event)) => panic!(
-            "Unexpected third AppEvent::RequestToolApproval received after 'always' approval and cascade: {:?}",
-            event
-        ),
+        Ok(Some(event)) => match event {
+            AppEvent::WorkspaceFiles { .. } | AppEvent::WorkspaceChanged => {
+                // Ignore workspace-related events
+            }
+            AppEvent::RequestToolApproval { .. } => panic!(
+                "Unexpected third AppEvent::RequestToolApproval received after 'always' approval and cascade: {:?}",
+                event
+            ),
+            _ => { /* Other events are fine */ }
+        },
         Ok(None) => { /* Channel closed, can happen if actor shuts down. */ }
         Err(_) => { /* Timeout is expected, good. */ }
     }

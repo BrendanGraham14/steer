@@ -22,6 +22,9 @@ service AgentService {
 
   // Explicitly activate (load) a dormant session into memory and return its state
   rpc ActivateSession(ActivateSessionRequest) returns (ActivateSessionResponse);
+
+  // List files in the workspace for fuzzy finding
+  rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
 }
 
 // Client to server messages in the bidirectional stream
@@ -59,6 +62,8 @@ message ServerEvent {
     OperationCancelledEvent operation_cancelled = 13;
     ModelChangedEvent model_changed = 14;
     ErrorEvent error = 15;
+    WorkspaceChangedEvent workspace_changed = 16;
+    WorkspaceFilesEvent workspace_files = 17;
   }
 }
 
@@ -753,4 +758,23 @@ message EditMessageRequest {
   string session_id = 1;
   string message_id = 2;
   string new_content = 3;
+}
+
+// File listing for fuzzy finder
+message ListFilesRequest {
+  string session_id = 1;   // target session
+  string query = 2;        // optional fuzzy query (empty = full list)
+  uint32 max_results = 3;  // 0 = unlimited
+}
+
+message ListFilesResponse {
+  repeated string paths = 1; // workspace-relative paths
+}
+
+message WorkspaceChangedEvent {
+  // No fields needed - just signals that workspace files have changed
+}
+
+message WorkspaceFilesEvent {
+  repeated string files = 1;
 }

@@ -43,4 +43,6 @@ pub enum AppCommand {
     /// Request to send the current conversation state
     /// Used by TUI to populate display after session restoration
     GetCurrentConversation,
+    /// Request to list workspace files
+    RequestWorkspaceFiles,
 }
