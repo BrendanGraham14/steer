@@ -1,8 +1,8 @@
+use conductor_tools::ToolCall;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use conductor_tools::ToolCall;
 use uuid::Uuid;
 
 use crate::api::Client as ApiClient;
@@ -243,9 +243,15 @@ impl Message {
 
     pub fn parent_message_id(&self) -> Option<&str> {
         match self {
-            Message::User { parent_message_id, .. } => parent_message_id.as_deref(),
-            Message::Assistant { parent_message_id, .. } => parent_message_id.as_deref(),
-            Message::Tool { parent_message_id, .. } => parent_message_id.as_deref(),
+            Message::User {
+                parent_message_id, ..
+            } => parent_message_id.as_deref(),
+            Message::Assistant {
+                parent_message_id, ..
+            } => parent_message_id.as_deref(),
+            Message::Tool {
+                parent_message_id, ..
+            } => parent_message_id.as_deref(),
         }
     }
 
@@ -594,13 +600,13 @@ impl Conversation {
 
     /// Edit a message, which removes the old message and all its children,
     /// then creates a new branch.
-    pub fn edit_message(&mut self, message_id: &str, new_content: Vec<UserContent>) -> Option<Uuid> {
+    pub fn edit_message(
+        &mut self,
+        message_id: &str,
+        new_content: Vec<UserContent>,
+    ) -> Option<Uuid> {
         // Find the message to edit
-        let message_to_edit = self
-            .messages
-            .iter()
-            .find(|m| m.id() == message_id)?
-            .clone();
+        let message_to_edit = self.messages.iter().find(|m| m.id() == message_id)?.clone();
 
         // Only allow editing user messages for now
         if !matches!(message_to_edit, Message::User { .. }) {
@@ -655,16 +661,18 @@ impl Conversation {
     /// Get messages in the current thread by following parent links
     pub fn get_thread_messages(&self) -> Vec<&Message> {
         let mut result = Vec::new();
-        
+
         // Find the latest message in the current thread
-        let mut current_msg = self.messages.iter()
+        let mut current_msg = self
+            .messages
+            .iter()
             .filter(|m| m.thread_id() == &self.current_thread_id)
             .max_by_key(|m| m.timestamp());
-        
+
         // Follow parent links to build the chain
         while let Some(msg) = current_msg {
             result.push(msg);
-            
+
             // Find parent message
             current_msg = if let Some(parent_id) = msg.parent_message_id() {
                 self.messages.iter().find(|m| m.id() == parent_id)
@@ -672,7 +680,7 @@ impl Conversation {
                 None
             };
         }
-        
+
         // Reverse to get chronological order
         result.reverse();
         result

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 
-use conductor_cli::cli::{Cli, Commands, ModelArg};
+use conductor_cli::cli::{Cli, Commands};
 use conductor_cli::commands::{
     Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
@@ -50,7 +50,14 @@ async fn main() -> Result<()> {
                     run_tui_remote(addr, cli.session, model, cli.directory, cli.system_prompt).await
                 } else {
                     // Launch with in-process server
-                    run_tui_local(cli.session, model, cli.directory, cli.system_prompt, cli.session_db).await
+                    run_tui_local(
+                        cli.session,
+                        model,
+                        cli.directory,
+                        cli.system_prompt,
+                        cli.session_db,
+                    )
+                    .await
                 }
             }
             #[cfg(not(feature = "ui"))]
@@ -89,9 +96,9 @@ async fn main() -> Result<()> {
             command.execute().await
         }
         Commands::Server { port, bind } => {
-            let command = ServeCommand { 
-                port, 
-                bind, 
+            let command = ServeCommand {
+                port,
+                bind,
                 model,
                 session_db: cli.session_db.clone(),
             };

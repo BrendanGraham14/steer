@@ -4,12 +4,10 @@
 //! All message handling now goes through ChatStore directly.
 
 use super::chat_store::ChatStore;
-use super::content_cache::ContentCache;
 use super::tool_registry::ToolCallRegistry;
 use crate::tui::model::MessageRow;
 use crate::tui::widgets::chat_list::ChatListState;
 use conductor_core::app::conversation::{AssistantContent, Message};
-use std::sync::{Arc, RwLock};
 
 #[derive(Debug)]
 pub struct MessageViewModel {
@@ -19,8 +17,6 @@ pub struct MessageViewModel {
     pub chat_list_state: ChatListState,
     /// Centralized tool call lifecycle tracking
     pub tool_registry: ToolCallRegistry,
-    /// Content rendering cache for performance
-    content_cache: Arc<RwLock<ContentCache>>,
     /// Currently active thread ID (None until first message)
     pub current_thread: Option<uuid::Uuid>,
 }
@@ -37,14 +33,8 @@ impl MessageViewModel {
             chat_store: ChatStore::new(),
             chat_list_state: ChatListState::new(),
             tool_registry: ToolCallRegistry::new(),
-            content_cache: Arc::new(RwLock::new(ContentCache::new())),
             current_thread: None, // No thread until first message
         }
-    }
-
-    /// Get access to the content cache for rendering
-    pub fn content_cache(&self) -> Arc<RwLock<ContentCache>> {
-        self.content_cache.clone()
     }
 
     /// Add a message to the view model, handling tool registry coordination automatically
@@ -69,14 +59,18 @@ impl MessageViewModel {
         // For tool messages, set the message index in the registry
         if let Message::Tool { tool_use_id, .. } = &message {
             // Get the tool call from registry or create a placeholder
-            let tool_call = self.tool_registry.get_tool_call(tool_use_id).cloned()
+            let tool_call = self
+                .tool_registry
+                .get_tool_call(tool_use_id)
+                .cloned()
                 .unwrap_or_else(|| conductor_tools::schema::ToolCall {
                     id: tool_use_id.clone(),
                     name: "unknown".to_string(),
                     parameters: serde_json::Value::Null,
                 });
             self.tool_registry.register_call(tool_call);
-            self.tool_registry.set_message_index(tool_use_id, message_index);
+            self.tool_registry
+                .set_message_index(tool_use_id, message_index);
         }
     }
 
@@ -105,43 +99,24 @@ impl MessageViewModel {
 
             // For tool messages, set the message index in the registry
             if let Message::Tool { tool_use_id, .. } = &message {
-                let tool_call = self.tool_registry.get_tool_call(tool_use_id).cloned()
+                let tool_call = self
+                    .tool_registry
+                    .get_tool_call(tool_use_id)
+                    .cloned()
                     .unwrap_or_else(|| conductor_tools::schema::ToolCall {
                         id: tool_use_id.clone(),
                         name: "unknown".to_string(),
                         parameters: serde_json::Value::Null,
                     });
                 self.tool_registry.register_call(tool_call);
-                self.tool_registry.set_message_index(tool_use_id, message_index);
+                self.tool_registry
+                    .set_message_index(tool_use_id, message_index);
             }
         }
 
         // Log summary after bulk loading
         if count > 0 {
             tracing::debug!(target: "view_model", "Loaded {} messages.", count);
-        }
-    }
-
-    /// Clear the content cache (e.g., on major UI changes)
-    pub fn clear_content_cache(&mut self) {
-        if let Ok(mut cache) = self.content_cache.write() {
-            cache.clear();
-        }
-    }
-
-    /// Invalidate cache for a specific message (when message content changes)
-    pub fn invalidate_message_cache(&mut self, message_id: &str) {
-        if let Ok(mut cache) = self.content_cache.write() {
-            cache.invalidate_message(message_id);
-        }
-    }
-
-    /// Get content cache statistics for debugging
-    pub fn cache_stats(&self) -> (usize, usize, f64) {
-        if let Ok(cache) = self.content_cache.read() {
-            cache.stats()
-        } else {
-            (0, 0, 0.0)
         }
     }
 
@@ -158,13 +133,5 @@ impl MessageViewModel {
     /// Get user messages in the current thread (for edit history)
     pub fn get_user_messages_in_thread(&self) -> Vec<(usize, &MessageRow)> {
         self.chat_store.user_messages()
-    }
-
-
-    /// Log cache performance summary
-    pub fn log_cache_performance(&self) {
-        if let Ok(cache) = self.content_cache.read() {
-            cache.log_summary();
-        }
     }
 }

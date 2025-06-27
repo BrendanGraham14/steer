@@ -3,7 +3,7 @@
 //! This module implements the terminal user interface using ratatui.
 
 use std::io::{self, Stdout};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -40,8 +40,7 @@ use crate::tui::events::processors::message::MessageEventProcessor;
 use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
 use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
-use crate::tui::state::{ContentCache, MessageViewModel};
-use crate::tui::widgets::cached_renderer::CachedContentRenderer;
+use crate::tui::state::MessageViewModel;
 use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
 use crate::tui::widgets::popup_list::PopupList;
 
@@ -136,9 +135,6 @@ pub struct Tui {
     current_model: Model,
     /// Popup selection state (when showing model list)
     popup_state: PopupState,
-    /// Cached renderer for performance
-    cached_renderer: CachedContentRenderer,
-    /// Current UI theme/mode
     /// Event processing pipeline
     event_pipeline: EventPipeline,
     /// Message view model (data + ui state)
@@ -207,8 +203,6 @@ impl Tui {
             models,
             current_model,
             popup_state: PopupState::default(),
-            cached_renderer: CachedContentRenderer::new(Arc::new(RwLock::new(ContentCache::new()))),
-
             event_pipeline: Self::create_event_pipeline(),
             view_model: MessageViewModel::new(),
             edit_selection_index: 0,
@@ -366,7 +360,6 @@ impl Tui {
                         Event::Resize(width, height) => {
                             self.terminal_size = (width, height);
                             // Terminal was resized, force redraw
-                            self.view_model.clear_content_cache();
                             needs_redraw = true;
                         }
                         Event::Paste(data) => {
@@ -456,7 +449,6 @@ impl Tui {
                 input_mode,
                 &current_model_owned,
                 current_tool_approval,
-                &self.cached_renderer,
                 self.view_model.current_thread,
                 is_processing,
                 spinner_state,
@@ -544,7 +536,6 @@ impl Tui {
         // Auto-scroll if messages were added
         if messages_updated {
             // Clear cache for any updated messages
-            self.view_model.clear_content_cache();
             // Scroll to bottom if we were already at the bottom
             if self.view_model.chat_list_state.is_at_bottom() {
                 self.view_model.chat_list_state.scroll_to_bottom();
@@ -619,15 +610,12 @@ impl Tui {
                         ViewMode::Compact => ViewMode::Detailed,
                         ViewMode::Detailed => ViewMode::Compact,
                     };
-                self.view_model.clear_content_cache();
             }
             KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.view_model.chat_list_state.view_mode = ViewMode::Detailed;
-                self.view_model.clear_content_cache();
             }
             KeyCode::Char('C') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.view_model.chat_list_state.view_mode = ViewMode::Compact;
-                self.view_model.clear_content_cache();
             }
             KeyCode::Esc => {
                 // Cancel current processing if any
@@ -1048,7 +1036,6 @@ impl Tui {
         input_mode: InputMode,
         current_model: &Model,
         current_approval: Option<&ToolCall>,
-        _cached_renderer: &CachedContentRenderer,
         _current_thread: Option<uuid::Uuid>,
         is_processing: bool,
         spinner_state: usize,
@@ -1303,160 +1290,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::ToolResult;
-    use serde_json::json;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
-
-    struct MockCommandSink;
-
-    #[async_trait]
-    impl AppCommandSink for MockCommandSink {
-        async fn send_command(&self, _command: AppCommand) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    struct MockEventSource;
-
-    #[async_trait]
-    impl AppEventSource for MockEventSource {
-        async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
-            let (_, rx) = mpsc::channel(10);
-            rx
-        }
-    }
-
-    fn create_test_tui() -> Tui {
-        let command_sink = Arc::new(MockCommandSink);
-        let event_source = Arc::new(MockEventSource);
-
-        Tui {
-            terminal: Terminal::new(CrosstermBackend::new(io::stdout())).unwrap(),
-            terminal_size: (80, 24),
-            input_mode: InputMode::Normal,
-            textarea: TextArea::default(),
-            previous_insert_text: String::new(),
-            editing_message_id: None,
-            command_sink,
-            is_processing: false,
-            progress_message: None,
-            spinner_state: 0,
-            last_spinner_update: Instant::now(),
-            current_tool_approval: None,
-            models: vec![Model::Claude3_5Sonnet20241022],
-            current_model: Model::Claude3_5Sonnet20241022,
-            popup_state: PopupState::default(),
-            cached_renderer: CachedContentRenderer::new(Arc::new(RwLock::new(ContentCache::new()))),
-            event_pipeline: Tui::create_event_pipeline(),
-            view_model: MessageViewModel::new(),
-            edit_selection_index: 0,
-            edit_selection_messages: Vec::new(),
-            edit_selection_hovered_id: None,
-        }
-    }
-
-    #[test]
-    fn test_restore_messages_preserves_tool_call_params() {
-        let mut tui = create_test_tui();
-
-        // Create messages with a tool call
-        let tool_call = conductor_tools::ToolCall {
-            id: "test_tool_123".to_string(),
-            name: "view".to_string(),
-            parameters: json!({
-                "file_path": "/test/file.rs",
-                "offset": 10,
-                "limit": 100
-            }),
-        };
-
-        let assistant_msg = Message::Assistant {
-            id: "msg_assistant".to_string(),
-            content: vec![AssistantContent::ToolCall {
-                tool_call: tool_call.clone(),
-            }],
-            timestamp: 1234567890,
-            thread_id: uuid::Uuid::new_v4(),
-            parent_message_id: None,
-        };
-
-        let tool_msg = Message::Tool {
-            id: "msg_tool".to_string(),
-            tool_use_id: "test_tool_123".to_string(),
-            result: ToolResult::Success {
-                output: "File contents...".to_string(),
-            },
-            timestamp: 1234567891,
-            thread_id: assistant_msg.thread_id().clone(),
-            parent_message_id: Some("msg_assistant".to_string()),
-        };
-
-        let messages = vec![assistant_msg, tool_msg];
-
-        // Restore messages
-        tui.restore_messages(messages);
-
-        // Verify tool call was preserved in registry
-        let stored_call = tui
-            .view_model
-            .tool_registry
-            .get_tool_call("test_tool_123")
-            .expect("Tool call should be in registry");
-        assert_eq!(stored_call.name, "view");
-        assert_eq!(stored_call.parameters, tool_call.parameters);
-    }
-
-    #[test]
-    fn test_restore_messages_handles_tool_result_before_assistant() {
-        let mut tui = create_test_tui();
-
-        let thread_id = uuid::Uuid::new_v4();
-
-        // Create a Tool message that arrives before its corresponding Assistant message
-        let tool_msg = Message::Tool {
-            id: "msg_tool".to_string(),
-            tool_use_id: "orphan_tool_123".to_string(),
-            result: ToolResult::Success {
-                output: "Orphaned result".to_string(),
-            },
-            timestamp: 1234567890,
-            thread_id,
-            parent_message_id: None,
-        };
-
-        // The assistant message with tool call arrives later
-        let tool_call = conductor_tools::ToolCall {
-            id: "orphan_tool_123".to_string(),
-            name: "bash".to_string(),
-            parameters: json!({"command": "ls -la"}),
-        };
-
-        let assistant_msg = Message::Assistant {
-            id: "msg_assistant".to_string(),
-            content: vec![AssistantContent::ToolCall {
-                tool_call: tool_call.clone(),
-            }],
-            timestamp: 1234567891,
-            thread_id,
-            parent_message_id: None,
-        };
-
-        let messages = vec![tool_msg, assistant_msg];
-
-        // Restore messages
-        tui.restore_messages(messages);
-
-        // Verify the tool message was created with proper tool call info
-        assert_eq!(tui.view_model.chat_store.len(), 2);
-    }
-}
-
 // -------------------------------------------------------------------------------------------------
 // Public API for backward compatibility with conductor-cli
 // -------------------------------------------------------------------------------------------------
@@ -1577,4 +1410,157 @@ pub async fn run_tui(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use conductor_core::app::AppCommand;
+    use conductor_core::app::conversation::ToolResult;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    struct MockCommandSink;
+
+    #[async_trait]
+    impl AppCommandSink for MockCommandSink {
+        async fn send_command(&self, _command: AppCommand) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MockEventSource;
+
+    #[async_trait]
+    impl AppEventSource for MockEventSource {
+        async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
+            let (_, rx) = mpsc::channel(10);
+            rx
+        }
+    }
+
+    fn create_test_tui() -> Tui {
+        let command_sink = Arc::new(MockCommandSink);
+        let event_source = Arc::new(MockEventSource);
+
+        Tui {
+            terminal: Terminal::new(CrosstermBackend::new(io::stdout())).unwrap(),
+            terminal_size: (80, 24),
+            input_mode: InputMode::Normal,
+            textarea: TextArea::default(),
+            previous_insert_text: String::new(),
+            editing_message_id: None,
+            command_sink,
+            is_processing: false,
+            progress_message: None,
+            spinner_state: 0,
+            last_spinner_update: Instant::now(),
+            current_tool_approval: None,
+            models: vec![Model::Claude3_5Sonnet20241022],
+            current_model: Model::Claude3_5Sonnet20241022,
+            popup_state: PopupState::default(),
+            event_pipeline: Tui::create_event_pipeline(),
+            view_model: MessageViewModel::new(),
+            edit_selection_index: 0,
+            edit_selection_messages: Vec::new(),
+            edit_selection_hovered_id: None,
+        }
+    }
+
+    #[test]
+    fn test_restore_messages_preserves_tool_call_params() {
+        let mut tui = create_test_tui();
+
+        // Create messages with a tool call
+        let tool_call = conductor_tools::ToolCall {
+            id: "test_tool_123".to_string(),
+            name: "view".to_string(),
+            parameters: json!({
+                "file_path": "/test/file.rs",
+                "offset": 10,
+                "limit": 100
+            }),
+        };
+
+        let assistant_msg = Message::Assistant {
+            id: "msg_assistant".to_string(),
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
+            timestamp: 1234567890,
+            thread_id: uuid::Uuid::new_v4(),
+            parent_message_id: None,
+        };
+
+        let tool_msg = Message::Tool {
+            id: "msg_tool".to_string(),
+            tool_use_id: "test_tool_123".to_string(),
+            result: ToolResult::Success {
+                output: "File contents...".to_string(),
+            },
+            timestamp: 1234567891,
+            thread_id: *assistant_msg.thread_id(),
+            parent_message_id: Some("msg_assistant".to_string()),
+        };
+
+        let messages = vec![assistant_msg, tool_msg];
+
+        // Restore messages
+        tui.restore_messages(messages);
+
+        // Verify tool call was preserved in registry
+        let stored_call = tui
+            .view_model
+            .tool_registry
+            .get_tool_call("test_tool_123")
+            .expect("Tool call should be in registry");
+        assert_eq!(stored_call.name, "view");
+        assert_eq!(stored_call.parameters, tool_call.parameters);
+    }
+
+    #[test]
+    fn test_restore_messages_handles_tool_result_before_assistant() {
+        let mut tui = create_test_tui();
+
+        let thread_id = uuid::Uuid::new_v4();
+
+        // Create a Tool message that arrives before its corresponding Assistant message
+        let tool_msg = Message::Tool {
+            id: "msg_tool".to_string(),
+            tool_use_id: "orphan_tool_123".to_string(),
+            result: ToolResult::Success {
+                output: "Orphaned result".to_string(),
+            },
+            timestamp: 1234567890,
+            thread_id,
+            parent_message_id: None,
+        };
+
+        // The assistant message with tool call arrives later
+        let tool_call = conductor_tools::ToolCall {
+            id: "orphan_tool_123".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({"command": "ls -la"}),
+        };
+
+        let assistant_msg = Message::Assistant {
+            id: "msg_assistant".to_string(),
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
+            timestamp: 1234567891,
+            thread_id,
+            parent_message_id: None,
+        };
+
+        let messages = vec![tool_msg, assistant_msg];
+
+        // Restore messages
+        tui.restore_messages(messages);
+
+        // Verify the tool message was created with proper tool call info
+        assert_eq!(tui.view_model.chat_store.len(), 2);
+    }
 }

@@ -4,7 +4,9 @@
 //! that can appear in the chat panel, including both conversation messages
 //! and meta rows like slash commands and system notices.
 
-use conductor_core::app::conversation::{AppCommandType, AssistantContent, CommandResponse, Message, ToolResult, UserContent};
+use conductor_core::app::conversation::{
+    AppCommandType, AssistantContent, CommandResponse, Message, ToolResult, UserContent,
+};
 use conductor_tools::ToolCall;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -29,9 +31,7 @@ pub struct MessageRow {
 
 impl MessageRow {
     pub fn new(message: Message) -> Self {
-        Self {
-            inner: message,
-        }
+        Self { inner: message }
     }
 
     pub fn id(&self) -> &str {
@@ -41,8 +41,6 @@ impl MessageRow {
     pub fn thread_id(&self) -> &Uuid {
         self.inner.thread_id()
     }
-
-
 }
 
 /// All rows that can appear in the scrollback panel

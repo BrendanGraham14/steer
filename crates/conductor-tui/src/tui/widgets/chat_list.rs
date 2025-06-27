@@ -604,7 +604,7 @@ impl<'a> ChatList<'a> {
                 (lines, height)
             }
 
-            ChatItem::SlashInput { raw, ts, .. } => {
+            ChatItem::SlashInput { raw, .. } => {
                 let mut lines = vec![];
 
                 // Render gutter and slash command on same line
@@ -623,7 +623,7 @@ impl<'a> ChatList<'a> {
                 (lines, height)
             }
 
-            ChatItem::CmdResponse { cmd, resp, ts, .. } => {
+            ChatItem::CmdResponse { cmd, resp, .. } => {
                 let mut lines = vec![];
 
                 // Format command nicely
@@ -672,8 +672,10 @@ impl<'a> ChatList<'a> {
 
                 // Split response into lines
                 let response_lines: Vec<&str> = response_text.lines().collect();
-                
-                if response_lines.is_empty() || (response_lines.len() == 1 && response_lines[0].len() <= 50) {
+
+                if response_lines.is_empty()
+                    || (response_lines.len() == 1 && response_lines[0].len() <= 50)
+                {
                     // Single short line - render inline
                     let mut first_line = vec![];
                     first_line.extend(self.render_meta_gutter().spans);
@@ -703,7 +705,7 @@ impl<'a> ChatList<'a> {
                     ));
                     first_line.push(Span::raw(":"));
                     lines.push(Line::from(first_line));
-                    
+
                     // Add response lines with proper indentation
                     for line in response_lines {
                         let wrapped = textwrap::wrap(line, max_width.saturating_sub(4));
@@ -763,7 +765,7 @@ impl<'a> ChatList<'a> {
     }
 }
 
-impl<'a> StatefulWidget for ChatList<'a> {
+impl StatefulWidget for ChatList<'_> {
     type State = ChatListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -880,11 +882,11 @@ impl<'a> StatefulWidget for ChatList<'a> {
                 let (lines, _) = self.render_chat_item(item, list_area.width, state.view_mode);
 
                 // Calculate where to start rendering this item
-                let _render_y = if item_y < visible_start {
+                if item_y < visible_start {
                     // Item starts above visible area, skip some lines
                     let skip_lines = (visible_start - item_y) as usize;
                     if skip_lines < lines.len() {
-                        for (_line_idx, line) in lines.iter().skip(skip_lines).enumerate() {
+                        for line in lines.iter().skip(skip_lines) {
                             if current_y < list_area.height {
                                 let y = list_area.y + current_y;
                                 let x = list_area.x;
@@ -931,11 +933,12 @@ impl<'a> StatefulWidget for ChatList<'a> {
                 };
 
                 // Add spacing between messages (but not after the last item)
-                if idx + 1 < self.items.len() && matches!(item, ChatItem::Message(_)) {
-                    if current_y < list_area.height {
-                        // Render an empty line for spacing
-                        current_y += 1;
-                    }
+                if idx + 1 < self.items.len()
+                    && matches!(item, ChatItem::Message(_))
+                    && current_y < list_area.height
+                {
+                    // Render an empty line for spacing
+                    current_y += 1;
                 }
             }
         }

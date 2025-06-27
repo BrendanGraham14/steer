@@ -3,15 +3,15 @@ use conductor_core::api::Model;
 use conductor_core::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
 use conductor_core::config::LlmConfig;
 use conductor_core::workspace::local::LocalWorkspace;
+use conductor_tools::ToolCall;
+use conductor_tools::tools::edit::EditTool;
+use conductor_tools::tools::view::ViewTool;
+use conductor_tools::traits::Tool;
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
-use conductor_tools::ToolCall;
-use conductor_tools::tools::edit::EditTool;
-use conductor_tools::tools::view::ViewTool;
-use conductor_tools::traits::Tool;
 use tracing::warn; // Added warn import
 
 async fn create_test_workspace() -> Arc<LocalWorkspace> {

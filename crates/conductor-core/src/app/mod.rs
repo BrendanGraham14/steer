@@ -235,7 +235,7 @@ impl App {
                 conv.messages.last().map(|m| m.id().to_string()),
             )
         };
-        
+
         self.add_message(Message::User {
             content: vec![UserContent::Text {
                 text: message.clone(),
@@ -624,7 +624,7 @@ impl App {
                         conv.messages.last().map(|m| m.id().to_string()),
                     )
                 };
-                
+
                 let cancelled_result = Message::Tool {
                     tool_use_id: tool_call.id.clone(),
                     result: ToolResult::Error {
@@ -913,7 +913,9 @@ async fn handle_app_command(
                 let mut conversation = app.conversation.lock().await;
                 let new_thread_id = conversation.edit_message(
                     &message_id,
-                    vec![UserContent::Text { text: new_content.clone() }]
+                    vec![UserContent::Text {
+                        text: new_content.clone(),
+                    }],
                 );
 
                 // Attempt to fetch the newly created edited message (it will be the latest User message in the new thread)
@@ -931,9 +933,9 @@ async fn handle_app_command(
 
             // Notify the UI about the newly edited user message so it can appear immediately
             if let Some(edited_message) = edited_message_opt {
-                let _ = app.emit_event(AppEvent::MessageAdded {
+                app.emit_event(AppEvent::MessageAdded {
                     message: edited_message,
-                    model: app.current_model.clone(),
+                    model: app.current_model,
                 });
             }
 
@@ -1066,7 +1068,7 @@ async fn handle_app_command(
                             conv.messages.last().map(|m| m.id().to_string()),
                         )
                     };
-                    
+
                     let message = Message::User {
                         content: vec![UserContent::CommandExecution {
                             command,
@@ -1092,7 +1094,7 @@ async fn handle_app_command(
                             conv.messages.last().map(|m| m.id().to_string()),
                         )
                     };
-                    
+
                     let message = Message::User {
                         content: vec![UserContent::CommandExecution {
                             command,
@@ -1302,7 +1304,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                             conv.messages.last().map(|m| m.id().to_string()),
                         )
                     };
-                    
+
                     app.add_message(Message::Assistant {
                         content: vec![AssistantContent::Text {
                             text: format!("Dispatch Agent Result:\n{}", response_text),

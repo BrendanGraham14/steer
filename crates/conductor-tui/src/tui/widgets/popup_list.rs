@@ -54,10 +54,10 @@ impl<'a, T> PopupList<'a, T> {
     pub fn centered_rect(area: Rect, max_height_percent: u16) -> Rect {
         let width_percent = 60;
         let popup_width = area.width * width_percent / 100;
-        
+
         // Calculate height based on content, but cap at max_height_percent
         let max_height = area.height * max_height_percent / 100;
-        
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -78,7 +78,7 @@ impl<'a, T> PopupList<'a, T> {
     }
 }
 
-impl<'a, T: Display> Widget for PopupList<'a, T> {
+impl<T: Display> Widget for PopupList<'_, T> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Clear the background
         Clear.render(area, buf);
@@ -166,7 +166,7 @@ impl<'a, T: Display> StatefulPopupList<'a, T> {
     }
 }
 
-impl<'a, T: Display> StatefulWidget for StatefulPopupList<'a, T> {
+impl<T: Display> StatefulWidget for StatefulPopupList<'_, T> {
     type State = PopupListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {

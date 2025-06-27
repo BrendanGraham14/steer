@@ -64,9 +64,7 @@ impl ChatStore {
 
     /// Add a message row
     pub fn add_message(&mut self, message: Message) -> usize {
-        let row = MessageRow {
-            inner: message,
-        };
+        let row = MessageRow { inner: message };
 
         if self.current_thread.is_none() {
             self.current_thread = Some(*row.inner.thread_id());
@@ -100,7 +98,6 @@ impl ChatStore {
         self.items.get(idx)
     }
 
-
     /// Retain all messages that are either in the selected thread **or** are
     /// ancestors (by `parent_message_id`) of any message in that thread.
     ///
@@ -114,8 +111,9 @@ impl ChatStore {
             .items
             .iter()
             .filter_map(|item| match item {
-                ChatItem::Message(row)
-                    if *row.inner.thread_id() == keep_thread_id => Some(row.inner.id().to_string()),
+                ChatItem::Message(row) if *row.inner.thread_id() == keep_thread_id => {
+                    Some(row.inner.id().to_string())
+                }
                 _ => None,
             })
             .collect();
@@ -129,14 +127,10 @@ impl ChatStore {
                 continue;
             }
             // Find the message row for this id so we can follow its parent.
-            if let Some(parent_id) = self
-                .items
-                .iter()
-                .find_map(|item| match item {
-                    ChatItem::Message(row) if row.inner.id() == id => row.inner.parent_message_id(),
-                    _ => None,
-                })
-            {
+            if let Some(parent_id) = self.items.iter().find_map(|item| match item {
+                ChatItem::Message(row) if row.inner.id() == id => row.inner.parent_message_id(),
+                _ => None,
+            }) {
                 queue.push(parent_id.to_string());
             }
         }

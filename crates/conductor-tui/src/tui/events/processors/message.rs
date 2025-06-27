@@ -3,10 +3,10 @@
 //! Processes events that add, update, or modify messages in the conversation,
 //! including streaming message parts and message restoration.
 
-use conductor_core::app::AppEvent;
-use conductor_core::app::conversation::AssistantContent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItem;
+use conductor_core::app::AppEvent;
+use conductor_core::app::conversation::AssistantContent;
 
 /// Processor for message-related events
 pub struct MessageEventProcessor;
@@ -43,7 +43,11 @@ impl EventProcessor for MessageEventProcessor {
                 for item in ctx.chat_store.iter_mut() {
                     if let ChatItem::Message(row) = item {
                         if row.inner.id() == id {
-                            if let conductor_core::app::conversation::Message::Assistant { content: blocks, .. } = &mut row.inner {
+                            if let conductor_core::app::conversation::Message::Assistant {
+                                content: blocks,
+                                ..
+                            } = &mut row.inner
+                            {
                                 blocks.clear();
                                 blocks.push(AssistantContent::Text { text: content });
                                 *ctx.messages_updated = true;
@@ -67,7 +71,11 @@ impl EventProcessor for MessageEventProcessor {
                 for item in ctx.chat_store.iter_mut() {
                     if let ChatItem::Message(row) = item {
                         if row.inner.id() == id {
-                            if let conductor_core::app::conversation::Message::Assistant { content: blocks, .. } = &mut row.inner {
+                            if let conductor_core::app::conversation::Message::Assistant {
+                                content: blocks,
+                                ..
+                            } = &mut row.inner
+                            {
                                 if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
                                     text.push_str(&delta);
                                     *ctx.messages_updated = true;
@@ -99,7 +107,11 @@ impl EventProcessor for MessageEventProcessor {
 }
 
 impl MessageEventProcessor {
-    fn handle_message_added(&self, message: conductor_core::app::Message, ctx: &mut ProcessingContext) {
+    fn handle_message_added(
+        &self,
+        message: conductor_core::app::Message,
+        ctx: &mut ProcessingContext,
+    ) {
         let old_thread_id = ctx.chat_store.current_thread();
         let new_message_thread_id = *message.thread_id();
 
@@ -130,7 +142,11 @@ impl MessageEventProcessor {
                     // update it with the real parameters
                     if let Some(idx) = ctx.tool_registry.get_message_index(&tool_call.id) {
                         if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                            if let conductor_core::app::conversation::Message::Tool { tool_use_id, .. } = &mut row.inner {
+                            if let conductor_core::app::conversation::Message::Tool {
+                                tool_use_id,
+                                ..
+                            } = &mut row.inner
+                            {
                                 if tool_use_id == &tool_call.id {
                                     // Tool messages are already properly handled, we just needed to update the registry
                                 }
@@ -149,17 +165,18 @@ impl MessageEventProcessor {
                 ..
             } => {
                 let idx = ctx.get_or_create_tool_index(tool_use_id, None);
-                
+
                 // Update the existing placeholder with the real result
                 if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
                     if let conductor_core::app::conversation::Message::Tool {
                         result: existing_result,
                         ..
-                    } = &mut row.inner {
+                    } = &mut row.inner
+                    {
                         *existing_result = result.clone();
                     }
                 }
-                
+
                 *ctx.messages_updated = true;
             }
             _ => {
@@ -173,7 +190,7 @@ impl MessageEventProcessor {
         if let Some(old_id) = old_thread_id {
             if old_id != new_message_thread_id {
                 tracing::debug!(
-                    target: "tui.message_event", 
+                    target: "tui.message_event",
                     "Thread switch detected from {} to {}. Pruning message store.",
                     old_id, new_message_thread_id
                 );
@@ -192,17 +209,17 @@ impl Default for MessageEventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::{AssistantContent, Message};
-    use conductor_core::app::io::AppCommandSink;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::chat_list::ChatListState;
     use anyhow::Result;
     use async_trait::async_trait;
+    use conductor_core::app::AppCommand;
+    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::io::AppCommandSink;
+    use conductor_tools::schema::ToolCall;
     use serde_json::json;
     use std::sync::Arc;
-    use conductor_tools::schema::ToolCall;
 
     // Mock command sink for tests
     struct MockCommandSink;
@@ -341,7 +358,8 @@ mod tests {
         assert!(matches!(result, ProcessingResult::Handled));
 
         // Verify the registry was updated with real params
-        let stored_call = tool_registry.get_tool_call(&tool_id)
+        let stored_call = tool_registry
+            .get_tool_call(&tool_id)
             .expect("Tool call should be in registry");
         assert_eq!(stored_call.parameters, real_params);
         assert_eq!(stored_call.name, "view");

@@ -52,7 +52,8 @@ impl EventProcessor for ToolEventProcessor {
                 // didn't have the ToolCall yet. Check again and update if needed.
                 if let Some(real_call) = ctx.tool_registry.get_tool_call(&id) {
                     if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                        if let conductor_core::app::conversation::Message::Tool { .. } = &row.inner {
+                        if let conductor_core::app::conversation::Message::Tool { .. } = &row.inner
+                        {
                             // The tool message has been created, registry has been updated
                             tracing::debug!(
                                 target: "tui.tool_event",

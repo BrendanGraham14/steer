@@ -16,21 +16,19 @@ impl From<ModelArg> for Model {
 impl clap::ValueEnum for ModelArg {
     fn value_variants<'a>() -> &'a [Self] {
         use once_cell::sync::Lazy;
-        static VARIANTS: Lazy<Vec<ModelArg>> = Lazy::new(|| {
-            Model::iter().map(ModelArg).collect()
-        });
+        static VARIANTS: Lazy<Vec<ModelArg>> = Lazy::new(|| Model::iter().map(ModelArg).collect());
         &VARIANTS
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
         let s: &'static str = self.0.into();
         let mut pv = clap::builder::PossibleValue::new(s);
-        
+
         // Add all aliases from the Model enum
         for alias in self.0.aliases() {
             pv = pv.alias(alias);
         }
-        
+
         Some(pv)
     }
 }
@@ -102,7 +100,7 @@ pub enum Commands {
         /// Custom system prompt to use instead of the default
         #[arg(long)]
         system_prompt: Option<String>,
-        
+
         /// Connect to a remote gRPC server (overrides global --remote)
         #[arg(long)]
         remote: Option<String>,

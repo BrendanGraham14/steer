@@ -808,7 +808,7 @@ async fn update_session_state_for_event(
                 // Fallback for empty session
                 (uuid::Uuid::now_v7(), None)
             };
-            
+
             let tool_message = ConversationMessage::Tool {
                 tool_use_id: tool_call_id.clone(),
                 result: crate::app::conversation::ToolResult::Success {
@@ -841,7 +841,7 @@ async fn update_session_state_for_event(
                 // Fallback for empty session
                 (uuid::Uuid::now_v7(), None)
             };
-            
+
             let tool_message = ConversationMessage::Tool {
                 tool_use_id: tool_call_id.clone(),
                 result: crate::app::conversation::ToolResult::Error {

@@ -24,8 +24,10 @@ impl Command for ListSessionCommand {
         }
 
         // Local session handling
-        let store_config = conductor_core::utils::session::resolve_session_store_config(self.session_db.clone())?;
-        let session_store = conductor_core::utils::session::create_session_store_with_config(store_config).await?;
+        let store_config =
+            conductor_core::utils::session::resolve_session_store_config(self.session_db.clone())?;
+        let session_store =
+            conductor_core::utils::session::create_session_store_with_config(store_config).await?;
         let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
 
         let session_manager_config = SessionManagerConfig {

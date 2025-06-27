@@ -1,12 +1,12 @@
 use super::{ToolFormatter, helpers::*};
-use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
+use conductor_core::app::conversation::ToolResult;
+use conductor_tools::tools::ls::LsParams;
 use ratatui::{
     style::Style,
     text::{Line, Span},
 };
 use serde_json::Value;
-use conductor_tools::tools::ls::LsParams;
 
 pub struct LsFormatter;
 
