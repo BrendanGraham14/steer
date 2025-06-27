@@ -42,7 +42,6 @@ impl ToolFormatter for DispatchAgentFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("AGENT ", styles::DIM_TEXT),
             Span::styled(format!("task='{}' ", preview), Style::default()),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));

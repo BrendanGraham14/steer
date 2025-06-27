@@ -1,13 +1,13 @@
 use super::{ToolFormatter, helpers::*};
-use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
+use conductor_core::app::conversation::ToolResult;
+use conductor_tools::tools::edit::{EditParams, multi_edit::MultiEditParams};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 use serde_json::Value;
 use similar::{ChangeTag, TextDiff};
-use conductor_tools::tools::edit::{EditParams, multi_edit::MultiEditParams};
 use tracing::debug;
 
 pub struct EditFormatter;
@@ -181,7 +181,7 @@ impl ToolFormatter for EditFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", action), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("file={} ", file_path), Style::default()),
+            Span::styled(format!("{} ", file_path), Style::default()),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));
 

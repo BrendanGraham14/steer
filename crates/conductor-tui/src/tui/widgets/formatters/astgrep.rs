@@ -42,7 +42,6 @@ impl ToolFormatter for AstGrepFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("ASTGREP ", styles::DIM_TEXT),
             Span::styled(format!("pattern='{}' ", params.pattern), Style::default()),
             Span::styled(format!("path={} ", path_display), styles::DIM_TEXT),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),

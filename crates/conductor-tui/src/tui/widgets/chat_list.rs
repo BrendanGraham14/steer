@@ -2,6 +2,7 @@
 
 use crate::tui::model::{ChatItem, MessageRow, NoticeLevel};
 use crate::tui::widgets::formatters;
+use crate::tui::widgets::styles;
 use conductor_core::app::conversation::{AssistantContent, Message, ToolResult};
 use ratatui::{
     buffer::Buffer,
@@ -513,7 +514,15 @@ impl<'a> ChatList<'a> {
                                             if first_output.width()
                                                 < (wrap_width - tool_call.name.len() - 5)
                                             {
-                                                first_line.push(Span::raw(" • "));
+                                                // Add status indicator or bullet
+                                                match result {
+                                                    ToolResult::Success { .. } => {
+                                                        first_line.push(Span::styled(" ✓ ", styles::TOOL_SUCCESS));
+                                                    }
+                                                    ToolResult::Error { .. } => {
+                                                        first_line.push(Span::styled(" ✗ ", styles::ERROR_TEXT));
+                                                    }
+                                                }
                                                 first_line.extend(first_output.spans.clone());
                                                 lines.push(Line::from(first_line));
 
@@ -525,6 +534,17 @@ impl<'a> ChatList<'a> {
                                                     lines.push(Line::from(indented_spans));
                                                 }
                                             } else {
+                                                // Add status indicator on first line if we have result
+                                                if view_mode == ViewMode::Compact {
+                                                    match result {
+                                                        ToolResult::Success { .. } => {
+                                                            first_line.push(Span::styled(" ✓", styles::TOOL_SUCCESS));
+                                                        }
+                                                        ToolResult::Error { .. } => {
+                                                            first_line.push(Span::styled(" ✗", styles::ERROR_TEXT));
+                                                        }
+                                                    }
+                                                }
                                                 lines.push(Line::from(first_line));
                                                 // Add all lines with indent
                                                 for line in formatted_lines {
@@ -835,11 +855,11 @@ impl<'a> StatefulWidget for ChatList<'a> {
                 );
 
                 // Calculate where to start rendering this item
-                let render_y = if item_y < visible_start {
+                let _render_y = if item_y < visible_start {
                     // Item starts above visible area, skip some lines
                     let skip_lines = (visible_start - item_y) as usize;
                     if skip_lines < lines.len() {
-                        for (line_idx, line) in lines.iter().skip(skip_lines).enumerate() {
+                        for (_line_idx, line) in lines.iter().skip(skip_lines).enumerate() {
                             if current_y < list_area.height {
                                 let y = list_area.y + current_y;
                                 let x = list_area.x;

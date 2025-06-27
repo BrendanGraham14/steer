@@ -44,7 +44,6 @@ impl ToolFormatter for LsFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("LS ", styles::DIM_TEXT),
             Span::styled(format!("path={} ", dir_name), Style::default()),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));
