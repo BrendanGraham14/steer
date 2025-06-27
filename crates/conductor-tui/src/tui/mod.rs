@@ -1053,11 +1053,24 @@ impl Tui {
             let title = Line::from(vec![
                 Span::raw(" Tool Approval Required "),
                 Span::raw("─ "),
-                Span::styled("[Y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Y]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" once "),
-                Span::styled("[A]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[A]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("lways "),
-                Span::styled("[N]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[N]",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("o "),
             ]);
 
@@ -1090,7 +1103,7 @@ impl Tui {
                         InputMode::ConfirmExit =>
                             " Really quit? (y/Y to confirm, any other key to cancel) ",
                         InputMode::EditMessageSelection =>
-                            " Select Message To Edit (↑↓ to navigate, Enter to select, Esc to cancel) ",
+                            " Select message to edit (↑↓ to navigate, Enter to select, Esc to cancel) ",
                     }
                 ))
                 .style(match input_mode {
