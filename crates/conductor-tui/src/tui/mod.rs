@@ -1050,34 +1050,24 @@ impl Tui {
 
             // Add the formatted preview
             approval_text.extend(preview_lines);
-            approval_text.push(Line::from(""));
-            approval_text.push(Line::from(vec![
-                Span::styled(
-                    "[Y]",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("es once | "),
-                Span::styled(
-                    "[A]",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("lways | "),
-                Span::styled(
-                    "[N]",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("o/Esc to reject"),
-            ]));
+
+            // Create the title with embedded options
+            let title = Line::from(vec![
+                Span::raw(" Tool Approval Required "),
+                Span::raw("─ "),
+                Span::styled("[Y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::raw(" once "),
+                Span::styled("[A]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::raw("lways "),
+                Span::styled("[N]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::raw("o "),
+            ]);
 
             let approval_block = Paragraph::new(approval_text)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Tool Approval Required ")
+                        .title(title)
                         .style(Style::default().fg(ratatui::style::Color::Yellow)),
                 )
                 .style(Style::default().fg(ratatui::style::Color::White));
