@@ -26,8 +26,6 @@ pub enum ViewMode {
 pub struct ChatListState {
     /// Current scroll offset (row-based)
     pub offset: u16,
-    /// Currently selected item index (if any)
-    pub selected: Option<usize>,
     /// View preferences
     pub view_mode: ViewMode,
     /// Cached visible range for efficient rendering
@@ -58,7 +56,6 @@ impl ChatListState {
     pub fn new() -> Self {
         Self {
             offset: 0,
-            selected: None,
             view_mode: ViewMode::Compact,
             visible_range: None,
             total_content_height: 0,
@@ -83,43 +80,9 @@ impl ChatListState {
         self.user_scrolled = true;
     }
 
-    pub fn select(&mut self, index: Option<usize>) {
-        self.selected = index;
-    }
-
-    pub fn selected(&self) -> Option<usize> {
-        self.selected
-    }
-
-    pub fn select_next(&mut self, total: usize) {
-        if total == 0 {
-            return;
-        }
-        self.selected = Some(match self.selected {
-            None => 0,
-            Some(i) => (i + 1) % total,
-        });
-    }
-
-    pub fn select_previous(&mut self) {
-        if let Some(i) = self.selected {
-            self.selected = Some(if i == 0 { 0 } else { i - 1 });
-        }
-    }
-
-    pub fn select_first(&mut self) {
-        self.selected = Some(0);
-    }
-
-    pub fn select_last(&mut self, total: usize) {
-        if total > 0 {
-            self.selected = Some(total - 1);
-        }
-    }
-
     pub fn scroll_to_top(&mut self) {
         self.offset = 0;
-        self.selected = Some(0);
+        self.user_scrolled = true;
     }
 
     pub fn is_at_bottom(&self) -> bool {
@@ -134,17 +97,31 @@ impl ChatListState {
         // We're at bottom if offset is at max or if user hasn't manually scrolled
         !self.user_scrolled || self.offset >= max_offset
     }
+
+    /// Scroll to center a specific item in the viewport
+    pub fn scroll_to_item(&mut self, index: usize) {
+        // Mark that we need to scroll to a specific item
+        // The actual scrolling will happen during render when we know item positions
+        self.user_scrolled = true;
+        // Use a special offset value to indicate we need to calculate scroll position for item
+        self.offset = u16::MAX - 1 - (index as u16); // Encode the index in the offset
+    }
 }
 
 /// The ChatList widget
 pub struct ChatList<'a> {
     items: &'a [ChatItem],
     block: Option<Block<'a>>,
+    hovered_message_id: Option<&'a str>,
 }
 
 impl<'a> ChatList<'a> {
     pub fn new(items: &'a [ChatItem]) -> Self {
-        Self { items, block: None }
+        Self {
+            items,
+            block: None,
+            hovered_message_id: None,
+        }
     }
 
     pub fn block(mut self, block: Block<'a>) -> Self {
@@ -152,7 +129,12 @@ impl<'a> ChatList<'a> {
         self
     }
 
-    fn render_gutter(&self, message: &MessageRow, selected: bool) -> Line<'static> {
+    pub fn hovered_message_id(mut self, id: Option<&'a str>) -> Self {
+        self.hovered_message_id = id;
+        self
+    }
+
+    fn render_gutter(&self, message: &MessageRow, is_hovered: bool) -> Line<'static> {
         let mut spans = vec![];
 
         // Role indicator
@@ -162,7 +144,8 @@ impl<'a> ChatList<'a> {
             Message::Tool { .. } => ("⚙", Color::Cyan),
         };
 
-        let style = if selected {
+        let style = if is_hovered {
+            // Hovered style - reversed or highlighted
             Style::default().fg(color).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(color)
@@ -173,26 +156,27 @@ impl<'a> ChatList<'a> {
         Line::from(spans)
     }
 
-    fn render_meta_gutter(&self, selected: bool) -> Line<'static> {
-        let style = if selected {
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-
+    fn render_meta_gutter(&self) -> Line<'static> {
+        let style = Style::default().fg(Color::Gray);
         Line::from(vec![Span::styled("•", style)])
     }
 
     fn render_chat_item(
         &self,
         item: &ChatItem,
-        selected: bool,
         width: u16,
         view_mode: ViewMode,
     ) -> (Vec<Line<'static>>, u16) {
         let max_width = (width.saturating_sub(4)) as usize; // 4 for gutter + minimal padding
+
+        // Check if this message is hovered
+        let is_hovered = if let ChatItem::Message(row) = item {
+            self.hovered_message_id
+                .map(|id| id == row.inner.id())
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         match item {
             ChatItem::Message(row) => {
@@ -204,7 +188,7 @@ impl<'a> ChatList<'a> {
                     Message::User { content, .. } => {
                         // Handle empty content
                         if content.is_empty() {
-                            lines.push(self.render_gutter(row, selected));
+                            lines.push(self.render_gutter(row, is_hovered));
                         } else {
                             // Render user content blocks
                             for (idx, block) in content.iter().enumerate() {
@@ -217,7 +201,7 @@ impl<'a> ChatList<'a> {
                                         if idx == 0 && line_idx == 0 {
                                             // First line goes with the gutter
                                             let mut first_line = vec![];
-                                            first_line.extend(self.render_gutter(row, selected).spans);
+                                            first_line.extend(self.render_gutter(row, is_hovered).spans);
                                             first_line.push(Span::raw(" "));
                                             first_line.push(Span::raw(wrapped_line.to_string()));
                                             lines.push(Line::from(first_line));
@@ -239,7 +223,7 @@ impl<'a> ChatList<'a> {
                                     // Add gutter if this is the first block
                                     if idx == 0 {
                                         let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, selected).spans);
+                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
                                         cmd_line.push(Span::raw(" "));
                                         cmd_line.push(Span::styled("$ ", Style::default().fg(Color::Yellow)));
                                         cmd_line.push(Span::raw(command.clone()));
@@ -247,7 +231,7 @@ impl<'a> ChatList<'a> {
                                     } else {
                                         lines.push(Line::from(""));
                                         let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, selected).spans);
+                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
                                         cmd_line.push(Span::raw(" "));
                                         cmd_line.push(Span::styled("$ ", Style::default().fg(Color::Yellow)));
                                         cmd_line.push(Span::raw(command.clone()));
@@ -308,14 +292,14 @@ impl<'a> ChatList<'a> {
                                     // Add gutter if this is the first block
                                     if idx == 0 {
                                         let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, selected).spans);
+                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
                                         cmd_line.push(Span::raw(" "));
                                         cmd_line.push(Span::styled(command_str, Style::default().fg(Color::Magenta)));
                                         lines.push(Line::from(cmd_line));
                                     } else {
                                         lines.push(Line::from(""));
                                         let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, selected).spans);
+                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
                                         cmd_line.push(Span::raw(" "));
                                         cmd_line.push(Span::styled(command_str, Style::default().fg(Color::Magenta)));
                                         lines.push(Line::from(cmd_line));
@@ -355,7 +339,7 @@ impl<'a> ChatList<'a> {
                     }
                     Message::Assistant { content, .. } => {
                         let mut first_content_rendered = false;
-                        
+
                         // Render assistant content blocks
                         for (idx, block) in content.iter().enumerate() {
                             match block {
@@ -364,7 +348,7 @@ impl<'a> ChatList<'a> {
                                     if text.trim().is_empty() {
                                         continue;
                                     }
-                                    
+
                                     // Wrap the text properly
                                     let wrapped = textwrap::wrap(text, max_width.saturating_sub(3)); // Account for indent
 
@@ -374,7 +358,7 @@ impl<'a> ChatList<'a> {
                                             let mut first_line = vec![];
                                             first_line.push(Span::raw("  ")); // Indent the glyph
                                             first_line
-                                                .extend(self.render_gutter(row, selected).spans);
+                                                .extend(self.render_gutter(row, is_hovered).spans);
                                             first_line.push(Span::raw(" "));
                                             first_line.push(Span::raw(wrapped_line.to_string()));
                                             lines.push(Line::from(first_line));
@@ -408,7 +392,8 @@ impl<'a> ChatList<'a> {
                                             // First line goes with the indented gutter
                                             let mut first_line = vec![];
                                             first_line.push(Span::raw("  ")); // Indent
-                                            first_line.extend(self.render_gutter(row, selected).spans);
+                                            first_line
+                                                .extend(self.render_gutter(row, is_hovered).spans);
                                             first_line.push(Span::raw(" "));
                                             first_line.push(Span::styled(
                                                 wrapped_line.to_string(),
@@ -433,12 +418,12 @@ impl<'a> ChatList<'a> {
                                 }
                             }
                         }
-                        
+
                         // If no content was rendered, just show the glyph
                         if !first_content_rendered {
                             let mut glyph_line = vec![];
                             glyph_line.push(Span::raw("  ")); // Indent
-                            glyph_line.extend(self.render_gutter(row, selected).spans);
+                            glyph_line.extend(self.render_gutter(row, is_hovered).spans);
                             lines.push(Line::from(glyph_line));
                         }
                     }
@@ -499,7 +484,8 @@ impl<'a> ChatList<'a> {
                                         // First line with indented gutter and tool name
                                         let mut first_line = vec![];
                                         first_line.push(Span::raw("  ")); // Indent
-                                        first_line.extend(self.render_gutter(row, selected).spans);
+                                        first_line
+                                            .extend(self.render_gutter(row, is_hovered).spans);
                                         first_line.push(Span::raw(" "));
                                         first_line.push(Span::styled(
                                             tool_call.name.clone(),
@@ -517,10 +503,16 @@ impl<'a> ChatList<'a> {
                                                 // Add status indicator or bullet
                                                 match result {
                                                     ToolResult::Success { .. } => {
-                                                        first_line.push(Span::styled(" ✓ ", styles::TOOL_SUCCESS));
+                                                        first_line.push(Span::styled(
+                                                            " ✓ ",
+                                                            styles::TOOL_SUCCESS,
+                                                        ));
                                                     }
                                                     ToolResult::Error { .. } => {
-                                                        first_line.push(Span::styled(" ✗ ", styles::ERROR_TEXT));
+                                                        first_line.push(Span::styled(
+                                                            " ✗ ",
+                                                            styles::ERROR_TEXT,
+                                                        ));
                                                     }
                                                 }
                                                 first_line.extend(first_output.spans.clone());
@@ -538,10 +530,16 @@ impl<'a> ChatList<'a> {
                                                 if view_mode == ViewMode::Compact {
                                                     match result {
                                                         ToolResult::Success { .. } => {
-                                                            first_line.push(Span::styled(" ✓", styles::TOOL_SUCCESS));
+                                                            first_line.push(Span::styled(
+                                                                " ✓",
+                                                                styles::TOOL_SUCCESS,
+                                                            ));
                                                         }
                                                         ToolResult::Error { .. } => {
-                                                            first_line.push(Span::styled(" ✗", styles::ERROR_TEXT));
+                                                            first_line.push(Span::styled(
+                                                                " ✗",
+                                                                styles::ERROR_TEXT,
+                                                            ));
                                                         }
                                                     }
                                                 }
@@ -574,7 +572,7 @@ impl<'a> ChatList<'a> {
                         // Fallback if we can't find the tool call (shouldn't happen)
                         let mut fallback_line = vec![];
                         fallback_line.push(Span::raw("  ")); // Indent
-                        fallback_line.extend(self.render_gutter(row, selected).spans);
+                        fallback_line.extend(self.render_gutter(row, is_hovered).spans);
                         fallback_line.push(Span::raw(" "));
                         fallback_line.push(Span::styled(
                             "Tool Result",
@@ -608,10 +606,10 @@ impl<'a> ChatList<'a> {
 
             ChatItem::SlashInput { raw, ts, .. } => {
                 let mut lines = vec![];
-                
+
                 // Render gutter and slash command on same line
                 let mut first_line = vec![];
-                first_line.extend(self.render_meta_gutter(selected).spans);
+                first_line.extend(self.render_meta_gutter().spans);
                 first_line.push(Span::raw(" "));
                 first_line.push(Span::styled(
                     raw.clone(),
@@ -679,7 +677,7 @@ impl<'a> ChatList<'a> {
 
                 // Render gutter and command on same line
                 let mut first_line = vec![];
-                first_line.extend(self.render_meta_gutter(selected).spans);
+                first_line.extend(self.render_meta_gutter().spans);
                 first_line.push(Span::raw(" "));
                 first_line.push(Span::styled(
                     command_str.to_string(),
@@ -688,7 +686,10 @@ impl<'a> ChatList<'a> {
                         .add_modifier(Modifier::BOLD),
                 ));
                 first_line.push(Span::raw(": "));
-                first_line.push(Span::styled(response_str, Style::default().fg(Color::White)));
+                first_line.push(Span::styled(
+                    response_str,
+                    Style::default().fg(Color::White),
+                ));
                 lines.push(Line::from(first_line));
 
                 // If detailed view and response is long text, show full content
@@ -732,7 +733,7 @@ impl<'a> ChatList<'a> {
 
                 // Render gutter and notice on same line
                 let mut first_line = vec![];
-                first_line.extend(self.render_meta_gutter(selected).spans);
+                first_line.extend(self.render_meta_gutter().spans);
                 first_line.push(Span::raw(" "));
                 first_line.push(Span::styled(prefix, Style::default().fg(color)));
                 first_line.push(Span::raw(text.clone()));
@@ -771,12 +772,7 @@ impl<'a> StatefulWidget for ChatList<'a> {
         let mut total_height = 0u16;
 
         for (idx, item) in self.items.iter().enumerate() {
-            let (_, height) = self.render_chat_item(
-                item,
-                state.selected == Some(idx),
-                list_area.width,
-                state.view_mode,
-            );
+            let (_, height) = self.render_chat_item(item, list_area.width, state.view_mode);
 
             item_positions.push((idx, total_height, height));
             total_height += height;
@@ -799,6 +795,27 @@ impl<'a> StatefulWidget for ChatList<'a> {
             // Scroll to bottom or fit in view
             state.offset = total_height.saturating_sub(list_area.height);
             state.user_scrolled = false;
+        } else if state.offset > u16::MAX - 100 {
+            // Special case: scroll to specific item
+            // Decode the index from the offset
+            let target_idx = (u16::MAX - 1 - state.offset) as usize;
+
+            if let Some(&(_, y, height)) = item_positions.get(target_idx) {
+                // Try to center the item
+                let half_viewport = list_area.height / 2;
+                let item_center = y + height / 2;
+
+                if item_center > half_viewport {
+                    state.offset = item_center - half_viewport;
+                } else {
+                    state.offset = 0;
+                }
+
+                // Ensure we don't scroll past the bottom
+                state.offset = state
+                    .offset
+                    .min(total_height.saturating_sub(list_area.height));
+            }
         } else {
             // Ensure we don't scroll past the bottom
             state.offset = state
@@ -847,12 +864,7 @@ impl<'a> StatefulWidget for ChatList<'a> {
                 }
 
                 let item = &self.items[idx];
-                let (lines, _) = self.render_chat_item(
-                    item,
-                    state.selected == Some(idx),
-                    list_area.width,
-                    state.view_mode,
-                );
+                let (lines, _) = self.render_chat_item(item, list_area.width, state.view_mode);
 
                 // Calculate where to start rendering this item
                 let _render_y = if item_y < visible_start {
@@ -904,7 +916,7 @@ impl<'a> StatefulWidget for ChatList<'a> {
                         current_y += 1;
                     }
                 };
-                
+
                 // Add spacing between messages (but not after the last item)
                 if idx + 1 < self.items.len() && matches!(item, ChatItem::Message(_)) {
                     if current_y < list_area.height {
