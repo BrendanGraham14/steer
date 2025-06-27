@@ -28,11 +28,11 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use tui_textarea::{Input, Key, TextArea};
 
 use crate::tui::events::pipeline::EventPipeline;
@@ -101,6 +101,8 @@ enum InputMode {
     SelectingModel,
     /// Confirm exit dialog
     ConfirmExit,
+    /// Edit message selection mode with fuzzy filtering
+    EditMessageSelection,
 }
 
 /// Main TUI application state
@@ -141,6 +143,9 @@ pub struct Tui {
     event_pipeline: EventPipeline,
     /// Message view model (data + ui state)
     view_model: MessageViewModel,
+    /// Edit message selection state
+    edit_selection_index: usize,
+    edit_selection_messages: Vec<(String, String)>, // (id, content)
 }
 
 impl Tui {
@@ -204,6 +209,8 @@ impl Tui {
 
             event_pipeline: Self::create_event_pipeline(),
             view_model: MessageViewModel::new(),
+            edit_selection_index: 0,
+            edit_selection_messages: Vec::new(),
         };
 
         // Restore messages using the public method
@@ -432,7 +439,8 @@ impl Tui {
             let textarea_ref = &self.textarea;
 
             // Clone the required fields to avoid borrowing conflicts
-            let (models_clone, popup_state_clone) = (self.models.clone(), self.popup_state.clone());
+            let (models_clone, _popup_state_clone) =
+                (self.models.clone(), self.popup_state.clone());
 
             // Get chat items from the chat store
             let chat_items = self.view_model.chat_store.as_slice();
@@ -449,6 +457,8 @@ impl Tui {
                 self.view_model.current_thread,
                 is_processing,
                 spinner_state,
+                &self.edit_selection_messages,
+                self.edit_selection_index,
             ) {
                 error!(target:"tui.run.draw", "UI rendering failed: {}", e);
             }
@@ -553,12 +563,12 @@ impl Tui {
             InputMode::AwaitingApproval => self.handle_approval_mode(key).await,
             InputMode::SelectingModel => self.handle_model_selection_mode(key).await,
             InputMode::ConfirmExit => self.handle_confirm_exit_mode(key).await,
+            InputMode::EditMessageSelection => self.handle_edit_selection_mode(key).await,
         }
     }
 
     async fn handle_normal_mode(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
-            KeyCode::Char('q') => return Ok(true),
             KeyCode::Char('i') => {
                 self.input_mode = InputMode::Insert;
                 self.previous_insert_text = self.textarea.lines().join("\n");
@@ -580,19 +590,8 @@ impl Tui {
                     .select_last(self.view_model.chat_store.len());
             }
             KeyCode::Char('e') => {
-                // Edit selected message
-                if let Some(selected) = self.view_model.chat_list_state.selected() {
-                    if selected < self.view_model.chat_store.len() {
-                        if let Some(item) = self.view_model.chat_store.get(selected) {
-                            if let crate::tui::model::ChatItem::Message(row) = item {
-                                if let Message::User { .. } = &row.inner {
-                                    let msg_id = row.inner.id().to_string();
-                                    self.enter_edit_mode(&msg_id);
-                                }
-                            }
-                        }
-                    }
-                }
+                // Enter edit message selection mode
+                self.enter_edit_selection_mode();
             }
             KeyCode::PageUp => {
                 self.view_model.chat_list_state.scroll_up(10);
@@ -652,8 +651,6 @@ impl Tui {
             KeyCode::Char('!') => {
                 // Enter bash command mode
                 self.input_mode = InputMode::BashCommand;
-                self.textarea = TextArea::default(); // Clear textarea for bash command
-                self.previous_insert_text = String::new();
             }
             KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Ctrl-M: Show model selection popup
@@ -916,6 +913,78 @@ impl Tui {
         }
     }
 
+    /// Enter edit message selection mode
+    fn enter_edit_selection_mode(&mut self) {
+        self.input_mode = InputMode::EditMessageSelection;
+        self.edit_selection_index = 0;
+
+        // Collect all user messages
+        let user_messages: Vec<(String, String)> = self
+            .view_model
+            .chat_store
+            .as_slice()
+            .iter()
+            .filter_map(|item| {
+                if let crate::tui::model::ChatItem::Message(row) = item {
+                    if let Message::User { content, .. } = &row.inner {
+                        // Extract text content from user blocks
+                        let text = content
+                            .iter()
+                            .filter_map(|block| match block {
+                                conductor_core::app::conversation::UserContent::Text { text } => {
+                                    Some(text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        Some((row.inner.id().to_string(), text))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.edit_selection_messages = user_messages;
+    }
+
+    /// Handle edit message selection mode input
+    async fn handle_edit_selection_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => {
+                // Exit edit selection mode
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Enter => {
+                // Select the currently highlighted message
+                if !self.edit_selection_messages.is_empty()
+                    && self.edit_selection_index < self.edit_selection_messages.len()
+                {
+                    let (message_id, _) =
+                        self.edit_selection_messages[self.edit_selection_index].clone();
+                    self.enter_edit_mode(&message_id);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                // Move selection up
+                if self.edit_selection_index > 0 {
+                    self.edit_selection_index -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                // Move selection down
+                if self.edit_selection_index + 1 < self.edit_selection_messages.len() {
+                    self.edit_selection_index += 1;
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     /// Static UI rendering function
     #[allow(clippy::too_many_arguments)]
     fn render_ui_static(
@@ -926,10 +995,12 @@ impl Tui {
         input_mode: InputMode,
         current_model: &Model,
         current_approval: Option<&ToolCall>,
-        cached_renderer: &CachedContentRenderer,
-        current_thread: Option<uuid::Uuid>,
+        _cached_renderer: &CachedContentRenderer,
+        _current_thread: Option<uuid::Uuid>,
         is_processing: bool,
         spinner_state: usize,
+        edit_selection_messages: &[(String, String)],
+        edit_selection_index: usize,
     ) -> Result<()> {
         let size = f.area();
 
@@ -944,7 +1015,7 @@ impl Tui {
             .split(size);
 
         // Render messages
-        let message_block = Block::default()
+        let _message_block = Block::default()
             .borders(Borders::ALL)
             .title(" Messages ")
             .style(Style::default().fg(ratatui::style::Color::DarkGray));
@@ -1024,12 +1095,14 @@ impl Tui {
                     },
                     match input_mode {
                         InputMode::Insert => " Insert (Alt-Enter to send, Esc to cancel) ",
-                        InputMode::Normal =>
-                            " (i to edit, ! for bash, u/d/j/k to scroll, q to quit) ",
+                        InputMode::Normal => " (i to insert, ! for bash, u/d/j/k to scroll) ",
                         InputMode::BashCommand => " Bash (Enter to execute, Esc to cancel) ",
                         InputMode::AwaitingApproval => " Awaiting Approval",
                         InputMode::SelectingModel => " Model Selection",
-                        InputMode::ConfirmExit => " Really quit? (y/Y to confirm, any other key to cancel) ",
+                        InputMode::ConfirmExit =>
+                            " Really quit? (y/Y to confirm, any other key to cancel) ",
+                        InputMode::EditMessageSelection =>
+                            " Select Message To Edit (↑↓ to navigate, Enter to select, Esc to cancel) ",
                     }
                 ))
                 .style(match input_mode {
@@ -1037,13 +1110,54 @@ impl Tui {
                     InputMode::Normal => Style::default().fg(ratatui::style::Color::DarkGray),
                     InputMode::BashCommand => Style::default().fg(ratatui::style::Color::Cyan),
                     InputMode::ConfirmExit => Style::default().fg(ratatui::style::Color::Red),
+                    InputMode::EditMessageSelection => {
+                        Style::default().fg(ratatui::style::Color::Yellow)
+                    }
                     _ => Style::default(),
                 });
 
             // Clone the textarea and set the block
             let mut textarea_with_block = textarea.clone();
-            textarea_with_block.set_block(input_block);
-            f.render_widget(&textarea_with_block, chunks[1]);
+            textarea_with_block.set_block(input_block.clone());
+
+            // Special rendering for edit message selection mode
+            if input_mode == InputMode::EditMessageSelection {
+                // Use the entire input area for the message list
+                let mut items: Vec<ListItem> = Vec::new();
+
+                if edit_selection_messages.is_empty() {
+                    items.push(
+                        ListItem::new("No user messages to edit")
+                            .style(Style::default().fg(Color::DarkGray)),
+                    );
+                } else {
+                    for (idx, (_, content)) in edit_selection_messages.iter().enumerate() {
+                        let preview = content
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .chars()
+                            .take(chunks[1].width.saturating_sub(4) as usize)
+                            .collect::<String>();
+
+                        let style = if idx == edit_selection_index {
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD)
+                                .add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        };
+
+                        items.push(ListItem::new(preview).style(style));
+                    }
+                }
+
+                let list = List::new(items).block(input_block);
+                f.render_widget(list, chunks[1]);
+            } else {
+                f.render_widget(&textarea_with_block, chunks[1]);
+            }
         }
 
         let status_block = Paragraph::new(format!(" {} ", current_model))
@@ -1158,6 +1272,8 @@ mod tests {
             cached_renderer: CachedContentRenderer::new(Arc::new(RwLock::new(ContentCache::new()))),
             event_pipeline: Tui::create_event_pipeline(),
             view_model: MessageViewModel::new(),
+            edit_selection_index: 0,
+            edit_selection_messages: Vec::new(),
         }
     }
 
