@@ -3,10 +3,7 @@
 //! Manages the overall processing state of the TUI, including thinking/processing
 //! indicators, spinner state, and progress messages.
 
-use conductor_core::app::{
-    AppEvent,
-    conversation::{AppCommandType, UserContent},
-};
+use conductor_core::app::AppEvent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 
 /// Processor for events that affect the overall processing state
@@ -51,19 +48,13 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.current_tool_approval = None;
 
                 // Add cancellation message to the UI
-                let display_id = format!("cancellation_{}", chrono::Utc::now().timestamp_millis());
-                let cancellation_message =
-                    crate::tui::widgets::message_list::MessageContent::User {
-                        id: display_id,
-                        blocks: vec![UserContent::AppCommand {
-                            command: AppCommandType::Cancel,
-                            response: Some(conductor_core::app::conversation::CommandResponse::Text(
-                                format!("Operation cancelled: {}", info),
-                            )),
-                        }],
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    };
-                ctx.messages.push(cancellation_message);
+                let chat_item = crate::tui::model::ChatItem::SystemNotice {
+                    id: crate::tui::model::generate_row_id(),
+                    level: crate::tui::model::NoticeLevel::Info,
+                    text: format!("Operation cancelled: {}", info),
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+                ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
 
                 ProcessingResult::Handled

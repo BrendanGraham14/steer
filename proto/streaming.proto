@@ -36,6 +36,7 @@ message ClientMessage {
     UpdateConfigRequest update_config = 6;
     ExecuteCommandRequest execute_command = 7;
     ExecuteBashCommandRequest execute_bash_command = 8;
+    EditMessageRequest edit_message = 9;
   }
 }
 
@@ -618,4 +619,10 @@ message ExecuteCommandRequest {
 message ExecuteBashCommandRequest {
   string session_id = 1;
   string command = 2;
+}
+
+message EditMessageRequest {
+  string session_id = 1;
+  string message_id = 2;
+  string new_content = 3;
 }

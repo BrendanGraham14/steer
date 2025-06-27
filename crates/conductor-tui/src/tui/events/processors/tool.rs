@@ -3,7 +3,7 @@
 //! Manages tool execution state, approval requests, completion, and failure events.
 
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::widgets::message_list::MessageContent;
+use crate::tui::model::ChatItem;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::ToolResult;
 
@@ -51,14 +51,14 @@ impl EventProcessor for ToolEventProcessor {
                 // The placeholder might have been created with null params if the registry
                 // didn't have the ToolCall yet. Check again and update if needed.
                 if let Some(real_call) = ctx.tool_registry.get_tool_call(&id) {
-                    if let MessageContent::Tool { call, .. } = &mut ctx.messages[idx] {
-                        if call.parameters.is_null() && !real_call.parameters.is_null() {
+                    if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
+                        if let conductor_core::app::conversation::Message::Tool { .. } = &row.inner {
+                            // The tool message has been created, registry has been updated
                             tracing::debug!(
                                 target: "tui.tool_event",
-                                "Updating Tool message {} with real parameters from registry",
+                                "Tool message {} found with registry entry",
                                 id
                             );
-                            *call = real_call.clone();
                         }
                     }
                 } else {
@@ -67,9 +67,6 @@ impl EventProcessor for ToolEventProcessor {
                         "No ToolCall found in registry for id={} at ToolCallStarted",
                         id
                     );
-                    if let MessageContent::Tool { call, .. } = &mut ctx.messages[idx] {
-                        call.name = name.clone();
-                    }
                 }
 
                 *ctx.messages_updated = true;
@@ -85,14 +82,16 @@ impl EventProcessor for ToolEventProcessor {
 
                 let idx = ctx.get_or_create_tool_index(&id, None);
 
-                if let MessageContent::Tool {
-                    result: existing_result,
-                    ..
-                } = &mut ctx.messages[idx]
-                {
-                    *existing_result = Some(ToolResult::Success {
-                        output: result.clone(),
-                    });
+                if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
+                    if let conductor_core::app::conversation::Message::Tool {
+                        result: existing_result,
+                        ..
+                    } = &mut row.inner
+                    {
+                        *existing_result = ToolResult::Success {
+                            output: result.clone(),
+                        };
+                    }
                 }
 
                 // Complete the tool execution in registry
@@ -109,14 +108,16 @@ impl EventProcessor for ToolEventProcessor {
 
                 let idx = ctx.get_or_create_tool_index(&id, None);
 
-                if let MessageContent::Tool {
-                    result: existing_result,
-                    ..
-                } = &mut ctx.messages[idx]
-                {
-                    *existing_result = Some(ToolResult::Error {
-                        error: error.clone(),
-                    });
+                if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
+                    if let conductor_core::app::conversation::Message::Tool {
+                        result: existing_result,
+                        ..
+                    } = &mut row.inner
+                    {
+                        *existing_result = ToolResult::Error {
+                            error: error.clone(),
+                        };
+                    }
                 }
 
                 // Complete the tool execution in registry with error
@@ -160,8 +161,8 @@ mod tests {
     use super::*;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::events::processors::message::MessageEventProcessor;
-    use crate::tui::state::{MessageStore, ToolCallRegistry};
-    use crate::tui::widgets::message_list::{MessageContent, MessageListState};
+    use crate::tui::state::{ChatStore, ToolCallRegistry};
+    use crate::tui::widgets::chat_list::ChatListState;
     use anyhow::Result;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
@@ -182,8 +183,8 @@ mod tests {
     }
 
     fn create_test_context() -> (
-        MessageStore,
-        MessageListState,
+        ChatStore,
+        ChatListState,
         ToolCallRegistry,
         Arc<dyn AppCommandSink>,
         bool,
@@ -193,8 +194,8 @@ mod tests {
         conductor_core::api::Model,
         bool,
     ) {
-        let messages = MessageStore::new();
-        let message_list_state = MessageListState::new();
+        let chat_store = ChatStore::new();
+        let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let is_processing = false;
@@ -205,8 +206,8 @@ mod tests {
         let messages_updated = false;
 
         (
-            messages,
-            message_list_state,
+            chat_store,
+            chat_list_state,
             tool_registry,
             command_sink,
             is_processing,
@@ -223,8 +224,8 @@ mod tests {
         let mut tool_proc = ToolEventProcessor::new();
         let mut msg_proc = MessageEventProcessor::new();
         let (
-            mut messages,
-            mut message_list_state,
+            mut chat_store,
+            mut chat_list_state,
             mut tool_registry,
             command_sink,
             mut is_processing,
@@ -257,8 +258,8 @@ mod tests {
 
         {
             let mut ctx = ProcessingContext {
-                messages: &mut messages,
-                message_list_state: &mut message_list_state,
+                chat_store: &mut chat_store,
+                chat_list_state: &mut chat_list_state,
                 tool_registry: &mut tool_registry,
                 command_sink: &command_sink,
                 is_processing: &mut is_processing,
@@ -267,6 +268,7 @@ mod tests {
                 current_tool_approval: &mut current_tool_approval,
                 current_model: &mut current_model,
                 messages_updated: &mut messages_updated,
+                current_thread: None,
             };
             msg_proc.process(
                 conductor_core::app::AppEvent::MessageAdded {
@@ -280,8 +282,8 @@ mod tests {
         // 2. ToolCallStarted arrives afterwards
         {
             let mut ctx = ProcessingContext {
-                messages: &mut messages,
-                message_list_state: &mut message_list_state,
+                chat_store: &mut chat_store,
+                chat_list_state: &mut chat_list_state,
                 tool_registry: &mut tool_registry,
                 command_sink: &command_sink,
                 is_processing: &mut is_processing,
@@ -290,6 +292,7 @@ mod tests {
                 current_tool_approval: &mut current_tool_approval,
                 current_model: &mut current_model,
                 messages_updated: &mut messages_updated,
+                current_thread: None,
             };
             tool_proc.process(
                 conductor_core::app::AppEvent::ToolCallStarted {
@@ -301,16 +304,12 @@ mod tests {
             );
         }
 
-        // Assert the placeholder kept the parameters
-        let idx = tool_registry
-            .get_message_index("id123")
-            .expect("placeholder should exist");
-        if let MessageContent::Tool { call, .. } = &messages[idx] {
-            assert_eq!(call.parameters, full_call.parameters);
-            assert_eq!(call.name, "view");
-            assert_eq!(call.id, "id123");
-        } else {
-            panic!("Expected Tool message at index {}", idx);
-        }
+        // Assert the tool was registered and stored properly
+        let stored_call = tool_registry
+            .get_tool_call("id123")
+            .expect("tool call should exist");
+        assert_eq!(stored_call.parameters, full_call.parameters);
+        assert_eq!(stored_call.name, "view");
+        assert_eq!(stored_call.id, "id123");
     }
 }

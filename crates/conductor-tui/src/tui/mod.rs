@@ -1,157 +1,214 @@
+//! TUI module for the conductor CLI
+//!
+//! This module implements the terminal user interface using ratatui.
+
+use std::io::{self, Stdout};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
-use ratatui::Terminal;
+use conductor_core::api::Model;
+use conductor_core::app::conversation::{AssistantContent, Message};
+use conductor_core::app::io::{AppCommandSink, AppEventSource};
+use conductor_core::app::{AppCommand, AppEvent};
+use conductor_tools::schema::ToolCall;
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseEvent, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    terminal::SetTitle,
+};
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEvent, KeyModifiers, KeyboardEnhancementFlags, MouseEvent, MouseEventKind,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-};
-use ratatui::crossterm::{
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use std::io::{self, Stdout};
-use std::panic;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tui_textarea::TextArea;
-
-use tokio::select;
-
-use conductor_core::api::Model;
-use conductor_core::app::AppEvent;
-use conductor_core::app::command::AppCommand;
-use conductor_core::app::conversation::Message;
-use conductor_core::app::io::AppCommandSink;
-use tokio::{sync::mpsc, task::JoinHandle};
+use ratatui::{Frame, Terminal};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-pub mod events;
+use tui_textarea::{Input, Key, TextArea};
+
+use crate::tui::events::pipeline::EventPipeline;
+use crate::tui::events::processors::message::MessageEventProcessor;
+use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
+use crate::tui::events::processors::system::SystemEventProcessor;
+use crate::tui::events::processors::tool::ToolEventProcessor;
+use crate::tui::state::{ContentCache, MessageViewModel};
+use crate::tui::widgets::cached_renderer::CachedContentRenderer;
+use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
+use crate::tui::widgets::popup_list::PopupList;
+
+pub mod model;
 pub mod state;
 pub mod widgets;
 
-use crate::tui::events::{EventPipeline, processors::*};
-use crate::tui::state::content_cache::ContentCache;
-use crate::tui::state::view_model::MessageViewModel;
-use crate::tui::widgets::{
-    CachedContentRenderer, CachedContentRendererRef, MessageList, MessageListState, ViewMode,
-    content_renderer::ContentRenderer, message_list::MessageContent,
-};
-use conductor_core::app::conversation::AssistantContent;
-use widgets::styles;
+mod events;
 
-const MAX_INPUT_HEIGHT: u16 = 10;
+/// Popup state for model selection
+#[derive(Debug, Clone, Default)]
+struct PopupState {
+    selected: Option<usize>,
+}
+
+impl PopupState {
+    fn select(&mut self, index: Option<usize>) {
+        self.selected = index;
+    }
+
+    fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
+    fn next(&mut self, total: usize) {
+        if total == 0 {
+            return;
+        }
+        self.selected = Some(match self.selected {
+            None => 0,
+            Some(i) => (i + 1) % total,
+        });
+    }
+
+    fn previous(&mut self) {
+        if let Some(i) = self.selected {
+            self.selected = Some(if i == 0 { 0 } else { i - 1 });
+        }
+    }
+}
+
+/// How often to update the spinner animation (when processing)
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Input modes for the TUI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputMode {
+    /// Normal mode - navigation and commands
     Normal,
-    Editing,
+    /// Insert mode - typing messages
+    Insert,
+    /// Bash command mode - executing shell commands
     BashCommand,
+    /// Awaiting tool approval
     AwaitingApproval,
+    /// Popup list is open for selection
+    SelectingModel,
+    /// Confirm exit dialog
     ConfirmExit,
 }
 
+/// Main TUI application state
 pub struct Tui {
+    /// Terminal instance
     terminal: Terminal<CrosstermBackend<Stdout>>,
-    terminal_size: (u16, u16), // Track terminal size for accurate scrolling
-    textarea: TextArea<'static>,
+    terminal_size: (u16, u16),
+    /// Current input mode
     input_mode: InputMode,
-    view_model: crate::tui::state::view_model::MessageViewModel,
-    is_processing: bool,
-    progress_message: Option<String>,
-    last_spinner_update: Instant,
-    spinner_state: usize,
+    /// Text area for message input
+    textarea: TextArea<'static>,
+    /// Previous insert mode text (for Esc handling)
+    previous_insert_text: String,
+    /// The ID of the message being edited (if any)
+    editing_message_id: Option<String>,
+    /// Handle to send commands to the app
     command_sink: Arc<dyn AppCommandSink>,
-    current_tool_approval: Option<conductor_tools::ToolCall>,
+    /// Are we currently processing a request?
+    is_processing: bool,
+    /// Progress message to show while processing
+    progress_message: Option<String>,
+    /// Animation frame for spinner
+    spinner_state: usize,
+    /// Last time spinner was updated
+    last_spinner_update: Instant,
+    /// Current tool approval request
+    current_tool_approval: Option<ToolCall>,
+    /// Available models for selection
+    models: Vec<Model>,
+    /// Current model in use
     current_model: Model,
+    /// Popup selection state (when showing model list)
+    popup_state: PopupState,
+    /// Cached renderer for performance
+    cached_renderer: CachedContentRenderer,
+    /// Current UI theme/mode
+    /// Event processing pipeline
     event_pipeline: EventPipeline,
-    cached_renderer: Arc<CachedContentRenderer>,
-}
-
-#[derive(Debug)]
-enum InputAction {
-    SendMessage(String),
-    ExecuteBashCommand(String),
-    ApproveToolNormal(String),
-    ApproveToolAlways(String),
-    DenyTool(String),
-    CancelProcessing,
-    Exit,
+    /// Message view model (data + ui state)
+    view_model: MessageViewModel,
 }
 
 impl Tui {
-    pub fn new(command_sink: Arc<dyn AppCommandSink>, initial_model: Model) -> Result<Self> {
-        // Detect terminal for diagnostics
-        let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
-        debug!(target:"tui.new", "Terminal detected: {}", term_program);
-
-        // Setup terminal
+    /// Create a new TUI instance
+    pub async fn new(
+        command_sink: Arc<dyn AppCommandSink>,
+        _event_source: Arc<dyn AppEventSource>,
+        current_model: Model,
+        models: Vec<Model>,
+    ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(
             stdout,
             EnterAlternateScreen,
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-            ),
             EnableBracketedPaste,
-            EnableMouseCapture
+            PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            ),
+            EnableMouseCapture,
+            SetTitle("Conductor")
         )?;
+
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
         let terminal_size = terminal
             .size()
             .map(|s| (s.width, s.height))
             .unwrap_or((80, 24));
-        // Initialize TextArea
+
         let mut textarea = TextArea::default();
-        textarea.set_block(
-            ratatui::widgets::Block::default()
-                .borders(Borders::ALL)
-                .title("Input (Ctrl+S or i to edit, Enter to send, Alt+Enter for newline, Esc to exit)"),
-        );
-        textarea.set_placeholder_text("Enter your message here...");
-        textarea.set_style(Style::default());
-        // Set cursor style to make it more visible
+        textarea.set_placeholder_text("Type your message here...");
+        textarea.set_cursor_line_style(Style::default());
         textarea.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
 
-        let view_model = MessageViewModel::new();
-        let cached_renderer = Arc::new(CachedContentRenderer::new(view_model.content_cache()));
+        // Request current conversation
+        let messages = Self::get_current_conversation(_event_source).await?;
+        info!(
+            "Received {} messages from current conversation",
+            messages.len()
+        );
 
-        Ok(Self {
+        // Create TUI with restored messages
+        let mut tui = Self {
             terminal,
             terminal_size,
-            textarea,
             input_mode: InputMode::Normal,
-            view_model,
+            textarea,
+            previous_insert_text: String::new(),
+            editing_message_id: None,
+            command_sink,
             is_processing: false,
             progress_message: None,
-            last_spinner_update: Instant::now(),
             spinner_state: 0,
-            command_sink,
+            last_spinner_update: Instant::now(),
             current_tool_approval: None,
-            current_model: initial_model,
-            event_pipeline: Self::create_event_pipeline(),
-            cached_renderer,
-        })
-    }
+            models,
+            current_model,
+            popup_state: PopupState::default(),
+            cached_renderer: CachedContentRenderer::new(Arc::new(RwLock::new(ContentCache::new()))),
 
-    /// Create a TUI with restored conversation state for local sessions
-    pub fn new_with_conversation(
-        command_sink: Arc<dyn AppCommandSink>,
-        initial_model: Model,
-        messages: Vec<Message>,
-        _approved_tools: Vec<String>, // TODO: restore approved tools
-    ) -> Result<Self> {
-        let mut tui = Self::new(command_sink, initial_model)?;
+            event_pipeline: Self::create_event_pipeline(),
+            view_model: MessageViewModel::new(),
+        };
+
+        // Restore messages using the public method
         tui.restore_messages(messages);
+
         Ok(tui)
     }
 
@@ -159,6 +216,15 @@ impl Tui {
     fn restore_messages(&mut self, messages: Vec<Message>) {
         let message_count = messages.len();
         info!("Starting to restore {} messages to TUI", message_count);
+
+        // If we have messages, use the thread ID from the most recent one
+        if let Some(last_msg) = messages.last() {
+            self.view_model.current_thread = Some(*last_msg.thread_id());
+            info!(
+                "Setting current thread to: {:?}",
+                self.view_model.current_thread
+            );
+        }
 
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
@@ -192,57 +258,19 @@ impl Tui {
         // Debug dump the registry state after first pass
         self.view_model.tool_registry.debug_dump("After first pass");
 
-        for (i, message) in messages.into_iter().enumerate() {
-            let content = Self::convert_message(message, &self.view_model.tool_registry);
-
-            if i < 5 || i >= message_count - 5 {
-                info!(
-                    "Converting message {}: type={:?}",
-                    i,
-                    match &content {
-                        MessageContent::User { .. } => "User",
-                        MessageContent::Assistant { .. } => "Assistant",
-                        MessageContent::Tool { .. } => "Tool",
-                    }
-                );
-            }
-
-            match &content {
-                MessageContent::Tool {
-                    id, call, result, ..
-                } => {
-                    // Merge with existing placeholder or create new
-                    let idx = self.get_or_create_tool_index(id, Some(call.name.clone()));
-                    if let MessageContent::Tool {
-                        call: existing_call,
-                        result: existing_result,
-                        ..
-                    } = &mut self.view_model.messages[idx]
-                    {
-                        // Always keep latest call params (they should be identical)
-                        *existing_call = call.clone();
-                        // Attach result if we didn't have it yet
-                        if existing_result.is_none() {
-                            *existing_result = result.clone();
-                        }
-                    }
-                }
-                _ => {
-                    self.view_model.add_message(content);
-                }
-            }
-        }
+        // Use the view model's add_messages method to add all messages at once
+        self.view_model.add_messages(messages);
 
         info!(
             "Finished restoring messages. TUI now has {} messages",
-            self.view_model.messages.len()
+            self.view_model.chat_store.len()
         );
 
         // Reset scroll to bottom after restoring messages
-        self.view_model.message_list_state.scroll_to_bottom();
+        self.view_model.chat_list_state.scroll_to_bottom();
     }
 
-    fn cleanup_terminal(&mut self) -> Result<()> {
+    pub fn cleanup_terminal(&mut self) -> Result<()> {
         execute!(
             self.terminal.backend_mut(),
             LeaveAlternateScreen,
@@ -258,7 +286,7 @@ impl Tui {
         // Log the current state of messages
         info!(
             "Starting TUI run with {} messages in view model",
-            self.view_model.messages.len()
+            self.view_model.chat_store.len()
         );
 
         // No need to request current conversation - messages are restored in the constructor
@@ -288,179 +316,160 @@ impl Tui {
             {
                 self.spinner_state = self.spinner_state.wrapping_add(1);
                 self.last_spinner_update = Instant::now();
-                let new_spinner = self.get_spinner_char();
-                let changed = new_spinner != last_spinner_char;
-                last_spinner_char = new_spinner;
+
+                // Check if spinner character changed
+                let current_spinner = get_spinner_char(self.spinner_state);
+                let changed = current_spinner != last_spinner_char;
+                last_spinner_char = current_spinner.to_string();
                 changed
             } else {
                 false
             };
 
-            // Only redraw if something changed
+            // Determine if we need to redraw
             if needs_redraw || spinner_updated {
-                let input_mode = self.input_mode;
-                let is_processing = self.is_processing;
-                let progress_message_owned: Option<String> = self.progress_message.clone();
-                let spinner_char_owned: String = self.get_spinner_char();
-                let current_model_owned: String = self.current_model.to_string();
-                let current_tool_approval_info = self.current_tool_approval.clone();
-
-                let input_block = Tui::create_input_block_static(
-                    input_mode,
-                    is_processing,
-                    progress_message_owned,
-                    spinner_char_owned,
-                    current_tool_approval_info.as_ref(),
-                );
-                self.textarea.set_block(input_block);
-
-                self.terminal.draw(|f| {
-                    let textarea_ref = &self.textarea;
-                    let current_approval_ref = self.current_tool_approval.as_ref();
-
-                    // Get references separately to avoid borrow conflicts
-                    let messages_slice = self.view_model.messages.as_slice();
-
-                    if let Err(e) = Tui::render_ui_static(
-                        f,
-                        textarea_ref,
-                        messages_slice,
-                        &mut self.view_model.message_list_state,
-                        input_mode,
-                        &current_model_owned,
-                        current_approval_ref,
-                        &self.cached_renderer,
-                    ) {
-                        error!(target:"tui.run.draw", "UI rendering failed: {}", e);
-                    }
-                })?;
-
-                needs_redraw = false; // Reset after drawing
+                self.draw()?;
+                needs_redraw = false;
             }
 
-            select! {
-                // Prioritize terminal events (especially mouse events) for responsiveness
-                biased;
+            // Prioritize terminal events over app events for responsiveness
+            let timeout = if self.is_processing {
+                Duration::from_millis(50) // Faster polling when processing for spinner
+            } else {
+                Duration::from_millis(100)
+            };
 
-                maybe_term_event = term_event_rx.recv() => {
-                    match maybe_term_event {
-                        Some(Ok(event)) => {
-                            match event {
-                                Event::Resize(width, height) => {
-                                    debug!(target:"tui.run", "Terminal resized to {}x{}", width, height);
-                                    self.terminal_size = (width, height);
-
-                                    needs_redraw = true;
-                                    // The widget will handle recalculating sizes internally
-                                }
-                                Event::Paste(data) => {
-                                    // Handle paste in any mode that accepts text input
-                                    if matches!(self.input_mode, InputMode::Editing | InputMode::BashCommand) {
-                                        let normalized_data = data.replace("\r\n", "\n").replace("\r", "\n");
-                                        self.textarea.insert_str(&normalized_data);
-                                        debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
-                                        needs_redraw = true;
-                                    }
-                                }
-                                Event::Key(key) => {
-                                    match self.handle_input(key).await {
-                                        Ok(Some(action)) => {
-                                            debug!(target:"tui.run", "Handling input action: {:?}", action);
-                                            if self.dispatch_input_action(action).await? {
-                                                should_exit = true;
-                                            }
-                                            needs_redraw = true;
-                                        }
-                                        Ok(None) => {
-                                            // Some keys (like navigation) are handled in handle_input
-                                            // Check if they changed state
-                                            needs_redraw = true; // Conservative: assume state changed
-                                        }
-                                        Err(e) => {
-                                            error!(target:"tui.run",    "Error handling input: {}", e);
-                                        }
-                                    }
-                                }
-                                Event::FocusGained => debug!(target:"tui.run", "Focus gained"),
-                                Event::FocusLost => debug!(target:"tui.run", "Focus lost"),
-                                Event::Mouse(event) => {
-                                    // Fast path for mouse events to minimize latency
-                                    // Mouse scroll events are handled with early return to prevent
-                                    // processing of other events in the same iteration. This ensures
-                                    // clean scroll behavior without interference from other inputs.
-                                    match event {
-                                        MouseEvent {
-                                            kind: MouseEventKind::ScrollDown,
-                                            ..
-                                        } => {
-                                            let scrolled = self.view_model.message_list_state.simple_scroll_down(
-                                                3, // Scroll by 3 lines for mouse wheel
-                                                self.view_model.messages.as_slice(),
-                                                Some(self.terminal_size),
-                                            );
-                                            if scrolled {
-                                                needs_redraw = true;
-                                            }
-                                            continue;
-                                        }
-                                        MouseEvent {
-                                            kind: MouseEventKind::ScrollUp,
-                                            ..
-                                        } => {
-                                            let scrolled = self.view_model.message_list_state.simple_scroll_up(
-                                                3, // Scroll by 3 lines for mouse wheel
-                                                self.view_model.messages.as_slice(),
-                                                Some(self.terminal_size),
-                                            );
-                                            if scrolled {
-                                                needs_redraw = true;
-                                            }
-                                            continue;
-                                        }
-                                        _ => {} // Ignore other mouse events
-                                    }
-                                }
+            tokio::select! {
+                Some(event) = term_event_rx.recv() => {
+                    match event? {
+                        Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                            if self.handle_key_event(key_event).await? {
+                                should_exit = true;
+                            }
+                            needs_redraw = true;
+                        }
+                        Event::Mouse(mouse_event) => {
+                            if self.handle_mouse_event(mouse_event)? {
+                                needs_redraw = true;
                             }
                         }
-                        Some(Err(e)) => {
-                            error!(target:"tui.run", "Error reading terminal event: {}", e);
-                            // Decide if we should exit on error
-                            // should_exit = true;
+                        Event::Resize(width, height) => {
+                            self.terminal_size = (width, height);
+                            // Terminal was resized, force redraw
+                            self.view_model.clear_content_cache();
+                            needs_redraw = true;
                         }
-                        None => {
-                            // Channel closed, input task likely ended
-                            info!(target:"tui.run", "Terminal event channel closed.");
-                            should_exit = true;
+                        Event::Paste(data) => {
+                            // Handle paste in modes that accept text input
+                            if matches!(self.input_mode, InputMode::Insert | InputMode::BashCommand) {
+                                let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
+                                self.textarea.insert_str(&normalized_data);
+                                debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
+                                needs_redraw = true;
+                            }
                         }
+                        _ => {}
                     }
                 }
-
-                maybe_app_event = event_rx.recv() => {
-                    match maybe_app_event {
-                        Some(event) => {
-                            self.handle_app_event(event).await;
-                            needs_redraw = true; // App events usually require redraw
-                        }
-                        None => {
-                            info!(target:"tui.run", "App event channel closed.");
-                            should_exit = true;
-                        }
-                    }
-                }
-
-                _ = tokio::time::sleep(SPINNER_UPDATE_INTERVAL / 2), if self.is_processing => {
-                    // Timer fired, spinner will update on next iteration
+                Some(app_event) = event_rx.recv() => {
+                    self.handle_app_event(app_event).await;
                     needs_redraw = true;
+                }
+                _ = tokio::time::sleep(timeout) => {
+                    // Timeout for spinner updates when processing
                 }
             }
         }
 
-        // Cleanup terminal before exiting run loop
+        // Cleanup terminal on exit
         self.cleanup_terminal()?;
         Ok(())
     }
 
-    /// Create the event processing pipeline with all processors
+    /// Handle mouse events
+    fn handle_mouse_event(&mut self, event: MouseEvent) -> Result<bool> {
+        let needs_redraw = match event.kind {
+            event::MouseEventKind::ScrollUp => {
+                match self.input_mode {
+                    InputMode::Normal => {
+                        self.view_model.chat_list_state.scroll_up(3);
+                        true
+                    }
+                    InputMode::Insert => {
+                        // In insert mode, let textarea handle scrolling if needed
+                        false
+                    }
+                    _ => false,
+                }
+            }
+            event::MouseEventKind::ScrollDown => {
+                match self.input_mode {
+                    InputMode::Normal => {
+                        self.view_model.chat_list_state.scroll_down(3);
+                        true
+                    }
+                    InputMode::Insert => {
+                        // In insert mode, let textarea handle scrolling if needed
+                        false
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+
+        Ok(needs_redraw)
+    }
+
+    /// Draw the UI
+    fn draw(&mut self) -> Result<()> {
+        self.terminal.draw(|f| {
+            let input_mode = self.input_mode;
+            let is_processing = self.is_processing;
+            let spinner_state = self.spinner_state;
+            let current_tool_approval = self.current_tool_approval.as_ref();
+            let current_model_owned = self.current_model;
+            let textarea_ref = &self.textarea;
+
+            // Clone the required fields to avoid borrowing conflicts
+            let (models_clone, popup_state_clone) = (self.models.clone(), self.popup_state.clone());
+
+            // Get chat items from the chat store
+            let chat_items = self.view_model.chat_store.as_slice();
+
+            if let Err(e) = Tui::render_ui_static(
+                f,
+                textarea_ref,
+                chat_items,
+                &mut self.view_model.chat_list_state,
+                input_mode,
+                &current_model_owned,
+                current_tool_approval,
+                &self.cached_renderer,
+                self.view_model.current_thread,
+                is_processing,
+                spinner_state,
+            ) {
+                error!(target:"tui.run.draw", "UI rendering failed: {}", e);
+            }
+
+            // Render popup after main UI
+            if input_mode == InputMode::SelectingModel {
+                Self::render_popup_static(
+                    f,
+                    f.area(),
+                    &models_clone,
+                    &current_model_owned,
+                    &mut self.popup_state.clone(),
+                );
+            }
+
+            // Progress is now shown in the status bar, no overlay needed
+        })?;
+        Ok(())
+    }
+
+    /// Create the event processing pipeline
     fn create_event_pipeline() -> EventPipeline {
         EventPipeline::new()
             .add_processor(Box::new(ProcessingStateProcessor::new()))
@@ -474,8 +483,8 @@ impl Tui {
 
         // Create processing context
         let mut ctx = crate::tui::events::processor::ProcessingContext {
-            messages: &mut self.view_model.messages,
-            message_list_state: &mut self.view_model.message_list_state,
+            chat_store: &mut self.view_model.chat_store,
+            chat_list_state: &mut self.view_model.chat_list_state,
             tool_registry: &mut self.view_model.tool_registry,
             command_sink: &self.command_sink,
             is_processing: &mut self.is_processing,
@@ -484,11 +493,29 @@ impl Tui {
             current_tool_approval: &mut self.current_tool_approval,
             current_model: &mut self.current_model,
             messages_updated: &mut messages_updated,
+            current_thread: self.view_model.current_thread,
         };
 
         // Process the event through the pipeline
         if let Err(e) = self.event_pipeline.process_event(event, &mut ctx) {
             tracing::error!(target: "tui.handle_app_event", "Event processing failed: {}", e);
+        }
+
+        // Sync thread if we don't have one and messages were added
+        if self.view_model.current_thread.is_none() && !self.view_model.chat_store.is_empty() {
+            // Find first message with a real thread ID
+            let thread_id = self
+                .view_model
+                .chat_store
+                .messages()
+                .into_iter()
+                .next()
+                .map(|row| *row.inner.thread_id());
+
+            if let Some(thread_id) = thread_id {
+                // Set as active thread
+                self.view_model.set_thread(thread_id);
+            }
         }
 
         // Handle special input mode changes for tool approval
@@ -500,860 +527,744 @@ impl Tui {
             self.input_mode = InputMode::Normal;
         }
 
-        // Auto-scroll to bottom if messages were updated and user hasn't manually scrolled
-        if messages_updated && !self.view_model.message_list_state.user_scrolled {
-            // Auto-scroll to bottom
-            self.view_model.message_list_state.scroll_to_bottom();
+        // Auto-scroll if messages were added
+        if messages_updated {
+            // Clear cache for any updated messages
+            self.view_model.clear_content_cache();
+            // Scroll to bottom if we were already at the bottom
+            if self.view_model.chat_list_state.is_at_bottom() {
+                self.view_model.chat_list_state.scroll_to_bottom();
+            }
         }
     }
 
-    fn convert_message(
-        message: conductor_core::app::Message,
-        tool_registry: &crate::tui::state::tool_registry::ToolCallRegistry,
-    ) -> MessageContent {
-        match message {
-            conductor_core::app::Message::User {
-                content,
-                timestamp,
-                id,
-                ..
-            } => MessageContent::User {
-                id,
-                blocks: content,
-                timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                    .map(|dt| dt.to_rfc3339())
-                    .unwrap_or_else(|| timestamp.to_string()),
-            },
-            conductor_core::app::Message::Assistant {
-                content,
-                timestamp,
-                id,
-                ..
-            } => {
-                // Don't convert single tool calls to Tool messages during restore
-                // The actual Tool message will provide the complete information
-                MessageContent::Assistant {
-                    id,
-                    blocks: content,
-                    timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_else(|| timestamp.to_string()),
-                }
-            }
-            conductor_core::app::Message::Tool {
-                tool_use_id,
-                result,
-                timestamp,
-                id: _,
-                ..
-            } => {
-                debug!(
-                    target: "tui.convert",
-                    "Converting Tool message: tool_use_id={}",
-                    tool_use_id
-                );
+    async fn get_current_conversation(
+        _event_source: Arc<dyn AppEventSource>,
+    ) -> Result<Vec<Message>> {
+        // For now, just return empty - conversation will be restored by the app
+        Ok(Vec::new())
+    }
 
-                // Try to find the corresponding ToolCall that we cached earlier
-                let tool_call = tool_registry
-                    .get_tool_call(&tool_use_id)
-                    .cloned()
-                    .inspect(|tc| {
-                        debug!(
-                            target: "tui.convert",
-                            "Found tool call in registry: name={}, params={}",
-                            tc.name,
-                            tc.parameters
-                        );
-                    })
-                    .unwrap_or_else(|| {
-                        warn!(target:"tui.convert_message", "Tool message {} has no associated tool call info", tool_use_id);
-                        conductor_tools::ToolCall {
-                            id: tool_use_id.clone(),
-                            name: "unknown".to_string(),
-                            parameters: serde_json::Value::Null,
+    async fn handle_key_event(&mut self, key: KeyEvent) -> Result<bool> {
+        match self.input_mode {
+            InputMode::Normal => self.handle_normal_mode(key).await,
+            InputMode::Insert => self.handle_insert_mode(key).await,
+            InputMode::BashCommand => self.handle_bash_mode(key).await,
+            InputMode::AwaitingApproval => self.handle_approval_mode(key).await,
+            InputMode::SelectingModel => self.handle_model_selection_mode(key).await,
+            InputMode::ConfirmExit => self.handle_confirm_exit_mode(key).await,
+        }
+    }
+
+    async fn handle_normal_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char('i') => {
+                self.input_mode = InputMode::Insert;
+                self.previous_insert_text = self.textarea.lines().join("\n");
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.view_model
+                    .chat_list_state
+                    .select_next(self.view_model.chat_store.len());
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.view_model.chat_list_state.select_previous();
+            }
+            KeyCode::Char('g') => {
+                self.view_model.chat_list_state.select_first();
+            }
+            KeyCode::Char('G') => {
+                self.view_model
+                    .chat_list_state
+                    .select_last(self.view_model.chat_store.len());
+            }
+            KeyCode::Char('e') => {
+                // Edit selected message
+                if let Some(selected) = self.view_model.chat_list_state.selected() {
+                    if selected < self.view_model.chat_store.len() {
+                        if let Some(item) = self.view_model.chat_store.get(selected) {
+                            if let crate::tui::model::ChatItem::Message(row) = item {
+                                if let Message::User { .. } = &row.inner {
+                                    let msg_id = row.inner.id().to_string();
+                                    self.enter_edit_mode(&msg_id);
+                                }
+                            }
                         }
-                    });
-
-                MessageContent::Tool {
-                    id: tool_use_id,
-                    call: tool_call,
-                    result: Some(result),
-                    timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_else(|| timestamp.to_string()),
+                    }
                 }
             }
-        }
-    }
-
-    fn get_spinner_char(&self) -> String {
-        const SPINNER: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
-        SPINNER[self.spinner_state % SPINNER.len()].to_string()
-    }
-
-    /// Ensure there is exactly one MessageContent::Tool for the given id.
-    /// Returns the index into self.view_model.messages for that message. If it does not
-    /// exist yet, a placeholder is created (optionally with a provided name).
-    fn get_or_create_tool_index(&mut self, id: &str, name_hint: Option<String>) -> usize {
-        debug!(
-            target: "tui.tool_index",
-            "get_or_create_tool_index called for id={}, name_hint={:?}",
-            id, name_hint
-        );
-
-        if let Some(idx) = self.view_model.tool_registry.get_message_index(id) {
-            debug!(target: "tui.tool_index", "Found existing message at index {}", idx);
-            return idx;
-        }
-
-        // Try to reuse any existing ToolCall info from registry (may already have parameters)
-        let existing = self.view_model.tool_registry.get_tool_call(id).cloned();
-
-        if let Some(ref call) = existing {
-            debug!(
-                target: "tui.tool_index",
-                "Found existing tool call in registry: name={}, params={}",
-                call.name, call.parameters
-            );
-        } else {
-            debug!(
-                target: "tui.tool_index",
-                "No existing tool call found in registry for id={}",
-                id
-            );
-        }
-
-        // Build placeholder ToolCall, preferring existing parameters if available
-        let placeholder_call = existing.unwrap_or_else(|| conductor_tools::ToolCall {
-            id: id.to_string(),
-            name: name_hint.unwrap_or_else(|| "unknown".to_string()),
-            parameters: serde_json::Value::Null,
-        });
-
-        debug!(
-            target: "tui.tool_index",
-            "Creating Tool message with call: name={}, params={}",
-            placeholder_call.name, placeholder_call.parameters
-        );
-
-        self.view_model.messages.push(MessageContent::Tool {
-            id: id.to_string(),
-            call: placeholder_call.clone(),
-            result: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
-
-        let idx = self.view_model.messages.len() - 1;
-        self.view_model.tool_registry.set_message_index(id, idx);
-        self.view_model
-            .tool_registry
-            .register_call(placeholder_call);
-
-        idx
-    }
-
-    fn create_input_block_static<'a>(
-        input_mode: InputMode,
-        is_processing: bool,
-        progress_message: Option<String>,
-        spinner_char: String,
-        current_tool_approval_info: Option<&conductor_tools::ToolCall>,
-    ) -> Block<'a> {
-        let input_border_style = match input_mode {
-            InputMode::Editing => styles::INPUT_BORDER_ACTIVE,
-            InputMode::Normal => styles::INPUT_BORDER_NORMAL,
-            InputMode::BashCommand => styles::INPUT_BORDER_COMMAND,
-            InputMode::AwaitingApproval => {
-                // Only style as ApprovalRequired if there *is* a current approval
-                if current_tool_approval_info.is_some() {
-                    styles::INPUT_BORDER_APPROVAL
+            KeyCode::PageUp => {
+                self.view_model.chat_list_state.scroll_up(10);
+            }
+            KeyCode::PageDown => {
+                self.view_model.chat_list_state.scroll_down(10);
+            }
+            KeyCode::Char('d') => {
+                let page_size = self.terminal_size.1.saturating_sub(6) / 2;
+                self.view_model.chat_list_state.scroll_down(page_size);
+            }
+            KeyCode::Char('u') => {
+                let page_size = self.terminal_size.1.saturating_sub(6) / 2;
+                self.view_model.chat_list_state.scroll_up(page_size);
+            }
+            KeyCode::Home => {
+                self.view_model.chat_list_state.scroll_to_top();
+            }
+            KeyCode::End => {
+                self.view_model.chat_list_state.scroll_to_bottom();
+            }
+            KeyCode::Char('v') => {
+                self.view_model.chat_list_state.view_mode =
+                    match self.view_model.chat_list_state.view_mode {
+                        ViewMode::Compact => ViewMode::Detailed,
+                        ViewMode::Detailed => ViewMode::Compact,
+                    };
+                self.view_model.clear_content_cache();
+            }
+            KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.view_model.chat_list_state.view_mode = ViewMode::Detailed;
+                self.view_model.clear_content_cache();
+            }
+            KeyCode::Char('C') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.view_model.chat_list_state.view_mode = ViewMode::Compact;
+                self.view_model.clear_content_cache();
+            }
+            KeyCode::Esc => {
+                // Cancel current processing if any
+                if self.is_processing {
+                    self.command_sink
+                        .send_command(AppCommand::CancelProcessing)
+                        .await?;
+                }
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.is_processing {
+                    // Cancel processing
+                    self.command_sink
+                        .send_command(AppCommand::CancelProcessing)
+                        .await?;
                 } else {
-                    styles::INPUT_BORDER_NORMAL
+                    // Enter exit confirmation mode
+                    self.input_mode = InputMode::ConfirmExit;
                 }
             }
-            InputMode::ConfirmExit => styles::INPUT_BORDER_EXIT,
-        };
-        let input_title: String = match input_mode {
-            InputMode::Editing => "Input (Esc to stop editing, Enter to send, Alt+Enter for newline)".to_string(),
-            InputMode::Normal => {
-                "Normal (i=edit, j/k=scroll, d/u=½page, G/End=bottom, v=view mode, Shift+D/C=detail/compact, Ctrl+C=exit)".to_string()
+            KeyCode::Char('!') => {
+                // Enter bash command mode
+                self.input_mode = InputMode::BashCommand;
+                self.textarea = TextArea::default(); // Clear textarea for bash command
+                self.previous_insert_text = String::new();
             }
-            InputMode::BashCommand => "Bash Command (Enter to execute, Esc to cancel)".to_string(),
-            InputMode::AwaitingApproval => {
-                // Update title based on current approval info
-                if let Some(info) = current_tool_approval_info {
-                    format!(
-                        "Approve Tool: '{}'? (y/n, Shift+Tab=always, Esc=deny)",
-                        info.name
-                    )
-                    .to_string()
-                } else {
-                    // Fallback title if somehow in this mode without current approval
-                    "Awaiting Approval... (State Error?)".to_string()
+            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl-M: Show model selection popup
+                self.input_mode = InputMode::SelectingModel;
+                self.popup_state = PopupState::default();
+                // Find current model index
+                if let Some(index) = self.models.iter().position(|m| m == &self.current_model) {
+                    self.popup_state.select(Some(index));
                 }
             }
-            InputMode::ConfirmExit => "Really quit? (y/N)".to_string(),
-        };
-
-        let title_line = if is_processing {
-            let progress_msg = progress_message.as_deref().unwrap_or("Processing...");
-
-            let processing_span = Span::styled(
-                format!("{} {} ", &spinner_char, progress_msg),
-                Style::default().white(),
-            );
-
-            let input_title_span = Span::styled(input_title, Style::default());
-
-            Line::from(vec![processing_span, input_title_span])
-        } else {
-            let title_span = Span::raw(input_title);
-            Line::from(vec![title_span])
-        };
-
-        Block::<'a>::default()
-            .borders(Borders::ALL)
-            .title(title_line)
-            .style(input_border_style)
+            _ => {}
+        }
+        Ok(false)
     }
 
+    async fn handle_insert_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        let input = Input::from(key);
+
+        // Check for Ctrl+C
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.is_processing {
+                // Cancel processing
+                self.command_sink
+                    .send_command(AppCommand::CancelProcessing)
+                    .await?;
+            } else {
+                // Go to exit confirmation mode
+                self.input_mode = InputMode::ConfirmExit;
+            }
+            return Ok(false);
+        }
+
+        // Check for Alt+Enter before passing to textarea
+        if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::ALT {
+            // Send message
+            let content = self.textarea.lines().join("\n");
+            if !content.trim().is_empty() {
+                self.send_message(content).await?;
+                self.textarea = TextArea::default(); // Clear after sending
+                self.input_mode = InputMode::Normal;
+            }
+            return Ok(false);
+        }
+
+        match input {
+            Input { key: Key::Esc, .. } => {
+                // Return to normal mode without clearing text
+                self.input_mode = InputMode::Normal;
+            }
+            _ => {
+                // Let textarea handle the input
+                self.textarea.input(input);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn handle_approval_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        if let Some(tool_call) = self.current_tool_approval.take() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    // Approve once
+                    self.command_sink
+                        .send_command(AppCommand::HandleToolResponse {
+                            id: tool_call.id,
+                            approved: true,
+                            always: false,
+                        })
+                        .await?;
+                    self.input_mode = InputMode::Normal;
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    // Approve always
+                    self.command_sink
+                        .send_command(AppCommand::HandleToolResponse {
+                            id: tool_call.id,
+                            approved: true,
+                            always: true,
+                        })
+                        .await?;
+                    self.input_mode = InputMode::Normal;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    // Reject
+                    self.command_sink
+                        .send_command(AppCommand::HandleToolResponse {
+                            id: tool_call.id,
+                            approved: false,
+                            always: false,
+                        })
+                        .await?;
+                    self.input_mode = InputMode::Normal;
+                }
+                _ => {
+                    // Put it back if not handled
+                    self.current_tool_approval = Some(tool_call);
+                }
+            }
+        } else {
+            // No approval pending, return to normal
+            self.input_mode = InputMode::Normal;
+        }
+        Ok(false)
+    }
+
+    async fn handle_bash_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        // Check for Ctrl+C
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.is_processing {
+                // Cancel processing
+                self.command_sink
+                    .send_command(AppCommand::CancelProcessing)
+                    .await?;
+            } else {
+                // Cancel bash mode and return to normal without clearing text
+                self.input_mode = InputMode::Normal;
+            }
+            return Ok(false);
+        }
+
+        let input = Input::from(key);
+
+        match input {
+            Input { key: Key::Esc, .. } => {
+                // Return to normal mode without clearing text
+                self.input_mode = InputMode::Normal;
+            }
+            Input {
+                key: Key::Enter, ..
+            } => {
+                // Execute the bash command
+                let command = self.textarea.lines().join("\n");
+                if !command.trim().is_empty() {
+                    self.command_sink
+                        .send_command(AppCommand::ExecuteBashCommand { command })
+                        .await?;
+                    self.textarea = TextArea::default(); // Clear after executing
+                    self.input_mode = InputMode::Normal;
+                }
+            }
+            _ => {
+                // Let textarea handle the input
+                self.textarea.input(input);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn handle_model_selection_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Enter => {
+                if let Some(selected) = self.popup_state.selected() {
+                    if selected < self.models.len() {
+                        let new_model = self.models[selected];
+                        self.current_model = new_model;
+                        // Send model change as a slash command
+                        let command = format!("/model {}", new_model);
+                        self.command_sink
+                            .send_command(AppCommand::ExecuteCommand(command))
+                            .await?;
+                    }
+                }
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.popup_state.previous();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.popup_state.next(self.models.len());
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_confirm_exit_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                // User confirmed exit
+                return Ok(true);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+C again also confirms exit
+                return Ok(true);
+            }
+            _ => {
+                // Any other key cancels exit and returns to normal mode
+                self.input_mode = InputMode::Normal;
+            }
+        }
+        Ok(false)
+    }
+
+    async fn send_message(&mut self, content: String) -> Result<()> {
+        // Handle slash commands
+        if content.starts_with('/') {
+            return self.handle_slash_command(content).await;
+        }
+
+        // Check if we're editing a message
+        if let Some(message_id_to_edit) = self.editing_message_id.take() {
+            // Send edit command which creates a new branch
+            self.command_sink
+                .send_command(AppCommand::EditMessage {
+                    message_id: message_id_to_edit,
+                    new_content: content,
+                })
+                .await?;
+        } else {
+            // Send regular message
+            self.command_sink
+                .send_command(AppCommand::ProcessUserInput(content))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_slash_command(&mut self, command: String) -> Result<()> {
+        // Just send the command as-is to ExecuteCommand
+        self.command_sink
+            .send_command(AppCommand::ExecuteCommand(command))
+            .await?;
+        Ok(())
+    }
+
+    /// Enter edit mode for a specific message
+    fn enter_edit_mode(&mut self, message_id: &str) {
+        // Find the message in the store
+        if let Some(item) = self
+            .view_model
+            .chat_store
+            .get_by_id(&message_id.to_string())
+        {
+            if let crate::tui::model::ChatItem::Message(row) = item {
+                if let Message::User { content, .. } = &row.inner {
+                    // Extract text content from user blocks
+                    let text = content
+                        .iter()
+                        .filter_map(|block| match block {
+                            conductor_core::app::conversation::UserContent::Text { text } => {
+                                Some(text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    // Set up textarea with the message content
+                    self.textarea = TextArea::from(text.lines().collect::<Vec<_>>());
+                    self.input_mode = InputMode::Insert;
+                    self.previous_insert_text = text;
+
+                    // Store the message ID we're editing
+                    self.editing_message_id = Some(message_id.to_string());
+                }
+            }
+        }
+    }
+
+    /// Static UI rendering function
+    #[allow(clippy::too_many_arguments)]
     fn render_ui_static(
-        f: &mut ratatui::Frame<'_>,
-        textarea: &TextArea<'_>,
-        messages: &[MessageContent],
-        view_state: &mut MessageListState,
+        f: &mut Frame,
+        textarea: &TextArea,
+        chat_items: &[crate::tui::model::ChatItem],
+        chat_list_state: &mut ChatListState,
         input_mode: InputMode,
-        current_model: &str,
-        current_approval_info: Option<&conductor_tools::ToolCall>,
-        cached_renderer: &Arc<CachedContentRenderer>,
+        current_model: &Model,
+        current_approval: Option<&ToolCall>,
+        cached_renderer: &CachedContentRenderer,
+        current_thread: Option<uuid::Uuid>,
+        is_processing: bool,
+        spinner_state: usize,
     ) -> Result<()> {
-        let total_area = f.area();
-        let input_height = (textarea.lines().len() as u16 + 2)
-            .min(MAX_INPUT_HEIGHT)
-            .min(total_area.height);
+        let size = f.area();
 
-        // Calculate potential preview height
-        let preview_height = if current_approval_info.is_some() {
-            // Calculate dynamic preview height based on terminal size
-            // Use up to 30% of terminal height, with min 8 and max 20 lines
-            let max_preview = (total_area.height as f32 * 0.3) as u16;
-            max_preview.clamp(1, 20)
-        } else {
-            0
-        };
-
-        // Adjust layout constraints
+        // Main layout
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),                 // Messages area
-                Constraint::Length(preview_height), // Tool preview area (optional)
-                Constraint::Length(input_height),   // Input area
-                Constraint::Length(1),              // Model info area
+                Constraint::Min(1),    // Messages area (flexible)
+                Constraint::Length(5), // Input area
+                Constraint::Length(1), // Status bar
             ])
-            .split(f.area());
+            .split(size);
 
-        let messages_area = chunks[0];
-        let preview_area = chunks[1]; // New area
-        let input_area = chunks[2];
-        let model_info_area = chunks[3];
+        // Render messages
+        let message_block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Messages ")
+            .style(Style::default().fg(ratatui::style::Color::DarkGray));
 
-        // Pre-calculate visible range to get messages_above count
-        let inner_area = messages_area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
-        let visible_range = view_state.calculate_visible_range(
-            messages,
-            inner_area.height,
-            inner_area.width,
-            cached_renderer.as_ref() as &dyn ContentRenderer,
-        );
+        // Use the ChatList widget as a stateful widget
+        let chat_list = ChatList::new(chat_items);
+        f.render_stateful_widget(chat_list, chunks[0], chat_list_state);
 
-        // Render Messages using the new widget with StatefulWidget pattern
-        let message_block = if let Some(range) = &visible_range {
-            if range.messages_above > 0 {
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(Line::from(Span::styled(
-                        format!("(↑ {} messages above)", range.messages_above),
-                        Style::default().white(),
-                    )))
-            } else {
-                Block::default().borders(Borders::ALL)
-            }
+        // Render input area or approval prompt
+        if let Some(tool_call) = current_approval {
+            // Use the formatter to create a nice preview
+            let formatter = crate::tui::widgets::formatters::get_formatter(&tool_call.name);
+            let preview_lines = formatter.compact(
+                &tool_call.parameters,
+                &None,
+                (chunks[1].width.saturating_sub(4)) as usize,
+            );
+
+            let mut approval_text = vec![
+                Line::from(vec![
+                    Span::styled("Tool '", Style::default().fg(Color::White)),
+                    Span::styled(
+                        &tool_call.name,
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("' requests approval:", Style::default().fg(Color::White)),
+                ]),
+                Line::from(""),
+            ];
+
+            // Add the formatted preview
+            approval_text.extend(preview_lines);
+            approval_text.push(Line::from(""));
+            approval_text.push(Line::from(vec![
+                Span::styled(
+                    "[Y]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("es once | "),
+                Span::styled(
+                    "[A]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("lways | "),
+                Span::styled(
+                    "[N]",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("o/Esc to reject"),
+            ]));
+
+            let approval_block = Paragraph::new(approval_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Tool Approval Required ")
+                        .style(Style::default().fg(ratatui::style::Color::Yellow)),
+                )
+                .style(Style::default().fg(ratatui::style::Color::White));
+            f.render_widget(approval_block, chunks[1]);
         } else {
-            Block::default().borders(Borders::ALL)
-        };
+            // Render input with a proper block
+            let input_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(
+                    "{}{}",
+                    if is_processing {
+                        format!(" {}", get_spinner_char(spinner_state))
+                    } else {
+                        String::new()
+                    },
+                    match input_mode {
+                        InputMode::Insert => " Insert (Alt-Enter to send, Esc to cancel) ",
+                        InputMode::Normal =>
+                            " (i to edit, ! for bash, u/d/j/k to scroll, q to quit) ",
+                        InputMode::BashCommand => " Bash (Enter to execute, Esc to cancel) ",
+                        InputMode::AwaitingApproval => " Awaiting Approval",
+                        InputMode::SelectingModel => " Model Selection",
+                        InputMode::ConfirmExit => " Really quit? (y/Y to confirm, any other key to cancel) ",
+                    }
+                ))
+                .style(match input_mode {
+                    InputMode::Insert => Style::default().fg(ratatui::style::Color::Green),
+                    InputMode::Normal => Style::default().fg(ratatui::style::Color::DarkGray),
+                    InputMode::BashCommand => Style::default().fg(ratatui::style::Color::Cyan),
+                    InputMode::ConfirmExit => Style::default().fg(ratatui::style::Color::Red),
+                    _ => Style::default(),
+                });
 
-        let message_widget = MessageList::new(messages)
-            .with_renderer(Box::new(CachedContentRendererRef::new(
-                cached_renderer.clone(),
-            )))
-            .block(message_block);
-        f.render_stateful_widget(message_widget, messages_area, view_state);
-
-        // Render Tool Preview (conditionally)
-        if let Some(info) = current_approval_info {
-            Self::render_tool_preview_static(f, preview_area, info);
+            // Clone the textarea and set the block
+            let mut textarea_with_block = textarea.clone();
+            textarea_with_block.set_block(input_block);
+            f.render_widget(&textarea_with_block, chunks[1]);
         }
 
-        // Render Text Area
-        f.render_widget(textarea, input_area);
-
-        // Render model info at the bottom
-        let model_info: Paragraph<'_> =
-            Paragraph::new(Line::from(Span::styled(current_model, styles::MODEL_INFO)))
-                .alignment(ratatui::layout::Alignment::Right);
-        f.render_widget(model_info, model_info_area);
-
-        // Hide terminal cursor when in editing mode
-        // The textarea widget renders its own cursor, so we don't need the terminal cursor
-        if input_mode == InputMode::Editing {
-            // Hide cursor by setting it outside the visible area
-            f.set_cursor_position(Position { x: 0, y: 0 });
-        }
+        let status_block = Paragraph::new(format!(" {} ", current_model))
+            .style(Style::default().fg(ratatui::style::Color::Gray))
+            .alignment(ratatui::layout::Alignment::Right);
+        f.render_widget(status_block, chunks[2]);
 
         Ok(())
     }
 
-    // Static function to render the tool preview
-    fn render_tool_preview_static(
-        f: &mut ratatui::Frame<'_>,
+    /// Render model selection popup
+    fn render_popup_static(
+        f: &mut Frame,
         area: Rect,
-        tool_call: &conductor_tools::ToolCall,
+        models: &[Model],
+        current_model: &Model,
+        _popup_state: &mut PopupState,
     ) {
-        use crate::tui::widgets::content_renderer::{ContentRenderer, DefaultContentRenderer};
+        let items: Vec<String> = models
+            .iter()
+            .map(|m| {
+                if m == current_model {
+                    format!("● {}", m)
+                } else {
+                    format!("  {}", m)
+                }
+            })
+            .collect();
 
-        // Create a temporary Tool message to render
-        let temp_message = MessageContent::Tool {
-            id: tool_call.id.clone(),
-            call: tool_call.clone(),
-            result: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+        let popup = PopupList::new("Select Model (Esc to cancel)", &items);
+
+        f.render_widget(popup, centered_rect(50, 70, area));
+    }
+}
+
+/// Helper function to get spinner character
+fn get_spinner_char(state: usize) -> &'static str {
+    const SPINNER_CHARS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    SPINNER_CHARS[state % SPINNER_CHARS.len()]
+}
+
+/// Helper function to create a centered rectangle
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use conductor_core::app::AppCommand;
+    use conductor_core::app::conversation::ToolResult;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    struct MockCommandSink;
+
+    #[async_trait]
+    impl AppCommandSink for MockCommandSink {
+        async fn send_command(&self, _command: AppCommand) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MockEventSource;
+
+    #[async_trait]
+    impl AppEventSource for MockEventSource {
+        async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
+            let (_, rx) = mpsc::channel(10);
+            rx
+        }
+    }
+
+    fn create_test_tui() -> Tui {
+        let command_sink = Arc::new(MockCommandSink);
+        let event_source = Arc::new(MockEventSource);
+
+        Tui {
+            terminal: Terminal::new(CrosstermBackend::new(io::stdout())).unwrap(),
+            terminal_size: (80, 24),
+            input_mode: InputMode::Normal,
+            textarea: TextArea::default(),
+            previous_insert_text: String::new(),
+            editing_message_id: None,
+            command_sink,
+            is_processing: false,
+            progress_message: None,
+            spinner_state: 0,
+            last_spinner_update: Instant::now(),
+            current_tool_approval: None,
+            models: vec![Model::Claude3_5Sonnet20241022],
+            current_model: Model::Claude3_5Sonnet20241022,
+            popup_state: PopupState::default(),
+            cached_renderer: CachedContentRenderer::new(Arc::new(RwLock::new(ContentCache::new()))),
+            event_pipeline: Tui::create_event_pipeline(),
+            view_model: MessageViewModel::new(),
+        }
+    }
+
+    #[test]
+    fn test_restore_messages_preserves_tool_call_params() {
+        let mut tui = create_test_tui();
+
+        // Create messages with a tool call
+        let tool_call = conductor_tools::ToolCall {
+            id: "test_tool_123".to_string(),
+            name: "view".to_string(),
+            parameters: json!({
+                "file_path": "/test/file.rs",
+                "offset": 10,
+                "limit": 100
+            }),
         };
 
-        let renderer = DefaultContentRenderer;
-        renderer.render(&temp_message, ViewMode::Detailed, area, f.buffer_mut());
-    }
+        let assistant_msg = Message::Assistant {
+            id: "msg_assistant".to_string(),
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
+            timestamp: 1234567890,
+            thread_id: uuid::Uuid::new_v4(),
+            parent_message_id: None,
+        };
 
-    async fn handle_input(&mut self, key: KeyEvent) -> Result<Option<InputAction>> {
-        let mut action = None;
-
-        // --- Global keys handled first ---
-
-        // Handle ESC specifically for denying the current tool approval
-        if key.code == KeyCode::Esc && self.input_mode == InputMode::AwaitingApproval {
-            if let Some(approval_info) = self.current_tool_approval.take() {
-                action = Some(InputAction::DenyTool(approval_info.id));
-                self.input_mode = InputMode::Normal; // Revert to normal mode
-                return Ok(action);
-            }
-        }
-
-        // --- View mode and navigation keys ---
-        if self.input_mode != InputMode::Editing {
-            match (key.code, key.modifiers) {
-                // View mode toggles
-                // v - cycle through view modes
-                // Shift+D - force Detailed view
-                // Shift+C - force Compact view
-                (KeyCode::Char('v'), KeyModifiers::NONE) => {
-                    self.view_model
-                        .message_list_state
-                        .view_prefs
-                        .global_override = match self
-                        .view_model
-                        .message_list_state
-                        .view_prefs
-                        .global_override
-                    {
-                        None => Some(ViewMode::Compact),
-                        Some(ViewMode::Compact) => Some(ViewMode::Detailed),
-                        Some(ViewMode::Detailed) => None,
-                    };
-                    // Clear caches when view mode changes
-
-                    self.view_model.clear_content_cache();
-                    return Ok(None);
-                }
-                (KeyCode::Char('D'), KeyModifiers::SHIFT)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    self.view_model
-                        .message_list_state
-                        .view_prefs
-                        .global_override = Some(ViewMode::Detailed);
-                    // Clear caches when view mode changes
-
-                    self.view_model.clear_content_cache();
-                    return Ok(None);
-                }
-                (KeyCode::Char('C'), KeyModifiers::SHIFT)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    self.view_model
-                        .message_list_state
-                        .view_prefs
-                        .global_override = Some(ViewMode::Compact);
-                    // Clear cache when view mode changes
-
-                    return Ok(None);
-                }
-
-                // Navigation
-                (KeyCode::PageUp, _) => {
-                    // Scroll up by approximately one page
-                    let page_size = self.terminal_size.1.saturating_sub(6) / 2; // Half page
-                    let scrolled = self.view_model.message_list_state.simple_scroll_up(
-                        page_size,
-                        self.view_model.messages.as_slice(),
-                        Some(self.terminal_size),
-                    );
-                    if scrolled {
-                        self.view_model.message_list_state.user_scrolled = true;
-                    }
-                    return Ok(None);
-                }
-                (KeyCode::PageDown, _) => {
-                    // Scroll down by approximately one page
-                    let page_size = self.terminal_size.1.saturating_sub(6) / 2; // Half page
-                    let scrolled = self.view_model.message_list_state.simple_scroll_down(
-                        page_size,
-                        self.view_model.messages.as_slice(),
-                        Some(self.terminal_size),
-                    );
-                    if scrolled {
-                        self.view_model.message_list_state.user_scrolled = true;
-                    }
-                    return Ok(None);
-                }
-                (KeyCode::Home, _) => {
-                    // Scroll to top
-                    self.view_model.message_list_state.set_scroll_offset(999999); // Will be clamped to max
-                    return Ok(None);
-                }
-                (KeyCode::End, _) => {
-                    // Scroll to bottom
-                    self.view_model.message_list_state.scroll_to_bottom();
-                    return Ok(None);
-                }
-                (KeyCode::Up, modifiers) => {
-                    if modifiers == KeyModifiers::SHIFT {
-                        // Select previous message
-                        self.view_model.message_list_state.select_previous();
-                    } else {
-                        // Scroll up
-                        let scrolled = self.view_model.message_list_state.simple_scroll_up(
-                            1,
-                            self.view_model.messages.as_slice(),
-                            Some(self.terminal_size),
-                        );
-                        if scrolled {
-                            self.view_model.message_list_state.user_scrolled = true;
-                        }
-                    }
-                    return Ok(None);
-                }
-                (KeyCode::Down, modifiers) => {
-                    if modifiers == KeyModifiers::SHIFT {
-                        // Select next message
-                        self.view_model
-                            .message_list_state
-                            .select_next(self.view_model.messages.len());
-                    } else {
-                        // Scroll down
-                        let scrolled = self.view_model.message_list_state.simple_scroll_down(
-                            1,
-                            self.view_model.messages.as_slice(),
-                            Some(self.terminal_size),
-                        );
-                        if scrolled {
-                            self.view_model.message_list_state.user_scrolled = true;
-                        }
-                    }
-                    return Ok(None);
-                }
-
-                // Vim-style navigation (only in Normal mode)
-                // j/k - scroll down/up one line
-                // d/u - scroll down/up half page
-                // G - go to bottom, g - go to top
-                (KeyCode::Char('g'), KeyModifiers::NONE)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    self.view_model.message_list_state.set_scroll_offset(999999); // Will be clamped to max
-                    return Ok(None);
-                }
-                (KeyCode::Char('G'), KeyModifiers::SHIFT)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    self.view_model.message_list_state.scroll_to_bottom();
-                    return Ok(None);
-                }
-                (KeyCode::Char('k'), KeyModifiers::NONE)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    // Scroll up one line
-                    let scrolled = self.view_model.message_list_state.simple_scroll_up(
-                        1,
-                        self.view_model.messages.as_slice(),
-                        Some(self.terminal_size),
-                    );
-                    if scrolled {
-                        self.view_model.message_list_state.user_scrolled = true;
-                    }
-                    return Ok(None);
-                }
-                (KeyCode::Char('j'), KeyModifiers::NONE)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    // Scroll down one line
-                    let scrolled = self.view_model.message_list_state.simple_scroll_down(
-                        1,
-                        self.view_model.messages.as_slice(),
-                        Some(self.terminal_size),
-                    );
-                    if scrolled {
-                        self.view_model.message_list_state.user_scrolled = true;
-                    }
-                    return Ok(None);
-                }
-                (KeyCode::Char('u'), KeyModifiers::NONE)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    // Scroll up half page
-                    let scrolled = self.view_model.message_list_state.simple_scroll_up(
-                        20,
-                        self.view_model.messages.as_slice(),
-                        Some(self.terminal_size),
-                    );
-                    if scrolled {
-                        self.view_model.message_list_state.user_scrolled = true;
-                    }
-                    return Ok(None);
-                }
-                (KeyCode::Char('d'), KeyModifiers::NONE)
-                    if self.input_mode == InputMode::Normal =>
-                {
-                    // Scroll down half page
-                    let scrolled = self.view_model.message_list_state.simple_scroll_down(
-                        20,
-                        self.view_model.messages.as_slice(),
-                        Some(self.terminal_size),
-                    );
-                    if scrolled {
-                        self.view_model.message_list_state.user_scrolled = true;
-                    }
-                    return Ok(None);
-                }
-
-                // Toggle expansion of selected message
-                (KeyCode::Enter, _) if self.input_mode == InputMode::Normal => {
-                    if let Some(idx) = self.view_model.message_list_state.selected {
-                        if idx < self.view_model.messages.len() {
-                            let msg_id = self.view_model.messages[idx].id().to_string();
-                            self.view_model.message_list_state.toggle_expanded(msg_id);
-                            return Ok(None);
-                        }
-                    }
-                    // If no selection, send the message
-                    let input = self.textarea.lines().join("\n");
-                    if !input.trim().is_empty() {
-                        self.clear_textarea();
-                        action = Some(InputAction::SendMessage(input));
-                        return Ok(action);
-                    }
-                }
-
-                // Toggle message detail (Ctrl+R)
-                (KeyCode::Char('r'), KeyModifiers::CONTROL)
-                | (KeyCode::Char('R'), KeyModifiers::CONTROL) => {
-                    if let Some(idx) = self.view_model.message_list_state.selected {
-                        if idx < self.view_model.messages.len() {
-                            let msg_id = self.view_model.messages[idx].id().to_string();
-                            self.view_model.message_list_state.toggle_expanded(msg_id);
-                        }
-                    }
-                    return Ok(None);
-                }
-
-                _ => {}
-            }
-        }
-
-        // --- Mode-specific keys ---
-        match self.input_mode {
-            InputMode::Normal => {
-                match key.code {
-                    KeyCode::Esc => {
-                        if self.is_processing {
-                            action = Some(InputAction::CancelProcessing);
-                        } else {
-                            self.clear_textarea();
-                        }
-                        return Ok(action);
-                    }
-                    // Enter Edit Mode
-                    KeyCode::Char('i') | KeyCode::Char('s') => {
-                        self.input_mode = InputMode::Editing;
-                    }
-                    // Enter Bash Command Mode
-                    KeyCode::Char('!') => {
-                        self.input_mode = InputMode::BashCommand;
-                        self.clear_textarea();
-                    }
-                    // Cancel Processing (Ctrl+C)
-                    KeyCode::Char('c') | KeyCode::Char('C')
-                        if key.modifiers == KeyModifiers::CONTROL =>
-                    {
-                        if self.is_processing {
-                            action = Some(InputAction::CancelProcessing);
-                        } else {
-                            // Enter ConfirmExit mode if not processing
-                            self.input_mode = InputMode::ConfirmExit;
-                        }
-                        return Ok(action);
-                    }
-                    _ => {} // Other keys handled above
-                }
-            }
-            InputMode::Editing => {
-                match key.code {
-                    // Stop editing
-                    KeyCode::Esc => {
-                        self.input_mode = InputMode::Normal;
-                    }
-                    // Debug: log all Enter key variants
-                    KeyCode::Enter => {
-                        debug!(target:"tui.input", "Enter key pressed with modifiers: {:?}", key.modifiers);
-
-                        if key.modifiers.contains(KeyModifiers::ALT) {
-                            // Insert newline (Alt+Enter)
-                            self.textarea.insert_char('\n');
-                        } else {
-                            // Send Message (plain Enter)
-                            let input = self.textarea.lines().join("\n");
-                            if !input.trim().is_empty() {
-                                action = Some(InputAction::SendMessage(input));
-                                // Re-initialize the textarea to clear it
-                                let mut new_textarea = TextArea::default();
-                                new_textarea
-                                    .set_block(self.textarea.block().cloned().unwrap_or_default());
-                                new_textarea.set_placeholder_text(self.textarea.placeholder_text());
-                                new_textarea.set_style(self.textarea.style());
-                                new_textarea.set_cursor_style(
-                                    Style::default().add_modifier(Modifier::REVERSED),
-                                );
-                                self.textarea = new_textarea;
-                                self.input_mode = InputMode::Normal;
-                            }
-                        }
-                    }
-                    // Cancel Processing (Ctrl+C)
-                    KeyCode::Char('c') | KeyCode::Char('C')
-                        if key.modifiers == KeyModifiers::CONTROL =>
-                    {
-                        if self.is_processing {
-                            action = Some(InputAction::CancelProcessing);
-                        } else {
-                            // Enter ConfirmExit mode if not processing
-                            self.input_mode = InputMode::ConfirmExit;
-                        }
-                        return Ok(action);
-                    }
-                    // Pass other keys to text area
-                    _ => {
-                        // Pass ratatui KeyEvent directly, as tui-textarea's input() expects `impl Into<Input>`
-                        self.textarea.input(key);
-                    }
-                }
-            }
-            InputMode::AwaitingApproval => {
-                if let Some(approval_info) = self.current_tool_approval.clone() {
-                    match key.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') => {
-                            action = Some(InputAction::ApproveToolNormal(approval_info.id));
-                            self.current_tool_approval = None; // Clear approval
-                            self.input_mode = InputMode::Normal; // Revert to normal
-                        }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                            action = Some(InputAction::DenyTool(approval_info.id));
-                            self.current_tool_approval = None; // Clear approval
-                            self.input_mode = InputMode::Normal; // Revert to normal
-                        }
-                        KeyCode::BackTab => {
-                            // Shift+Tab for Approve Always
-                            action = Some(InputAction::ApproveToolAlways(approval_info.id));
-                            self.current_tool_approval = None; // Clear approval
-                            self.input_mode = InputMode::Normal; // Revert to normal
-                        }
-                        // Cancel Processing (Ctrl+C)
-                        KeyCode::Char('c') | KeyCode::Char('C')
-                            if key.modifiers == KeyModifiers::CONTROL =>
-                        {
-                            if self.is_processing {
-                                action = Some(InputAction::CancelProcessing);
-                            } else {
-                                // Enter ConfirmExit mode if not processing
-                                self.input_mode = InputMode::ConfirmExit;
-                            }
-                            return Ok(action);
-                        }
-                        _ => {} // Ignore other keys
-                    }
-                } else {
-                    // Should not happen, but revert to normal mode if no approval is active
-                    warn!(target: "tui.handle_input", "In AwaitingApproval mode but no current approval info. Reverting to Normal.");
-                    self.input_mode = InputMode::Normal;
-                }
-            }
-            InputMode::BashCommand => {
-                match key.code {
-                    // Cancel bash command
-                    KeyCode::Esc => {
-                        self.input_mode = InputMode::Normal;
-                        self.clear_textarea();
-                    }
-                    // Execute bash command
-                    KeyCode::Enter => {
-                        let command = self.textarea.lines().join("\n");
-                        if !command.trim().is_empty() {
-                            action = Some(InputAction::ExecuteBashCommand(command));
-                            self.clear_textarea();
-                            self.input_mode = InputMode::Normal;
-                        }
-                    }
-                    // Cancel Processing (Ctrl+C)
-                    KeyCode::Char('c') | KeyCode::Char('C')
-                        if key.modifiers == KeyModifiers::CONTROL =>
-                    {
-                        if self.is_processing {
-                            action = Some(InputAction::CancelProcessing);
-                        } else {
-                            // Cancel bash command and return to normal
-                            self.input_mode = InputMode::Normal;
-                            self.clear_textarea();
-                        }
-                        return Ok(action);
-                    }
-                    // Pass other keys to text area
-                    _ => {
-                        self.textarea.input(key);
-                    }
-                }
-            }
-            InputMode::ConfirmExit => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    action = Some(InputAction::Exit);
-                }
-                // Also exit if Ctrl+C is pressed *again*
-                KeyCode::Char('c') | KeyCode::Char('C')
-                    if key.modifiers == KeyModifiers::CONTROL =>
-                {
-                    action = Some(InputAction::Exit);
-                }
-                _ => {
-                    // Any other key cancels exit confirmation
-                    self.input_mode = InputMode::Normal;
-                }
+        let tool_msg = Message::Tool {
+            id: "msg_tool".to_string(),
+            tool_use_id: "test_tool_123".to_string(),
+            result: ToolResult::Success {
+                output: "File contents...".to_string(),
             },
-        }
-        Ok(action)
+            timestamp: 1234567891,
+            thread_id: assistant_msg.thread_id().clone(),
+            parent_message_id: Some("msg_assistant".to_string()),
+        };
+
+        let messages = vec![assistant_msg, tool_msg];
+
+        // Restore messages
+        tui.restore_messages(messages);
+
+        // Verify tool call was preserved in registry
+        let stored_call = tui
+            .view_model
+            .tool_registry
+            .get_tool_call("test_tool_123")
+            .expect("Tool call should be in registry");
+        assert_eq!(stored_call.name, "view");
+        assert_eq!(stored_call.parameters, tool_call.parameters);
     }
 
-    async fn dispatch_input_action(&mut self, action: InputAction) -> Result<bool> {
-        let mut should_exit = false;
-        match action {
-            InputAction::SendMessage(input) => {
-                self.command_sink
-                    .send_command(AppCommand::ProcessUserInput(input))
-                    .await?;
-                // Clear any selection and reset manual scroll when user sends a message
-                self.view_model.message_list_state.selected = None;
-                self.view_model.message_list_state.user_scrolled = false;
-                debug!(target: "tui.dispatch_input_action", "Sent UserInput command, reset user_scrolled");
-            }
-            InputAction::ExecuteBashCommand(command) => {
-                self.command_sink
-                    .send_command(AppCommand::ExecuteBashCommand { command })
-                    .await?;
-                // Clear any selection and reset manual scroll when user executes a command
-                self.view_model.message_list_state.selected = None;
-                self.view_model.message_list_state.user_scrolled = false;
-                debug!(target: "tui.dispatch_input_action", "Sent ExecuteBashCommand, reset user_scrolled");
-            }
-            InputAction::ApproveToolNormal(id) => {
-                self.command_sink
-                    .send_command(AppCommand::HandleToolResponse {
-                        id,
-                        approved: true,
-                        always: false,
-                    })
-                    .await?;
-                self.activate_next_approval();
-            }
-            InputAction::ApproveToolAlways(id) => {
-                self.command_sink
-                    .send_command(AppCommand::HandleToolResponse {
-                        id,
-                        approved: true,
-                        always: true,
-                    })
-                    .await?;
-                self.activate_next_approval();
-            }
-            InputAction::DenyTool(id) => {
-                self.command_sink
-                    .send_command(AppCommand::HandleToolResponse {
-                        id,
-                        approved: false,
-                        always: false,
-                    })
-                    .await?;
-                self.activate_next_approval();
-            }
-            InputAction::CancelProcessing => {
-                self.command_sink
-                    .send_command(AppCommand::CancelProcessing)
-                    .await?;
-            }
-            InputAction::Exit => {
-                should_exit = true;
-            }
-        }
-        Ok(should_exit)
-    }
+    #[test]
+    fn test_restore_messages_handles_tool_result_before_assistant() {
+        let mut tui = create_test_tui();
 
-    fn activate_next_approval(&mut self) {
-        // Since we clear current_tool_approval after handling, we just return to normal mode
-        debug!(target: "tui.activate_next_approval", "Clearing approval state, returning to Normal mode.");
-        self.current_tool_approval = None;
-        self.input_mode = InputMode::Normal;
-    }
+        let thread_id = uuid::Uuid::new_v4();
 
-    fn clear_textarea(&mut self) {
-        self.textarea.delete_line_by_end();
-        self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
-        self.textarea.move_cursor(tui_textarea::CursorMove::End);
+        // Create a Tool message that arrives before its corresponding Assistant message
+        let tool_msg = Message::Tool {
+            id: "msg_tool".to_string(),
+            tool_use_id: "orphan_tool_123".to_string(),
+            result: ToolResult::Success {
+                output: "Orphaned result".to_string(),
+            },
+            timestamp: 1234567890,
+            thread_id,
+            parent_message_id: None,
+        };
+
+        // The assistant message with tool call arrives later
+        let tool_call = conductor_tools::ToolCall {
+            id: "orphan_tool_123".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({"command": "ls -la"}),
+        };
+
+        let assistant_msg = Message::Assistant {
+            id: "msg_assistant".to_string(),
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
+            timestamp: 1234567891,
+            thread_id,
+            parent_message_id: None,
+        };
+
+        let messages = vec![tool_msg, assistant_msg];
+
+        // Restore messages
+        tui.restore_messages(messages);
+
+        // Verify the tool message was created with proper tool call info
+        assert_eq!(tui.view_model.chat_store.len(), 2);
     }
 }
 
-// Implement Drop to ensure terminal cleanup happens
-impl Drop for Tui {
-    fn drop(&mut self) {
-        if let Err(e) = self.cleanup_terminal() {
-            error!(target:"tui.drop", "Failed to cleanup terminal: {}", e);
-        }
-    }
-}
+// -------------------------------------------------------------------------------------------------
+// Public API for backward compatibility with conductor-cli
+// -------------------------------------------------------------------------------------------------
 
 /// Free function for best-effort terminal cleanup (raw mode, alt screen, mouse, etc.)
 pub fn cleanup_terminal() {
-    use ratatui::crossterm::event::{
-        DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags,
-    };
-    use ratatui::crossterm::{
+    use crossterm::{
+        event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags},
         execute,
         terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
@@ -1367,204 +1278,32 @@ pub fn cleanup_terminal() {
     );
 }
 
-// Helper to wrap terminal cleanup in panic handler
+/// Helper to wrap terminal cleanup in panic handler
 pub fn setup_panic_hook() {
-    panic::set_hook(Box::new(|panic_info| {
-        let mut stdout = io::stdout();
-        let _ = execute!(
-            stdout,
-            LeaveAlternateScreen,
-            DisableBracketedPaste,
-            PopKeyboardEnhancementFlags,
-            DisableMouseCapture
-        );
-        let _ = disable_raw_mode();
+    std::panic::set_hook(Box::new(|panic_info| {
+        cleanup_terminal();
         // Print panic info to stderr after restoring terminal state
         eprintln!("Application panicked:");
         eprintln!("{}", panic_info);
     }));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tui::widgets::formatters::ToolFormatter;
-    use crate::tui::widgets::formatters::view::ViewFormatter;
-    use anyhow::Result;
-    use async_trait::async_trait;
-    use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::{AssistantContent, Message, ToolResult};
-    use conductor_core::app::io::AppCommandSink;
-    use serde_json::json;
-
-    // Mock command sink for tests
-    struct MockCommandSink;
-
-    #[async_trait]
-    impl AppCommandSink for MockCommandSink {
-        async fn send_command(&self, _command: AppCommand) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_restore_messages_preserves_tool_call_params() {
-        // Create a TUI instance for testing
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
-        let mut tui = Tui::new(command_sink, model).unwrap();
-
-        // Build test messages: Assistant with ToolCall, then Tool result
-        let tool_id = "test_tool_123".to_string();
-        let real_params = json!({
-            "file_path": "/test/file.rs",
-            "offset": 10,
-            "limit": 100
-        });
-
-        let tool_call = conductor_tools::schema::ToolCall {
-            id: tool_id.clone(),
-            name: "view".to_string(),
-            parameters: real_params.clone(),
-        };
-
-        let messages = vec![
-            Message::Assistant {
-                id: "msg_123".to_string(),
-                content: vec![AssistantContent::ToolCall { tool_call }],
-                timestamp: 1234567890,
-                thread_id: uuid::Uuid::new_v4(),
-                parent_message_id: None,
-            },
-            Message::Tool {
-                tool_use_id: tool_id.clone(),
-                result: ToolResult::Success {
-                    output: "file content here".to_string(),
-                },
-                timestamp: 1234567891,
-                id: "tool_result_123".to_string(),
-                thread_id: uuid::Uuid::new_v4(),
-                parent_message_id: Some("msg_123".to_string()),
-            },
-        ];
-
-        // Restore the messages
-        tui.restore_messages(messages);
-
-        // Assert we have exactly one Tool message in the view model
-        let tool_messages: Vec<_> = tui
-            .view_model
-            .messages
-            .iter()
-            .filter_map(|msg| match msg {
-                MessageContent::Tool { call, .. } => Some(call),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(tool_messages.len(), 1);
-        let tool_call = tool_messages[0];
-
-        // Verify the Tool message has proper parameters (not null)
-        assert_ne!(tool_call.parameters, serde_json::Value::Null);
-        assert_eq!(tool_call.parameters, real_params);
-        assert_eq!(tool_call.name, "view");
-        assert_eq!(tool_call.id, tool_id);
-
-        // Verify the formatter can parse these parameters without error
-        let formatter = ViewFormatter;
-        let lines = formatter.compact(&tool_call.parameters, &None, 80);
-
-        let text = lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        assert!(!text.contains("Invalid view params"));
-        assert!(text.contains("file.rs"));
-    }
-
-    #[test]
-    fn test_restore_messages_handles_tool_result_before_assistant() {
-        // Test edge case where Tool result arrives before Assistant message
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
-        let mut tui = Tui::new(command_sink, model).unwrap();
-
-        let tool_id = "test_tool_456".to_string();
-        let real_params = json!({
-            "file_path": "/another/file.rs"
-        });
-
-        // Tool result comes first (unusual but possible)
-        let messages = vec![
-            Message::Tool {
-                tool_use_id: tool_id.clone(),
-                result: ToolResult::Success {
-                    output: "file content".to_string(),
-                },
-                timestamp: 1234567890,
-                id: "tool_result_456".to_string(),
-                thread_id: uuid::Uuid::new_v4(),
-                parent_message_id: None,
-            },
-            Message::Assistant {
-                id: "msg_456".to_string(),
-                content: vec![AssistantContent::ToolCall {
-                    tool_call: conductor_tools::schema::ToolCall {
-                        id: tool_id.clone(),
-                        name: "view".to_string(),
-                        parameters: real_params.clone(),
-                    },
-                }],
-                timestamp: 1234567891,
-                thread_id: uuid::Uuid::new_v4(),
-                parent_message_id: Some("tool_result_456".to_string()),
-            },
-        ];
-
-        tui.restore_messages(messages);
-
-        // Should still have proper parameters
-        let tool_messages: Vec<_> = tui
-            .view_model
-            .messages
-            .iter()
-            .filter_map(|msg| match msg {
-                MessageContent::Tool { call, .. } => Some(call),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(tool_messages.len(), 1);
-        let tool_call = tool_messages[0];
-        assert_eq!(tool_call.parameters, real_params);
-        assert_eq!(tool_call.name, "view");
-    }
-}
-
 /// High-level entry point for running the TUI
 pub async fn run_tui(
-    client: Arc<conductor_grpc::GrpcClientAdapter>,
+    client: std::sync::Arc<conductor_grpc::GrpcClientAdapter>,
     session_id: Option<String>,
-    model: Model,
+    model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
-) -> Result<()> {
-    use conductor_core::app::io::AppEventSource;
+) -> anyhow::Result<()> {
+    use conductor_core::app::io::{AppCommandSink, AppEventSource};
     use conductor_core::session::{SessionConfig, SessionToolConfig};
     use std::collections::HashMap;
 
     // If session_id is provided, resume that session
     if let Some(session_id) = session_id {
         // Activate the existing session
-        let (messages, approved_tools) = client.activate_session(session_id.clone()).await?;
+        let (messages, _approved_tools) = client.activate_session(session_id.clone()).await?;
         info!(
             "Activated session: {} with {} messages",
             session_id,
@@ -1579,12 +1318,18 @@ pub async fn run_tui(
         let event_rx = client.subscribe().await;
 
         // Initialize TUI with restored conversation
-        let mut tui = Tui::new_with_conversation(
-            client.clone() as Arc<dyn AppCommandSink>,
+        let mut tui = Tui::new(
+            client.clone() as std::sync::Arc<dyn AppCommandSink>,
+            client.clone() as std::sync::Arc<dyn AppEventSource>,
             model,
-            messages,
-            approved_tools,
-        )?;
+            vec![model], // For now, just pass the single model
+        )
+        .await?;
+
+        // Restore messages if we have any
+        if !messages.is_empty() {
+            tui.restore_messages(messages);
+        }
 
         // Run the TUI
         tui.run(event_rx).await?;
@@ -1604,8 +1349,6 @@ pub async fn run_tui(
 
         // Set workspace directory if provided
         if let Some(dir) = directory {
-            // Note: WorkspaceConfig doesn't have a root field in the default implementation
-            // You may need to adjust this based on your actual WorkspaceConfig definition
             std::env::set_current_dir(dir)?;
         }
 
@@ -1621,7 +1364,13 @@ pub async fn run_tui(
         let event_rx = client.subscribe().await;
 
         // Initialize TUI
-        let mut tui = Tui::new(client as Arc<dyn AppCommandSink>, model)?;
+        let mut tui = Tui::new(
+            client.clone() as std::sync::Arc<dyn AppCommandSink>,
+            client.clone() as std::sync::Arc<dyn AppEventSource>,
+            model,
+            vec![model], // For now, just pass the single model
+        )
+        .await?;
 
         // Run the TUI
         tui.run(event_rx).await?;

@@ -895,6 +895,73 @@ async fn handle_app_command(
             }
             false
         }
+        AppCommand::EditMessage {
+            message_id,
+            new_content,
+        } => {
+            debug!(target: "handle_app_command", "Editing message {} with new content", message_id);
+
+            // Cancel any existing operations first
+            app.cancel_current_processing().await;
+            if active_agent_event_rx.is_some() {
+                warn!(target: "handle_app_command", "Clearing previous active agent event receiver due to message edit.");
+                *active_agent_event_rx = None;
+            }
+
+            // Edit the message in the conversation. This removes the old branch and adds the new one.
+            let (new_thread_id, edited_message_opt) = {
+                let mut conversation = app.conversation.lock().await;
+                let new_thread_id = conversation.edit_message(
+                    &message_id,
+                    vec![UserContent::Text { text: new_content.clone() }]
+                );
+
+                // Attempt to fetch the newly created edited message (it will be the latest User message in the new thread)
+                let edited_msg = new_thread_id.and_then(|tid| {
+                    conversation
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.thread_id() == &tid && matches!(m, Message::User { .. }))
+                        .cloned()
+                });
+
+                (new_thread_id, edited_msg)
+            };
+
+            // Notify the UI about the newly edited user message so it can appear immediately
+            if let Some(edited_message) = edited_message_opt {
+                let _ = app.emit_event(AppEvent::MessageAdded {
+                    message: edited_message,
+                    model: app.current_model.clone(),
+                });
+            }
+
+            if let Some(thread_id) = new_thread_id {
+                debug!(target: "handle_app_command", "Created new branch with thread_id: {}", thread_id);
+
+                // This message is now the latest in the conversation.
+                // We can now start a new agent operation.
+                // This logic is adapted from `process_user_message`, but without adding a new message.
+                app.inject_cancelled_tool_results().await;
+                app.current_op_context = Some(OpContext::new());
+                app.emit_event(AppEvent::ThinkingStarted);
+
+                match app.spawn_agent_operation().await {
+                    Ok(maybe_receiver) => {
+                        *active_agent_event_rx = maybe_receiver;
+                    }
+                    Err(e) => {
+                        error!(target: "handle_app_command", "Error processing edited message: {}", e);
+                        app.current_op_context = None;
+                        app.emit_event(AppEvent::ThinkingCompleted);
+                    }
+                }
+            } else {
+                error!(target: "handle_app_command", "Failed to edit message {}", message_id);
+            }
+            false
+        }
         AppCommand::RestoreConversation {
             messages,
             approved_tools,

@@ -3,9 +3,9 @@
 //! Processes events related to model changes, command responses, and other
 //! system-level state changes.
 
-use conductor_core::app::{AppEvent, conversation::UserContent};
+use conductor_core::app::AppEvent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::widgets::message_list::MessageContent;
+use crate::tui::model::{ChatItem, generate_row_id};
 
 /// Processor for system-level events
 pub struct SystemEventProcessor;
@@ -15,20 +15,20 @@ impl SystemEventProcessor {
         Self
     }
 
-    /// Create a user command response message
-    fn create_command_response(
-        id: String,
+    /// Handle command response by adding it to the chat store
+    fn handle_command_response(
+        &self,
         command: conductor_core::app::conversation::AppCommandType,
         response: conductor_core::app::conversation::CommandResponse,
-    ) -> MessageContent {
-        MessageContent::User {
-            id,
-            blocks: vec![UserContent::AppCommand {
-                command,
-                response: Some(response),
-            }],
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        }
+        ctx: &mut ProcessingContext,
+    ) {
+        let chat_item = ChatItem::CmdResponse {
+            id: generate_row_id(),
+            cmd: command,
+            resp: response,
+            ts: time::OffsetDateTime::now_utc(),
+        };
+        ctx.chat_store.push(chat_item);
     }
 }
 
@@ -55,10 +55,7 @@ impl EventProcessor for SystemEventProcessor {
                 response,
                 id: _,
             } => {
-                let response_id = format!("cmd_resp_{}", chrono::Utc::now().timestamp_millis());
-                let response_message =
-                    Self::create_command_response(response_id, command, response);
-                ctx.messages.push(response_message);
+                self.handle_command_response(command, response, ctx);
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
             }

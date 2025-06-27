@@ -5,7 +5,8 @@ use tracing::debug;
 
 use super::content_renderer::{ContentRenderer, DefaultContentRenderer};
 use crate::tui::state::content_cache::ContentCache;
-use crate::tui::widgets::message_list::{MessageContent, ViewMode};
+use crate::tui::model::MessageContent;
+use crate::tui::widgets::chat_list::ViewMode;
 
 // Wrapper struct that holds an Arc to the actual renderer
 pub struct CachedContentRendererRef {

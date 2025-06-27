@@ -3,7 +3,8 @@ use std::collections::{HashMap, VecDeque, hash_map::RandomState};
 use std::hash::{BuildHasher, Hash, Hasher};
 use tracing::debug;
 
-use crate::tui::widgets::message_list::{MessageContent, ViewMode};
+use crate::tui::model::MessageContent;
+use crate::tui::widgets::chat_list::ViewMode;
 
 /// Global hasher builder with a fixed random seed so that hashes are stable
 static HASHER_BUILDER: Lazy<RandomState> = Lazy::new(RandomState::new);
@@ -256,6 +257,9 @@ mod tests {
                 text: "Hello world".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
         };
 
         let key1 = CacheKey::new(&message, ViewMode::Compact, 80);
@@ -279,6 +283,9 @@ mod tests {
                 text: "Hello world".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
         };
 
         let hash1 = hash_message_content(&message);
@@ -298,6 +305,9 @@ mod tests {
                 text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
         };
 
         // First access - should be a miss
@@ -331,6 +341,9 @@ mod tests {
                 text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
         };
 
         // First access with Compact mode
@@ -360,6 +373,9 @@ mod tests {
                 text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
         };
 
         // Access with width 78
@@ -392,6 +408,9 @@ mod tests {
                     text: format!("Message {}", i),
                 }],
                 timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
             });
         }
 
@@ -448,6 +467,9 @@ mod tests {
                     text: format!("Message {}", i),
                 }],
                 timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
             });
         }
 
@@ -494,6 +516,9 @@ mod tests {
                 text: "Test message".to_string(),
             }],
             timestamp: "2023-01-01T00:00:00Z".to_string(),
+            thread_id: Some(uuid::Uuid::new_v4()),
+            parent_message_id: None,
+            has_hidden_branches: false,
         };
 
         // Test with very large width that could cause overflow

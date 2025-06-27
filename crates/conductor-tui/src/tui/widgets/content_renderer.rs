@@ -11,7 +11,8 @@ use conductor_core::app::conversation::{AssistantContent, ToolResult, UserConten
 use conductor_tools::ToolCall;
 
 use super::formatters;
-use super::message_list::{MessageContent, ViewMode};
+use crate::tui::model::MessageContent;
+use crate::tui::widgets::chat_list::ViewMode;
 use super::styles;
 
 /// Trait for rendering message content in different view modes
@@ -24,13 +25,18 @@ pub trait ContentRenderer {
 pub struct DefaultContentRenderer;
 
 impl DefaultContentRenderer {
-    fn render_user_message(&self, blocks: &[UserContent], area: Rect, buf: &mut Buffer) {
+    fn render_user_message(&self, blocks: &[UserContent], has_hidden_branches: bool, area: Rect, buf: &mut Buffer) {
         let mut content = Text::default();
 
-        // Add role header
-        content
-            .lines
-            .push(Line::from(Span::styled("User:", styles::ROLE_USER)));
+        // Add role header with fork glyph if needed
+        let mut header_line = vec![
+            Span::styled("User:", styles::ROLE_USER),
+        ];
+        if has_hidden_branches {
+            header_line.push(Span::raw(" "));
+            header_line.push(Span::styled("↳", Style::default().fg(Color::White)));
+        }
+        content.lines.push(Line::from(header_line));
         content.lines.push(Line::from(""));
 
         // Format each content block
@@ -116,18 +122,26 @@ impl DefaultContentRenderer {
     fn render_assistant_message(
         &self,
         blocks: &[AssistantContent],
+        has_hidden_branches: bool,
         _mode: ViewMode,
         area: Rect,
         buf: &mut Buffer,
     ) {
         let mut y_offset = 0u16;
 
-        // Add role header
-        let header = vec![
-            Line::from(Span::styled("Assistant:", styles::ROLE_ASSISTANT)),
-            Line::from(""),
+        // Add role header with fork glyph if needed
+        let mut header_lines = Vec::new();
+        let mut header_line = vec![
+            Span::styled("Assistant:", styles::ROLE_ASSISTANT),
         ];
-        let header_paragraph = Paragraph::new(header);
+        if has_hidden_branches {
+            header_line.push(Span::raw(" "));
+            header_line.push(Span::styled("↳", Style::default().fg(Color::White)));
+        }
+        header_lines.push(Line::from(header_line));
+        header_lines.push(Line::from(""));
+        
+        let header_paragraph = Paragraph::new(header_lines);
         let header_area = Rect {
             x: area.x,
             y: area.y,
@@ -219,7 +233,8 @@ impl DefaultContentRenderer {
     fn render_tool_message(
         &self,
         call: &ToolCall,
-        result: &Option<ToolResult>,
+        result: Option<&ToolResult>,
+        has_hidden_branches: bool,
         mode: ViewMode,
         area: Rect,
         buf: &mut Buffer,
@@ -230,26 +245,28 @@ impl DefaultContentRenderer {
         let formatter = formatters::get_formatter(&call.name);
 
         // Format the tool with integrated call/result handling
+        let result_owned = result.cloned();
         let all_lines = match mode {
-            ViewMode::Compact => formatter.compact(&call.parameters, result, wrap_width),
-            ViewMode::Detailed => formatter.detailed(&call.parameters, result, wrap_width),
+            ViewMode::Compact => formatter.compact(&call.parameters, &result_owned, wrap_width),
+            ViewMode::Detailed => formatter.detailed(&call.parameters, &result_owned, wrap_width),
         };
 
         // Draw the box with all content
-        self.draw_tool_box(call, result, all_lines, area, buf);
+        self.draw_tool_box(call, result, has_hidden_branches, all_lines, area, buf);
     }
 
     fn draw_tool_box(
         &self,
         call: &ToolCall,
-        result: &Option<ToolResult>,
+        result: Option<&ToolResult>,
+        has_hidden_branches: bool,
         content_lines: Vec<Line<'static>>,
         area: Rect,
         buf: &mut Buffer,
     ) {
         let box_style = styles::TOOL_BOX;
 
-        // Build title with status indicator first, then tool name
+        // Build title with status indicator first, then tool name, then fork glyph
         let mut title_spans = vec![];
 
         // Add status indicator if there's a result
@@ -269,6 +286,12 @@ impl DefaultContentRenderer {
 
         // Add tool ID
         title_spans.push(Span::styled(format!("[{}]", call.id), styles::TOOL_ID));
+
+        // Add fork glyph if has hidden branches
+        if has_hidden_branches {
+            title_spans.push(Span::raw(" "));
+            title_spans.push(Span::styled("↳", Style::default().fg(Color::White)));
+        }
 
         let title = Line::from(title_spans);
 
@@ -406,12 +429,14 @@ impl DefaultContentRenderer {
 impl ContentRenderer for DefaultContentRenderer {
     fn render(&self, content: &MessageContent, mode: ViewMode, area: Rect, buf: &mut Buffer) {
         match content {
-            MessageContent::User { blocks, .. } => self.render_user_message(blocks, area, buf),
-            MessageContent::Assistant { blocks, .. } => {
-                self.render_assistant_message(blocks, mode, area, buf)
+            MessageContent::User { blocks, has_hidden_branches, .. } => {
+                self.render_user_message(blocks, *has_hidden_branches, area, buf)
             }
-            MessageContent::Tool { call, result, .. } => {
-                self.render_tool_message(call, result, mode, area, buf)
+            MessageContent::Assistant { blocks, has_hidden_branches, .. } => {
+                self.render_assistant_message(blocks, *has_hidden_branches, mode, area, buf)
+            }
+            MessageContent::Tool { call, result, has_hidden_branches, .. } => {
+                self.render_tool_message(call, result.as_ref(), *has_hidden_branches, mode, area, buf)
             }
         }
     }

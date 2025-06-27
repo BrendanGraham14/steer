@@ -6,7 +6,7 @@
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::AssistantContent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::widgets::message_list::MessageContent;
+use crate::tui::model::ChatItem;
 
 /// Processor for message-related events
 pub struct MessageEventProcessor;
@@ -38,40 +38,53 @@ impl EventProcessor for MessageEventProcessor {
                 ProcessingResult::Handled
             }
             AppEvent::MessageUpdated { id, content } => {
-                if let Some(msg) = ctx.messages.iter_mut().find(|m| m.id() == id) {
-                    match msg {
-                        MessageContent::Assistant { blocks, .. } => {
-                            blocks.clear();
-                            blocks.push(AssistantContent::Text { text: content });
-                            *ctx.messages_updated = true;
-                        }
-                        _ => {
-                            tracing::warn!(target: "tui.message", "MessageUpdated for non-assistant message: {}", id);
+                // Find the message in the chat store
+                let mut found = false;
+                for item in ctx.chat_store.iter_mut() {
+                    if let ChatItem::Message(row) = item {
+                        if row.inner.id() == id {
+                            if let conductor_core::app::conversation::Message::Assistant { content: blocks, .. } = &mut row.inner {
+                                blocks.clear();
+                                blocks.push(AssistantContent::Text { text: content });
+                                *ctx.messages_updated = true;
+                                found = true;
+                                break;
+                            } else {
+                                tracing::warn!(target: "tui.message", "MessageUpdated for non-assistant message: {}", id);
+                                break;
+                            }
                         }
                     }
-                } else {
+                }
+                if !found {
                     tracing::warn!(target: "tui.message", "MessageUpdated for unknown ID: {}", id);
                 }
                 ProcessingResult::Handled
             }
             AppEvent::MessagePart { id, delta } => {
                 // For streaming messages, append to existing text blocks
-                if let Some(msg) = ctx.messages.iter_mut().find(|m| m.id() == id) {
-                    match msg {
-                        MessageContent::Assistant { blocks, .. } => {
-                            if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
-                                text.push_str(&delta);
-                                *ctx.messages_updated = true;
+                let mut found = false;
+                for item in ctx.chat_store.iter_mut() {
+                    if let ChatItem::Message(row) = item {
+                        if row.inner.id() == id {
+                            if let conductor_core::app::conversation::Message::Assistant { content: blocks, .. } = &mut row.inner {
+                                if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
+                                    text.push_str(&delta);
+                                    *ctx.messages_updated = true;
+                                } else {
+                                    blocks.push(AssistantContent::Text { text: delta });
+                                    *ctx.messages_updated = true;
+                                }
+                                found = true;
+                                break;
                             } else {
-                                blocks.push(AssistantContent::Text { text: delta });
-                                *ctx.messages_updated = true;
+                                tracing::warn!(target: "tui.message", "MessagePart for non-assistant message: {}", id);
+                                break;
                             }
                         }
-                        _ => {
-                            tracing::warn!(target: "tui.message", "MessagePart for non-assistant message: {}", id);
-                        }
                     }
-                } else {
+                }
+                if !found {
                     tracing::warn!(target: "tui.message", "MessagePart received for unknown ID: {}", id);
                 }
                 ProcessingResult::Handled
@@ -87,6 +100,9 @@ impl EventProcessor for MessageEventProcessor {
 
 impl MessageEventProcessor {
     fn handle_message_added(&self, message: conductor_core::app::Message, ctx: &mut ProcessingContext) {
+        let old_thread_id = ctx.chat_store.current_thread();
+        let new_message_thread_id = *message.thread_id();
+
         // First, extract tool calls from Assistant messages to register them
         if let conductor_core::app::Message::Assistant {
             ref content,
@@ -107,47 +123,61 @@ impl MessageEventProcessor {
                         tool_call.id, tool_call.name, tool_call.parameters
                     );
 
-                    // already handled above
-                    // Update registry entry with full parameters too
+                    // Update registry entry with full parameters
                     ctx.tool_registry.upsert_call(tool_call.clone());
 
-                    // If we already created a placeholder Tool message for this id (e.g. via
-                    // ToolCallStarted that arrived earlier) then update the placeholder with the
-                    // real parameters (and name) so that formatters can successfully parse them
+                    // If we already created a placeholder Tool message for this id,
+                    // update it with the real parameters
                     if let Some(idx) = ctx.tool_registry.get_message_index(&tool_call.id) {
-                        if let MessageContent::Tool { call, .. } = &mut ctx.messages[idx] {
-                            *call = tool_call.clone();
+                        if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
+                            if let conductor_core::app::conversation::Message::Tool { tool_use_id, .. } = &mut row.inner {
+                                if tool_use_id == &tool_call.id {
+                                    // Tool messages are already properly handled, we just needed to update the registry
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        let content = ctx.convert_message(message);
-
-        match &content {
-            MessageContent::Tool {
-                id, call, result, ..
+        // Handle Tool messages specially to update existing placeholders
+        match &message {
+            conductor_core::app::conversation::Message::Tool {
+                tool_use_id,
+                result,
+                ..
             } => {
-                let idx = ctx.get_or_create_tool_index(id, Some(call.name.clone()));
-
-                if let MessageContent::Tool {
-                    call: existing_call,
-                    result: existing_result,
-                    ..
-                } = &mut ctx.messages[idx]
-                {
-                    *existing_call = call.clone();
-                    if existing_result.is_none() {
+                let idx = ctx.get_or_create_tool_index(tool_use_id, None);
+                
+                // Update the existing placeholder with the real result
+                if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
+                    if let conductor_core::app::conversation::Message::Tool {
+                        result: existing_result,
+                        ..
+                    } = &mut row.inner {
                         *existing_result = result.clone();
                     }
                 }
-
+                
                 *ctx.messages_updated = true;
             }
             _ => {
-                ctx.messages.push(content);
+                // Add the message normally
+                ctx.chat_store.add_message(message);
                 *ctx.messages_updated = true;
+            }
+        }
+
+        // After adding, check if a thread switch occurred, and prune if so.
+        if let Some(old_id) = old_thread_id {
+            if old_id != new_message_thread_id {
+                tracing::debug!(
+                    target: "tui.message_event", 
+                    "Thread switch detected from {} to {}. Pruning message store.",
+                    old_id, new_message_thread_id
+                );
+                ctx.chat_store.prune_to_thread(new_message_thread_id);
             }
         }
     }
@@ -166,8 +196,8 @@ mod tests {
     use conductor_core::app::conversation::{AssistantContent, Message};
     use conductor_core::app::io::AppCommandSink;
     use crate::tui::events::processor::ProcessingContext;
-    use crate::tui::state::{MessageStore, ToolCallRegistry};
-    use crate::tui::widgets::message_list::{MessageContent, MessageListState};
+    use crate::tui::state::{ChatStore, ToolCallRegistry};
+    use crate::tui::widgets::chat_list::ChatListState;
     use anyhow::Result;
     use async_trait::async_trait;
     use serde_json::json;
@@ -185,8 +215,8 @@ mod tests {
     }
 
     fn create_test_context() -> (
-        MessageStore,
-        MessageListState,
+        ChatStore,
+        ChatListState,
         ToolCallRegistry,
         Arc<dyn AppCommandSink>,
         bool,
@@ -196,8 +226,8 @@ mod tests {
         conductor_core::api::Model,
         bool,
     ) {
-        let messages = MessageStore::new();
-        let message_list_state = MessageListState::new();
+        let chat_store = ChatStore::new();
+        let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let is_processing = false;
@@ -208,8 +238,8 @@ mod tests {
         let messages_updated = false;
 
         (
-            messages,
-            message_list_state,
+            chat_store,
+            chat_list_state,
             tool_registry,
             command_sink,
             is_processing,
@@ -225,8 +255,8 @@ mod tests {
     fn test_assistant_message_updates_placeholder_tool_params() {
         let mut processor = MessageEventProcessor::new();
         let (
-            mut messages,
-            mut message_list_state,
+            mut chat_store,
+            mut chat_list_state,
             mut tool_registry,
             command_sink,
             mut is_processing,
@@ -245,21 +275,23 @@ mod tests {
             parameters: serde_json::Value::Null, // This is the problem - null params
         };
 
-        messages.push(MessageContent::Tool {
-            id: tool_id.clone(),
-            call: placeholder_call.clone(),
-            result: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
-        let tool_idx = messages.len() - 1;
+        // Create a placeholder Tool message
+        let placeholder_msg = Message::Tool {
+            id: "tool_msg_id".to_string(),
+            tool_use_id: tool_id.clone(),
+            result: conductor_core::app::conversation::ToolResult::Success {
+                output: "Pending...".to_string(),
+            },
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            thread_id: uuid::Uuid::new_v4(),
+            parent_message_id: None,
+        };
+        let tool_idx = chat_store.add_message(placeholder_msg);
         tool_registry.set_message_index(&tool_id, tool_idx);
         tool_registry.register_call(placeholder_call);
 
-        // Verify the placeholder has null params
-        if let MessageContent::Tool { call, .. } = messages.get(tool_idx).unwrap() {
-            assert_eq!(call.parameters, serde_json::Value::Null);
-            assert_eq!(call.name, "unknown");
-        }
+        // Verify the placeholder was created
+        assert_eq!(chat_store.len(), 1);
 
         // Now process an Assistant message with the real ToolCall
         let real_params = json!({
@@ -282,9 +314,10 @@ mod tests {
             parent_message_id: None,
         };
 
+        let current_thread = uuid::Uuid::new_v4();
         let mut ctx = ProcessingContext {
-            messages: &mut messages,
-            message_list_state: &mut message_list_state,
+            chat_store: &mut chat_store,
+            chat_list_state: &mut chat_list_state,
             tool_registry: &mut tool_registry,
             command_sink: &command_sink,
             is_processing: &mut is_processing,
@@ -293,6 +326,7 @@ mod tests {
             current_tool_approval: &mut current_tool_approval,
             current_model: &mut current_model,
             messages_updated: &mut messages_updated,
+            current_thread: Some(current_thread),
         };
 
         // Process the Assistant message
@@ -306,13 +340,11 @@ mod tests {
 
         assert!(matches!(result, ProcessingResult::Handled));
 
-        // Verify the placeholder Tool message was updated with real params
-        if let MessageContent::Tool { call, .. } = messages.get(tool_idx).unwrap() {
-            assert_eq!(call.parameters, real_params);
-            assert_eq!(call.name, "view");
-            assert_eq!(call.id, tool_id);
-        } else {
-            panic!("Expected Tool message at index {}", tool_idx);
-        }
+        // Verify the registry was updated with real params
+        let stored_call = tool_registry.get_tool_call(&tool_id)
+            .expect("Tool call should be in registry");
+        assert_eq!(stored_call.parameters, real_params);
+        assert_eq!(stored_call.name, "view");
+        assert_eq!(stored_call.id, tool_id);
     }
 }
