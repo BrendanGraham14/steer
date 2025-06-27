@@ -41,7 +41,6 @@ impl ToolFormatter for FetchFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("FETCH ", styles::DIM_TEXT),
             Span::styled(format!("url={} ", url_display), Style::default()),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));

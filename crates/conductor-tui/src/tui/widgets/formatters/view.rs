@@ -1,12 +1,12 @@
 use super::{ToolFormatter, helpers::*};
-use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
+use conductor_core::app::conversation::ToolResult;
+use conductor_tools::tools::view::ViewParams;
 use ratatui::{
     style::Style,
     text::{Line, Span},
 };
 use serde_json::Value;
-use conductor_tools::tools::view::ViewParams;
 use tracing::debug;
 
 pub struct ViewFormatter;
@@ -47,8 +47,7 @@ impl ToolFormatter for ViewFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("VIEW ", styles::DIM_TEXT),
-            Span::styled(format!("file={} ", file_name), Style::default()),
+            Span::styled(format!("{} ", file_name), Style::default()),
             Span::styled(format!("({})", info), styles::ITALIC_GRAY),
         ]));
 

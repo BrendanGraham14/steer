@@ -1,12 +1,12 @@
 use super::ToolFormatter;
-use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
+use conductor_core::app::conversation::ToolResult;
+use conductor_tools::tools::replace::ReplaceParams;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 use serde_json::Value;
-use conductor_tools::tools::replace::ReplaceParams;
 
 pub struct ReplaceFormatter;
 
@@ -14,7 +14,7 @@ impl ToolFormatter for ReplaceFormatter {
     fn compact(
         &self,
         params: &Value,
-        result: &Option<ToolResult>,
+        _result: &Option<ToolResult>,
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
@@ -29,8 +29,7 @@ impl ToolFormatter for ReplaceFormatter {
         let line_count = params.content.lines().count();
 
         lines.push(Line::from(vec![
-            Span::styled("REPLACE ", Style::default().fg(Color::Yellow)),
-            Span::styled(format!("file={} ", params.file_path), Style::default()),
+            Span::styled(format!("{} ", params.file_path), Style::default()),
             Span::styled(format!("({} lines)", line_count), styles::ITALIC_GRAY),
         ]));
 

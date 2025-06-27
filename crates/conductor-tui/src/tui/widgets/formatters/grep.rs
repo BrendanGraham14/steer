@@ -47,7 +47,6 @@ impl ToolFormatter for GrepFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("GREP ", styles::DIM_TEXT),
             Span::styled(format!("pattern='{}' ", params.pattern), Style::default()),
             Span::styled(
                 format!("path={}{} ", path_display, include_display),

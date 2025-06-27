@@ -14,7 +14,7 @@ impl ToolFormatter for TodoWriteFormatter {
     fn compact(
         &self,
         params: &Value,
-        result: &Option<ToolResult>,
+        _result: &Option<ToolResult>,
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
