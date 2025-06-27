@@ -9,8 +9,8 @@ use std::sync::Arc;
 use conductor_core::api::Model;
 use conductor_core::app::AppEvent;
 use conductor_core::app::io::AppCommandSink;
-use crate::tui::state::{MessageStore, ToolCallRegistry};
-use crate::tui::widgets::message_list::MessageListState;
+use crate::tui::state::{ChatStore, ToolCallRegistry};
+use crate::tui::widgets::chat_list::ChatListState;
 use conductor_tools::schema::ToolCall;
 
 /// Result of processing an event
@@ -28,10 +28,10 @@ pub enum ProcessingResult {
 
 /// Context passed to event processors containing mutable access to TUI state
 pub struct ProcessingContext<'a> {
-    /// Message store for adding/updating messages
-    pub messages: &'a mut MessageStore,
-    /// Message list UI state (scroll, selection, etc.)
-    pub message_list_state: &'a mut MessageListState,
+    /// Chat store for adding/updating messages
+    pub chat_store: &'a mut ChatStore,
+    /// Chat list UI state (scroll, selection, etc.)
+    pub chat_list_state: &'a mut ChatListState,
     /// Tool call registry for tracking tool lifecycle
     pub tool_registry: &'a mut ToolCallRegistry,
     /// Command sink for dispatching app commands
@@ -48,12 +48,25 @@ pub struct ProcessingContext<'a> {
     pub current_model: &'a mut Model,
     /// Flag to indicate if messages were updated (for auto-scroll)
     pub messages_updated: &'a mut bool,
+    /// Current thread ID (None until first message)
+    pub current_thread: Option<uuid::Uuid>,
 }
 
 impl ProcessingContext<'_> {
     /// Helper to get or create a tool message index
     pub fn get_or_create_tool_index(&mut self, id: &str, name_hint: Option<String>) -> usize {
-        if let Some(idx) = self.tool_registry.get_message_index(id) {
+        // First, try to find existing tool message by id
+        if let Some((idx, _)) = self.chat_store.iter().enumerate().find(|(_, item)| {
+            if let crate::tui::model::ChatItem::Message(row) = item {
+                if let conductor_core::app::conversation::Message::Tool { tool_use_id, .. } = &row.inner {
+                    tool_use_id == id
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }) {
             return idx;
         }
 
@@ -64,88 +77,25 @@ impl ProcessingContext<'_> {
             parameters: serde_json::Value::Null,
         };
 
-        let message_content = crate::tui::widgets::message_list::MessageContent::Tool {
-            id: id.to_string(),
-            call: placeholder_call.clone(),
-            result: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+        // Create a placeholder Tool message
+        let tool_msg = conductor_core::app::conversation::Message::Tool {
+            id: crate::tui::model::generate_row_id(),
+            tool_use_id: id.to_string(),
+            result: conductor_core::app::conversation::ToolResult::Success {
+                output: "Pending...".to_string(),
+            },
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            thread_id: self.current_thread.unwrap_or(uuid::Uuid::new_v4()),
+            parent_message_id: None,
         };
 
-        self.messages.push(message_content);
-        let idx = self.messages.len() - 1;
+        let idx = self.chat_store.add_message(tool_msg);
         self.tool_registry.set_message_index(id, idx);
         self.tool_registry.register_call(placeholder_call);
 
         idx
     }
 
-    /// Helper to convert app::Message to MessageContent
-    pub fn convert_message(
-        &self,
-        message: conductor_core::app::Message,
-    ) -> crate::tui::widgets::message_list::MessageContent {
-        use crate::tui::widgets::message_list::MessageContent;
-
-        match message {
-            conductor_core::app::Message::User {
-                content,
-                timestamp,
-                id,
-                ..
-            } => MessageContent::User {
-                id,
-                blocks: content,
-                timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                    .map(|dt| dt.to_rfc3339())
-                    .unwrap_or_else(|| timestamp.to_string()),
-            },
-            conductor_core::app::Message::Assistant {
-                content,
-                timestamp,
-                id,
-                ..
-            } => {
-                // Always keep tool calls as part of Assistant messages
-                // The Tool message will be handled separately
-                MessageContent::Assistant {
-                    id,
-                    blocks: content,
-                    timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_else(|| timestamp.to_string()),
-                }
-            }
-            conductor_core::app::Message::Tool {
-                tool_use_id,
-                result,
-                timestamp,
-                id: _,
-                ..
-            } => {
-                // Try to find the corresponding ToolCall that we cached earlier
-                let tool_call = self.tool_registry
-                    .get_tool_call(&tool_use_id)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        tracing::warn!(target:"tui.convert_message", "Tool message {} has no associated tool call info", tool_use_id);
-                        ToolCall {
-                            id: tool_use_id.clone(),
-                            name: "unknown".to_string(),
-                            parameters: serde_json::Value::Null,
-                        }
-                    });
-
-                MessageContent::Tool {
-                    id: tool_use_id,
-                    call: tool_call,
-                    result: Some(result),
-                    timestamp: chrono::DateTime::from_timestamp(timestamp as i64, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_else(|| timestamp.to_string()),
-                }
-            }
-        }
-    }
 }
 
 /// Trait for processing specific types of AppEvents

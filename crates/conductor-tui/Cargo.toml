@@ -39,3 +39,5 @@ tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 
 # Logging
 tracing = "0.1"
+time = { version = "0.3.41", features = ["formatting"] }
+ulid = "1.2.1"

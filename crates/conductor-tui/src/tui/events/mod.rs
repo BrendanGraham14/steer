@@ -10,5 +10,3 @@ pub mod pipeline;
 pub mod processor;
 pub mod processors;
 
-pub use pipeline::EventPipeline;
-pub use processor::{EventProcessor, ProcessingContext, ProcessingResult};

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use conductor_tools::ToolCall;
@@ -591,24 +592,49 @@ impl Conversation {
         Ok(CompactResult::Success(summary_text))
     }
 
-    /// Edit a message and create a new thread branch
+    /// Edit a message, which removes the old message and all its children,
+    /// then creates a new branch.
     pub fn edit_message(&mut self, message_id: &str, new_content: Vec<UserContent>) -> Option<Uuid> {
         // Find the message to edit
-        let message_to_edit = self.messages.iter()
-            .find(|m| m.id() == message_id)?;
-        
+        let message_to_edit = self
+            .messages
+            .iter()
+            .find(|m| m.id() == message_id)?
+            .clone();
+
         // Only allow editing user messages for now
         if !matches!(message_to_edit, Message::User { .. }) {
             return None;
         }
 
-        // Get the parent_message_id from the original message
+        // Get the parent_message_id from the original message before we remove it
         let parent_id = message_to_edit.parent_message_id().map(|s| s.to_string());
-        
+
+        // Find all descendants of the message to be edited
+        let mut to_remove = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        to_remove.insert(message_id.to_string());
+        queue.push_back(message_id.to_string());
+
+        while let Some(current_id) = queue.pop_front() {
+            for msg in &self.messages {
+                if msg.parent_message_id() == Some(current_id.as_str()) {
+                    let child_id = msg.id().to_string();
+                    if to_remove.insert(child_id.clone()) {
+                        queue.push_back(child_id);
+                    }
+                }
+            }
+        }
+
+        // Remove the old message and all its descendants
+        self.messages.retain(|m| !to_remove.contains(m.id()));
+
         // Create a new thread ID for this branch
         let new_thread_id = Self::generate_thread_id();
-        
-        // Create the edited message with new thread ID
+
+        // Create the edited message with a new ID and the new thread ID
         let edited_message = Message::User {
             content: new_content,
             timestamp: Message::current_timestamp(),
@@ -616,13 +642,13 @@ impl Conversation {
             thread_id: new_thread_id,
             parent_message_id: parent_id,
         };
-        
+
         // Add the edited message
         self.messages.push(edited_message);
-        
+
         // Update current thread to the new branch
         self.current_thread_id = new_thread_id;
-        
+
         Some(new_thread_id)
     }
 

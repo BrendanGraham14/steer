@@ -9,6 +9,13 @@ use conductor_tools::ToolCall;
 pub enum AppCommand {
     /// Send a user's message text for processing.
     ProcessUserInput(String),
+    /// Edit a previous message, creating a new branch
+    EditMessage {
+        /// ID of the message to edit. The new message will share the same parent.
+        message_id: String,
+        /// New content for the edited message
+        new_content: String,
+    },
     /// Handle the user's decision on a tool approval request.
     HandleToolResponse {
         id: String,

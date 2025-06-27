@@ -657,6 +657,17 @@ async fn handle_client_message(
                     .await
                     .map_err(|e| format!("Failed to execute bash command: {}", e))?;
             }
+
+            client_message::Message::EditMessage(edit_message) => {
+                let app_command = conductor_core::app::AppCommand::EditMessage {
+                    message_id: edit_message.message_id,
+                    new_content: edit_message.new_content,
+                };
+                session_manager
+                    .send_command(&client_message.session_id, app_command)
+                    .await
+                    .map_err(|e| format!("Failed to edit message: {}", e))?;
+            }
         }
     }
 

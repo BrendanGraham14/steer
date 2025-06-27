@@ -1162,6 +1162,15 @@ pub fn convert_app_command_to_client_message(
             }))
         }
 
+        AppCommand::EditMessage {
+            message_id,
+            new_content,
+        } => Some(ClientMessageType::EditMessage(proto::EditMessageRequest {
+            session_id: session_id.to_string(),
+            message_id,
+            new_content,
+        })),
+
         AppCommand::HandleToolResponse {
             id,
             approved,
