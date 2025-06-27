@@ -146,6 +146,8 @@ pub struct Tui {
     /// Edit message selection state
     edit_selection_index: usize,
     edit_selection_messages: Vec<(String, String)>, // (id, content)
+    /// ID of the message currently hovered in edit selection mode
+    edit_selection_hovered_id: Option<String>,
 }
 
 impl Tui {
@@ -211,6 +213,7 @@ impl Tui {
             view_model: MessageViewModel::new(),
             edit_selection_index: 0,
             edit_selection_messages: Vec::new(),
+            edit_selection_hovered_id: None,
         };
 
         // Restore messages using the public method
@@ -459,6 +462,7 @@ impl Tui {
                 spinner_state,
                 &self.edit_selection_messages,
                 self.edit_selection_index,
+                self.edit_selection_hovered_id.as_deref(),
             ) {
                 error!(target:"tui.run.draw", "UI rendering failed: {}", e);
             }
@@ -580,12 +584,10 @@ impl Tui {
                 self.view_model.chat_list_state.scroll_up(1);
             }
             KeyCode::Char('g') => {
-                self.view_model.chat_list_state.select_first();
+                self.view_model.chat_list_state.scroll_to_top();
             }
             KeyCode::Char('G') => {
-                self.view_model
-                    .chat_list_state
-                    .select_last(self.view_model.chat_store.len());
+                self.view_model.chat_list_state.scroll_to_bottom();
             }
             KeyCode::Char('e') => {
                 // Enter edit message selection mode
@@ -911,10 +913,44 @@ impl Tui {
         }
     }
 
+    /// Update the hovered message ID based on current selection
+    fn update_hovered_message_id(&mut self) {
+        let id_to_scroll =
+            if let Some((id, _)) = self.edit_selection_messages.get(self.edit_selection_index) {
+                self.edit_selection_hovered_id = Some(id.clone());
+                Some(id.clone())
+            } else {
+                self.edit_selection_hovered_id = None;
+                None
+            };
+
+        if let Some(id) = id_to_scroll {
+            self.scroll_to_message_id(&id);
+        }
+    }
+
+    /// Scroll chat list to show a specific message
+    fn scroll_to_message_id(&mut self, message_id: &str) {
+        // Find the index of the message in the chat store
+        let mut target_index = None;
+        for (idx, item) in self.view_model.chat_store.as_slice().iter().enumerate() {
+            if let crate::tui::model::ChatItem::Message(row) = item {
+                if row.inner.id() == message_id {
+                    target_index = Some(idx);
+                    break;
+                }
+            }
+        }
+
+        if let Some(idx) = target_index {
+            // Scroll to center the message if possible
+            self.view_model.chat_list_state.scroll_to_item(idx);
+        }
+    }
+
     /// Enter edit message selection mode
     fn enter_edit_selection_mode(&mut self) {
         self.input_mode = InputMode::EditMessageSelection;
-        self.edit_selection_index = 0;
 
         // Collect all user messages
         let user_messages: Vec<(String, String)> = self
@@ -947,16 +983,32 @@ impl Tui {
             .collect();
 
         self.edit_selection_messages = user_messages;
+
+        // Calculate how many messages fit in the selection area
+        // Input area is 5 lines, minus 2 for borders = 3 lines available
+        let max_visible = 3usize;
+
+        if !self.edit_selection_messages.is_empty() {
+            // Start with the last (most recent) message selected
+            self.edit_selection_index = self.edit_selection_messages.len() - 1;
+
+            // Update the hovered ID and scroll to it
+            self.update_hovered_message_id();
+        } else {
+            self.edit_selection_index = 0;
+            self.edit_selection_hovered_id = None;
+        }
     }
 
     /// Handle edit message selection mode input
     async fn handle_edit_selection_mode(&mut self, key: KeyEvent) -> Result<bool> {
-        match key.code {
-            KeyCode::Esc => {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 // Exit edit selection mode
                 self.input_mode = InputMode::Normal;
+                self.edit_selection_hovered_id = None;
             }
-            KeyCode::Enter => {
+            (KeyCode::Enter, _) => {
                 // Select the currently highlighted message
                 if !self.edit_selection_messages.is_empty()
                     && self.edit_selection_index < self.edit_selection_messages.len()
@@ -964,18 +1016,21 @@ impl Tui {
                     let (message_id, _) =
                         self.edit_selection_messages[self.edit_selection_index].clone();
                     self.enter_edit_mode(&message_id);
+                    self.edit_selection_hovered_id = None;
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
                 // Move selection up
                 if self.edit_selection_index > 0 {
                     self.edit_selection_index -= 1;
+                    self.update_hovered_message_id();
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
                 // Move selection down
                 if self.edit_selection_index + 1 < self.edit_selection_messages.len() {
                     self.edit_selection_index += 1;
+                    self.update_hovered_message_id();
                 }
             }
             _ => {}
@@ -999,6 +1054,7 @@ impl Tui {
         spinner_state: usize,
         edit_selection_messages: &[(String, String)],
         edit_selection_index: usize,
+        edit_selection_hovered_id: Option<&str>,
     ) -> Result<()> {
         let size = f.area();
 
@@ -1019,7 +1075,7 @@ impl Tui {
             .style(Style::default().fg(ratatui::style::Color::DarkGray));
 
         // Use the ChatList widget as a stateful widget
-        let chat_list = ChatList::new(chat_items);
+        let chat_list = ChatList::new(chat_items).hovered_message_id(edit_selection_hovered_id);
         f.render_stateful_widget(chat_list, chunks[0], chat_list_state);
 
         // Render input area or approval prompt
@@ -1132,7 +1188,33 @@ impl Tui {
                             .style(Style::default().fg(Color::DarkGray)),
                     );
                 } else {
-                    for (idx, (_, content)) in edit_selection_messages.iter().enumerate() {
+                    // Calculate how many messages can fit (3 lines available)
+                    let max_visible = 3;
+                    let total = edit_selection_messages.len();
+
+                    // Calculate which messages to show
+                    let (start_idx, end_idx) = if total <= max_visible {
+                        // Show all messages
+                        (0, total)
+                    } else {
+                        // Show a window around the current selection
+                        let half_window = max_visible / 2;
+
+                        if edit_selection_index < half_window {
+                            // Near the beginning
+                            (0, max_visible)
+                        } else if edit_selection_index >= total - half_window {
+                            // Near the end
+                            (total - max_visible, total)
+                        } else {
+                            // In the middle
+                            let start = edit_selection_index - half_window;
+                            (start, start + max_visible)
+                        }
+                    };
+
+                    for idx in start_idx..end_idx {
+                        let (_, content) = &edit_selection_messages[idx];
                         let preview = content
                             .lines()
                             .next()
@@ -1275,6 +1357,7 @@ mod tests {
             view_model: MessageViewModel::new(),
             edit_selection_index: 0,
             edit_selection_messages: Vec::new(),
+            edit_selection_hovered_id: None,
         }
     }
 
