@@ -1,10 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use conductor_tools::{ToolCall, ToolSchema};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use conductor_tools::{ToolCall, ToolSchema};
 
 use super::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
 use crate::app::EnvironmentInfo;

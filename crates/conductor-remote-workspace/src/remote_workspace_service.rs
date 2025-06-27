@@ -7,8 +7,8 @@ use conductor_tools::tools::workspace_tools;
 use conductor_tools::{ExecutionContext, Tool, ToolError};
 
 use crate::proto::{
-    AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus, ToolSchema as GrpcToolSchema,
-    ToolSchemasResponse,
+    AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus,
+    ToolSchema as GrpcToolSchema, ToolSchemasResponse,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
 };
 

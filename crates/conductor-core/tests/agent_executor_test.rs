@@ -2,9 +2,7 @@
 mod tests {
     use conductor_core::api::{Client, Model};
     use conductor_core::app::conversation::{AssistantContent, Message, Role, UserContent};
-    use conductor_core::app::{
-        AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
-    };
+    use conductor_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
     use conductor_core::config::LlmConfig;
     use conductor_core::tools::ToolError;
     use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};

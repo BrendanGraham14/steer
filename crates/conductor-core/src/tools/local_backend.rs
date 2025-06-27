@@ -178,9 +178,9 @@ impl Default for LocalBackend {
 mod tests {
     use super::*;
     use crate::api::ToolCall;
+    use conductor_tools::tools::{EDIT_TOOL_NAME, VIEW_TOOL_NAME, bash::BASH_TOOL_NAME};
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
-    use conductor_tools::tools::{EDIT_TOOL_NAME, VIEW_TOOL_NAME, bash::BASH_TOOL_NAME};
 
     #[tokio::test]
     async fn test_local_backend_creation() {

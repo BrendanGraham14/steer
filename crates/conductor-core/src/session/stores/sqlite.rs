@@ -615,7 +615,7 @@ impl SessionStore for SqliteSessionStore {
             let content = row.get::<String, _>("content");
             let id: String = row.get("id");
             let created_at = row.get::<chrono::DateTime<chrono::Utc>, _>("created_at");
-            
+
             // Get UUIDs directly from SQLx
             let thread_id: Uuid = row.get("thread_id");
             let parent_message_id: Option<String> = row.get("parent_message_id");
@@ -634,7 +634,7 @@ impl SessionStore for SqliteSessionStore {
                         content,
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
-                        thread_id: thread_id.clone(),
+                        thread_id,
                         parent_message_id: parent_message_id.clone(),
                     }
                 }
@@ -650,7 +650,7 @@ impl SessionStore for SqliteSessionStore {
                         content,
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
-                        thread_id: thread_id.clone(),
+                        thread_id,
                         parent_message_id: parent_message_id.clone(),
                     }
                 }
@@ -672,7 +672,7 @@ impl SessionStore for SqliteSessionStore {
                         result: stored.result,
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
-                        thread_id: thread_id.clone(),
+                        thread_id,
                         parent_message_id: parent_message_id.clone(),
                     }
                 }

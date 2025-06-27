@@ -1,8 +1,8 @@
 use crate::app::Message;
 use crate::app::agent_executor::ApprovalDecision;
+use conductor_tools::ToolCall;
 use std::collections::HashSet;
 use tokio::sync::oneshot;
-use conductor_tools::ToolCall;
 
 /// Defines messages the TUI can send *to* the `App` actor.
 #[derive(Debug)]

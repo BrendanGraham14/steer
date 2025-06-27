@@ -17,11 +17,9 @@ use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::{AppCommand, AppEvent};
 use conductor_core::session::SessionConfig;
 use conductor_proto::agent::{
-    ClientMessage, CreateSessionRequest,
-    DeleteSessionRequest, GetConversationRequest, GetSessionRequest, ListSessionsRequest,
-    SessionInfo, SessionState,
-    SubscribeRequest, agent_service_client::AgentServiceClient,
-    client_message::Message as ClientMessageType,
+    ClientMessage, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
+    GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState, SubscribeRequest,
+    agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
 };
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming

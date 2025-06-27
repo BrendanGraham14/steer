@@ -7,10 +7,10 @@ use crate::app::agent_executor::AgentExecutorError;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::AppCommand;
 use crate::app::conversation::Message;
+use conductor_tools::ToolError;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use conductor_tools::ToolError;
 
 // Global command sender for tool approval requests
 static COMMAND_TX: OnceCell<Arc<mpsc::Sender<AppCommand>>> = OnceCell::new();

@@ -7,7 +7,9 @@ use super::super::Command;
 use conductor_core::api::Model;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
-use conductor_core::utils::session::{resolve_session_store_config, create_session_store_with_config};
+use conductor_core::utils::session::{
+    create_session_store_with_config, resolve_session_store_config,
+};
 
 pub struct DeleteSessionCommand {
     pub session_id: String,

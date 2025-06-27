@@ -1,6 +1,6 @@
 use super::{ToolFormatter, helpers::*};
-use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
+use conductor_core::app::conversation::ToolResult;
 use conductor_core::tools::fetch::FetchParams;
 use ratatui::{
     style::Style,

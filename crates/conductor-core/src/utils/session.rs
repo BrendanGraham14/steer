@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use crate::session::{
     Session, SessionStoreConfig,
-    state::{
-        SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig,
-    },
+    state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig},
     store::SessionStore,
 };
 
@@ -19,7 +17,9 @@ pub fn create_session_store_path() -> Result<std::path::PathBuf> {
 
 /// Resolve session store configuration from an optional path
 /// If no path is provided, uses the default SQLite configuration
-pub fn resolve_session_store_config(session_db_path: Option<PathBuf>) -> Result<SessionStoreConfig> {
+pub fn resolve_session_store_config(
+    session_db_path: Option<PathBuf>,
+) -> Result<SessionStoreConfig> {
     match session_db_path {
         Some(path) => Ok(SessionStoreConfig::sqlite(path)),
         None => SessionStoreConfig::default_sqlite(),
@@ -31,9 +31,11 @@ pub async fn create_session_store() -> Result<Arc<dyn SessionStore>> {
     create_session_store_with_config(config).await
 }
 
-pub async fn create_session_store_with_config(config: SessionStoreConfig) -> Result<Arc<dyn SessionStore>> {
+pub async fn create_session_store_with_config(
+    config: SessionStoreConfig,
+) -> Result<Arc<dyn SessionStore>> {
     use crate::session::stores::sqlite::SqliteSessionStore;
-    
+
     match config {
         SessionStoreConfig::Sqlite { path } => {
             // Create directory if it doesn't exist
@@ -134,7 +136,7 @@ mod tests {
     fn test_resolve_session_store_config_with_path() {
         let custom_path = PathBuf::from("/custom/path/sessions.db");
         let config = resolve_session_store_config(Some(custom_path.clone())).unwrap();
-        
+
         match config {
             SessionStoreConfig::Sqlite { path } => {
                 assert_eq!(path, custom_path);
@@ -146,7 +148,7 @@ mod tests {
     #[test]
     fn test_resolve_session_store_config_without_path() {
         let config = resolve_session_store_config(None).unwrap();
-        
+
         match config {
             SessionStoreConfig::Sqlite { path } => {
                 assert!(path.to_string_lossy().contains("sessions.db"));

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use conductor_tools::{ToolCall, ToolSchema};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
-use conductor_tools::{ToolCall, ToolSchema};
 
 use crate::app::EnvironmentInfo;
 use crate::session::state::{RemoteAuth, ToolFilter};

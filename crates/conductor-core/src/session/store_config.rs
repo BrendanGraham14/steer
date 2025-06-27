@@ -53,7 +53,7 @@ mod tests {
     fn test_sqlite_config_creation() {
         let path = PathBuf::from("/tmp/test.db");
         let config = SessionStoreConfig::sqlite(path.clone());
-        
+
         match config {
             SessionStoreConfig::Sqlite { path: config_path } => {
                 assert_eq!(config_path, path);
@@ -66,7 +66,7 @@ mod tests {
     fn test_default_sqlite_config() {
         let config = SessionStoreConfig::default_sqlite();
         assert!(config.is_ok());
-        
+
         match config.unwrap() {
             SessionStoreConfig::Sqlite { path } => {
                 assert!(path.to_string_lossy().contains(".conductor"));
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = SessionStoreConfig::default();
-        
+
         match config {
             SessionStoreConfig::Sqlite { path } => {
                 // Should either be in .conductor or current directory

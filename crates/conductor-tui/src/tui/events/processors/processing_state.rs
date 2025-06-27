@@ -3,8 +3,8 @@
 //! Manages the overall processing state of the TUI, including thinking/processing
 //! indicators, spinner state, and progress messages.
 
-use conductor_core::app::AppEvent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
+use conductor_core::app::AppEvent;
 
 /// Processor for events that affect the overall processing state
 pub struct ProcessingStateProcessor;

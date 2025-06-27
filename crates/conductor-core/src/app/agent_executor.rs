@@ -109,18 +109,15 @@ impl AgentExecutor {
                 )
                 .await?;
             let tool_calls = completion_response.extract_tool_calls();
-            
+
             // Get thread info from the last message
             let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                (
-                    *last_msg.thread_id(),
-                    Some(last_msg.id().to_string()),
-                )
+                (*last_msg.thread_id(), Some(last_msg.id().to_string()))
             } else {
                 // This shouldn't happen, but provide a fallback
                 (Uuid::now_v7(), None)
             };
-            
+
             let full_assistant_message = Message::Assistant {
                 content: completion_response.content,
                 timestamp: SystemTime::now()
@@ -181,10 +178,7 @@ impl AgentExecutor {
 
                     // Get thread info from the last message
                     let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                        (
-                            *last_msg.thread_id(),
-                            Some(last_msg.id().to_string()),
-                        )
+                        (*last_msg.thread_id(), Some(last_msg.id().to_string()))
                     } else {
                         // This shouldn't happen, but provide a fallback
                         (Uuid::now_v7(), None)

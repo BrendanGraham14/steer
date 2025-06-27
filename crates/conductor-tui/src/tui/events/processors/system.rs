@@ -3,9 +3,9 @@
 //! Processes events related to model changes, command responses, and other
 //! system-level state changes.
 
-use conductor_core::app::AppEvent;
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItem, generate_row_id};
+use conductor_core::app::AppEvent;
 
 /// Processor for system-level events
 pub struct SystemEventProcessor;

@@ -4,12 +4,12 @@ use conductor_core::app::conversation::{AssistantContent, Message, ToolResult, U
 use conductor_core::config::LlmConfig;
 use conductor_core::workspace::Workspace;
 use conductor_core::workspace::local::LocalWorkspace;
+use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 
 #[tokio::test]
 #[ignore]
@@ -48,7 +48,7 @@ async fn test_api_basic() {
             // Call API with specified model
             let response = client
                 .complete(
-                    model.clone(),
+                    model,
                     messages,
                     None,
                     None,
@@ -168,7 +168,7 @@ async fn test_api_with_tools() {
 
             let response = client
                 .complete(
-                    model.clone(),
+                    model,
                     messages,
                     None,
                     Some(tools),              // Use cloned tools
@@ -204,7 +204,7 @@ async fn test_api_with_tools() {
             let first_tool_call = tool_calls
                 .iter()
                 .find(|tc| tc.name == "ls")
-                .expect(&format!("Expected 'ls' tool call for model {:?}", model));
+                .unwrap_or_else(|| panic!("Expected 'ls' tool call for model {:?}", model));
 
             println!("{:?} Tool call: {}", model, first_tool_call.name);
             // Optional: Pretty print parameters only if needed for debugging
@@ -346,7 +346,7 @@ async fn test_api_with_tool_response() {
 
             let response = client
                 .complete(
-                    model.clone(),
+                    model,
                     messages,
                     None,
                     None, // No tools needed here as we are providing the tool result
@@ -883,7 +883,7 @@ async fn test_api_with_cancelled_tool_execution() {
             // Call the API - it should handle the cancelled tool result gracefully
             let response = client
                 .complete(
-                    model.clone(),
+                    model,
                     messages,
                     None,
                     None, // No tools needed as we're testing message handling

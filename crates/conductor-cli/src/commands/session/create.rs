@@ -10,7 +10,10 @@ use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{
     SessionConfig, SessionManager, SessionManagerConfig, SessionToolConfig, WorkspaceConfig,
 };
-use conductor_core::utils::session::{resolve_session_store_config, create_session_store_with_config, parse_metadata, parse_tool_policy};
+use conductor_core::utils::session::{
+    create_session_store_with_config, parse_metadata, parse_tool_policy,
+    resolve_session_store_config,
+};
 
 pub struct CreateSessionCommand {
     pub tool_policy: String,

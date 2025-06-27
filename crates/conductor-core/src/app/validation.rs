@@ -1,7 +1,7 @@
 use async_trait::async_trait;
+use conductor_tools::tools::bash::BASH_TOOL_NAME;
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
-use conductor_tools::tools::bash::BASH_TOOL_NAME;
 
 use crate::api::ToolCall;
 

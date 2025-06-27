@@ -1,6 +1,6 @@
 use super::{ToolFormatter, helpers::*};
-use conductor_core::app::conversation::ToolResult;
 use crate::tui::widgets::styles;
+use conductor_core::app::conversation::ToolResult;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 

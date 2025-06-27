@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
+use crate::tui::state::{ChatStore, ToolCallRegistry};
+use crate::tui::widgets::chat_list::ChatListState;
 use conductor_core::api::Model;
 use conductor_core::app::AppEvent;
 use conductor_core::app::io::AppCommandSink;
-use crate::tui::state::{ChatStore, ToolCallRegistry};
-use crate::tui::widgets::chat_list::ChatListState;
 use conductor_tools::schema::ToolCall;
 
 /// Result of processing an event
@@ -58,7 +58,9 @@ impl ProcessingContext<'_> {
         // First, try to find existing tool message by id
         if let Some((idx, _)) = self.chat_store.iter().enumerate().find(|(_, item)| {
             if let crate::tui::model::ChatItem::Message(row) = item {
-                if let conductor_core::app::conversation::Message::Tool { tool_use_id, .. } = &row.inner {
+                if let conductor_core::app::conversation::Message::Tool { tool_use_id, .. } =
+                    &row.inner
+                {
                     tool_use_id == id
                 } else {
                     false
@@ -95,7 +97,6 @@ impl ProcessingContext<'_> {
 
         idx
     }
-
 }
 
 /// Trait for processing specific types of AppEvents
