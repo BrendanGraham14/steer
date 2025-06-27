@@ -9,7 +9,6 @@ pub use claude::AnthropicClient;
 pub use conductor_tools::{InputSchema, ToolCall, ToolSchema};
 pub use error::ApiError;
 pub use gemini::GeminiClient;
-use once_cell::sync::Lazy;
 pub use openai::OpenAIClient;
 pub use provider::{CompletionResponse, Provider};
 use std::collections::HashMap;
@@ -17,7 +16,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use strum::Display;
 use strum::IntoStaticStr;
-use strum::{EnumIter, IntoEnumIterator};
+use strum::EnumIter;
 use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -138,8 +137,6 @@ impl Model {
         }
     }
 }
-
-static MODEL_VARIANTS: Lazy<Vec<Model>> = Lazy::new(|| Model::iter().collect());
 
 #[derive(Clone)]
 pub struct Client {

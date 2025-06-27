@@ -36,12 +36,20 @@ impl ToolFormatter for ViewFormatter {
             .and_then(|n| n.to_str())
             .unwrap_or(&params.file_path);
 
-        let info = if let Some(ToolResult::Success { output }) = result {
-            let line_count = output.lines().count();
-            let size = format_size(output.len());
-            format!("{} lines, {}", line_count, size)
-        } else if let Some(ToolResult::Error { .. }) = result {
-            "failed".to_string()
+        let info = if let Some(result) = result {
+            match result {
+                ToolResult::FileContent(file_result) => {
+                    let line_count = file_result.line_count;
+                    let size = format_size(file_result.content.len());
+                    if file_result.truncated {
+                        format!("{} lines (truncated), {}", line_count, size)
+                    } else {
+                        format!("{} lines, {}", line_count, size)
+                    }
+                }
+                ToolResult::Error(_) => "failed".to_string(),
+                _ => "unexpected result type".to_string(),
+            }
         } else {
             "reading...".to_string()
         };
@@ -89,26 +97,43 @@ impl ToolFormatter for ViewFormatter {
         }
 
         // Show file content if we have a result
-        if let Some(ToolResult::Success { output }) = result {
-            if !output.trim().is_empty() {
-                lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+        if let Some(result) = result {
+            match result {
+                ToolResult::FileContent(file_result) => {
+                    if !file_result.content.trim().is_empty() {
+                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-                const MAX_PREVIEW_LINES: usize = 20;
-                let content_lines: Vec<&str> = output.lines().collect();
+                        const MAX_PREVIEW_LINES: usize = 20;
+                        let content_lines: Vec<&str> = file_result.content.lines().collect();
 
-                for line in content_lines.iter().take(MAX_PREVIEW_LINES) {
-                    for wrapped in textwrap::wrap(line, wrap_width) {
-                        lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        for line in content_lines.iter().take(MAX_PREVIEW_LINES) {
+                            for wrapped in textwrap::wrap(line, wrap_width) {
+                                lines.push(Line::from(Span::raw(wrapped.to_string())));
+                            }
+                        }
+
+                        if content_lines.len() > MAX_PREVIEW_LINES {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "... ({} more lines)",
+                                    content_lines.len() - MAX_PREVIEW_LINES
+                                ),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
                     }
                 }
-
-                if content_lines.len() > MAX_PREVIEW_LINES {
+                ToolResult::Error(error) => {
+                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!(
-                            "... ({} more lines)",
-                            content_lines.len() - MAX_PREVIEW_LINES
-                        ),
-                        styles::ITALIC_GRAY,
+                        error.to_string(),
+                        styles::ERROR_TEXT,
+                    )));
+                }
+                _ => {
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
                     )));
                 }
             }

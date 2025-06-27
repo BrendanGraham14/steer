@@ -1,8 +1,9 @@
 use crate::api::Model;
 use crate::app::Message;
-use crate::session::{SessionInfo, ToolResult};
+use crate::session::SessionInfo;
 use chrono::{DateTime, Utc};
 use conductor_tools::ToolCall;
+use conductor_tools::result::ToolResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -355,15 +355,17 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
             // Convert ToolResult to Claude format
             // Claude expects tool results as User messages
             let (result_text, is_error) = match result {
-                ToolResult::Success { output } => {
-                    let text = if output.trim().is_empty() {
+                ToolResult::Error(e) => (e.to_string(), Some(true)),
+                _ => {
+                    // For all other variants, use llm_format
+                    let text = result.llm_format();
+                    let text = if text.trim().is_empty() {
                         "(No output)".to_string()
                     } else {
-                        output
+                        text
                     };
                     (text, None)
                 }
-                ToolResult::Error { error } => (error, Some(true)),
             };
 
             let claude_blocks = vec![ClaudeContentBlock::ToolResult {

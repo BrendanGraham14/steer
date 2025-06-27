@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use conductor_tools::{ToolCall, ToolSchema};
+use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,7 +73,7 @@ impl Workspace for LocalWorkspace {
         &self,
         tool_call: &ToolCall,
         mut ctx: ExecutionContext,
-    ) -> Result<String> {
+    ) -> Result<ToolResult> {
         // Set the working directory for local execution
         ctx.environment = crate::tools::ExecutionEnvironment::Local {
             working_directory: self.root_path.clone(),

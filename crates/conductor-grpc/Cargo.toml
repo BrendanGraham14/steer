@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 conductor-core = { path = "../conductor-core" }
 conductor-proto = { path = "../conductor-proto" }
+conductor-tools = { path = "../conductor-tools" }
 
 # gRPC
 tonic = "0.12"

@@ -101,6 +101,7 @@ struct GeminiThinkingConfig {
     thinking_budget: Option<i32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum GeminiMimeType {
@@ -301,6 +302,7 @@ enum GeminiHarmProbability {
     High,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GeminiCitationMetadata {
     #[serde(rename = "citationSources")]
@@ -308,6 +310,7 @@ struct GeminiCitationMetadata {
     citation_sources: Option<Vec<GeminiCitationSource>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GeminiCitationSource {
     #[serde(rename = "startIndex")]
@@ -430,13 +433,12 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                 } => {
                     // Convert tool result to function response
                     let result_value = match result {
-                        ToolResult::Success { output } => {
-                            // Try to parse as JSON, otherwise use as string
-                            serde_json::from_str(&output)
-                                .ok()
-                                .unwrap_or(Value::String(output))
+                        ToolResult::Error(e) => Value::String(format!("Error: {}", e)),
+                        _ => {
+                            // For all other variants, try to serialize as JSON
+                            serde_json::to_value(&result)
+                                .unwrap_or_else(|_| Value::String(result.llm_format()))
                         }
-                        ToolResult::Error { error } => Value::String(format!("Error: {}", error)),
                     };
 
                     let parts = vec![GeminiRequestPart::FunctionResponse {

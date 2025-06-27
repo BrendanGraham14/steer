@@ -157,34 +157,9 @@ impl MessageEventProcessor {
             }
         }
 
-        // Handle Tool messages specially to update existing placeholders
-        match &message {
-            conductor_core::app::conversation::Message::Tool {
-                tool_use_id,
-                result,
-                ..
-            } => {
-                let idx = ctx.get_or_create_tool_index(tool_use_id, None);
-
-                // Update the existing placeholder with the real result
-                if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                    if let conductor_core::app::conversation::Message::Tool {
-                        result: existing_result,
-                        ..
-                    } = &mut row.inner
-                    {
-                        *existing_result = result.clone();
-                    }
-                }
-
-                *ctx.messages_updated = true;
-            }
-            _ => {
-                // Add the message normally
-                ctx.chat_store.add_message(message);
-                *ctx.messages_updated = true;
-            }
-        }
+        // Add the message to the store
+        ctx.chat_store.add_message(message);
+        *ctx.messages_updated = true;
 
         // After adding, check if a thread switch occurred, and prune if so.
         if let Some(old_id) = old_thread_id {

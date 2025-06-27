@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use conductor_tools::{ToolCall, ToolSchema};
+use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,7 +19,7 @@ pub trait Workspace: Send + Sync {
     async fn environment(&self) -> Result<EnvironmentInfo>;
 
     /// Execute a tool in this workspace
-    async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext) -> Result<String>;
+    async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext) -> Result<ToolResult>;
 
     /// Get available tools for this workspace
     async fn available_tools(&self) -> Vec<ToolSchema>;

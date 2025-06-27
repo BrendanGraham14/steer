@@ -78,7 +78,7 @@ async fn test_execute_tool_ls() {
     let result = response.unwrap().into_inner();
     // Either succeeds or fails gracefully
     if result.success {
-        assert!(!result.result.is_empty());
+        assert!(result.result.is_some());
         assert!(result.error.is_empty());
     } else {
         assert!(!result.error.is_empty());

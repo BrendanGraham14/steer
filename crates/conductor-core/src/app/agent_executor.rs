@@ -1,6 +1,6 @@
 use crate::api::{ApiError, Client as ApiClient, Model};
 use crate::app::conversation::Message;
-use conductor_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
+use conductor_tools::{result::ToolResult as ConductorToolResult, ToolCall, ToolError, ToolSchema};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,8 +20,14 @@ pub enum ApprovalDecision {
 pub enum AgentEvent {
     AssistantMessagePart(String),
     AssistantMessageFinal(Message),
-    ExecutingTool { tool_call_id: String, name: String },
-    ToolResultReceived(ToolResult),
+    ExecutingTool {
+        tool_call_id: String,
+        name: String,
+    },
+    ToolResultReceived {
+        tool_call_id: String,
+        result: ConductorToolResult,
+    },
 }
 
 #[derive(Error, Debug)]
@@ -79,7 +85,7 @@ impl AgentExecutor {
     ) -> Result<Message, AgentExecutorError>
     where
         F: Fn(ToolCall, CancellationToken) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<String, ToolError>> + Send + 'static,
+        Fut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
     {
         let mut messages = request.initial_messages.clone();
         let tools = if request.available_tools.is_empty() {
@@ -165,17 +171,7 @@ impl AgentExecutor {
                 }
 
                 // Add tool results to messages - one message per tool result
-                for tool_result in &tool_results {
-                    let conversation_result = if tool_result.is_error {
-                        crate::app::conversation::ToolResult::Error {
-                            error: tool_result.output.clone(),
-                        }
-                    } else {
-                        crate::app::conversation::ToolResult::Success {
-                            output: tool_result.output.clone(),
-                        }
-                    };
-
+                for (i, tool_result) in tool_results.iter().enumerate() {
                     // Get thread info from the last message
                     let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
                         (*last_msg.thread_id(), Some(last_msg.id().to_string()))
@@ -185,8 +181,8 @@ impl AgentExecutor {
                     };
 
                     messages.push(Message::Tool {
-                        tool_use_id: tool_result.tool_call_id.clone(),
-                        result: conversation_result,
+                        tool_use_id: tool_calls[i].id.clone(),
+                        result: tool_result.clone(),
                         timestamp: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .unwrap()
@@ -212,10 +208,10 @@ impl AgentExecutor {
         tool_executor_callback: &F,
         event_sender: &mpsc::Sender<AgentEvent>,
         token: &CancellationToken,
-    ) -> Result<Vec<ToolResult>, AgentExecutorError>
+    ) -> Result<Vec<ConductorToolResult>, AgentExecutorError>
     where
         F: Fn(ToolCall, CancellationToken) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<String, ToolError>> + Send + 'static,
+        Fut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
     {
         info!("Processing tool calls via provided callback.");
         let futures: Vec<_> = tool_calls
@@ -245,13 +241,11 @@ impl AgentExecutor {
                                 res = tool_executor_callback(call.clone(), token_clone.clone()) => res,
                             };
 
-                            // Create the ToolResult based on the callback's outcome
-                            let tool_result = match &result {
+                            let tool_result = match result {
                                 Ok(output) => {
-                                    // Tool was approved and executed successfully
                                     debug!(tool_id=%call_id, tool_name=%tool_name, "Tool executed successfully via callback");
 
-                                    // Send the ExecutingTool event (tool was successfully executed)
+                                    // Send ExecutingTool event for successful execution
                                     if let Err(e) = event_sender_clone
                                         .send(AgentEvent::ExecutingTool {
                                             tool_call_id: call_id.clone(),
@@ -262,18 +256,18 @@ impl AgentExecutor {
                                         warn!(tool_id=%call_id, tool_name=%tool_name, "Failed to send ExecutingTool event: {}", e);
                                     }
 
-                                    ToolResult::success(call_id.clone(), output.clone())
+                                    output
                                 }
-                                Err(ToolError::DeniedByUser(_)) => {
+                                Err(e @ ToolError::DeniedByUser(_)) => {
                                     // Tool was denied, don't send ExecutingTool event
                                     warn!(tool_id=%call_id, tool_name=%tool_name, "Tool callback resulted in denial");
-                                    ToolResult::error(call_id.clone(), format!("Tool execution denied by user: {}", tool_name))
-                                },
+                                    ConductorToolResult::Error(e)
+                                }
                                 Err(e @ ToolError::Cancelled(_)) => {
-                                    // Propagate cancellation error specifically
+                                    // Tool was cancelled
                                     warn!(tool_id=%call_id, tool_name=%tool_name, "Tool callback resulted in cancellation: {}", e);
-                                    ToolResult::error(call_id.clone(), e.to_string()) // Report as error
-                                },
+                                    ConductorToolResult::Error(e)
+                                }
                                 Err(e) => {
                                     // Other errors (tool was approved but failed during execution)
                                     error!(tool_id=%call_id, tool_name=%tool_name, "Tool callback failed: {}", e);
@@ -289,19 +283,21 @@ impl AgentExecutor {
                                         warn!(tool_id=%call_id, tool_name=%tool_name, "Failed to send ExecutingTool event: {}", send_err);
                                     }
 
-                                    ToolResult::error(call_id.clone(), e.to_string()) // Report other errors
+                                    ConductorToolResult::Error(e)
                                 }
                             };
 
                             // Send the final result event (success, denied, cancelled, or other error)
                             if let Err(e) = event_sender_clone
-                                .send(AgentEvent::ToolResultReceived(tool_result.clone()))
+                                .send(AgentEvent::ToolResultReceived {
+                                    tool_call_id: call_id.clone(),
+                                    result: tool_result.clone(),
+                                })
                                 .await
                             {
                                 error!("Failed to send ToolResultReceived event: {}", e);
-                                // Don't lose the original result if send fails
                             }
-                            tool_result // Return the result for collection by join_all
+                            tool_result
                         }
                     })
                     .collect();

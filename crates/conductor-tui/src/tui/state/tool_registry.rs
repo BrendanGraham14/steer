@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use conductor_core::app::conversation::ToolResult;
+use conductor_tools::error::ToolError;
 use conductor_tools::schema::ToolCall;
 
 /// Status of a tool call in its lifecycle
@@ -185,8 +186,11 @@ impl ToolCallRegistry {
                 .map(|started| completed_at.duration_since(started));
 
             let completed = CompletedToolCall {
-                call: state.call,
-                result: ToolResult::Error { error },
+                call: state.call.clone(),
+                result: ToolResult::Error(ToolError::Execution {
+                    tool_name: state.call.name.clone(),
+                    message: error,
+                }),
                 message_index: state.message_index,
                 started_at: state.started_at,
                 completed_at,

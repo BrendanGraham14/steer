@@ -49,4 +49,7 @@ pub enum ConversionError {
 
     #[error("Invalid data: {message}")]
     InvalidData { message: String },
+
+    #[error("Tool result conversion error: {0}")]
+    ToolResultConversion(String),
 }

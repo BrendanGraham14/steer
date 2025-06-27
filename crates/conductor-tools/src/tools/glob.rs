@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::{ExecutionContext, ToolError};
+use crate::result::GlobResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GlobParams {
@@ -16,6 +17,8 @@ pub struct GlobParams {
 tool! {
     GlobTool {
         params: GlobParams,
+        output: GlobResult,
+        variant: Glob,
         description: r#"Fast file pattern matching tool that works with any codebase size.
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
@@ -28,7 +31,7 @@ tool! {
         _tool: &GlobTool,
         params: GlobParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<GlobResult, ToolError> {
         if context.is_cancelled() {
             return Err(ToolError::Cancelled(GLOB_TOOL_NAME.to_string()));
         }
@@ -75,12 +78,11 @@ tool! {
             }
         }
 
-        if results.is_empty() {
-            Ok("No files found matching the pattern.".to_string())
-        } else {
-            // Sort results for consistent output
-            results.sort();
-            Ok(results.join("\n"))
-        }
+        // Sort results for consistent output
+        results.sort();
+        Ok(GlobResult {
+            matches: results,
+            pattern: params.pattern,
+        })
     }
 }

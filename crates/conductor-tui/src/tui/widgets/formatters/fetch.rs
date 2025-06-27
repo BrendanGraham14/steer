@@ -26,12 +26,11 @@ impl ToolFormatter for FetchFormatter {
             ))];
         };
 
-        let info = if let Some(ToolResult::Success { output }) = result {
-            format_size(output.len())
-        } else if let Some(ToolResult::Error { .. }) = result {
-            "failed".to_string()
-        } else {
-            "fetching...".to_string()
+        let info = match result {
+            Some(ToolResult::Fetch(fetch_result)) => format_size(fetch_result.content.len()),
+            Some(ToolResult::Error(_)) => "failed".to_string(),
+            Some(_) => "unexpected result type".to_string(),
+            None => "fetching...".to_string(),
         };
 
         let url_display = if params.url.len() > 50 {
@@ -84,35 +83,47 @@ impl ToolFormatter for FetchFormatter {
         }
 
         // Show result if available
-        if let Some(ToolResult::Success { output }) = result {
-            if !output.trim().is_empty() {
-                lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+        if let Some(result) = result {
+            match result {
+                ToolResult::Fetch(fetch_result) => {
+                    if !fetch_result.content.trim().is_empty() {
+                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-                const MAX_OUTPUT_LINES: usize = 25;
-                let (output_lines, truncated) = truncate_lines(output, MAX_OUTPUT_LINES);
+                        const MAX_OUTPUT_LINES: usize = 25;
+                        let (output_lines, truncated) =
+                            truncate_lines(&fetch_result.content, MAX_OUTPUT_LINES);
 
-                for line in output_lines {
-                    for wrapped in textwrap::wrap(line, wrap_width) {
-                        lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        for line in output_lines {
+                            for wrapped in textwrap::wrap(line, wrap_width) {
+                                lines.push(Line::from(Span::raw(wrapped.to_string())));
+                            }
+                        }
+
+                        if truncated {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "... ({} more lines)",
+                                    fetch_result.content.lines().count() - MAX_OUTPUT_LINES
+                                ),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
                     }
                 }
-
-                if truncated {
+                ToolResult::Error(error) => {
+                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!(
-                            "... ({} more lines)",
-                            output.lines().count() - MAX_OUTPUT_LINES
-                        ),
-                        styles::ITALIC_GRAY,
+                        format!("Error: {}", error),
+                        styles::ERROR_TEXT,
+                    )));
+                }
+                _ => {
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
                     )));
                 }
             }
-        } else if let Some(ToolResult::Error { error }) = result {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-            lines.push(Line::from(Span::styled(
-                format!("Error: {}", error),
-                styles::ERROR_TEXT,
-            )));
         }
 
         lines

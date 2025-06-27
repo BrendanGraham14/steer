@@ -16,6 +16,8 @@ pub struct FetchParams {
 tool! {
     FetchTool {
         params: FetchParams,
+        output: conductor_tools::result::FetchResult,
+        variant: Fetch,
         description: r#"- Fetches content from a specified URL and processes it using an AI model
 - Takes a URL and a prompt as input
 - Fetches the URL content, converts HTML to markdown
@@ -40,7 +42,7 @@ Usage notes:
         _tool: &FetchTool,
         params: FetchParams,
         context: &conductor_tools::ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<conductor_tools::result::FetchResult, ToolError> {
         let token = Some(context.cancellation_token.clone());
         // Create a reqwest client
         let client = reqwest::Client::new();
@@ -83,7 +85,11 @@ Usage notes:
 
                 match text {
                     Ok(content) => {
-                        process_web_page_content(content, params.prompt, token).await
+                        process_web_page_content(content, params.prompt.clone(), token).await
+                            .map(|payload| conductor_tools::result::FetchResult {
+                                url: params.url,
+                                content: payload,
+                            })
                     }
                     Err(e) => Err(ToolError::execution(
                         "Fetch",

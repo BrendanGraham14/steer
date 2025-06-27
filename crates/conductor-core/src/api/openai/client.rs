@@ -420,15 +420,14 @@ impl OpenAIClient {
                 } => {
                     // Convert ToolResult to OpenAI format
                     let content_text = match result {
-                        ToolResult::Success { output } => {
-                            if output.trim().is_empty() {
+                        ToolResult::Error(e) => format!("Error: {}", e),
+                        _ => {
+                            let text = result.llm_format();
+                            if text.trim().is_empty() {
                                 "(No output)".to_string()
                             } else {
-                                output
+                                text
                             }
-                        }
-                        ToolResult::Error { error } => {
-                            format!("Error: {}", error)
                         }
                     };
 

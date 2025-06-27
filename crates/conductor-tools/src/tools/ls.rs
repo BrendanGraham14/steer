@@ -7,6 +7,7 @@ use thiserror::Error;
 use tokio::task;
 
 use crate::{ExecutionContext, ToolError};
+use crate::result::{FileListResult, FileEntry};
 
 #[derive(Debug, Error)]
 pub enum LsError {
@@ -35,6 +36,8 @@ pub struct LsParams {
 tool! {
     LsTool {
         params: LsParams,
+        output: FileListResult,
+        variant: FileList,
         description: "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You should generally prefer the Glob and Grep tools, if you know which directories to search.",
         name: "ls",
         require_approval: false
@@ -44,7 +47,7 @@ tool! {
         _tool: &LsTool,
         params: LsParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<FileListResult, ToolError> {
         if context.is_cancelled() {
             return Err(ToolError::Cancelled(LS_TOOL_NAME.to_string()));
         }
@@ -79,7 +82,7 @@ fn list_directory_internal(
     path_str: &str,
     ignore_patterns: &[String],
     cancellation_token: &tokio_util::sync::CancellationToken,
-) -> Result<String, LsError> {
+) -> Result<FileListResult, LsError> {
     let path = Path::new(path_str);
     if !path.is_dir() {
         return Err(LsError::NotADirectory {
@@ -103,8 +106,7 @@ fn list_directory_internal(
     }
 
     let walker = walk_builder.build();
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
+    let mut entries = Vec::new();
 
     for result in walker.skip(1) {
         // Skip the root directory itself
@@ -117,12 +119,20 @@ fn list_directory_internal(
                 let file_path = entry.path();
                 let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
 
-                // Add to appropriate list based on file type
-                if file_path.is_dir() {
-                    dirs.push(format!("{}/", file_name));
+                // Create FileEntry
+                let metadata = file_path.metadata().ok();
+                let size = if file_path.is_dir() {
+                    None
                 } else {
-                    files.push(file_name.to_string());
-                }
+                    metadata.as_ref().map(|m| m.len())
+                };
+                
+                entries.push(FileEntry {
+                    path: file_name.to_string(),
+                    is_directory: file_path.is_dir(),
+                    size,
+                    permissions: None, // Could add if needed
+                });
             }
             Err(e) => {
                 // Log errors but don't include in the output
@@ -131,16 +141,18 @@ fn list_directory_internal(
         }
     }
 
-    // Combine and sort all entries
-    let mut all_entries = Vec::new();
-    all_entries.extend(dirs);
-    all_entries.extend(files);
-    all_entries.sort();
+    // Sort entries by name
+    entries.sort_by(|a, b| {
+        // Directories first, then files
+        match (a.is_directory, b.is_directory) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.path.cmp(&b.path),
+        }
+    });
 
-    // Format output
-    if all_entries.is_empty() {
-        Ok("Directory is empty or contains only ignored files.".to_string())
-    } else {
-        Ok(all_entries.join("\n"))
-    }
+    Ok(FileListResult {
+        entries,
+        base_path: path_str.to_string(),
+    })
 }

@@ -8,6 +8,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::{ExecutionContext, ToolError};
+use crate::result::BashResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BashParams {
@@ -21,6 +22,8 @@ pub struct BashParams {
 tool! {
     BashTool {
         params: BashParams,
+        output: BashResult,
+        variant: Bash,
         description: "Run a bash command in the terminal",
         name: "bash",
         require_approval: true
@@ -30,7 +33,7 @@ tool! {
         _tool: &BashTool,
         params: BashParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<BashResult, ToolError> {
         if context.is_cancelled() {
             return Err(ToolError::Cancelled(BASH_TOOL_NAME.to_string()));
         }
@@ -66,7 +69,7 @@ tool! {
     }
 }
 
-async fn run_command(command: &str, context: &ExecutionContext) -> Result<String, ToolError> {
+async fn run_command(command: &str, context: &ExecutionContext) -> Result<BashResult, ToolError> {
     let mut cmd = Command::new("/bin/bash");
     cmd.arg("-c")
         .arg(command)
@@ -89,23 +92,17 @@ async fn run_command(command: &str, context: &ExecutionContext) -> Result<String
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output
+        .status
+        .code()
+        .unwrap_or(-1);
 
-    if output.status.success() {
-        Ok(stdout)
-    } else {
-        let exit_code = output
-            .status
-            .code()
-            .map_or_else(|| "N/A".to_string(), |c| c.to_string());
-
-        let error_message = format!(
-            "Command failed with exit code {}\n--- STDOUT ---\n{}\n--- STDERR ---\n{}",
-            exit_code,
-            stdout.trim(),
-            stderr.trim()
-        );
-        Err(ToolError::execution(BASH_TOOL_NAME, error_message))
-    }
+    Ok(BashResult {
+        stdout,
+        stderr,
+        exit_code,
+        command: command.to_string(),
+    })
 }
 
 static BANNED_COMMAND_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {

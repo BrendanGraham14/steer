@@ -90,6 +90,8 @@ fn write_todos(todos: &TodoList) -> Result<(), std::io::Error> {
 pub mod read {
     use super::read_todos;
     use crate::{ExecutionContext, ToolError};
+    use crate::result::{TodoListResult, TodoItem as TodoItemResult};
+    use super::{TodoStatus, TodoPriority};
     use conductor_macros::tool;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -103,6 +105,8 @@ pub mod read {
     tool! {
         TodoReadTool {
             params: TodoReadParams,
+            output: TodoListResult,
+            variant: TodoRead,
             description: r#"Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of
 the status of the current task list. You should make use of this tool as often as possible, especially in the following situations:
 - At the beginning of conversations to see what's pending
@@ -125,7 +129,7 @@ Usage:
             _tool: &TodoReadTool,
             _params: TodoReadParams,
             context: &ExecutionContext,
-        ) -> Result<String, ToolError> {
+        ) -> Result<TodoListResult, ToolError> {
             // Cancellation check
             if context.cancellation_token.is_cancelled() {
                 return Err(ToolError::Cancelled(TODO_READ_TOOL_NAME.to_string()));
@@ -134,14 +138,33 @@ Usage:
             // Read the todos
             let todos = read_todos().map_err(|e| ToolError::io(TODO_READ_TOOL_NAME, e.to_string()))?;
 
-            Ok(format!("Remember to continue to use update and read from the todo list as you make progress. Here is the current list: \n{}", serde_json::to_string_pretty(&todos).unwrap_or_default()))
+            // Convert to result format
+            let result_todos = todos.into_iter().map(|todo| TodoItemResult {
+                id: todo.id,
+                content: todo.content,
+                status: match todo.status {
+                    TodoStatus::Pending => "pending".to_string(),
+                    TodoStatus::InProgress => "in_progress".to_string(),
+                    TodoStatus::Completed => "completed".to_string(),
+                },
+                priority: match todo.priority {
+                    TodoPriority::High => "high".to_string(),
+                    TodoPriority::Medium => "medium".to_string(),
+                    TodoPriority::Low => "low".to_string(),
+                },
+            }).collect();
+
+            Ok(TodoListResult {
+                todos: result_todos,
+            })
         }
     }
 }
 
 pub mod write {
-    use super::{TodoList, write_todos};
+    use super::{TodoList, write_todos, TodoStatus, TodoPriority};
     use crate::{ExecutionContext, ToolError};
+    use crate::result::{TodoWriteResult, TodoItem as TodoItemResult};
     use conductor_macros::tool;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -155,6 +178,8 @@ pub mod write {
     tool! {
         TodoWriteTool {
             params: TodoWriteParams,
+            output: TodoWriteResult,
+            variant: TodoWrite,
             description:   r#"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 It also helps the user understand the progress of the task and overall progress of their requests.
 
@@ -310,7 +335,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
             _tool: &TodoWriteTool,
             params: TodoWriteParams,
             context: &ExecutionContext,
-        ) -> Result<String, ToolError> {
+        ) -> Result<TodoWriteResult, ToolError> {
             // Cancellation check
             if context.cancellation_token.is_cancelled() {
                 return Err(ToolError::Cancelled(TODO_WRITE_TOOL_NAME.to_string()));
@@ -319,7 +344,26 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
             // Write the new todos
             write_todos(&params.todos).map_err(|e| ToolError::io(TODO_WRITE_TOOL_NAME, e.to_string()))?;
 
-            Ok(format!("Todos have been modified successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}", serde_json::to_string_pretty(&params.todos).unwrap_or_default()))
+            // Convert to result format
+            let result_todos = params.todos.into_iter().map(|todo| TodoItemResult {
+                id: todo.id,
+                content: todo.content,
+                status: match todo.status {
+                    TodoStatus::Pending => "pending".to_string(),
+                    TodoStatus::InProgress => "in_progress".to_string(),
+                    TodoStatus::Completed => "completed".to_string(),
+                },
+                priority: match todo.priority {
+                    TodoPriority::High => "high".to_string(),
+                    TodoPriority::Medium => "medium".to_string(),
+                    TodoPriority::Low => "low".to_string(),
+                },
+            }).collect();
+
+            Ok(TodoWriteResult {
+                todos: result_todos,
+                operation: "modified".to_string(),
+            })
         }
     }
 }

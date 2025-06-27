@@ -1,5 +1,4 @@
 use anyhow::{Result, anyhow};
-use conductor_tools::ToolResult;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -8,6 +7,14 @@ use crate::app::conversation::UserContent;
 use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfig;
 use crate::session::state::WorkspaceConfig;
+
+/// Record of a tool execution for audit purposes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultRecord {
+    pub tool_call_id: String,
+    pub output: String,
+    pub is_error: bool,
+}
 use crate::session::{
     manager::SessionManager,
     state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy},
@@ -20,7 +27,7 @@ pub struct RunOnceResult {
     /// The final assistant message after all tools have been executed
     pub final_msg: Message,
     /// All tool results produced during the run (for audit logging)
-    pub tool_results: Vec<ToolResult>,
+    pub tool_results: Vec<ToolResultRecord>,
 }
 
 /// Orchestrates single non-interactive agent loop executions using the session system.
@@ -201,9 +208,9 @@ impl OneShotRunner {
                     info!(session_id = %session_id, name = %name, id = %id, "ToolCallCompleted event");
                     pending_tool_calls.remove(&id);
 
-                    tool_results.push(ToolResult {
+                    tool_results.push(ToolResultRecord {
                         tool_call_id: id.clone(),
-                        output: result,
+                        output: result.llm_format(),
                         is_error: false,
                     });
                 }
@@ -214,7 +221,7 @@ impl OneShotRunner {
                     error!(session_id = %session_id, name = %name, id = %id, error = %error, "ToolCallFailed event");
                     pending_tool_calls.remove(&id);
 
-                    tool_results.push(ToolResult {
+                    tool_results.push(ToolResultRecord {
                         tool_call_id: id.clone(),
                         output: error,
                         is_error: true,
@@ -267,7 +274,7 @@ impl OneShotRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
+    use crate::app::conversation::{AssistantContent, ToolResult, Message, UserContent};
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
@@ -540,9 +547,10 @@ mod tests {
 
         let messages = vec![Message::Tool {
             tool_use_id: "test".to_string(),
-            result: ToolResult::Success {
-                output: "test".to_string(),
-            },
+            result: ToolResult::External(conductor_tools::result::ExternalResult {
+                tool_name: "test_tool".to_string(),
+                payload: "test".to_string(),
+            }),
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
             thread_id: uuid::Uuid::now_v7(),

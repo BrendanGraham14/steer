@@ -28,6 +28,8 @@ pub struct DispatchAgentParams {
 tool! {
     DispatchAgentTool {
         params: DispatchAgentParams,
+        output: conductor_tools::result::AgentResult,
+        variant: Agent,
         description: r#"Launch a new agent that has access to the following tools: glob, grep, ls, view. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
 
 When to use the Agent tool:
@@ -52,7 +54,7 @@ Usage notes:
         _tool: &DispatchAgentTool,
         params: DispatchAgentParams,
         context: &conductor_tools::ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<conductor_tools::result::AgentResult, ToolError> {
         let token = context.cancellation_token.clone();
 
         // --- Setup AgentExecutor dependencies ---
@@ -143,7 +145,9 @@ Usage notes:
                  if final_text.is_empty() {
                      final_text = message.extract_text();
                  }
-                 Ok(final_text)
+                 Ok(conductor_tools::result::AgentResult {
+                     content: final_text,
+                 })
             }
             Err(e) => {
                  Err(ToolError::execution(DISPATCH_AGENT_TOOL_NAME, e.to_string()))
@@ -216,13 +220,13 @@ fn search_database() {}
         // Check if we got a valid response
         assert!(result.is_ok(), "Agent execution failed: {:?}", result.err());
         let response = result.unwrap();
-        assert!(!response.is_empty(), "Response should not be empty");
+        assert!(!response.content.is_empty(), "Response should not be empty");
         assert!(
-            response.contains("search_code.rs"),
+            response.content.contains("search_code.rs"),
             "Response should contain the file path"
         ); // Check for expected content
 
-        println!("Dispatch agent response: {}", response);
+        println!("Dispatch agent response: {}", response.content);
         println!("Dispatch agent test passed successfully!");
     }
 }

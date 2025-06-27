@@ -1,12 +1,14 @@
 pub mod context;
 pub mod error;
+pub mod result;
 pub mod schema;
 pub mod tools;
 pub mod traits;
 
 pub use context::ExecutionContext;
 pub use error::ToolError;
-pub use schema::{InputSchema, ToolCall, ToolResult, ToolSchema};
+pub use result::{ToolOutput, ToolResult};
+pub use schema::{InputSchema, ToolCall, ToolSchema};
 pub use traits::Tool;
 
 #[cfg(test)]
@@ -28,6 +30,8 @@ mod description_format_tests {
         tool! {
             StringLiteralTool {
                 params: SimpleParams,
+                output: crate::result::ExternalResult,
+                variant: External,
                 description: "This is a simple string literal description",
                 name: "string_literal_tool",
                 require_approval: false
@@ -37,8 +41,11 @@ mod description_format_tests {
                 _tool: &StringLiteralTool,
                 params: SimpleParams,
                 _context: &ExecutionContext,
-            ) -> Result<String, ToolError> {
-                Ok(format!("Processed: {}", params.value))
+            ) -> Result<crate::result::ExternalResult, ToolError> {
+                Ok(crate::result::ExternalResult {
+                    tool_name: "string_literal_tool".to_string(),
+                    payload: format!("Processed: {}", params.value),
+                })
             }
         }
     }
@@ -51,6 +58,8 @@ mod description_format_tests {
         tool! {
             FormattedStringTool {
                 params: SimpleParams,
+                output: crate::result::ExternalResult,
+                variant: External,
                 description: format!("This is a formatted description with version {} and features: {:?}",
                                    "1.0.0",
                                    vec!["advanced", "dynamic"]),
@@ -62,8 +71,11 @@ mod description_format_tests {
                 _tool: &FormattedStringTool,
                 params: SimpleParams,
                 _context: &ExecutionContext,
-            ) -> Result<String, ToolError> {
-                Ok(format!("Formatted result: {}", params.value))
+            ) -> Result<crate::result::ExternalResult, ToolError> {
+                Ok(crate::result::ExternalResult {
+                    tool_name: "formatted_string_tool".to_string(),
+                    payload: format!("Formatted result: {}", params.value),
+                })
             }
         }
     }
@@ -78,6 +90,8 @@ mod description_format_tests {
         tool! {
             ConstantDescriptionTool {
                 params: SimpleParams,
+                output: crate::result::ExternalResult,
+                variant: External,
                 description: format!("Tool version {} with enhanced capabilities", TOOL_VERSION),
                 name: "constant_description_tool",
                 require_approval: false
@@ -87,8 +101,11 @@ mod description_format_tests {
                 _tool: &ConstantDescriptionTool,
                 params: SimpleParams,
                 _context: &ExecutionContext,
-            ) -> Result<String, ToolError> {
-                Ok(format!("Version {} result: {}", TOOL_VERSION, params.value))
+            ) -> Result<crate::result::ExternalResult, ToolError> {
+                Ok(crate::result::ExternalResult {
+                    tool_name: "constant_description_tool".to_string(),
+                    payload: format!("Version {} result: {}", TOOL_VERSION, params.value),
+                })
             }
         }
     }

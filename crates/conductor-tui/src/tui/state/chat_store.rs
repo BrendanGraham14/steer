@@ -80,6 +80,22 @@ impl ChatStore {
         self.push(ChatItem::Message(row))
     }
 
+    /// Add a pending tool call
+    pub fn add_pending_tool(&mut self, item: ChatItem) -> usize {
+        self.push(item)
+    }
+
+    /// Remove an item by index
+    pub fn remove(&mut self, idx: usize) {
+        if idx < self.items.len() {
+            let item = self.items.remove(idx);
+            // Remove from index
+            self.index.remove(item.id());
+            // Rebuild index to fix indices after removal
+            self.rebuild_index();
+        }
+    }
+
     /// Clear all items
     pub fn clear(&mut self) {
         self.items.clear();

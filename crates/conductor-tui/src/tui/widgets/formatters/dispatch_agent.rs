@@ -32,13 +32,14 @@ impl ToolFormatter for DispatchAgentFormatter {
             params.prompt.clone()
         };
 
-        let info = if let Some(ToolResult::Success { output }) = result {
-            let line_count = output.lines().count();
-            format!("{} lines", line_count)
-        } else if let Some(ToolResult::Error { .. }) = result {
-            "failed".to_string()
-        } else {
-            "running...".to_string()
+        let info = match result {
+            Some(ToolResult::Agent(agent_result)) => {
+                let line_count = agent_result.content.lines().count();
+                format!("{} lines", line_count)
+            }
+            Some(ToolResult::Error(_)) => "failed".to_string(),
+            Some(_) => "unexpected result type".to_string(),
+            None => "running...".to_string(),
         };
 
         lines.push(Line::from(vec![
@@ -75,35 +76,47 @@ impl ToolFormatter for DispatchAgentFormatter {
         }
 
         // Show output if we have results
-        if let Some(ToolResult::Success { output }) = result {
-            if !output.trim().is_empty() {
-                lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+        if let Some(result) = result {
+            match result {
+                ToolResult::Agent(agent_result) => {
+                    if !agent_result.content.trim().is_empty() {
+                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-                const MAX_OUTPUT_LINES: usize = 30;
-                let (output_lines, truncated) = truncate_lines(output, MAX_OUTPUT_LINES);
+                        const MAX_OUTPUT_LINES: usize = 30;
+                        let (output_lines, truncated) =
+                            truncate_lines(&agent_result.content, MAX_OUTPUT_LINES);
 
-                for line in output_lines {
-                    for wrapped in textwrap::wrap(line, wrap_width) {
-                        lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        for line in output_lines {
+                            for wrapped in textwrap::wrap(line, wrap_width) {
+                                lines.push(Line::from(Span::raw(wrapped.to_string())));
+                            }
+                        }
+
+                        if truncated {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "... ({} more lines)",
+                                    agent_result.content.lines().count() - MAX_OUTPUT_LINES
+                                ),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
                     }
                 }
-
-                if truncated {
+                ToolResult::Error(error) => {
+                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!(
-                            "... ({} more lines)",
-                            output.lines().count() - MAX_OUTPUT_LINES
-                        ),
-                        styles::ITALIC_GRAY,
+                        format!("Error: {}", error),
+                        styles::ERROR_TEXT,
+                    )));
+                }
+                _ => {
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
                     )));
                 }
             }
-        } else if let Some(ToolResult::Error { error }) = result {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-            lines.push(Line::from(Span::styled(
-                format!("Error: {}", error),
-                styles::ERROR_TEXT,
-            )));
         }
 
         lines

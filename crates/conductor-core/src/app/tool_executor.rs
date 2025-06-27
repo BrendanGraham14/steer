@@ -7,7 +7,7 @@ use crate::api::ToolCall;
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
 use crate::tools::{BackendRegistry, ExecutionContext};
 use crate::workspace::Workspace;
-use conductor_tools::ToolError;
+use conductor_tools::{ToolError, result::ToolResult};
 use conductor_tools::ToolSchema;
 
 /// Manages the execution of tools called by the AI model
@@ -111,7 +111,7 @@ impl ToolExecutor {
         &self,
         tool_call: &ToolCall,
         token: CancellationToken,
-    ) -> Result<String, ToolError> {
+    ) -> Result<ToolResult, ToolError> {
         let tool_name = &tool_call.name;
         let tool_id = &tool_call.id;
 
@@ -196,7 +196,7 @@ impl ToolExecutor {
         &self,
         tool_call: &ToolCall,
         token: CancellationToken,
-    ) -> Result<String, ToolError> {
+    ) -> Result<ToolResult, ToolError> {
         let tool_name = &tool_call.name;
         let tool_id = &tool_call.id;
 

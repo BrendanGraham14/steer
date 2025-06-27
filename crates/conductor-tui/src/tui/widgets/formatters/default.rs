@@ -9,20 +9,11 @@ pub struct DefaultFormatter;
 impl ToolFormatter for DefaultFormatter {
     fn compact(
         &self,
-        params: &Value,
+        _params: &Value,
         _result: &Option<ToolResult>,
         _wrap_width: usize,
     ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
-        let preview = json_preview(params, 60);
-
-        lines.push(Line::from(vec![Span::styled(
-            format!("Tool: {}", preview),
-            styles::DIM_TEXT,
-        )]));
-
-        lines
+        vec![Line::from(Span::styled("Unknown tool", styles::ERROR_TEXT))]
     }
 
     fn detailed(
@@ -33,16 +24,20 @@ impl ToolFormatter for DefaultFormatter {
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
-        // Show parameters
-        if let Ok(json) = serde_json::to_string_pretty(params) {
-            for line in json.lines() {
-                let wrapped_lines = textwrap::wrap(line, wrap_width);
-                for wrapped_line in wrapped_lines {
-                    lines.push(Line::from(Span::styled(
-                        wrapped_line.to_string(),
-                        styles::DIM_TEXT,
-                    )));
-                }
+        lines.push(Line::from(Span::styled(
+            "Tool Parameters:",
+            styles::TOOL_HEADER,
+        )));
+
+        // Show parameters as pretty-printed JSON
+        let pretty_params = serde_json::to_string_pretty(params).unwrap_or_default();
+        for line in pretty_params.lines() {
+            let wrapped_lines = textwrap::wrap(line, wrap_width);
+            for wrapped_line in wrapped_lines {
+                lines.push(Line::from(Span::styled(
+                    wrapped_line.to_string(),
+                    styles::DIM_TEXT,
+                )));
             }
         }
 
@@ -50,32 +45,25 @@ impl ToolFormatter for DefaultFormatter {
         if let Some(result) = result {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-            match result {
-                ToolResult::Success { output } => {
-                    if output.trim().is_empty() {
-                        lines.push(Line::from(Span::styled("(No output)", styles::ITALIC_GRAY)));
-                    } else {
-                        const MAX_LINES: usize = 10;
-                        let (output_lines, truncated) = truncate_lines(output, MAX_LINES);
+            // Use the llm_format method to get string representation
+            let output = result.llm_format();
 
-                        for line in output_lines {
-                            for wrapped in textwrap::wrap(line, wrap_width) {
-                                lines.push(Line::from(Span::raw(wrapped.to_string())));
-                            }
-                        }
+            if output.trim().is_empty() {
+                lines.push(Line::from(Span::styled("(No output)", styles::ITALIC_GRAY)));
+            } else {
+                const MAX_LINES: usize = 10;
+                let (output_lines, truncated) = truncate_lines(&output, MAX_LINES);
 
-                        if truncated {
-                            lines.push(Line::from(Span::styled(
-                                format!("... ({} more lines)", output.lines().count() - MAX_LINES),
-                                styles::ITALIC_GRAY,
-                            )));
-                        }
+                for line in output_lines {
+                    for wrapped in textwrap::wrap(line, wrap_width) {
+                        lines.push(Line::from(Span::raw(wrapped.to_string())));
                     }
                 }
-                ToolResult::Error { error } => {
+
+                if truncated {
                     lines.push(Line::from(Span::styled(
-                        format!("Error: {}", error),
-                        styles::ERROR_TEXT,
+                        format!("... ({} more lines)", output.lines().count() - MAX_LINES),
+                        styles::ITALIC_GRAY,
                     )));
                 }
             }

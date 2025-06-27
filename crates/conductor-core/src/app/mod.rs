@@ -63,7 +63,7 @@ pub enum AppEvent {
     },
     ToolCallCompleted {
         name: String,
-        result: String,
+        result: conductor_tools::result::ToolResult,
         id: String,
         model: Model,
     },
@@ -627,10 +627,7 @@ impl App {
 
                 let cancelled_result = Message::Tool {
                     tool_use_id: tool_call.id.clone(),
-                    result: ToolResult::Error {
-                        error: "Tool execution was cancelled by user before completion."
-                            .to_string(),
-                    },
+                    result: ToolResult::Error(ToolError::Cancelled(tool_call.name.clone())),
                     timestamp: Message::current_timestamp(),
                     id: Message::generate_id("tool", Message::current_timestamp()),
                     thread_id,
@@ -1056,9 +1053,12 @@ async fn handle_app_command(
                 .await
             {
                 Ok(output) => {
+                    // Get the formatted output from the typed result
+                    let output_str = output.llm_format();
+                    
                     // Parse the output to extract stdout/stderr/exit code
                     // The bash tool returns output in a specific format
-                    let (stdout, stderr, exit_code) = parse_bash_output(&output);
+                    let (stdout, stderr, exit_code) = parse_bash_output(&output_str);
 
                     // Add the command execution as a message
                     let (thread_id, parent_id) = {
@@ -1232,33 +1232,37 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 model: app.current_model,
             });
         }
-        AgentEvent::ToolResultReceived(tool_result) => {
+        AgentEvent::ToolResultReceived { tool_call_id, result } => {
             let tool_name = app
                 .conversation
                 .lock()
                 .await
-                .find_tool_name_by_id(&tool_result.tool_call_id)
+                .find_tool_name_by_id(&tool_call_id)
                 .unwrap_or_else(|| "unknown_tool".to_string());
+
+            let is_error = matches!(result, conductor_tools::result::ToolResult::Error(_));
 
             // Add result to conversation store
             app.conversation
                 .lock()
                 .await
-                .add_tool_result(tool_result.tool_call_id.clone(), tool_result.output.clone());
+                .add_tool_result(tool_call_id.clone(), result.clone());
 
             // Emit the corresponding AppEvent based on is_error flag
-            if tool_result.is_error {
-                app.emit_event(AppEvent::ToolCallFailed {
-                    id: tool_result.tool_call_id,
-                    name: tool_name,
-                    error: tool_result.output,
-                    model: app.current_model,
-                });
+            if is_error {
+                if let conductor_tools::result::ToolResult::Error(e) = result {
+                    app.emit_event(AppEvent::ToolCallFailed {
+                        id: tool_call_id,
+                        name: tool_name,
+                        error: e.to_string(),
+                        model: app.current_model,
+                    });
+                }
             } else {
                 app.emit_event(AppEvent::ToolCallCompleted {
-                    id: tool_result.tool_call_id,
+                    id: tool_call_id,
                     name: tool_name,
-                    result: tool_result.output,
+                    result,
                     model: app.current_model,
                 });
             }

@@ -1,4 +1,5 @@
 use conductor_tools::ToolCall;
+pub use conductor_tools::result::ToolResult;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
@@ -170,13 +171,7 @@ pub enum AssistantContent {
     Thought { thought: ThoughtContent },
 }
 
-/// Result from a tool execution
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ToolResult {
-    Success { output: String },
-    Error { error: String },
-}
+
 
 /// A message in the conversation, with role-specific content
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,6 +264,40 @@ impl Message {
         format!("{}_{}", prefix, Uuid::now_v7())
     }
 
+    /// Extract text content from the message
+    pub fn extract_text(&self) -> String {
+        match self {
+            Message::User { content, .. } => {
+                content
+                    .iter()
+                    .filter_map(|c| match c {
+                        UserContent::Text { text } => Some(text.clone()),
+                        UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
+                        UserContent::AppCommand { response, .. } => {
+                            response.as_ref().map(|r| match r {
+                                CommandResponse::Text(t) => t.clone(),
+                                CommandResponse::Compact(CompactResult::Success(s)) => s.clone(),
+                                _ => String::new(),
+                            })
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            Message::Assistant { content, .. } => {
+                content
+                    .iter()
+                    .filter_map(|c| match c {
+                        AssistantContent::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            Message::Tool { result, .. } => result.llm_format(),
+        }
+    }
+
     /// Get a string representation of the message content
     pub fn content_string(&self) -> String {
         match self {
@@ -327,59 +356,24 @@ impl Message {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            Message::Tool {
-                tool_use_id,
-                result,
-                ..
-            } => match result {
-                ToolResult::Success { output } => {
-                    format!("[Tool Result for {}: {}]", tool_use_id, output)
-                }
-                ToolResult::Error { error } => {
-                    format!("[Tool Error for {}: {}]", tool_use_id, error)
-                }
-            },
-        }
-    }
-
-    /// Extract all text content from the message
-    pub fn extract_text(&self) -> String {
-        match self {
-            Message::User { content, .. } => content
-                .iter()
-                .filter_map(|c| match c {
-                    UserContent::Text { text } => Some(text.clone()),
-                    UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
-                    UserContent::AppCommand { response, .. } => {
-                        response.as_ref().map(|r| match r {
-                            CommandResponse::Text(msg) => msg.clone(),
-                            CommandResponse::Compact(result) => match result {
-                                CompactResult::Success(summary) => summary.clone(),
-                                CompactResult::Cancelled => {
-                                    "Compact command cancelled.".to_string()
-                                }
-                                CompactResult::InsufficientMessages => {
-                                    "Not enough messages to compact (minimum 10 required)."
-                                        .to_string()
-                                }
-                            },
-                        })
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Message::Assistant { content, .. } => content
-                .iter()
-                .filter_map(|c| match c {
-                    AssistantContent::Text { text } => Some(text.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Message::Tool { result, .. } => match result {
-                ToolResult::Success { output } => output.clone(),
-                ToolResult::Error { error } => format!("Error: {}", error),
-            },
+            Message::Tool { result, .. } => {
+                // This is a simplified representation. The TUI will have a more detailed view.
+                let result_type = match result {
+                    ToolResult::Search(_) => "Search Result",
+                    ToolResult::FileList(_) => "File List",
+                    ToolResult::FileContent(_) => "File Content",
+                    ToolResult::Edit(_) => "Edit Result",
+                    ToolResult::Bash(_) => "Bash Result",
+                    ToolResult::Glob(_) => "Glob Result",
+                    ToolResult::TodoRead(_) => "Todo List",
+                    ToolResult::TodoWrite(_) => "Todo Update",
+                    ToolResult::Fetch(_) => "Fetch Result",
+                    ToolResult::Agent(_) => "Agent Result",
+                    ToolResult::External(_) => "External Tool Result",
+                    ToolResult::Error(_) => "Error",
+                };
+                format!("[Tool Result: {}]", result_type)
+            }
         }
     }
 }
@@ -499,11 +493,11 @@ impl Conversation {
         self.messages.clear();
     }
 
-    pub fn add_tool_result(&mut self, tool_use_id: String, result: String) {
+    pub fn add_tool_result(&mut self, tool_use_id: String, result: ToolResult) {
         let parent_id = self.messages.last().map(|m| m.id().to_string());
         self.add_message(Message::Tool {
             tool_use_id,
-            result: ToolResult::Success { output: result },
+            result,
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
             thread_id: self.current_thread_id,
@@ -511,11 +505,11 @@ impl Conversation {
         });
     }
 
-    pub fn add_tool_error(&mut self, tool_use_id: String, error: String) {
+    pub fn add_tool_error(&mut self, tool_use_id: String, error: conductor_tools::error::ToolError) {
         let parent_id = self.messages.last().map(|m| m.id().to_string());
         self.add_message(Message::Tool {
             tool_use_id,
-            result: ToolResult::Error { error },
+            result: ToolResult::Error(error),
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
             thread_id: self.current_thread_id,

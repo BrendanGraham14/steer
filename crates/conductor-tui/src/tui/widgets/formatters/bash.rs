@@ -38,8 +38,8 @@ impl ToolFormatter for BashFormatter {
         ];
 
         // Add exit code if error
-        if let Some(ToolResult::Error { error }) = result {
-            if let Some(exit_code) = extract_exit_code(error) {
+        if let Some(ToolResult::Error(error)) = result {
+            if let Some(exit_code) = error.to_string().strip_prefix("Exit code: ").and_then(|s| s.parse::<i32>().ok()) {
                 spans.push(Span::styled(
                     format!(" (exit {})", exit_code),
                     styles::ERROR_TEXT,
@@ -88,15 +88,11 @@ impl ToolFormatter for BashFormatter {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
             match result {
-                ToolResult::Success { output } => {
-                    if output.trim().is_empty() {
-                        lines.push(Line::from(Span::styled(
-                            "(Command completed successfully with no output)",
-                            styles::ITALIC_GRAY,
-                        )));
-                    } else {
+                ToolResult::Bash(bash_result) => {
+                    // Show stdout if present
+                    if !bash_result.stdout.trim().is_empty() {
                         const MAX_OUTPUT_LINES: usize = 20;
-                        let (output_lines, truncated) = truncate_lines(output, MAX_OUTPUT_LINES);
+                        let (output_lines, truncated) = truncate_lines(&bash_result.stdout, MAX_OUTPUT_LINES);
 
                         for line in output_lines {
                             for wrapped in textwrap::wrap(line, wrap_width) {
@@ -108,17 +104,61 @@ impl ToolFormatter for BashFormatter {
                             lines.push(Line::from(Span::styled(
                                 format!(
                                     "... ({} more lines)",
-                                    output.lines().count() - MAX_OUTPUT_LINES
+                                    bash_result.stdout.lines().count() - MAX_OUTPUT_LINES
                                 ),
                                 styles::ITALIC_GRAY,
                             )));
                         }
                     }
+                    
+                    // Show stderr if present
+                    if !bash_result.stderr.trim().is_empty() {
+                        if !bash_result.stdout.trim().is_empty() {
+                            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                        }
+                        lines.push(Line::from(Span::styled("[stderr]", styles::ERROR_TEXT)));
+                        
+                        const MAX_ERROR_LINES: usize = 10;
+                        let (error_lines, truncated) = truncate_lines(&bash_result.stderr, MAX_ERROR_LINES);
+                        
+                        for line in error_lines {
+                            for wrapped in textwrap::wrap(line, wrap_width) {
+                                lines.push(Line::from(Span::styled(
+                                    wrapped.to_string(),
+                                    styles::ERROR_TEXT,
+                                )));
+                            }
+                        }
+                        
+                        if truncated {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "... ({} more lines)",
+                                    bash_result.stderr.lines().count() - MAX_ERROR_LINES
+                                ),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
+                    }
+                    
+                    // Show exit code if non-zero
+                    if bash_result.exit_code != 0 {
+                        lines.push(Line::from(Span::styled(
+                            format!("Exit code: {}", bash_result.exit_code),
+                            styles::ERROR_TEXT,
+                        )));
+                    } else if bash_result.stdout.trim().is_empty() && bash_result.stderr.trim().is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "(Command completed successfully with no output)",
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
                 }
-                ToolResult::Error { error } => {
-                    // Show error output
+                ToolResult::Error(error) => {
+                    // Show error message
                     const MAX_ERROR_LINES: usize = 10;
-                    let (error_lines, truncated) = truncate_lines(error, MAX_ERROR_LINES);
+                    let error_message = error.to_string();
+                    let (error_lines, truncated) = truncate_lines(&error_message, MAX_ERROR_LINES);
 
                     for line in error_lines {
                         for wrapped in textwrap::wrap(line, wrap_width) {
@@ -133,11 +173,18 @@ impl ToolFormatter for BashFormatter {
                         lines.push(Line::from(Span::styled(
                             format!(
                                 "... ({} more lines)",
-                                error.lines().count() - MAX_ERROR_LINES
+                                error_message.lines().count() - MAX_ERROR_LINES
                             ),
                             styles::ERROR_TEXT,
                         )));
                     }
+                }
+                _ => {
+                    // Other result types shouldn't appear for bash tool
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
+                    )));
                 }
             }
         }

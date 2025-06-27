@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 use crate::api::ToolCall;
 use crate::app::ToolExecutor;
-use conductor_tools::ToolError;
+use conductor_tools::{ToolError, result::ToolResult};
 
 // Removed the old execute_tool_with_context function.
 
@@ -19,7 +19,7 @@ pub async fn execute_tool_task_logic(
     // conversation: Arc<Mutex<Conversation>>,
     // event_sender: Option<Sender<AppEvent>>,
     token: CancellationToken,
-) -> Result<String, ToolError> {
+) -> Result<ToolResult, ToolError> {
     // Return Result<String, ToolError> instead of TaskResult
     let tool_id = tool_call.id.clone();
     let tool_name = tool_call.name.clone();
@@ -44,10 +44,10 @@ pub async fn execute_tool_task_logic(
     match &result {
         Ok(output) => debug!(
             target:"app.context_util.execute_tool_task_logic",
-            "Tool {} ({}) completed successfully. Output length: {}",
+            "Tool {} ({}) completed successfully. Output type: {:?}",
                 tool_name,
                 tool_id,
-                output.len(),
+                std::mem::discriminant(output),
         ),
         Err(e) => warn!(
             target:"app.context_util.execute_tool_task_logic",
@@ -55,6 +55,6 @@ pub async fn execute_tool_task_logic(
         ),
     }
 
-    // Return the raw Result<String, ToolError>
+    // Return the raw Result<ToolResult, ToolError>
     result
 }

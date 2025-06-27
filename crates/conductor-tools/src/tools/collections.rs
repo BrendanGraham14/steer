@@ -1,4 +1,4 @@
-use crate::Tool;
+use crate::traits::ExecutableTool;
 use crate::tools::{
     AstGrepTool, BashTool, EditTool, GlobTool, GrepTool, LsTool, MultiEditTool, ReplaceTool,
     TodoReadTool, TodoWriteTool, ViewTool,
@@ -8,7 +8,7 @@ use crate::tools::{
 ///
 /// This includes all file manipulation and execution tools that work
 /// in the context of a workspace/filesystem.
-pub fn workspace_tools() -> Vec<Box<dyn Tool>> {
+pub fn workspace_tools() -> Vec<Box<dyn ExecutableTool>> {
     vec![
         Box::new(BashTool),
         Box::new(GrepTool),
@@ -30,7 +30,7 @@ pub fn workspace_tools() -> Vec<Box<dyn Tool>> {
 /// These are safe to use in restricted environments.
 /// Note: TodoReadTool and TodoWriteTool are included as they only modify
 /// in-memory session state, not actual files.
-pub fn read_only_workspace_tools() -> Vec<Box<dyn Tool>> {
+pub fn read_only_workspace_tools() -> Vec<Box<dyn ExecutableTool>> {
     vec![
         Box::new(GrepTool),
         Box::new(AstGrepTool),

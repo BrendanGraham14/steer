@@ -26,24 +26,34 @@ impl ToolFormatter for GrepFormatter {
             ))];
         };
 
-        let path_display = params.path.as_deref().unwrap_or(".");
+        let path_display = params
+            .path
+            .as_deref()
+            .unwrap_or(".");
         let include_display = params
             .include
-            .as_ref()
+            .as_deref()
             .map(|i| format!(" ({})", i))
             .unwrap_or_default();
 
-        let info = if let Some(ToolResult::Success { output }) = result {
-            let match_count = output.lines().count();
-            if match_count == 0 {
-                "no matches".to_string()
-            } else {
-                format!("{} matches", match_count)
+        let info = match result {
+            Some(ToolResult::Search(search_result)) => {
+                if search_result.matches.is_empty() {
+                    "no matches".to_string()
+                } else {
+                    let unique_files: std::collections::HashSet<_> = search_result.matches
+                        .iter()
+                        .map(|m| m.file_path.as_str())
+                        .collect();
+                    format!("{} matches in {} files",
+                        search_result.matches.len(),
+                        unique_files.len()
+                    )
+                }
             }
-        } else if let Some(ToolResult::Error { .. }) = result {
-            "failed".to_string()
-        } else {
-            "searching...".to_string()
+            Some(ToolResult::Error(_)) => "failed".to_string(),
+            Some(_) => "unexpected result type".to_string(),
+            None => "searching...".to_string(),
         };
 
         lines.push(Line::from(vec![
@@ -74,20 +84,18 @@ impl ToolFormatter for GrepFormatter {
         };
 
         lines.push(Line::from(Span::styled(
-            "Search Parameters:",
-            styles::TOOL_HEADER,
-        )));
-        lines.push(Line::from(Span::styled(
-            format!("  Pattern: {}", params.pattern),
+            format!("Pattern: {}", params.pattern),
             Style::default(),
         )));
 
-        if let Some(path) = &params.path {
-            lines.push(Line::from(Span::styled(
-                format!("  Path: {}", path),
-                Style::default(),
-            )));
-        }
+        let path_display = params
+            .path
+            .as_deref()
+            .unwrap_or("current directory");
+        lines.push(Line::from(Span::styled(
+            format!("Path: {}", path_display),
+            Style::default(),
+        )));
 
         if let Some(include) = &params.include {
             lines.push(Line::from(Span::styled(
@@ -97,33 +105,56 @@ impl ToolFormatter for GrepFormatter {
         }
 
         // Show matches if we have results
-        if let Some(ToolResult::Success { output }) = result {
-            if !output.trim().is_empty() {
-                lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+        if let Some(result) = result {
+            match result {
+                ToolResult::Search(search_result) => {
+                    if !search_result.matches.is_empty() {
+                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-                const MAX_MATCHES: usize = 15;
-                let matches: Vec<&str> = output.lines().collect();
+                        const MAX_MATCHES: usize = 15;
+                        let matches = &search_result.matches;
 
-                for line in matches.iter().take(MAX_MATCHES) {
-                    for wrapped in textwrap::wrap(line, wrap_width) {
+                        for search_match in matches.iter().take(MAX_MATCHES) {
+                            let formatted = format!("{}:{}: {}",
+                                search_match.file_path,
+                                search_match.line_number,
+                                search_match.line_content.trim()
+                            );
+                            
+                            for wrapped in textwrap::wrap(&formatted, wrap_width) {
+                                lines.push(Line::from(Span::styled(
+                                    wrapped.to_string(),
+                                    Style::default(),
+                                )));
+                            }
+                        }
+
+                        if matches.len() > MAX_MATCHES {
+                            lines.push(Line::from(Span::styled(
+                                format!("... ({} more matches)", matches.len() - MAX_MATCHES),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
+                    } else {
                         lines.push(Line::from(Span::styled(
-                            wrapped.to_string(),
-                            Style::default(),
+                            "No matches found",
+                            styles::ITALIC_GRAY,
                         )));
                     }
                 }
-
-                if matches.len() > MAX_MATCHES {
+                ToolResult::Error(error) => {
+                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!("... ({} more matches)", matches.len() - MAX_MATCHES),
-                        styles::ITALIC_GRAY,
+                        error.to_string(),
+                        styles::ERROR_TEXT,
                     )));
                 }
-            } else {
-                lines.push(Line::from(Span::styled(
-                    "No matches found",
-                    styles::ITALIC_GRAY,
-                )));
+                _ => {
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
+                    )));
+                }
             }
         }
 

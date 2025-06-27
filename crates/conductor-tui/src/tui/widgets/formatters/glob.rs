@@ -28,16 +28,13 @@ impl ToolFormatter for GlobFormatter {
 
         let path_display = params.path.as_deref().unwrap_or(".");
 
-        let info = if let Some(ToolResult::Success { output }) = result {
-            let file_count = output
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .count();
-            format!("{} matches", file_count)
-        } else if let Some(ToolResult::Error { .. }) = result {
-            "failed".to_string()
-        } else {
-            "searching...".to_string()
+        let info = match result {
+            Some(ToolResult::Glob(glob_result)) => {
+                format!("{} matches", glob_result.matches.len())
+            }
+            Some(ToolResult::Error(_)) => "failed".to_string(),
+            Some(_) => "unexpected result type".to_string(),
+            None => "searching...".to_string(),
         };
 
         lines.push(Line::from(vec![
@@ -77,21 +74,43 @@ impl ToolFormatter for GlobFormatter {
         }
 
         // Show matches if we have results
-        if let Some(ToolResult::Success { output }) = result {
-            if !output.trim().is_empty() {
-                lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+        if let Some(result) = result {
+            match result {
+                ToolResult::Glob(glob_result) => {
+                    if !glob_result.matches.is_empty() {
+                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-                const MAX_FILES: usize = 20;
-                let files: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+                        const MAX_FILES: usize = 20;
+                        let files = &glob_result.matches;
 
-                for file in files.iter().take(MAX_FILES) {
-                    lines.push(Line::from(Span::raw(file.to_string())));
+                        for file in files.iter().take(MAX_FILES) {
+                            lines.push(Line::from(Span::raw(file.to_string())));
+                        }
+
+                        if files.len() > MAX_FILES {
+                            lines.push(Line::from(Span::styled(
+                                format!("... ({} more matches)", files.len() - MAX_FILES),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
+                    } else {
+                        lines.push(Line::from(Span::styled(
+                            "No matches found",
+                            styles::ITALIC_GRAY,
+                        )));
+                    }
                 }
-
-                if files.len() > MAX_FILES {
+                ToolResult::Error(error) => {
+                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!("... ({} more matches)", files.len() - MAX_FILES),
-                        styles::ITALIC_GRAY,
+                        error.to_string(),
+                        styles::ERROR_TEXT,
+                    )));
+                }
+                _ => {
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
                     )));
                 }
             }
