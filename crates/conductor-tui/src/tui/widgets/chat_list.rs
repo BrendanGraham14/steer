@@ -650,15 +650,10 @@ impl<'a> ChatList<'a> {
                     }
                 };
 
-                // Format response nicely
-                let response_str = match resp {
+                // Get the full response text
+                let response_text = match resp {
                     conductor_core::app::conversation::CommandResponse::Text(text) => {
-                        // Truncate long responses for inline display
-                        if text.len() > 50 {
-                            format!("{}...", &text[..50])
-                        } else {
-                            text.clone()
-                        }
+                        text.clone()
                     }
                     conductor_core::app::conversation::CommandResponse::Compact(result) => {
                         match result {
@@ -675,35 +670,53 @@ impl<'a> ChatList<'a> {
                     }
                 };
 
-                // Render gutter and command on same line
-                let mut first_line = vec![];
-                first_line.extend(self.render_meta_gutter().spans);
-                first_line.push(Span::raw(" "));
-                first_line.push(Span::styled(
-                    command_str.to_string(),
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                first_line.push(Span::raw(": "));
-                first_line.push(Span::styled(
-                    response_str,
-                    Style::default().fg(Color::White),
-                ));
-                lines.push(Line::from(first_line));
-
-                // If detailed view and response is long text, show full content
-                if view_mode == ViewMode::Detailed {
-                    if let conductor_core::app::conversation::CommandResponse::Text(text) = resp {
-                        if text.len() > 50 {
+                // Split response into lines
+                let response_lines: Vec<&str> = response_text.lines().collect();
+                
+                if response_lines.is_empty() || (response_lines.len() == 1 && response_lines[0].len() <= 50) {
+                    // Single short line - render inline
+                    let mut first_line = vec![];
+                    first_line.extend(self.render_meta_gutter().spans);
+                    first_line.push(Span::raw(" "));
+                    first_line.push(Span::styled(
+                        command_str.to_string(),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    first_line.push(Span::raw(": "));
+                    first_line.push(Span::styled(
+                        response_text,
+                        Style::default().fg(Color::White),
+                    ));
+                    lines.push(Line::from(first_line));
+                } else {
+                    // Multi-line or long response - render command and response separately
+                    let mut first_line = vec![];
+                    first_line.extend(self.render_meta_gutter().spans);
+                    first_line.push(Span::raw(" "));
+                    first_line.push(Span::styled(
+                        command_str.to_string(),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    first_line.push(Span::raw(":"));
+                    lines.push(Line::from(first_line));
+                    
+                    // Add response lines with proper indentation
+                    for line in response_lines {
+                        let wrapped = textwrap::wrap(line, max_width.saturating_sub(4));
+                        if wrapped.is_empty() {
+                            // Empty line
                             lines.push(Line::from(""));
-                            let wrapped = textwrap::wrap(text, max_width.saturating_sub(6));
-                            for line in wrapped {
+                        } else {
+                            for wrapped_line in wrapped {
                                 lines.push(Line::from(vec![
-                                    Span::raw("      "),
+                                    Span::raw("    "),
                                     Span::styled(
-                                        line.to_string(),
-                                        Style::default().fg(Color::DarkGray),
+                                        wrapped_line.to_string(),
+                                        Style::default().fg(Color::White),
                                     ),
                                 ]));
                             }
