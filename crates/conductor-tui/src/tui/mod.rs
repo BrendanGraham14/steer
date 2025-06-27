@@ -574,12 +574,10 @@ impl Tui {
                 self.previous_insert_text = self.textarea.lines().join("\n");
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.view_model
-                    .chat_list_state
-                    .select_next(self.view_model.chat_store.len());
+                self.view_model.chat_list_state.scroll_down(1);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.view_model.chat_list_state.select_previous();
+                self.view_model.chat_list_state.scroll_up(1);
             }
             KeyCode::Char('g') => {
                 self.view_model.chat_list_state.select_first();
