@@ -1,10 +1,94 @@
 #!/usr/bin/env bash
 
-# Git pre-commit hook: run the full test suite
-CARGO_CMD="cargo test"
+# Git pre-commit hook: fix issues and run the full test suite
+set -euo pipefail
 
-# Print what we are about to run (helpful for debugging)
-echo "Running: $CARGO_CMD"
+echo "Running pre-commit checks..."
 
-# Execute tests; propagate exit status so commit aborts on failure
-$CARGO_CMD
+# Get list of staged files before any modifications
+STAGED_FILES=$(git diff --staged --name-only)
+
+# Stash any unstaged changes to avoid conflicts with --allow-staged
+STASH_NAME="pre-commit-hook-$(date +%s)"
+STASHED=false
+
+# Check if there are any unstaged changes
+if ! git diff --quiet || ! git diff --untracked-files=no --quiet; then
+    echo "Stashing unstaged changes..."
+    git stash push --keep-index --include-untracked -m "$STASH_NAME"
+    STASHED=true
+fi
+
+# Function to restore stashed changes
+restore_stash() {
+    if [ "$STASHED" = true ]; then
+        echo "Restoring unstaged changes..."
+        git stash pop --quiet || {
+            echo "⚠️  Failed to restore stashed changes automatically."
+            echo "Your changes are saved in the stash. Run 'git stash list' to see them."
+        }
+    fi
+}
+
+# Ensure we restore the stash on exit
+trap restore_stash EXIT
+
+# Run cargo fix to fix compiler warnings
+echo "Running: cargo fix --allow-staged"
+if cargo fix --allow-staged; then
+    echo "✓ cargo fix completed"
+else
+    echo "✗ cargo fix failed"
+    exit 1
+fi
+
+# Run cargo clippy --fix to fix clippy warnings
+echo "Running: cargo clippy --fix --allow-staged"
+if cargo clippy --fix --allow-staged -- -D warnings; then
+    echo "✓ cargo clippy --fix completed"
+else
+    echo "✗ cargo clippy --fix failed"
+    exit 1
+fi
+
+# Run cargo fmt to fix formatting issues
+echo "Running: cargo fmt"
+if cargo fmt; then
+    echo "✓ cargo fmt completed"
+else
+    echo "✗ cargo fmt failed"
+    exit 1
+fi
+
+# Check if any of the staged files were modified by the fixes
+MODIFIED=false
+for file in $STAGED_FILES; do
+    if ! git diff --quiet "$file" 2>/dev/null; then
+        MODIFIED=true
+        break
+    fi
+done
+
+if [ "$MODIFIED" = true ]; then
+    echo "✗ Staged files were modified by cargo fix/clippy/fmt."
+    echo "Please review the changes and commit them manually."
+    echo "Modified staged files:"
+    for file in $STAGED_FILES; do
+        if ! git diff --quiet "$file" 2>/dev/null; then
+            echo "  - $file"
+        fi
+    done
+    echo "You can see the changes with: git diff --staged"
+    exit 1
+fi
+
+# Run tests
+echo "Running: cargo test"
+if cargo test; then
+    echo "✓ All tests passed"
+else
+    echo "✗ Tests failed"
+    exit 1
+fi
+
+echo "✓ Pre-commit checks completed successfully"
