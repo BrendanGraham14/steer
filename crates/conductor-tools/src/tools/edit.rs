@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::ExecutionContext;
 use crate::error::ToolError;
+use crate::result::EditResult;
 
 // Global lock manager for file paths
 static FILE_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
@@ -190,6 +191,8 @@ pub struct EditParams {
 tool! {
     EditTool {
         params: EditParams,
+        output: EditResult,
+        variant: Edit,
         description: r#"This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the replace tool to overwrite files.
 
 Before using this tool:
@@ -246,7 +249,7 @@ Remember: when making multiple file edits in a row to the same file, you should 
         _tool: &EditTool,
         params: EditParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<EditResult, ToolError> {
         let file_lock = get_file_lock(&params.file_path).await;
         let _lock_guard = file_lock.lock().await;
 
@@ -268,14 +271,32 @@ Remember: when making multiple file edits in a row to the same file, you should 
 
                     if created_or_overwritten {
                         // The "created_or_overwritten" flag from perform_edit_operations handles if old_string was empty.
-                        Ok(format!("File created/overwritten: {}", params.file_path))
+                        Ok(EditResult {
+                            file_path: params.file_path.clone(),
+                            changes_made: num_ops,
+                            file_created: true,
+                            old_content: None,
+                            new_content: Some(final_content),
+                        })
                     } else {
-                        Ok(format!("File edited: {}", params.file_path))
+                        Ok(EditResult {
+                            file_path: params.file_path.clone(),
+                            changes_made: num_ops,
+                            file_created: false,
+                            old_content: None,
+                            new_content: Some(final_content),
+                        })
                     }
                 } else {
                      // This case implies the file existed, old_string was empty, new_string was same as existing content,
                      // or some other no-op scenario that perform_edit_operations handled by returning num_ops = 0 and created = false.
-                    Ok(format!("File {} not changed (operation resulted in no change or was a no-op).", params.file_path))
+                    Ok(EditResult {
+                        file_path: params.file_path.clone(),
+                        changes_made: 0,
+                        file_created: false,
+                        old_content: None,
+                        new_content: None,
+                    })
                 }
             }
             Err(e) => Err(e),
@@ -285,6 +306,8 @@ Remember: when making multiple file edits in a row to the same file, you should 
 
 pub mod multi_edit {
     use super::*;
+    use crate::result::MultiEditResult;
+
 
     #[derive(Deserialize, Debug, JsonSchema)]
     pub struct MultiEditParams {
@@ -294,9 +317,13 @@ pub mod multi_edit {
         pub edits: Vec<SingleEditOperation>,
     }
 
+
+
     tool! {
         MultiEditTool {
             params: MultiEditParams,
+            output: MultiEditResult,
+            variant: Edit,
             description: format!(r#"This is a tool for making multiple edits to a single file in one operation. It is built on top of the {} tool and allows you to perform multiple find-and-replace operations efficiently. Prefer this tool over the {} tool when you need to make multiple edits to the same file.
 
 Before using this tool:
@@ -341,7 +368,7 @@ If you want to create a new file, use:
             _tool: &MultiEditTool,
             params: MultiEditParams,
             context: &ExecutionContext,
-        ) -> Result<String, ToolError> {
+        ) -> Result<MultiEditResult, ToolError> {
             let file_lock = super::get_file_lock(&params.file_path).await;
             let _lock_guard = file_lock.lock().await;
 
@@ -354,7 +381,13 @@ If you want to create a new file, use:
                         format!("File {} does not exist and no edit operations provided to create or modify it.", params.file_path),
                     ));
                  }
-                return Ok(format!("File {} not changed as no edits were provided.", params.file_path));
+                return Ok(MultiEditResult(EditResult {
+                    file_path: params.file_path.clone(),
+                    changes_made: 0,
+                    file_created: false,
+                    old_content: None,
+                    new_content: None,
+                }));
             }
 
             match super::perform_edit_operations(&params.file_path, &params.edits, Some(&context.cancellation_token), MULTI_EDIT_TOOL_NAME).await {
@@ -370,20 +403,32 @@ If you want to create a new file, use:
                             .map_err(|e| ToolError::io(MULTI_EDIT_TOOL_NAME, format!("Failed to write file {}: {}", params.file_path, e)))?;
 
                         if file_was_created {
-                            Ok(format!(
-                                "File {} created and {} edit(s) applied successfully.",
-                                params.file_path, num_ops_processed
-                            ))
+                            Ok(MultiEditResult(EditResult {
+                                file_path: params.file_path.clone(),
+                                changes_made: num_ops_processed,
+                                file_created: true,
+                                old_content: None,
+                                new_content: Some(final_content.clone()),
+                            }))
                         } else { // Edits were made to an existing file
-                            Ok(format!(
-                                "File {} edited successfully with {} operation(s).",
-                                params.file_path, num_ops_processed
-                            ))
+                            Ok(MultiEditResult(EditResult {
+                                file_path: params.file_path.clone(),
+                                changes_made: num_ops_processed,
+                                file_created: false,
+                                old_content: None,
+                                new_content: Some(final_content.clone()),
+                            }))
                         }
                     } else {
                         // This case implies params.edits was not empty, but perform_edit_operations resulted in no effective change
                         // (e.g. all edits were no-ops that didn't change content and didn't create a file).
-                        Ok(format!("File {} was not changed (operations resulted in no change).", params.file_path))
+                        Ok(MultiEditResult(EditResult {
+                            file_path: params.file_path.clone(),
+                            changes_made: 0,
+                            file_created: false,
+                            old_content: None,
+                            new_content: None,
+                        }))
                     }
                 }
                 Err(e) => Err(e), // Propagate error from perform_edit_operations

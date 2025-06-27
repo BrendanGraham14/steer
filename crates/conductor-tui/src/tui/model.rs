@@ -5,7 +5,7 @@
 //! and meta rows like slash commands and system notices.
 
 use conductor_core::app::conversation::{
-    AppCommandType, AssistantContent, CommandResponse, Message, ToolResult, UserContent,
+    AppCommandType, CommandResponse, Message,
 };
 use conductor_tools::ToolCall;
 use time::OffsetDateTime;
@@ -49,6 +49,13 @@ pub enum ChatItem {
     /// Real conversation message – always belongs to a branch
     Message(MessageRow),
 
+    /// A tool call that is in progress
+    PendingToolCall {
+        id: RowId,
+        tool_call: ToolCall,
+        ts: OffsetDateTime,
+    },
+
     /// Raw slash command entered by the user (never sent to an LLM)
     SlashInput {
         id: RowId,
@@ -78,6 +85,7 @@ impl ChatItem {
     pub fn id(&self) -> &str {
         match self {
             ChatItem::Message(row) => row.id(),
+            ChatItem::PendingToolCall { id, .. } => id,
             ChatItem::SlashInput { id, .. } => id,
             ChatItem::CmdResponse { id, .. } => id,
             ChatItem::SystemNotice { id, .. } => id,
@@ -93,6 +101,7 @@ impl ChatItem {
                 // when Message includes a timestamp field
                 OffsetDateTime::now_utc()
             }
+            ChatItem::PendingToolCall { ts, .. } => *ts,
             ChatItem::SlashInput { ts, .. } => *ts,
             ChatItem::CmdResponse { ts, .. } => *ts,
             ChatItem::SystemNotice { ts, .. } => *ts,
@@ -113,84 +122,4 @@ impl ChatItem {
 /// Helper function to generate a new row ID (ULID)
 pub fn generate_row_id() -> RowId {
     ulid::Ulid::new().to_string()
-}
-
-/// Legacy MessageContent enum - for compatibility during migration
-/// This will be removed once all code is migrated to use ChatItem
-#[derive(Debug, Clone)]
-pub enum MessageContent {
-    User {
-        id: String,
-        blocks: Vec<UserContent>,
-        timestamp: String,
-        thread_id: Option<Uuid>,
-        parent_message_id: Option<String>,
-        has_hidden_branches: bool,
-    },
-    Assistant {
-        id: String,
-        blocks: Vec<AssistantContent>,
-        timestamp: String,
-        thread_id: Option<Uuid>,
-        parent_message_id: Option<String>,
-        has_hidden_branches: bool,
-    },
-    Tool {
-        id: String,
-        call: ToolCall,
-        result: Option<ToolResult>,
-        timestamp: String,
-        thread_id: Option<Uuid>,
-        parent_message_id: Option<String>,
-        has_hidden_branches: bool,
-    },
-}
-
-impl MessageContent {
-    pub fn id(&self) -> &str {
-        match self {
-            Self::User { id, .. } => id,
-            Self::Assistant { id, .. } => id,
-            Self::Tool { id, .. } => id,
-        }
-    }
-
-    pub fn thread_id(&self) -> Option<Uuid> {
-        match self {
-            Self::User { thread_id, .. } => *thread_id,
-            Self::Assistant { thread_id, .. } => *thread_id,
-            Self::Tool { thread_id, .. } => *thread_id,
-        }
-    }
-
-    pub fn parent_message_id(&self) -> Option<&str> {
-        match self {
-            Self::User {
-                parent_message_id, ..
-            } => parent_message_id.as_deref(),
-            Self::Assistant {
-                parent_message_id, ..
-            } => parent_message_id.as_deref(),
-            Self::Tool {
-                parent_message_id, ..
-            } => parent_message_id.as_deref(),
-        }
-    }
-
-    pub fn has_hidden_branches(&self) -> bool {
-        match self {
-            Self::User {
-                has_hidden_branches,
-                ..
-            } => *has_hidden_branches,
-            Self::Assistant {
-                has_hidden_branches,
-                ..
-            } => *has_hidden_branches,
-            Self::Tool {
-                has_hidden_branches,
-                ..
-            } => *has_hidden_branches,
-        }
-    }
 }

@@ -11,6 +11,7 @@ use std::str::FromStr;
 use tokio::task;
 
 use crate::{ExecutionContext, ToolError};
+use crate::result::{AstGrepResult, SearchResult, SearchMatch};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AstGrepParams {
@@ -38,23 +39,22 @@ pub struct AstGrepMatch {
 tool! {
     AstGrepTool {
         params: AstGrepParams,
+        output: AstGrepResult,
+        variant: Search,
         description: r#"Structural code search using abstract syntax trees (AST).
 - Searches code by its syntactic structure, not just text patterns
 - Use $METAVAR placeholders (e.g., $VAR, $FUNC, $ARGS) to match any code element
 - Supports all major languages: rust, javascript, typescript, python, java, go, etc.
-
 Pattern examples:
 - "console.log($MSG)" - finds all console.log calls regardless of argument
 - "fn $NAME($PARAMS) { $BODY }" - finds all Rust function definitions
 - "if $COND { $THEN } else { $ELSE }" - finds all if-else statements
 - "import $WHAT from '$MODULE'" - finds all ES6 imports from specific modules
 - "$VAR = $VAR + $EXPR" - finds all self-incrementing assignments
-
 Advanced patterns:
 - "function $FUNC($$$ARGS) { $$$ }" - $$$ matches any number of elements
 - "foo($ARG, ...)" - ellipsis matches remaining arguments
 - Use any valid code as a pattern - ast-grep understands the syntax!
-
 Automatically respects .gitignore files"#,
         name: "astgrep",
         require_approval: false
@@ -64,7 +64,7 @@ Automatically respects .gitignore files"#,
         _tool: &AstGrepTool,
         params: AstGrepParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<AstGrepResult, ToolError> {
         if context.is_cancelled() {
             return Err(ToolError::Cancelled(AST_GREP_TOOL_NAME.to_string()));
         }
@@ -101,7 +101,7 @@ fn astgrep_search_internal(
     exclude: Option<&str>,
     base_path: &Path,
     cancellation_token: &tokio_util::sync::CancellationToken,
-) -> Result<String, String> {
+) -> Result<AstGrepResult, String> {
     if !base_path.exists() {
         return Err(format!("Path does not exist: {}", base_path.display()));
     }
@@ -121,11 +121,16 @@ fn astgrep_search_internal(
         .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid exclude glob pattern: {}", e)))
         .transpose()?;
 
-    let mut results = Vec::new();
+    let mut all_matches = Vec::new();
+    let mut files_searched = 0;
 
     for result in walker.build() {
         if cancellation_token.is_cancelled() {
-            return Err("Search cancelled".to_string());
+            return Ok(AstGrepResult(SearchResult {
+                matches: all_matches,
+                total_files_searched: files_searched,
+                search_completed: false,
+            }));
         }
 
         let entry = match result {
@@ -181,6 +186,7 @@ fn astgrep_search_internal(
         };
 
         // Read file content
+        files_searched += 1;
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue, // Skip files that can't be read
@@ -199,26 +205,25 @@ fn astgrep_search_internal(
         let relative_path = path.strip_prefix(base_path).unwrap_or(path);
         let file_matches = find_matches(&ast_grep, &pattern_matcher, relative_path, &content);
 
-        if !file_matches.is_empty() {
-            results.extend(file_matches);
+        // Convert AstGrepMatch to SearchMatch
+        for m in file_matches {
+            all_matches.push(SearchMatch {
+                file_path: m.file,
+                line_number: m.line,
+                line_content: m.context.trim().to_string(),
+                column_range: Some((m.column, m.column + m.matched_code.len())),
+            });
         }
     }
 
-    if results.is_empty() {
-        return Ok("No matches found.".to_string());
-    }
-
     // Sort by file path for consistent output
-    results.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+    all_matches.sort_by(|a, b| a.file_path.cmp(&b.file_path).then(a.line_number.cmp(&b.line_number)));
 
-    // Format results
-    let output = results
-        .into_iter()
-        .map(|m| format!("{}:{}:{}: {}", m.file, m.line, m.column, m.context.trim()))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    Ok(output)
+    Ok(AstGrepResult(SearchResult {
+        matches: all_matches,
+        total_files_searched: files_searched,
+        search_completed: true,
+    }))
 }
 
 fn find_matches(
@@ -342,12 +347,13 @@ async fn fetch_data() -> Result<String, Error> {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        eprintln!("Result: {}", result);
-
+        
         // Only fn main() matches the pattern - functions with return types have different AST structure
-        let expected = "test.rs:1:1: fn main() {\n    println!(\"Hello, world!\");\n}";
-        assert_eq!(result, expected);
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("test.rs"));
+        assert_eq!(result.0.matches[0].line_number, 1);
+        assert!(result.0.matches[0].line_content.contains("fn main() {"));
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -382,12 +388,22 @@ console.log("Application ready");"#,
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        eprintln!("Result: {}", result);
-
+        
         // Only top-level console.log calls are found, not ones inside functions
-        let expected = "app.js:1:1: console.log(\"Starting application\");\napp.js:9:1: console.log(\"Application ready\");";
-        assert_eq!(result, expected);
+        assert_eq!(result.0.matches.len(), 2);
+        // Check first match
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("app.js") && 
+            m.line_number == 1 &&
+            m.line_content.contains("console.log(\"Starting application\")")
+        ));
+        // Check second match
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("app.js") && 
+            m.line_number == 9 &&
+            m.line_content.contains("console.log(\"Application ready\")")
+        ));
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -427,12 +443,10 @@ console.log("Application ready");"#,
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        eprintln!("Result: {}", result);
-
+        
         // Export function syntax doesn't match the pattern
-        let expected = "No matches found.";
-        assert_eq!(result, expected);
+        assert_eq!(result.0.matches.len(), 0);
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -458,8 +472,9 @@ console.log("Application ready");"#,
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        assert_eq!(result, "No matches found.");
+        
+        assert_eq!(result.0.matches.len(), 0);
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]

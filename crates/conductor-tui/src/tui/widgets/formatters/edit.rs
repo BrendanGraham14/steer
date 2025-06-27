@@ -209,7 +209,7 @@ impl ToolFormatter for EditFormatter {
         }
 
         // Show error if result is an error
-        if let Some(ToolResult::Error { error }) = result {
+        if let Some(ToolResult::Error(error)) = result {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
             lines.push(Line::from(Span::styled(
                 format!("Error: {}", error),

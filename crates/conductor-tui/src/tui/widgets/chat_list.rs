@@ -502,16 +502,16 @@ impl<'a> ChatList<'a> {
                                             {
                                                 // Add status indicator or bullet
                                                 match result {
-                                                    ToolResult::Success { .. } => {
-                                                        first_line.push(Span::styled(
-                                                            " ✓ ",
-                                                            styles::TOOL_SUCCESS,
-                                                        ));
-                                                    }
-                                                    ToolResult::Error { .. } => {
+                                                    ToolResult::Error(_) => {
                                                         first_line.push(Span::styled(
                                                             " ✗ ",
                                                             styles::ERROR_TEXT,
+                                                        ));
+                                                    }
+                                                    _ => {
+                                                        first_line.push(Span::styled(
+                                                            " ✓ ",
+                                                            styles::TOOL_SUCCESS,
                                                         ));
                                                     }
                                                 }
@@ -529,16 +529,16 @@ impl<'a> ChatList<'a> {
                                                 // Add status indicator on first line if we have result
                                                 if view_mode == ViewMode::Compact {
                                                     match result {
-                                                        ToolResult::Success { .. } => {
-                                                            first_line.push(Span::styled(
-                                                                " ✓",
-                                                                styles::TOOL_SUCCESS,
-                                                            ));
-                                                        }
-                                                        ToolResult::Error { .. } => {
+                                                        ToolResult::Error(_) => {
                                                             first_line.push(Span::styled(
                                                                 " ✗",
                                                                 styles::ERROR_TEXT,
+                                                            ));
+                                                        }
+                                                        _ => {
+                                                            first_line.push(Span::styled(
+                                                                " ✓",
+                                                                styles::TOOL_SUCCESS,
                                                             ));
                                                         }
                                                     }
@@ -581,8 +581,8 @@ impl<'a> ChatList<'a> {
                         lines.push(Line::from(fallback_line));
 
                         let (content, color) = match result {
-                            ToolResult::Success { output } => (output, Color::Cyan),
-                            ToolResult::Error { error } => (error, Color::Red),
+                            ToolResult::Error(_) => (result.llm_format(), Color::Red),
+                            _ => (result.llm_format(), Color::Cyan),
                         };
 
                         let preview = if view_mode == ViewMode::Compact && content.len() > 100 {
@@ -599,6 +599,26 @@ impl<'a> ChatList<'a> {
                         }
                     }
                 }
+
+                let height = lines.len() as u16;
+                (lines, height)
+            }
+
+            ChatItem::PendingToolCall { tool_call, .. } => {
+                let mut lines = vec![];
+
+                // Render the pending tool call
+                let mut first_line = vec![];
+                first_line.push(Span::raw("  ")); // Indent
+                first_line.push(Span::styled("⚙", Style::default().fg(Color::Cyan)));
+                first_line.push(Span::raw(" "));
+                first_line.push(Span::styled(
+                    tool_call.name.clone(),
+                    Style::default().fg(Color::Cyan),
+                ));
+                first_line.push(Span::styled(" ⋯ ", styles::DIM_TEXT));
+                first_line.push(Span::styled("Pending...", styles::ITALIC_GRAY));
+                lines.push(Line::from(first_line));
 
                 let height = lines.len() as u16;
                 (lines, height)

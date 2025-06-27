@@ -243,6 +243,7 @@ impl EnvironmentInfo {
         ))?;
 
         let mut builder = GlobSetBuilder::new();
+        #[allow(unused_assignments)]
         let mut has_valid_patterns = false;
 
         for line in content.lines() {
@@ -279,7 +280,6 @@ impl EnvironmentInfo {
                 match Glob::new(&dir_pattern) {
                     Ok(glob) => {
                         builder.add(glob);
-                        has_valid_patterns = true;
                     }
                     Err(e) => {
                         // Return error for invalid patterns

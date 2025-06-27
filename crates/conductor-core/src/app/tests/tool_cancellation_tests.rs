@@ -4,12 +4,12 @@ mod tests {
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
         App, AppConfig, ToolExecutor,
-        conversation::{AssistantContent, Message, ToolResult},
+        conversation::{AssistantContent, Message},
     };
     use crate::config::LlmConfig;
     use crate::tools::{BackendRegistry, LocalBackend};
     use crate::workspace::local::LocalWorkspace;
-    use conductor_tools::ToolCall;
+    use conductor_tools::{ToolCall, ToolError, result::ToolResult};
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -115,12 +115,10 @@ mod tests {
             {
                 assert_eq!(tool_use_id, "test_tool_123");
                 match result {
-                    ToolResult::Success { output } => {
-                        assert!(output.contains("cancelled"));
+                    ToolResult::Error(ToolError::Cancelled(tool_name)) => {
+                        assert_eq!(tool_name, "test_tool");
                     }
-                    ToolResult::Error { error } => {
-                        assert!(error.contains("cancelled"));
-                    }
+                    _ => panic!("Expected cancelled tool error, got: {:?}", result),
                 }
             } else {
                 panic!("Expected Tool message");
@@ -176,9 +174,10 @@ mod tests {
         // Add a tool result for this tool call
         let tool_result_msg = Message::Tool {
             tool_use_id: "complete_tool_456".to_string(),
-            result: ToolResult::Success {
-                output: "Tool completed successfully".to_string(),
-            },
+            result: ToolResult::External(conductor_tools::result::ExternalResult {
+                tool_name: "test_tool".to_string(),
+                payload: "Tool completed successfully".to_string(),
+            }),
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
             thread_id: uuid::Uuid::now_v7(),
@@ -285,22 +284,18 @@ mod tests {
                     if tool_use_id == "tool_1" {
                         found_tool_1 = true;
                         match result {
-                            ToolResult::Success { output } => {
-                                assert!(output.contains("cancelled"));
+                            ToolResult::Error(ToolError::Cancelled(tool_name)) => {
+                                assert_eq!(tool_name, "bash");
                             }
-                            ToolResult::Error { error } => {
-                                assert!(error.contains("cancelled"));
-                            }
+                            _ => panic!("Expected cancelled tool error for tool_1, got: {:?}", result),
                         }
                     } else if tool_use_id == "tool_2" {
                         found_tool_2 = true;
                         match result {
-                            ToolResult::Success { output } => {
-                                assert!(output.contains("cancelled"));
+                            ToolResult::Error(ToolError::Cancelled(tool_name)) => {
+                                assert_eq!(tool_name, "read_file");
                             }
-                            ToolResult::Error { error } => {
-                                assert!(error.contains("cancelled"));
-                            }
+                            _ => panic!("Expected cancelled tool error for tool_2, got: {:?}", result),
                         }
                     }
                 } else {

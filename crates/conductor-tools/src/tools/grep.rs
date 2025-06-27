@@ -6,11 +6,13 @@ use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::WalkBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
 use tokio::task;
 
-use crate::{ExecutionContext, ToolError};
+use crate::{ExecutionContext, ToolError, result::{GrepResult, SearchResult}};
+
+/// Match from grep search
+pub type GrepMatch = crate::result::SearchMatch;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GrepParams {
@@ -25,6 +27,8 @@ pub struct GrepParams {
 tool! {
     GrepTool {
         params: GrepParams,
+        output: GrepResult,
+        variant: Search,
         description: r#"Fast content search built on ripgrep for blazing performance at any scale.
 - Searches using regular expressions or literal strings
 - Supports regex syntax like "log.*Error", "function\\s+\\w+", etc.
@@ -40,7 +44,7 @@ tool! {
         _tool: &GrepTool,
         params: GrepParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<GrepResult, ToolError> {
         if context.is_cancelled() {
             return Err(ToolError::Cancelled(GREP_TOOL_NAME.to_string()));
         }
@@ -62,7 +66,7 @@ tool! {
         }).await;
 
         match result {
-            Ok(search_result) => search_result.map_err(|e| ToolError::execution(GREP_TOOL_NAME, e.to_string())),
+            Ok(search_result) => search_result.map_err(|e| ToolError::execution(GREP_TOOL_NAME, e)),
             Err(e) => Err(ToolError::execution(GREP_TOOL_NAME, format!("Task join error: {}", e))),
         }
     }
@@ -73,7 +77,7 @@ fn grep_search_internal(
     include: Option<&str>,
     base_path: &Path,
     cancellation_token: &tokio_util::sync::CancellationToken,
-) -> Result<String, String> {
+) -> Result<GrepResult, String> {
     if !base_path.exists() {
         return Err(format!("Path does not exist: {}", base_path.display()));
     }
@@ -111,11 +115,16 @@ fn grep_search_internal(
         .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid glob pattern: {}", e)))
         .transpose()?;
 
-    let mut results = Vec::new();
+    let mut all_matches = Vec::new();
+    let mut files_searched = 0;
 
     for result in walker.build() {
         if cancellation_token.is_cancelled() {
-            return Err("Search cancelled".to_string());
+            return Ok(GrepResult(SearchResult {
+                matches: all_matches,
+                total_files_searched: files_searched,
+                search_completed: false,
+            }));
         }
 
         let entry = match result {
@@ -135,6 +144,8 @@ fn grep_search_internal(
             }
         }
 
+        files_searched += 1;
+
         // Search the file
         let mut matches_in_file = Vec::new();
         let search_result = searcher.search_path(
@@ -147,7 +158,12 @@ fn grep_search_internal(
                     // If canonicalization fails (e.g., file doesn't exist), fall back to regular display
                     Err(_) => path.display().to_string(),
                 };
-                matches_in_file.push(format!("{}:{}: {}", display_path, line_num, line));
+                matches_in_file.push(GrepMatch {
+                    file_path: display_path,
+                    line_number: line_num as usize,
+                    line_content: line.trim_end().to_string(),
+                    column_range: None,
+                });
                 Ok(true)
             }),
         );
@@ -159,38 +175,52 @@ fn grep_search_internal(
             }
         }
 
-        if !matches_in_file.is_empty() {
-            results.push((path.to_path_buf(), matches_in_file.join("\n")));
-        }
+        // Add all matches from this file to the overall results
+        all_matches.extend(matches_in_file);
     }
 
-    if results.is_empty() {
-        return Ok("No matches found.".to_string());
-    }
-
-    // Sort by modification time (newest first)
-    let mut results_with_time = Vec::new();
-    for (path, matches) in results {
-        if cancellation_token.is_cancelled() {
-            return Err("Search cancelled".to_string());
+    // Sort matches by file modification time (newest first)
+    if !all_matches.is_empty() {
+        // Group matches by file
+        let mut file_groups: std::collections::HashMap<String, Vec<GrepMatch>> = std::collections::HashMap::new();
+        for match_item in all_matches {
+            file_groups.entry(match_item.file_path.clone()).or_default().push(match_item);
         }
 
-        let mtime = fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        // Get modification times and sort
+        let mut sorted_files: Vec<(String, std::time::SystemTime)> = Vec::new();
+        for file_path in file_groups.keys() {
+            if cancellation_token.is_cancelled() {
+                return Ok(GrepResult(SearchResult {
+                    matches: Vec::new(),
+                    total_files_searched: files_searched,
+                    search_completed: false,
+                }));
+            }
 
-        results_with_time.push((path, matches, mtime));
+            let mtime = Path::new(file_path)
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            sorted_files.push((file_path.clone(), mtime));
+        }
+        sorted_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Rebuild matches in sorted order
+        let mut sorted_matches = Vec::new();
+        for (file_path, _) in sorted_files {
+            if let Some(file_matches) = file_groups.remove(&file_path) {
+                sorted_matches.extend(file_matches);
+            }
+        }
+        all_matches = sorted_matches;
     }
 
-    results_with_time.sort_by(|a, b| b.2.cmp(&a.2));
-
-    let output = results_with_time
-        .into_iter()
-        .map(|(_, matches, _)| matches)
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    Ok(output)
+    Ok(GrepResult(SearchResult {
+        matches: all_matches,
+        total_files_searched: files_searched,
+        search_completed: true,
+    }))
 }
 
 fn path_matches_glob(path: &Path, pattern: &glob::Pattern, base_path: &Path) -> bool {
@@ -219,7 +249,7 @@ fn path_matches_glob(path: &Path, pattern: &glob::Pattern, base_path: &Path) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ExecutionContext, Tool, ToolError};
+    use crate::{ExecutionContext, Tool};
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -262,9 +292,13 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        assert!(result.contains("file1.txt:2: find me here"));
-        assert!(!result.contains("file2.log"));
+        
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("file1.txt"));
+        assert_eq!(result.0.matches[0].line_number, 2);
+        assert_eq!(result.0.matches[0].line_content, "find me here");
+        assert!(result.0.search_completed);
+        assert!(result.0.total_files_searched > 0);
     }
 
     #[tokio::test]
@@ -282,9 +316,12 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        assert!(result.contains("file2.log:3: LOG-123: an error"));
-        assert!(!result.contains("file1.txt"));
+        
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("file2.log"));
+        assert_eq!(result.0.matches[0].line_number, 3);
+        assert_eq!(result.0.matches[0].line_content, "LOG-123: an error");
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -302,8 +339,10 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        assert_eq!(result, "No matches found.");
+        
+        assert_eq!(result.0.matches.len(), 0);
+        assert!(result.0.search_completed);
+        assert!(result.0.total_files_searched > 0);
     }
 
     #[tokio::test]
@@ -321,10 +360,12 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        assert!(result.contains("subdir/file3.txt:1: nested file"));
-        assert!(!result.contains("file1.txt"));
-        assert!(!result.contains("file2.log"));
+        
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("subdir/file3.txt"));
+        assert_eq!(result.0.matches[0].line_number, 1);
+        assert_eq!(result.0.matches[0].line_content, "nested file");
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -342,9 +383,12 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        assert!(result.contains("file2.log:1: another file"));
-        assert!(!result.contains("file1.txt"));
+        
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("file2.log"));
+        assert_eq!(result.0.matches[0].line_number, 1);
+        assert_eq!(result.0.matches[0].line_content, "another file");
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -432,11 +476,13 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
+        
         // Should find the match in file1.txt but not in ignored files
-        assert!(result.contains("file1.txt:2: find me here"));
-        assert!(!result.contains("ignored.txt"));
-        assert!(!result.contains("also_ignored.log"));
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("file1.txt"));
+        assert_eq!(result.0.matches[0].line_number, 2);
+        assert_eq!(result.0.matches[0].line_content, "find me here");
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -461,10 +507,13 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
+        
         // Should find the literal match
-        assert!(result.contains("code.rs:2:     format_message(\"hello\");"));
-        assert!(!result.contains("println!"));
+        assert_eq!(result.0.matches.len(), 1);
+        assert!(result.0.matches[0].file_path.contains("code.rs"));
+        assert_eq!(result.0.matches[0].line_number, 2);
+        assert!(result.0.matches[0].line_content.contains("format_message(\"hello\");"));
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -504,13 +553,27 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
-        // Should find matches in conductor/src files but not in other/src
-        assert!(result.contains("conductor/src/session/state.rs:1: pub struct SessionConfig {"));
-        assert!(result.contains(
-            "conductor/src/utils/session.rs:3:     SessionConfig { field: \"test\".to_string() }"
+        
+        // Should find 3 matches in conductor/src files but not in other/src
+        assert_eq!(result.0.matches.len(), 3);
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("conductor/src/session/state.rs") && 
+            m.line_number == 1 &&
+            m.line_content == "pub struct SessionConfig {"
         ));
-        assert!(!result.contains("other/src/main.rs"));
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("conductor/src/utils/session.rs") && 
+            m.line_number == 2 &&
+            m.line_content == "fn test() -> SessionConfig {"
+        ));
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("conductor/src/utils/session.rs") && 
+            m.line_number == 3 &&
+            m.line_content.contains("SessionConfig { field: \"test\".to_string() }")
+        ));
+        // Ensure no matches from other/src
+        assert!(!result.0.matches.iter().any(|m| m.file_path.contains("other/src")));
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -551,12 +614,26 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
+        
         // Should find matches in src/ but not in tests/
-        assert!(result.contains("src/api/client/mod.rs:1: pub mod client;"));
-        assert!(result.contains("src/api/client/mod.rs:2: pub use client::ApiClient;"));
-        assert!(result.contains("src/tools/grep.rs:1: pub struct GrepTool;"));
-        assert!(!result.contains("tests/integration/api_test.rs"));
+        assert!(result.0.matches.len() >= 3);
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("src/api/client/mod.rs") && 
+            m.line_number == 1 &&
+            m.line_content == "pub mod client;"
+        ));
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("src/api/client/mod.rs") && 
+            m.line_number == 2 &&
+            m.line_content == "pub use client::ApiClient;"
+        ));
+        assert!(result.0.matches.iter().any(|m| 
+            m.file_path.contains("src/tools/grep.rs") && 
+            m.line_number == 1 &&
+            m.line_content == "pub struct GrepTool;"
+        ));
+        assert!(!result.0.matches.iter().any(|m| m.file_path.contains("tests/")));
+        assert!(result.0.search_completed);
     }
 
     #[tokio::test]
@@ -582,14 +659,18 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-
+        
         // The result should contain a canonicalized path without "./"
-        assert!(result.contains(":2: find this line"));
+        assert_eq!(result.0.matches.len(), 1);
+        assert_eq!(result.0.matches[0].line_number, 2);
+        assert_eq!(result.0.matches[0].line_content, "find this line");
         // Ensure no "./" appears in the path
-        assert!(!result.contains("./"));
+        assert!(!result.0.matches[0].file_path.contains("./"));
+        assert!(result.0.matches[0].file_path.contains("test.txt"));
+        assert!(result.0.search_completed);
 
         // The path should be absolute and canonical
         let canonical_path = temp_dir.path().join("test.txt").canonicalize().unwrap();
-        assert!(result.contains(&canonical_path.display().to_string()));
+        assert_eq!(result.0.matches[0].file_path, canonical_path.display().to_string());
     }
 }

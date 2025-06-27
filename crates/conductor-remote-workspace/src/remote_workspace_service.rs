@@ -4,12 +4,21 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use conductor_tools::tools::workspace_tools;
-use conductor_tools::{ExecutionContext, Tool, ToolError};
+use conductor_tools::{ExecutionContext, ToolError};
+use conductor_tools::traits::ExecutableTool;
+use conductor_tools::result::ToolResult;
 
 use crate::proto::{
     AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus,
     ToolSchema as GrpcToolSchema, ToolSchemasResponse,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
+    execute_tool_response::{Result as ProtoResult},
+    SearchResult as ProtoSearchResult, FileListResult as ProtoFileListResult,
+    FileContentResult as ProtoFileContentResult, EditResult as ProtoEditResult,
+    BashResult as ProtoBashResult, GlobResult as ProtoGlobResult,
+    TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
+    SearchMatch as ProtoSearchMatch, FileEntry as ProtoFileEntry,
+    TodoItem as ProtoTodoItem, ColumnRange as ProtoColumnRange,
 };
 
 /// Agent service implementation that executes tools locally
@@ -18,7 +27,7 @@ use crate::proto::{
 /// using the standard tool executor. It's designed to run on remote machines,
 /// VMs, or containers to provide remote tool execution capabilities.
 pub struct RemoteWorkspaceService {
-    tools: Arc<HashMap<String, Box<dyn Tool>>>,
+    tools: Arc<HashMap<String, Box<dyn ExecutableTool>>>,
     version: String,
 }
 
@@ -29,8 +38,8 @@ impl RemoteWorkspaceService {
     }
 
     /// Create a new RemoteWorkspaceService with a custom set of tools
-    pub fn with_tools(tools_list: Vec<Box<dyn Tool>>) -> Result<Self, ToolError> {
-        let mut tools: HashMap<String, Box<dyn Tool>> = HashMap::new();
+    pub fn with_tools(tools_list: Vec<Box<dyn ExecutableTool>>) -> Result<Self, ToolError> {
+        let mut tools: HashMap<String, Box<dyn ExecutableTool>> = HashMap::new();
 
         // Register the provided tools
         for tool in tools_list {
@@ -77,6 +86,126 @@ impl RemoteWorkspaceService {
             ToolError::Serialization(e) => Status::internal(format!("Serialization error: {}", e)),
             ToolError::Http(e) => Status::internal(format!("HTTP error: {}", e)),
             ToolError::Regex(e) => Status::internal(format!("Regex error: {}", e)),
+        }
+    }
+
+    /// Convert a typed tool output to a proto result
+    fn tool_result_to_proto_result(result: &conductor_tools::result::ToolResult) -> Option<ProtoResult> {
+        // Match on the ToolResult enum variants
+        match result {
+            conductor_tools::result::ToolResult::Search(search_result) => {
+                let proto_matches = search_result.matches.iter().map(|m| ProtoSearchMatch {
+                    file_path: m.file_path.clone(),
+                    line_number: m.line_number as u64,
+                    line_content: m.line_content.clone(),
+                    column_range: m.column_range.map(|(start, end)| ProtoColumnRange {
+                        start: start as u64,
+                        end: end as u64,
+                    }),
+                }).collect();
+                
+                Some(ProtoResult::SearchResult(ProtoSearchResult {
+                    matches: proto_matches,
+                    total_files_searched: search_result.total_files_searched as u64,
+                    search_completed: search_result.search_completed,
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::FileList(file_list) => {
+                let proto_entries = file_list.entries.iter().map(|e| ProtoFileEntry {
+                    path: e.path.clone(),
+                    is_directory: e.is_directory,
+                    size: e.size,
+                    permissions: e.permissions.clone(),
+                }).collect();
+                
+                Some(ProtoResult::FileListResult(ProtoFileListResult {
+                    entries: proto_entries,
+                    base_path: file_list.base_path.clone(),
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::FileContent(file_content) => {
+                Some(ProtoResult::FileContentResult(ProtoFileContentResult {
+                    content: file_content.content.clone(),
+                    file_path: file_content.file_path.clone(),
+                    line_count: file_content.line_count as u64,
+                    truncated: file_content.truncated,
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::Edit(edit_result) => {
+                Some(ProtoResult::EditResult(ProtoEditResult {
+                    file_path: edit_result.file_path.clone(),
+                    changes_made: edit_result.changes_made as u64,
+                    file_created: edit_result.file_created,
+                    old_content: edit_result.old_content.clone(),
+                    new_content: edit_result.new_content.clone(),
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::Bash(bash_result) => {
+                Some(ProtoResult::BashResult(ProtoBashResult {
+                    stdout: bash_result.stdout.clone(),
+                    stderr: bash_result.stderr.clone(),
+                    exit_code: bash_result.exit_code,
+                    command: bash_result.command.clone(),
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::Glob(glob_result) => {
+                Some(ProtoResult::GlobResult(ProtoGlobResult {
+                    matches: glob_result.matches.clone(),
+                    pattern: glob_result.pattern.clone(),
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::TodoRead(todo_list) => {
+                let proto_todos = todo_list.todos.iter().map(|t| ProtoTodoItem {
+                    id: t.id.clone(),
+                    content: t.content.clone(),
+                    status: t.status.clone(),
+                    priority: t.priority.clone(),
+                }).collect();
+                
+                Some(ProtoResult::TodoListResult(ProtoTodoListResult {
+                    todos: proto_todos,
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::TodoWrite(todo_write_result) => {
+                let proto_todos = todo_write_result.todos.iter().map(|t| ProtoTodoItem {
+                    id: t.id.clone(),
+                    content: t.content.clone(),
+                    status: t.status.clone(),
+                    priority: t.priority.clone(),
+                }).collect();
+                
+                Some(ProtoResult::TodoWriteResult(ProtoTodoWriteResult {
+                    todos: proto_todos,
+                    operation: todo_write_result.operation.clone(),
+                }))
+            }
+            
+            conductor_tools::result::ToolResult::Fetch(_) => {
+                // Fetch results are not handled in the remote workspace
+                None
+            }
+            
+            conductor_tools::result::ToolResult::Agent(_) => {
+                // Agent results are not handled in the remote workspace
+                None
+            }
+            
+            conductor_tools::result::ToolResult::External(_) => {
+                // External results are not handled in the remote workspace
+                None
+            }
+            
+            conductor_tools::result::ToolResult::Error(_) => {
+                // Errors are handled differently
+                None
+            }
         }
     }
 
@@ -233,17 +362,24 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         let context = ExecutionContext::new(req.tool_call_id.clone())
             .with_cancellation_token(cancellation_token);
 
-        let result = tool.execute(parameters, &context).await;
+        let result = tool.run(parameters, &context).await;
 
         let end_time = std::time::Instant::now();
         let duration = end_time - start_time;
 
         // Convert result to response
         let response = match result {
-            Ok(output) => ExecuteToolResponse {
-                success: true,
-                result: output,
-                error: String::new(),
+            Ok(tool_result) => {
+                // Convert to a typed result
+                let proto_result = Self::tool_result_to_proto_result(&tool_result);
+                
+                let response = ExecuteToolResponse {
+                    success: true,
+                    result: proto_result.or_else(|| {
+                        // Fallback to string result
+                        Some(ProtoResult::StringResult(tool_result.llm_format()))
+                    }),
+                    error: String::new(),
                 started_at: Some(prost_types::Timestamp {
                     seconds: start_time.elapsed().as_secs() as i64,
                     nanos: 0,
@@ -253,6 +389,8 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                     nanos: duration.subsec_nanos() as i32,
                 }),
                 metadata: std::collections::HashMap::new(),
+            };
+            response
             },
             Err(error) => {
                 // For some errors, we want to return them as successful responses
@@ -266,7 +404,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                     }
                     _ => ExecuteToolResponse {
                         success: false,
-                        result: String::new(),
+                        result: None,
                         error: error.to_string(),
                         started_at: Some(prost_types::Timestamp {
                             seconds: start_time.elapsed().as_secs() as i64,

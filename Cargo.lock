@@ -627,6 +627,7 @@ dependencies = [
  "chrono",
  "conductor-core",
  "conductor-proto",
+ "conductor-tools",
  "futures",
  "proptest",
  "prost",

@@ -1,6 +1,7 @@
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum ToolError {
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
@@ -27,13 +28,13 @@ pub enum ToolError {
     Io { tool_name: String, message: String },
 
     #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    Serialization(String),
 
     #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(String),
 
     #[error("Regex error: {0}")]
-    Regex(#[from] regex::Error),
+    Regex(String),
 }
 
 impl ToolError {

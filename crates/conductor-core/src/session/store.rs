@@ -125,7 +125,7 @@ pub enum OrderDirection {
 #[derive(Debug, Clone)]
 pub struct ToolCallUpdate {
     pub status: Option<super::ToolCallStatus>,
-    pub result: Option<super::ToolResult>,
+    pub result: Option<super::ToolExecutionStats>,
     pub error: Option<String>,
 }
 
@@ -138,7 +138,7 @@ impl ToolCallUpdate {
         }
     }
 
-    pub fn set_result(result: super::ToolResult) -> Self {
+    pub fn set_result(result: super::ToolExecutionStats) -> Self {
         Self {
             status: Some(super::ToolCallStatus::Completed),
             result: Some(result),

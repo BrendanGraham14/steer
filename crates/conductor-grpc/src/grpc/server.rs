@@ -150,10 +150,16 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             let event_task = tokio::spawn(async move {
                 while let Some(app_event) = event_rx.recv().await {
                     event_sequence += 1;
-                    let server_event = crate::grpc::conversions::app_event_to_server_event(
+                    let server_event = match crate::grpc::conversions::app_event_to_server_event(
                         app_event,
                         event_sequence,
-                    );
+                    ) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            warn!("Failed to convert app event to server event: {}", e);
+                            continue;
+                        }
+                    };
 
                     if let Err(e) = tx_clone.send(Ok(server_event)).await {
                         warn!("Failed to send event to client: {}", e);
@@ -361,7 +367,8 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                         debug!("Converted message {} to proto", msg.id());
                         proto_msg
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?;
 
                 info!("Converted {} messages to proto format", messages.len());
 
@@ -470,7 +477,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .await
         {
             return Ok(Response::new(ActivateSessionResponse {
-                messages: state.messages.into_iter().map(message_to_proto).collect(),
+                messages: state.messages.into_iter()
+                    .map(message_to_proto)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?,
                 approved_tools: state.approved_tools.into_iter().collect(),
             }));
         }
@@ -493,7 +503,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                     .await
                 {
                     return Ok(Response::new(ActivateSessionResponse {
-                        messages: state.messages.into_iter().map(message_to_proto).collect(),
+                        messages: state.messages.into_iter()
+                            .map(message_to_proto)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?,
                         approved_tools: state.approved_tools.into_iter().collect(),
                     }));
                 }

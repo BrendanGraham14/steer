@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use conductor_tools::{ToolCall, ToolSchema};
+use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -115,7 +115,11 @@ impl Workspace for RemoteWorkspace {
         Ok(env_info)
     }
 
-    async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext) -> Result<String> {
+    async fn execute_tool(
+        &self,
+        tool_call: &ToolCall,
+        ctx: ExecutionContext,
+    ) -> Result<ToolResult> {
         self.tool_backend
             .execute(tool_call, &ctx)
             .await

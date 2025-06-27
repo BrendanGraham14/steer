@@ -6,6 +6,7 @@ use crate::tui::events::processor::{EventProcessor, ProcessingContext, Processin
 use crate::tui::model::ChatItem;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::ToolResult;
+use conductor_tools::error::ToolError;
 
 /// Processor for tool-related events
 pub struct ToolEventProcessor;
@@ -46,29 +47,27 @@ impl EventProcessor for ToolEventProcessor {
                 *ctx.spinner_state = 0;
                 *ctx.progress_message = Some(format!("Executing tool: {}", name));
 
-                let idx = ctx.get_or_create_tool_index(&id, Some(name.clone()));
-
-                // The placeholder might have been created with null params if the registry
-                // didn't have the ToolCall yet. Check again and update if needed.
-                if let Some(real_call) = ctx.tool_registry.get_tool_call(&id) {
-                    if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                        if let conductor_core::app::conversation::Message::Tool { .. } = &row.inner
-                        {
-                            // The tool message has been created, registry has been updated
-                            tracing::debug!(
-                                target: "tui.tool_event",
-                                "Tool message {} found with registry entry",
-                                id
-                            );
-                        }
-                    }
+                // Get the tool call from the registry
+                let tool_call = if let Some(call) = ctx.tool_registry.get_tool_call(&id) {
+                    call.clone()
                 } else {
-                    tracing::warn!(
-                        target: "tui.tool_event",
-                        "No ToolCall found in registry for id={} at ToolCallStarted",
-                        id
-                    );
-                }
+                    // Create a placeholder tool call if not found
+                    conductor_tools::schema::ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        parameters: serde_json::Value::Null,
+                    }
+                };
+
+                // Add a pending tool call item
+                let pending = ChatItem::PendingToolCall {
+                    id: crate::tui::model::generate_row_id(),
+                    tool_call,
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+
+                let idx = ctx.chat_store.add_pending_tool(pending);
+                ctx.tool_registry.set_message_index(&id, idx);
 
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
@@ -81,45 +80,58 @@ impl EventProcessor for ToolEventProcessor {
             } => {
                 *ctx.progress_message = None;
 
-                let idx = ctx.get_or_create_tool_index(&id, None);
-
-                if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                    if let conductor_core::app::conversation::Message::Tool {
-                        result: existing_result,
-                        ..
-                    } = &mut row.inner
-                    {
-                        *existing_result = ToolResult::Success {
-                            output: result.clone(),
-                        };
+                // Find and remove the pending tool call
+                if let Some(idx) = ctx.tool_registry.get_message_index(&id) {
+                    if let Some(ChatItem::PendingToolCall { .. }) = ctx.chat_store.get(idx) {
+                        ctx.chat_store.remove(idx);
                     }
                 }
 
+                // Create a complete tool message
+                let tool_msg = conductor_core::app::conversation::Message::Tool {
+                    id: crate::tui::model::generate_row_id(),
+                    tool_use_id: id.clone(),
+                    result: result.clone(),
+                    timestamp: chrono::Utc::now().timestamp() as u64,
+                    thread_id: ctx.current_thread.unwrap_or(uuid::Uuid::new_v4()),
+                    parent_message_id: None,
+                };
+
+                let _idx = ctx.chat_store.add_message(tool_msg);
+                
                 // Complete the tool execution in registry
                 ctx.tool_registry
-                    .complete_execution(&id, ToolResult::Success { output: result });
+                    .complete_execution(&id, result);
 
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
             }
             AppEvent::ToolCallFailed {
-                name: _, error, id, ..
+                name, error, id, ..
             } => {
                 *ctx.progress_message = None;
 
-                let idx = ctx.get_or_create_tool_index(&id, None);
-
-                if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                    if let conductor_core::app::conversation::Message::Tool {
-                        result: existing_result,
-                        ..
-                    } = &mut row.inner
-                    {
-                        *existing_result = ToolResult::Error {
-                            error: error.clone(),
-                        };
+                // Find and remove the pending tool call
+                if let Some(idx) = ctx.tool_registry.get_message_index(&id) {
+                    if let Some(ChatItem::PendingToolCall { .. }) = ctx.chat_store.get(idx) {
+                        ctx.chat_store.remove(idx);
                     }
                 }
+
+                // Create a complete tool message with error
+                let tool_msg = conductor_core::app::conversation::Message::Tool {
+                    id: crate::tui::model::generate_row_id(),
+                    tool_use_id: id.clone(),
+                    result: ToolResult::Error(ToolError::Execution {
+                        tool_name: name.clone(),
+                        message: error.clone(),
+                    }),
+                    timestamp: chrono::Utc::now().timestamp() as u64,
+                    thread_id: ctx.current_thread.unwrap_or(uuid::Uuid::new_v4()),
+                    parent_message_id: None,
+                };
+
+                let _idx = ctx.chat_store.add_message(tool_msg);
 
                 // Complete the tool execution in registry with error
                 ctx.tool_registry.fail_execution(&id, error);

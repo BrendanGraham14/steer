@@ -6,6 +6,7 @@ use tokio::fs;
 
 use crate::tools::{LS_TOOL_NAME, VIEW_TOOL_NAME};
 use crate::{ExecutionContext, ToolError};
+use crate::result::{EditResult, ReplaceResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReplaceParams {
@@ -15,9 +16,13 @@ pub struct ReplaceParams {
     pub content: String,
 }
 
+
+
 tool! {
     ReplaceTool {
         params: ReplaceParams,
+        output: ReplaceResult,
+        variant: Edit,
         description: format!(r#"Writes a file to the local filesystem.
 
 Before using this tool:
@@ -34,7 +39,7 @@ Before using this tool:
         _tool: &ReplaceTool,
         params: ReplaceParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<ReplaceResult, ToolError> {
         // Validate absolute path
         if !params.file_path.starts_with('/') && !params.file_path.starts_with("\\") {
             return Err(ToolError::invalid_params(
@@ -72,6 +77,9 @@ Before using this tool:
             }
         }
 
+        // Check if file already exists
+        let file_existed = path.exists();
+
         // Write the file
         fs::write(path, &params.content).await.map_err(|e| {
             ToolError::io(
@@ -80,6 +88,12 @@ Before using this tool:
             )
         })?;
 
-        Ok(format!("File written successfully: {}", abs_path))
+        Ok(ReplaceResult(EditResult {
+            file_path: abs_path,
+            changes_made: 1,
+            file_created: !file_existed,
+            old_content: None,
+            new_content: Some(params.content),
+        }))
     }
 }

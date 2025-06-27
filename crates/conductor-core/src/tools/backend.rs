@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::api::ToolCall;
 use crate::tools::ExecutionContext;
-use conductor_tools::ToolError;
+use conductor_tools::{ToolError, result::ToolResult};
 use conductor_tools::ToolSchema;
 
 /// Metadata about a tool backend for debugging and monitoring
@@ -51,12 +51,12 @@ pub trait ToolBackend: Send + Sync {
     /// * `context` - Execution context with session info, cancellation, etc.
     ///
     /// # Returns
-    /// The string output of the tool on success, or a ToolError on failure
+    /// The typed tool result on success, or a ToolError on failure
     async fn execute(
         &self,
         tool_call: &ToolCall,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError>;
+    ) -> Result<ToolResult, ToolError>;
 
     /// List the tools this backend can handle
     ///
@@ -233,11 +233,14 @@ mod tests {
             &self,
             tool_call: &ToolCall,
             _context: &ExecutionContext,
-        ) -> Result<String, ToolError> {
-            Ok(format!(
-                "Mock execution of {} by {}",
-                tool_call.name, self.name
-            ))
+        ) -> Result<ToolResult, ToolError> {
+            Ok(ToolResult::External(conductor_tools::result::ExternalResult {
+                tool_name: self.name.clone(),
+                payload: format!(
+                    "Mock execution of {} by {}",
+                    tool_call.name, self.name
+                ),
+            }))
         }
 
         fn supported_tools(&self) -> Vec<String> {
@@ -311,8 +314,13 @@ mod tests {
         );
 
         let result = backend.execute(&tool_call, &context).await.unwrap();
-        assert!(result.contains("Mock execution"));
-        assert!(result.contains("test_tool"));
-        assert!(result.contains("test"));
+        match result {
+            ToolResult::External(external) => {
+                assert!(external.payload.contains("Mock execution"));
+                assert!(external.payload.contains("test_tool"));
+                assert!(external.payload.contains("test"));
+            }
+            _ => panic!("Expected External result"),
+        }
     }
 }

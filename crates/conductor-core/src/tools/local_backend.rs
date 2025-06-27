@@ -5,19 +5,75 @@ use crate::api::ToolCall;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};
 use conductor_tools::tools::{read_only_workspace_tools, workspace_tools};
-use conductor_tools::{ExecutionContext as ConductorExecutionContext, Tool, ToolError, ToolSchema};
+use conductor_tools::{ExecutionContext as ConductorExecutionContext, Tool, ToolError, ToolSchema, result::ToolResult, traits::ExecutableTool};
+
+// Tool wrappers for server-side tools
+struct FetchToolWrapper(FetchTool);
+struct DispatchAgentToolWrapper(DispatchAgentTool);
+
+#[async_trait]
+impl Tool for FetchToolWrapper {
+    type Output = ToolResult;
+
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn description(&self) -> String {
+        self.0.description()
+    }
+
+    fn input_schema(&self) -> &'static conductor_tools::InputSchema {
+        self.0.input_schema()
+    }
+
+    async fn execute(&self, params: serde_json::Value, ctx: &ConductorExecutionContext) -> Result<Self::Output, ToolError> {
+        let result = self.0.execute(params, ctx).await?;
+        Ok(ToolResult::Fetch(result))
+    }
+
+    fn requires_approval(&self) -> bool {
+        self.0.requires_approval()
+    }
+}
+
+#[async_trait]
+impl Tool for DispatchAgentToolWrapper {
+    type Output = ToolResult;
+
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn description(&self) -> String {
+        self.0.description()
+    }
+
+    fn input_schema(&self) -> &'static conductor_tools::InputSchema {
+        self.0.input_schema()
+    }
+
+    async fn execute(&self, params: serde_json::Value, ctx: &ConductorExecutionContext) -> Result<Self::Output, ToolError> {
+        let result = self.0.execute(params, ctx).await?;
+        Ok(ToolResult::Agent(result))
+    }
+
+    fn requires_approval(&self) -> bool {
+        self.0.requires_approval()
+    }
+}
 
 /// Local backend that executes tools in the current process
 ///
 /// This backend uses the conductor-tools implementations directly.
 pub struct LocalBackend {
     /// The tool registry containing all available tools
-    registry: HashMap<String, Box<dyn Tool>>,
+    registry: HashMap<String, Box<dyn ExecutableTool>>,
 }
 
 impl LocalBackend {
     /// Create a backend from a collection of tool instances
-    pub fn from_tools(tools: Vec<Box<dyn Tool>>) -> Self {
+    pub fn from_tools(tools: Vec<Box<dyn ExecutableTool>>) -> Self {
         let mut registry = HashMap::new();
         tools.into_iter().for_each(|tool| {
             registry.insert(tool.name().to_string(), tool);
@@ -31,10 +87,10 @@ impl LocalBackend {
     /// containing only those tools from the full set of available tools.
     pub fn with_tools(tool_names: Vec<String>) -> Self {
         let mut all_tools = workspace_tools();
-        all_tools.push(Box::new(FetchTool));
-        all_tools.push(Box::new(DispatchAgentTool));
+        all_tools.push(Box::new(FetchToolWrapper(FetchTool)));
+        all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool)));
 
-        let filtered_tools: Vec<Box<dyn Tool>> = all_tools
+        let filtered_tools: Vec<Box<dyn ExecutableTool>> = all_tools
             .into_iter()
             .filter(|tool| tool_names.contains(&tool.name().to_string()))
             .collect();
@@ -48,10 +104,10 @@ impl LocalBackend {
     /// containing all other tools from the full set of available tools.
     pub fn without_tools(excluded_tools: Vec<String>) -> Self {
         let mut all_tools = workspace_tools();
-        all_tools.push(Box::new(FetchTool));
-        all_tools.push(Box::new(DispatchAgentTool));
+        all_tools.push(Box::new(FetchToolWrapper(FetchTool)));
+        all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool)));
 
-        let filtered_tools: Vec<Box<dyn Tool>> = all_tools
+        let filtered_tools: Vec<Box<dyn ExecutableTool>> = all_tools
             .into_iter()
             .filter(|tool| !excluded_tools.contains(&tool.name().to_string()))
             .collect();
@@ -63,8 +119,8 @@ impl LocalBackend {
     pub fn full() -> Self {
         let mut tools = workspace_tools();
         // Add server-side tools
-        tools.push(Box::new(FetchTool));
-        tools.push(Box::new(DispatchAgentTool));
+        tools.push(Box::new(FetchToolWrapper(FetchTool)));
+        tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool)));
         Self::from_tools(tools)
     }
 
@@ -75,7 +131,10 @@ impl LocalBackend {
 
     /// Create a LocalBackend with only server-side tools
     pub fn server_only() -> Self {
-        Self::from_tools(vec![Box::new(FetchTool), Box::new(DispatchAgentTool)])
+        Self::from_tools(vec![
+            Box::new(FetchToolWrapper(FetchTool)), 
+            Box::new(DispatchAgentToolWrapper(DispatchAgentTool))
+        ])
     }
 
     /// Create a LocalBackend with read-only tools
@@ -85,7 +144,7 @@ impl LocalBackend {
     pub fn read_only() -> Self {
         let mut tools = read_only_workspace_tools();
         // Add server-side tools (they're read-only too)
-        tools.push(Box::new(FetchTool));
+        tools.push(Box::new(FetchToolWrapper(FetchTool)));
         Self::from_tools(tools)
     }
 
@@ -101,7 +160,7 @@ impl ToolBackend for LocalBackend {
         &self,
         tool_call: &ToolCall,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<ToolResult, ToolError> {
         // Get the tool from the registry
         let tool = self
             .registry
@@ -126,8 +185,8 @@ impl ToolBackend for LocalBackend {
             .with_cancellation_token(context.cancellation_token.clone())
             .with_working_directory(working_directory);
 
-        // Execute the tool directly
-        tool.execute(tool_call.parameters.clone(), &conductor_context)
+        // Execute the tool and get the result
+        tool.run(tool_call.parameters.clone(), &conductor_context)
             .await
     }
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::api::Model;
 use crate::app::Message;
 use crate::tools::{BackendRegistry, LocalBackend, ToolBackend};
-use conductor_tools::ToolCall;
+use conductor_tools::{result::ToolResult, ToolCall};
 use conductor_tools::tools::read_only_workspace_tools;
 
 /// Defines the primary execution environment for a session's workspace
@@ -572,19 +572,36 @@ impl ToolCallStatus {
     }
 }
 
-/// Tool execution result
+/// Tool execution statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub output: String,
+pub struct ToolExecutionStats {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,  // Legacy string output
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_output: Option<serde_json::Value>,  // Typed JSON output
+    pub result_type: Option<String>,  // Type name (e.g., "SearchResult")
     pub success: bool,
     pub execution_time_ms: u64,
     pub metadata: HashMap<String, String>,
 }
 
-impl ToolResult {
+impl ToolExecutionStats {
     pub fn success(output: String, execution_time_ms: u64) -> Self {
         Self {
-            output,
+            output: Some(output),
+            json_output: None,
+            result_type: None,
+            success: true,
+            execution_time_ms,
+            metadata: HashMap::new(),
+        }
+    }
+    
+    pub fn success_typed(json_output: serde_json::Value, result_type: String, execution_time_ms: u64) -> Self {
+        Self {
+            output: None,
+            json_output: Some(json_output),
+            result_type: Some(result_type),
             success: true,
             execution_time_ms,
             metadata: HashMap::new(),
@@ -593,7 +610,9 @@ impl ToolResult {
 
     pub fn failure(error: String, execution_time_ms: u64) -> Self {
         Self {
-            output: error,
+            output: Some(error),
+            json_output: None,
+            result_type: None,
             success: false,
             execution_time_ms,
             metadata: HashMap::new(),

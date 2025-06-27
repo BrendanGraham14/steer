@@ -5,7 +5,7 @@ mod tests {
     use conductor_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
     use conductor_core::config::LlmConfig;
     use conductor_core::tools::ToolError;
-    use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
+    use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool, result::{ToolResult, ExternalResult}};
     use dotenv::dotenv;
     use serde_json::json;
     use std::sync::Arc;
@@ -64,7 +64,10 @@ mod tests {
         let tool_executor_callback = |_call: ToolCall, _token: CancellationToken| async {
             panic!("Tool executor should not be called");
             #[allow(unreachable_code)]
-            Ok::<String, ToolError>("".to_string())
+            Ok::<ToolResult, ToolError>(ToolResult::External(ExternalResult {
+                tool_name: "dummy".to_string(),
+                payload: "".to_string(),
+            }))
         };
 
         let final_message_result = executor
@@ -143,7 +146,10 @@ mod tests {
             if call.name == "get_capital" {
                 let input_country = call.parameters.get("country").and_then(|v| v.as_str());
                 if input_country == Some("France") {
-                    Ok("Paris".to_string())
+                    Ok(ToolResult::External(ExternalResult {
+                        tool_name: call.name.clone(),
+                        payload: "Paris".to_string(),
+                    }))
                 } else {
                     Err(ToolError::Execution {
                         tool_name: call.name.clone(),
@@ -219,18 +225,19 @@ mod tests {
                         saw_executing = true;
                     }
                 }
-                AgentEvent::ToolResultReceived(res) => {
+                AgentEvent::ToolResultReceived { tool_call_id, result } => {
                     // Log all tool results for debugging
                     println!(
-                        "Test: Received ToolResultReceived event with ID: {}, output: {}, is_error: {}",
-                        res.tool_call_id, res.output, res.is_error
+                        "Test: Received ToolResultReceived event with ID: {}, result: {:?}",
+                        tool_call_id, result
                     );
 
-                    // More permissive matching - the ID might not start with tool_
-                    // and we're just checking for the expected output
-                    if res.output == "Paris" && !res.is_error {
-                        println!("Test: Matched correct tool result with output 'Paris'");
-                        saw_tool_result = true;
+                    // Check if we got the expected result
+                    if let ToolResult::External(ext_result) = &result {
+                        if ext_result.payload == "Paris" {
+                            println!("Test: Matched correct tool result with output 'Paris'");
+                            saw_tool_result = true;
+                        }
                     }
                 }
                 _ => {}

@@ -1,10 +1,11 @@
 use conductor_core::api::ApiError;
 use conductor_core::api::{Client, Model};
-use conductor_core::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
+use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
 use conductor_core::config::LlmConfig;
 use conductor_core::workspace::Workspace;
 use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
+use conductor_tools::result::{ToolResult, ExternalResult};
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
@@ -236,7 +237,7 @@ async fn test_api_with_tools() {
                 result.err() // Use .err() for assertion message
             );
 
-            println!("{:?} Tool result: {}", model, result.unwrap()); // Unwrap after assertion
+            println!("{:?} Tool result: {}", model, result.unwrap().llm_format()); // Unwrap after assertion
             println!("Tools API test for {:?} passed successfully!", model);
 
             Ok::<_, ApiError>(model) // Return model on success
@@ -325,9 +326,10 @@ async fn test_api_with_tool_response() {
                 },
                 Message::Tool {
                     tool_use_id: tool_use_id.clone(),
-                    result: ToolResult::Success {
-                        output: "foo.txt, bar.rs".to_string(),
-                    },
+                    result: ToolResult::External(ExternalResult {
+                        tool_name: "ls".to_string(),
+                        payload: "foo.txt, bar.rs".to_string(),
+                    }),
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
                     thread_id: Uuid::new_v4(),
@@ -494,9 +496,10 @@ async fn test_gemini_api_tool_result_error() {
         },
         Message::Tool {
             tool_use_id: "tool-use-id-error".to_string(),
-            result: ToolResult::Error {
-                error: "Error executing command".to_string(),
-            },
+            result: ToolResult::Error(conductor_tools::ToolError::Execution {
+                tool_name: "ls".to_string(),
+                message: "Error executing command".to_string(),
+            }),
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
             thread_id: Uuid::new_v4(),
@@ -652,9 +655,10 @@ async fn test_gemini_api_tool_result_json() {
         },
         Message::Tool {
             tool_use_id: "tool-use-id-json".to_string(),
-            result: ToolResult::Success {
-                output: json_result_string,
-            },
+            result: ToolResult::External(ExternalResult {
+                tool_name: "list_files".to_string(),
+                payload: json_result_string,
+            }),
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
             thread_id: Uuid::new_v4(),
@@ -736,9 +740,10 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         // Provide results for both tool calls
         Message::Tool {
             tool_use_id: "tool-use-id-1".to_string(),
-            result: ToolResult::Success {
-                output: "file1.rs, file2.toml".to_string(),
-            },
+            result: ToolResult::External(ExternalResult {
+                tool_name: "ls".to_string(),
+                payload: "file1.rs, file2.toml".to_string(),
+            }),
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
             thread_id: Uuid::new_v4(),
@@ -746,9 +751,10 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         },
         Message::Tool {
             tool_use_id: "tool-use-id-2".to_string(),
-            result: ToolResult::Success {
-                output: "Sunny, 20C".to_string(),
-            },
+            result: ToolResult::External(ExternalResult {
+                tool_name: "get_weather".to_string(),
+                payload: "Sunny, 20C".to_string(),
+            }),
             timestamp: ts4,
             id: Message::generate_id("tool", ts4),
             thread_id: Uuid::new_v4(),
@@ -859,10 +865,10 @@ async fn test_api_with_cancelled_tool_execution() {
                 // Tool execution was cancelled - this is what inject_cancelled_tool_results would add
                 Message::Tool {
                     tool_use_id: tool_call_id.clone(),
-                    result: ToolResult::Success {
-                        output: "Tool execution was cancelled by user before completion."
-                            .to_string(),
-                    },
+                    result: ToolResult::External(ExternalResult {
+                        tool_name: "ls".to_string(),
+                        payload: "Tool execution was cancelled by user before completion.".to_string(),
+                    }),
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
                     thread_id: Uuid::new_v4(),

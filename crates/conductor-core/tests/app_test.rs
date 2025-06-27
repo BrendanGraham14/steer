@@ -64,9 +64,10 @@ async fn test_tool_executor() -> Result<()> {
     // Verify the tool executed correctly
     assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
     let output = result?;
-    assert!(!output.is_empty(), "Tool output should not be empty");
+    let formatted = output.llm_format();
+    assert!(!formatted.is_empty(), "Tool output should not be empty");
 
-    println!("Tool result: {}", output);
+    println!("Tool result: {}", formatted);
     println!("Tool executor test passed successfully!");
     Ok(())
 }

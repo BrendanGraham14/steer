@@ -18,9 +18,10 @@ use crate::events::StreamEvent;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionOrderBy, SessionState,
     SessionStatus, SessionStore, SessionStoreError, ToolApprovalPolicy, ToolCallState,
-    ToolCallStatus, ToolCallUpdate, ToolResult,
+    ToolCallStatus, ToolCallUpdate, ToolExecutionStats,
 };
 use conductor_tools::ToolCall;
+use conductor_tools::result::ToolResult;
 
 /// SQLite implementation of SessionStore
 pub struct SqliteSessionStore {
@@ -210,7 +211,7 @@ impl SessionStore for SqliteSessionStore {
         // Load tool calls
         let tool_calls_rows = sqlx::query(
             r#"
-            SELECT id, tool_name, parameters, status, result, error, started_at, completed_at
+            SELECT id, tool_name, parameters, status, result, error, started_at, completed_at, kind, payload_json, error_json
             FROM tool_calls
             WHERE session_id = ?1
             "#,
@@ -252,12 +253,63 @@ impl SessionStore for SqliteSessionStore {
             };
 
             let result: Option<String> = row.get("result");
-            let tool_result = result.map(|r| ToolResult {
-                output: r,
-                success: true,
-                execution_time_ms: 0,
-                metadata: std::collections::HashMap::new(),
-            });
+            let json_result: Option<String> = row.get("payload_json");
+            let result_type: Option<String> = row.get("kind");
+            let error_json: Option<String> = row.get("error_json");
+            
+            let _tool_result = if let Some(kind) = result_type.as_ref() {
+                if kind == "error" {
+                    // Error result - use error_json
+                    let error_data = error_json.and_then(|json_str| {
+                        serde_json::from_str::<serde_json::Value>(&json_str).ok()
+                    });
+                    Some(ToolExecutionStats {
+                        output: result.clone(),
+                        json_output: error_data,
+                        result_type: Some("error".to_string()),
+                        success: false,
+                        execution_time_ms: 0,
+                        metadata: std::collections::HashMap::new(),
+                    })
+                } else if let Some(json_str) = json_result {
+                    // Success result with payload
+                    let json_value = serde_json::from_str(&json_str)
+                        .map_err(|e| SessionStoreError::serialization(format!("Invalid JSON result: {}", e)))?;
+                    Some(ToolExecutionStats {
+                        output: result.clone(),
+                        json_output: Some(json_value),
+                        result_type,
+                        success: true,
+                        execution_time_ms: 0,
+                        metadata: std::collections::HashMap::new(),
+                    })
+                } else {
+                    // Success without payload
+                    Some(ToolExecutionStats {
+                        output: result.clone(),
+                        json_output: None,
+                        result_type,
+                        success: true,
+                        execution_time_ms: 0,
+                        metadata: std::collections::HashMap::new(),
+                    })
+                }
+            } else if let Some(r) = result {
+                // Legacy string result
+                Some(ToolExecutionStats {
+                    output: Some(r),
+                    json_output: None,
+                    result_type: None,
+                    success: true,
+                    execution_time_ms: 0,
+                    metadata: std::collections::HashMap::new(),
+                })
+            } else {
+                None
+            };
+
+            // Skip loading tool results for now - just set to None
+            let tool_result: Option<ToolResult> = None;
 
             let state = ToolCallState {
                 tool_call,
@@ -701,8 +753,8 @@ impl SessionStore for SqliteSessionStore {
 
         sqlx::query(
             r#"
-            INSERT INTO tool_calls (id, session_id, tool_name, parameters, status)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO tool_calls (id, session_id, tool_name, parameters, status, kind)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             "#,
         )
         .bind(&tool_call.id)
@@ -710,6 +762,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&tool_call.name)
         .bind(&parameters_json)
         .bind("pending")
+        .bind("external") // Default to external, will be updated when result comes in
         .execute(&self.pool)
         .await
         .map_err(|e| SessionStoreError::database(format!("Failed to create tool call: {}", e)))?;
@@ -753,11 +806,55 @@ impl SessionStore for SqliteSessionStore {
         }
 
         if let Some(result) = update.result {
-            updates.push(format!("result = ?{}", bindings.len() + 1));
-            bindings.push(result.output);
+            // Determine kind from result_type
+            let kind = if let Some(rt) = &result.result_type {
+                rt.clone()
+            } else {
+                "external".to_string()
+            };
+            
+            updates.push(format!("kind = ?{}", bindings.len() + 1));
+            bindings.push(kind);
+
+            // Always store the legacy output if available
+            if let Some(output) = &result.output {
+                updates.push(format!("result = ?{}", bindings.len() + 1));
+                bindings.push(output.clone());
+            }
+            
+            // Store JSON result if available
+            if let Some(json_output) = &result.json_output {
+                updates.push(format!("payload_json = ?{}", bindings.len() + 1));
+                let json_str = serde_json::to_string(json_output)
+                    .map_err(|e| SessionStoreError::serialization(format!("Failed to serialize JSON result: {}", e)))?;
+                bindings.push(json_str);
+            } else if let Some(output) = &result.output {
+                // Fallback to wrapping string output as External
+                updates.push(format!("payload_json = ?{}", bindings.len() + 1));
+                let external_json = serde_json::json!({
+                    "tool_name": "unknown",
+                    "payload": output
+                });
+                bindings.push(external_json.to_string());
+            }
+            
+
         }
 
         if let Some(error) = update.error {
+            // Mark as error kind
+            updates.push(format!("kind = ?{}", bindings.len() + 1));
+            bindings.push("error".to_string());
+            
+            // Store error in error_json
+            updates.push(format!("error_json = ?{}", bindings.len() + 1));
+            let error_json = serde_json::json!({
+                "tool_name": "unknown",
+                "message": &error
+            });
+            bindings.push(error_json.to_string());
+            
+            // Also store in legacy error column
             updates.push(format!("error = ?{}", bindings.len() + 1));
             bindings.push(error);
         }

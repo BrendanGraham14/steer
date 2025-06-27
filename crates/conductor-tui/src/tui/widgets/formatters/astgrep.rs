@@ -28,17 +28,17 @@ impl ToolFormatter for AstGrepFormatter {
 
         let path_display = params.path.as_deref().unwrap_or(".");
 
-        let info = if let Some(ToolResult::Success { output }) = result {
-            let match_count = output.lines().count();
-            if match_count == 0 {
-                "no matches".to_string()
-            } else {
-                format!("{} matches", match_count)
+        let info = match result {
+            Some(ToolResult::Search(search_result)) => {
+                if search_result.matches.is_empty() {
+                    "no matches".to_string()
+                } else {
+                    format!("{} matches", search_result.matches.len())
+                }
             }
-        } else if let Some(ToolResult::Error { .. }) = result {
-            "failed".to_string()
-        } else {
-            "searching...".to_string()
+            Some(ToolResult::Error(_)) => "failed".to_string(),
+            Some(_) => "unexpected result type".to_string(),
+            None => "searching...".to_string(),
         };
 
         lines.push(Line::from(vec![
@@ -100,29 +100,53 @@ impl ToolFormatter for AstGrepFormatter {
         }
 
         // Render matches if result success
-        if let Some(ToolResult::Success { output }) = result {
-            if !output.trim().is_empty() {
-                lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+        if let Some(result) = result {
+            match result {
+                ToolResult::Search(search_result) => {
+                    if !search_result.matches.is_empty() {
+                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-                const MAX_LINES: usize = 20;
-                let matches: Vec<&str> = output.lines().collect();
-                for m in matches.iter().take(MAX_LINES) {
-                    for wrapped in textwrap::wrap(m, wrap_width) {
-                        lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        const MAX_LINES: usize = 20;
+                        let matches = &search_result.matches;
+                        
+                        for search_match in matches.iter().take(MAX_LINES) {
+                            let formatted = format!("{}:{}: {}",
+                                search_match.file_path,
+                                search_match.line_number,
+                                search_match.line_content.trim()
+                            );
+                            
+                            for wrapped in textwrap::wrap(&formatted, wrap_width) {
+                                lines.push(Line::from(Span::raw(wrapped.to_string())));
+                            }
+                        }
+
+                        if matches.len() > MAX_LINES {
+                            lines.push(Line::from(Span::styled(
+                                format!("... ({} more matches)", matches.len() - MAX_LINES),
+                                styles::ITALIC_GRAY,
+                            )));
+                        }
+                    } else {
+                        lines.push(Line::from(Span::styled(
+                            "No matches found",
+                            styles::ITALIC_GRAY,
+                        )));
                     }
                 }
-
-                if matches.len() > MAX_LINES {
+                ToolResult::Error(error) => {
+                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!("... ({} more matches)", matches.len() - MAX_LINES),
-                        styles::ITALIC_GRAY,
+                        error.to_string(),
+                        styles::ERROR_TEXT,
                     )));
                 }
-            } else {
-                lines.push(Line::from(Span::styled(
-                    "No matches found",
-                    styles::ITALIC_GRAY,
-                )));
+                _ => {
+                    lines.push(Line::from(Span::styled(
+                        "Unexpected result type",
+                        styles::ERROR_TEXT,
+                    )));
+                }
             }
         }
 

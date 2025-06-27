@@ -5,7 +5,7 @@ use super::conversions::*;
 use conductor_core::api::ToolCall;
 use conductor_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, Message as ConversationMessage,
-    ThoughtContent, ToolResult, UserContent,
+    ThoughtContent, UserContent,
 };
 use conductor_core::app::{
     AppCommand, AppEvent,
@@ -15,6 +15,7 @@ use conductor_core::session::state::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
     ToolVisibility, WorkspaceConfig,
 };
+use conductor_tools::{ToolError, result::{ToolResult, ExternalResult}};
 use serde_json::json;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -134,13 +135,29 @@ prop_compose! {
 prop_compose! {
     fn arb_tool_result()(
         is_success in prop::bool::ANY,
+        tool_name in "[a-z_]+",
         output in ".*",
-        error in ".*",
+        error_variant in 0..4usize,
+        error_msg in ".*",
     ) -> ToolResult {
         if is_success {
-            ToolResult::Success { output }
+            ToolResult::External(ExternalResult {
+                tool_name,
+                payload: output,
+            })
         } else {
-            ToolResult::Error { error }
+            match error_variant {
+                0 => ToolResult::Error(ToolError::Execution { 
+                    tool_name: tool_name.clone(), 
+                    message: error_msg 
+                }),
+                1 => ToolResult::Error(ToolError::UnknownTool(tool_name)),
+                2 => ToolResult::Error(ToolError::Cancelled(tool_name)),
+                _ => ToolResult::Error(ToolError::InvalidParams( 
+                    tool_name, 
+                    error_msg 
+                )),
+            }
         }
     }
 }
@@ -307,11 +324,8 @@ proptest! {
 
     #[test]
     fn prop_message_roundtrip(message in arb_conversation_message()) {
-        let proto = message_to_proto(message.clone());
-        let roundtrip = proto_to_message(proto);
-
-        prop_assert!(roundtrip.is_ok());
-        let roundtrip = roundtrip.unwrap();
+        let proto = message_to_proto(message.clone()).unwrap();
+        let roundtrip = proto_to_message(proto).unwrap();
 
         // Compare the messages field by field since ConversationMessage doesn't implement PartialEq
         prop_assert_eq!(roundtrip.id(), message.id());
@@ -381,11 +395,32 @@ proptest! {
              ConversationMessage::Tool { tool_use_id: id2, result: r2, .. }) => {
                 prop_assert_eq!(id1, id2);
                 match (r1, r2) {
-                    (ToolResult::Success { output: o1 }, ToolResult::Success { output: o2 }) => {
-                        prop_assert_eq!(o1, o2);
+                    (ToolResult::External(ext1), ToolResult::External(ext2)) => {
+                        prop_assert_eq!(&ext1.tool_name, &ext2.tool_name);
+                        prop_assert_eq!(&ext1.payload, &ext2.payload);
                     }
-                    (ToolResult::Error { error: e1 }, ToolResult::Error { error: e2 }) => {
-                        prop_assert_eq!(e1, e2);
+                    (ToolResult::Error(err1), ToolResult::Error(err2)) => {
+                        // Compare error types - use discriminant for enum comparison
+                        prop_assert_eq!(std::mem::discriminant(err1), std::mem::discriminant(err2));
+                        match (err1, err2) {
+                            (ToolError::Execution { tool_name: tn1, message: msg1 }, 
+                             ToolError::Execution { tool_name: tn2, message: msg2 }) => {
+                                prop_assert_eq!(tn1, tn2);
+                                prop_assert_eq!(msg1, msg2);
+                            }
+                            (ToolError::UnknownTool(tn1), ToolError::UnknownTool(tn2)) => {
+                                prop_assert_eq!(tn1, tn2);
+                            }
+                            (ToolError::Cancelled(tn1), ToolError::Cancelled(tn2)) => {
+                                prop_assert_eq!(tn1, tn2);
+                            }
+                            (ToolError::InvalidParams(tn1, msg1), 
+                             ToolError::InvalidParams(tn2, msg2)) => {
+                                prop_assert_eq!(tn1, tn2);
+                                prop_assert_eq!(msg1, msg2);
+                            }
+                            _ => {} // Other error types we don't generate in our test
+                        }
                     }
                     _ => prop_assert!(false, "Tool result type mismatch"),
                 }
@@ -453,14 +488,12 @@ proptest! {
         let app_event = AppEvent::OperationCancelled { info: info.clone() };
 
         // Convert to proto
-        let proto_event = app_event_to_server_event(app_event, 42);
+        let proto_event = app_event_to_server_event(app_event, 42).unwrap();
 
         // Convert back
-        let roundtrip = server_event_to_app_event(proto_event);
+        let roundtrip = server_event_to_app_event(proto_event).unwrap();
 
-        prop_assert!(roundtrip.is_ok());
-
-        if let Ok(AppEvent::OperationCancelled { info: roundtrip_info }) = roundtrip {
+        if let AppEvent::OperationCancelled { info: roundtrip_info } = roundtrip {
             prop_assert_eq!(info.api_call_in_progress, roundtrip_info.api_call_in_progress);
             prop_assert_eq!(info.pending_tool_approvals, roundtrip_info.pending_tool_approvals);
 

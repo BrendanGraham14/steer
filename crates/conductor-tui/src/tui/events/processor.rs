@@ -52,53 +52,6 @@ pub struct ProcessingContext<'a> {
     pub current_thread: Option<uuid::Uuid>,
 }
 
-impl ProcessingContext<'_> {
-    /// Helper to get or create a tool message index
-    pub fn get_or_create_tool_index(&mut self, id: &str, name_hint: Option<String>) -> usize {
-        // First, try to find existing tool message by id
-        if let Some((idx, _)) = self.chat_store.iter().enumerate().find(|(_, item)| {
-            if let crate::tui::model::ChatItem::Message(row) = item {
-                if let conductor_core::app::conversation::Message::Tool { tool_use_id, .. } =
-                    &row.inner
-                {
-                    tool_use_id == id
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        }) {
-            return idx;
-        }
-
-        // Build placeholder ToolCall
-        let placeholder_call = ToolCall {
-            id: id.to_string(),
-            name: name_hint.unwrap_or_else(|| "unknown".to_string()),
-            parameters: serde_json::Value::Null,
-        };
-
-        // Create a placeholder Tool message
-        let tool_msg = conductor_core::app::conversation::Message::Tool {
-            id: crate::tui::model::generate_row_id(),
-            tool_use_id: id.to_string(),
-            result: conductor_core::app::conversation::ToolResult::Success {
-                output: "Pending...".to_string(),
-            },
-            timestamp: chrono::Utc::now().timestamp() as u64,
-            thread_id: self.current_thread.unwrap_or(uuid::Uuid::new_v4()),
-            parent_message_id: None,
-        };
-
-        let idx = self.chat_store.add_message(tool_msg);
-        self.tool_registry.set_message_index(id, idx);
-        self.tool_registry.register_call(placeholder_call);
-
-        idx
-    }
-}
-
 /// Trait for processing specific types of AppEvents
 pub trait EventProcessor: Send + Sync {
     /// Priority for this processor (lower numbers run first)

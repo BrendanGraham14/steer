@@ -7,6 +7,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::{ExecutionContext, ToolError};
+use crate::result::FileContentResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ViewParams {
@@ -52,6 +53,8 @@ const MAX_LINE_LENGTH: usize = 2000; // Maximum characters per line before trunc
 tool! {
     ViewTool {
         params: ViewParams,
+        output: FileContentResult,
+        variant: FileContent,
         description: format!(r#"Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path.
 By default, it reads up to 2000 lines starting from the beginning of the file. You can optionally specify a line offset and limit
 (especially handy for long files), but it's recommended to read the whole file by not providing these parameters.
@@ -64,7 +67,7 @@ Any lines longer than {} characters will be truncated."#, MAX_LINE_LENGTH),
         _tool: &ViewTool,
         params: ViewParams,
         context: &ExecutionContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<FileContentResult, ToolError> {
         if context.is_cancelled() {
             return Err(ToolError::Cancelled(VIEW_TOOL_NAME.to_string()));
         }
@@ -94,7 +97,7 @@ async fn view_file_internal(
     offset: Option<usize>,
     limit: Option<usize>,
     context: &ExecutionContext,
-) -> Result<String, ViewError> {
+) -> Result<FileContentResult, ViewError> {
     let mut file = File::open(file_path)
         .await
         .map_err(|e| ViewError::FileOpen {
@@ -114,6 +117,9 @@ async fn view_file_internal(
     let mut buffer = Vec::new();
     let start_line = offset.unwrap_or(1).max(1); // 1-indexed
     let line_limit = limit;
+    #[allow(unused_assignments)]
+    let mut total_lines = 0;
+    let mut truncated = false;
 
     if start_line > 1 || line_limit.is_some() {
         // Read line by line if offset or limit is specified
@@ -141,6 +147,7 @@ async fn view_file_internal(
                         lines.push(line.trim_end().to_string()); // Store line
                         lines_read += 1;
                         if line_limit.is_some_and(|l| lines_read >= l) {
+                            truncated = true;
                             break; // Reached limit
                         }
                     }
@@ -153,6 +160,7 @@ async fn view_file_internal(
         }
 
         // Add line numbers
+        total_lines = lines.len();
         let numbered_lines: Vec<String> = lines
             .into_iter()
             .enumerate()
@@ -184,6 +192,8 @@ async fn view_file_internal(
         // Convert to string and add line numbers
         let content = String::from_utf8_lossy(&buffer);
         let lines: Vec<&str> = content.lines().collect();
+        total_lines = lines.len();
+        truncated = file_size as usize > MAX_READ_BYTES;
         let numbered_lines: Vec<String> = lines
             .into_iter()
             .enumerate()
@@ -202,5 +212,11 @@ async fn view_file_internal(
     }
 
     // Return the final content
-    Ok(String::from_utf8_lossy(&buffer).to_string())
+    let content = String::from_utf8_lossy(&buffer).to_string();
+    Ok(FileContentResult {
+        content,
+        file_path: file_path.to_string(),
+        line_count: total_lines,
+        truncated,
+    })
 }

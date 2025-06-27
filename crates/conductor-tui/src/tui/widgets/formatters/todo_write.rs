@@ -97,7 +97,7 @@ impl ToolFormatter for TodoWriteFormatter {
             ]));
         }
 
-        if let Some(ToolResult::Error { error }) = result {
+        if let Some(ToolResult::Error(error)) = result {
             lines.push(separator_line(40, styles::DIM_TEXT));
             lines.push(Line::from(Span::styled(
                 format!("Error: {}", error),

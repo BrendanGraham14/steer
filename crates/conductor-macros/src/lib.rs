@@ -29,15 +29,20 @@ impl Parse for FieldValue {
 // tool! {
 //    ToolName {
 //        params: ParamsStruct,
+//        output: OutputType,
+//        variant: ResultVariant,
 //        description: "Description string",
 //        name: "name_string",
 //        require_approval: true
-//    }
-//    async fn run(&self, p: ParamsStruct, cancel: Option<CancellationToken>) -> Result<String, ToolError> { ... }
 // }
+//    async fn run(&self, p: ParamsStruct, cancel: Option<CancellationToken>) -> Result<OutputType, ToolError> { ... }
+// }
+#[allow(dead_code)]
 struct ToolDefinition {
     tool_name: Ident,
     params_struct: Path,
+    output_type: Path,
+    variant: Ident,
     description: syn::Expr,
     require_approval: LitBool,
     name: LitStr,
@@ -55,6 +60,8 @@ impl Parse for ToolDefinition {
             content.parse_terminated(FieldValue::parse, Token![,])?;
 
         let mut params_struct: Option<Path> = None;
+        let mut output_type: Option<Path> = None;
+        let mut variant: Option<Ident> = None;
         let mut description: Option<syn::Expr> = None;
         let mut name: Option<LitStr> = None;
         let mut require_approval: Option<LitBool> = None;
@@ -66,7 +73,7 @@ impl Parse for ToolDefinition {
                     if params_struct.is_some() {
                         return Err(syn::Error::new_spanned(
                             field.key,
-                            "Duplicate \'params\' field",
+                            "Duplicate 'params' field",
                         ));
                     }
                     if let syn::Expr::Path(expr_path) = field.value {
@@ -74,7 +81,7 @@ impl Parse for ToolDefinition {
                     } else {
                         return Err(syn::Error::new_spanned(
                             field.value,
-                            "Expected a path for \'params\' (e.g., crate::some::Params)",
+                            "Expected a path for 'params' (e.g., crate::some::Params)",
                         ));
                     }
                 }
@@ -82,7 +89,7 @@ impl Parse for ToolDefinition {
                     if description.is_some() {
                         return Err(syn::Error::new_spanned(
                             field.key,
-                            "Duplicate \'description\' field",
+                            "Duplicate 'description' field",
                         ));
                     }
                     description = Some(field.value);
@@ -91,7 +98,7 @@ impl Parse for ToolDefinition {
                     if name.is_some() {
                         return Err(syn::Error::new_spanned(
                             field.key,
-                            "Duplicate \'name\' field",
+                            "Duplicate 'name' field",
                         ));
                     }
                     if let syn::Expr::Lit(ref expr_lit) = field.value {
@@ -100,13 +107,52 @@ impl Parse for ToolDefinition {
                         } else {
                             return Err(syn::Error::new_spanned(
                                 field.value,
-                                "Expected a string literal for \'name\' (e.g., \"tool_name\")",
+                                "Expected a string literal for 'name' (e.g., \"tool_name\")",
                             ));
                         }
                     } else {
                         return Err(syn::Error::new_spanned(
                             field.value,
-                            "Expected a string literal for \'name\' (e.g., \"tool_name\")",
+                            "Expected a string literal for 'name' (e.g., \"tool_name\")",
+                        ));
+                    }
+                }
+                "output" => {
+                    if output_type.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            field.key,
+                            "Duplicate 'output' field",
+                        ));
+                    }
+                    if let syn::Expr::Path(expr_path) = field.value {
+                        output_type = Some(expr_path.path);
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            field.value,
+                            "Expected a path for 'output' (e.g., MyOutputType)",
+                        ));
+                    }
+                }
+                "variant" => {
+                    if variant.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            field.key,
+                            "Duplicate 'variant' field",
+                        ));
+                    }
+                    if let syn::Expr::Path(ref expr_path) = field.value {
+                        if let Some(ident) = expr_path.path.get_ident() {
+                            variant = Some(ident.clone());
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                field.value,
+                                "Expected an identifier for 'variant' (e.g., Search)",
+                            ));
+                        }
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            field.value,
+                            "Expected an identifier for 'variant' (e.g., Search)",
                         ));
                     }
                 }
@@ -114,7 +160,7 @@ impl Parse for ToolDefinition {
                     if require_approval.is_some() {
                         return Err(syn::Error::new_spanned(
                             field.key,
-                            "Duplicate \'require_approval\' field",
+                            "Duplicate 'require_approval' field",
                         ));
                     }
                     if let syn::Expr::Lit(ref expr_lit) = field.value {
@@ -123,7 +169,7 @@ impl Parse for ToolDefinition {
                         } else {
                             return Err(syn::Error::new_spanned(
                                 field.value,
-                                "Expected a boolean literal for \'require_approval\' (e.g., true or false)",
+                                "Expected a boolean literal for 'require_approval' (e.g., true or false)",
                             ));
                         }
                     }
@@ -131,7 +177,7 @@ impl Parse for ToolDefinition {
                 _ => {
                     return Err(syn::Error::new(
                         field.key.span(),
-                        "Expected one of: 'params', 'description', 'name', 'require_approval'",
+                        "Expected one of: 'params', 'output', 'variant', 'description', 'name', 'require_approval'",
                     ));
                 }
             }
@@ -139,10 +185,13 @@ impl Parse for ToolDefinition {
 
         // Check for missing fields
         let params_struct = params_struct
-            .ok_or_else(|| syn::Error::new(input.span(), "Missing \'params\' field"))?;
-        let description = description
-            .ok_or_else(|| syn::Error::new(input.span(), "Missing \'description\' field"))?;
-        let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing \'name\' field"))?;
+            .ok_or_else(|| syn::Error::new(input.span(), "Missing 'params' field"))?;
+        let output_type =
+            output_type.ok_or_else(|| syn::Error::new(input.span(), "Missing 'output' field"))?;
+        let variant = variant.ok_or_else(|| syn::Error::new(input.span(), "Missing 'variant' field"))?;
+        let description =
+            description.ok_or_else(|| syn::Error::new(input.span(), "Missing 'description' field"))?;
+        let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing 'name' field"))?;
         let require_approval = require_approval.unwrap_or(LitBool::new(true, input.span()));
 
         let run_function: syn::ItemFn = input.parse()?;
@@ -150,13 +199,15 @@ impl Parse for ToolDefinition {
         if run_function.sig.ident != "run" {
             return Err(syn::Error::new_spanned(
                 run_function.sig.ident,
-                "Function must be named \'run\'",
+                "Function must be named 'run'",
             ));
         }
 
         Ok(ToolDefinition {
             tool_name,
             params_struct,
+            output_type,
+            variant,
             description,
             name,
             require_approval,
@@ -190,6 +241,8 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
 
     let tool_struct_name = parsed_input.tool_name;
     let params_struct_name = parsed_input.params_struct;
+    let output_type = parsed_input.output_type;
+    let variant = parsed_input.variant;
     let description_expr = parsed_input.description;
     let require_approval = parsed_input.require_approval;
     let run_function = parsed_input.run_function;
@@ -213,12 +266,13 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
     let const_name = syn::Ident::new(&const_name_string, tool_struct_name.span());
 
     // Choose import path based on whether we're in an external crate
-    let (trait_path, context_path, error_path, schema_path) = if is_external {
+    let (trait_path, context_path, error_path, schema_path, tool_result_path) = if is_external {
         (
             quote! { conductor_tools::Tool },
             quote! { conductor_tools::ExecutionContext },
             quote! { conductor_tools::ToolError },
             quote! { conductor_tools::InputSchema },
+            quote! { conductor_tools::result::ToolResult },
         )
     } else {
         (
@@ -226,8 +280,50 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
             quote! { crate::ExecutionContext },
             quote! { crate::ToolError },
             quote! { crate::InputSchema },
+            quote! { crate::result::ToolResult },
         )
     };
+
+    // Check if output_type is a newtype wrapper (ends with "Result")
+    let is_newtype = if let Some(last_segment) = output_type.segments.last() {
+        let ident_str = last_segment.ident.to_string();
+        ident_str == "GrepResult" || 
+        ident_str == "AstGrepResult" || 
+        ident_str == "MultiEditResult" || 
+        ident_str == "ReplaceResult"
+    } else {
+        false
+    };
+
+    // Check if output_type is ExternalResult
+    let is_external_result = if let Some(last_segment) = output_type.segments.last() {
+        last_segment.ident.to_string() == "ExternalResult"
+    } else {
+        false
+    };
+
+    let from_impl = if is_external || is_external_result {
+        // Skip generating From impls when used outside conductor-tools to avoid orphan rules
+        // or when the output type is ExternalResult (which has a manual impl)
+        quote! {}
+    } else if is_newtype {
+        quote! {
+            impl From<#output_type> for #tool_result_path {
+                fn from(r: #output_type) -> Self {
+                    Self::#variant(r.0)
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl From<#output_type> for #tool_result_path {
+                fn from(r: #output_type) -> Self {
+                    Self::#variant(r)
+                }
+            }
+        }
+    };
+
 
     let expanded = quote! {
         // Generate a constant for the tool name
@@ -246,6 +342,8 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
 
         #[async_trait::async_trait]
         impl #trait_path for #tool_struct_name {
+            type Output = #output_type;
+
             fn name(&self) -> &'static str {
                 #tool_struct_name::name()
             }
@@ -292,7 +390,7 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
                 &self,
                 parameters: ::serde_json::Value,
                 context: &#context_path,
-            ) -> std::result::Result<String, #error_path> {
+            ) -> std::result::Result<Self::Output, #error_path> {
                 let params: #params_struct_name = ::serde_json::from_value(parameters.clone())
                     .map_err(|e| #error_path::invalid_params(#tool_name_for_errors, e.to_string()))?;
 
@@ -307,6 +405,7 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
                 #require_approval
             }
         }
+        #from_impl
     };
 
     TokenStream::from(expanded)

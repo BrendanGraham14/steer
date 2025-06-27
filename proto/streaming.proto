@@ -191,7 +191,7 @@ message ToolCallStartedEvent {
 
 message ToolCallCompletedEvent {
   string name = 1;
-  string result = 2;
+  ToolResult result = 2;
   string id = 3;
   string model = 4;
 }
@@ -386,9 +386,137 @@ message ToolCall {
 
 message ToolResult {
   oneof result {
-    string success = 1;
-    string error = 2;
+    SearchResult search = 1;
+    FileListResult file_list = 2;
+    FileContentResult file_content = 3;
+    EditResult edit = 4;
+    BashResult bash = 5;
+    GlobResult glob = 6;
+    TodoListResult todo_read = 7;
+    TodoWriteResult todo_write = 8;
+    FetchResult fetch = 9;
+    AgentResult agent = 10;
+    ExternalResult external = 50;
+    ToolError error = 99;
   }
+}
+
+message SearchResult {
+  repeated SearchMatch matches = 1;
+  uint32 total_files_searched = 2;
+  bool search_completed = 3;
+}
+
+message SearchMatch {
+  string file_path = 1;
+  uint32 line_number = 2;
+  string line_content = 3;
+  optional ColumnRange column_range = 4;
+}
+
+message ColumnRange {
+  uint32 start = 1;
+  uint32 end = 2;
+}
+
+message FileListResult {
+  repeated FileEntry entries = 1;
+  string base_path = 2;
+}
+
+message FileEntry {
+  string path = 1;
+  bool is_directory = 2;
+  optional uint64 size = 3;
+  optional string permissions = 4;
+}
+
+message FileContentResult {
+  string content = 1;
+  string file_path = 2;
+  uint32 line_count = 3;
+  bool truncated = 4;
+}
+
+message EditResult {
+  string file_path = 1;
+  uint32 changes_made = 2;
+  bool file_created = 3;
+  optional string old_content = 4;
+  optional string new_content = 5;
+}
+
+message BashResult {
+  string stdout = 1;
+  string stderr = 2;
+  int32 exit_code = 3;
+  string command = 4;
+}
+
+message GlobResult {
+  repeated string matches = 1;
+  string pattern = 2;
+}
+
+message TodoListResult {
+  repeated TodoItem todos = 1;
+}
+
+message TodoItem {
+  string id = 1;
+  string content = 2;
+  string status = 3;
+  string priority = 4;
+}
+
+message TodoWriteResult {
+  repeated TodoItem todos = 1;
+  string operation = 2;
+}
+
+message FetchResult {
+  string url = 1;
+  string content = 2;
+}
+
+message AgentResult {
+  string content = 1;
+}
+
+message ExternalResult {
+  string tool_name = 1;
+  string payload = 2;
+}
+
+message ToolError {
+  oneof error_type {
+    string unknown_tool = 1;
+    InvalidParamsError invalid_params = 2;
+    ExecutionError execution = 3;
+    string cancelled = 4;
+    string timeout = 5;
+    string denied_by_user = 6;
+    string internal_error = 7;
+    IoError io = 8;
+    string serialization = 9;
+    string http = 10;
+    string regex = 11;
+  }
+}
+
+message InvalidParamsError {
+  string tool_name = 1;
+  string message = 2;
+}
+
+message ExecutionError {
+  string tool_name = 1;
+  string message = 2;
+}
+
+message IoError {
+  string tool_name = 1;
+  string message = 2;
 }
 
 message ToolCallState {
