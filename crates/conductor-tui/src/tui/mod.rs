@@ -1152,7 +1152,7 @@ impl Tui {
                     },
                     match input_mode {
                         InputMode::Insert => " Insert (Alt-Enter to send, Esc to cancel) ",
-                        InputMode::Normal => " (i to insert, ! for bash, u/d/j/k to scroll) ",
+                        InputMode::Normal => " (i to insert, ! for bash, u/d/j/k to scroll, e to edit previous messages) ",
                         InputMode::BashCommand => " Bash (Enter to execute, Esc to cancel) ",
                         InputMode::AwaitingApproval => " Awaiting Approval",
                         InputMode::SelectingModel => " Model Selection",
