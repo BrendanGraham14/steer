@@ -43,3 +43,5 @@ time = { version = "0.3.41", features = ["formatting"] }
 ulid = "1.2.1"
 notify-rust = "4.11.7"
 actually_beep = "0.1.1"
+tui-markdown = "0.3.5"
+unicode-width = "0.2.0"

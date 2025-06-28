@@ -20,7 +20,6 @@ pub enum NoticeLevel {
     Info,
 }
 
-/// Extended message data with UI-specific information
 #[derive(Debug, Clone)]
 pub struct MessageRow {
     /// The core message from conductor-core

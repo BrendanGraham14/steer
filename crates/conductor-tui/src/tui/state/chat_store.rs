@@ -2,6 +2,7 @@
 
 use crate::tui::model::{ChatItem, MessageRow, RowId};
 use conductor_core::app::conversation::Message;
+
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -64,7 +65,7 @@ impl ChatStore {
 
     /// Add a message row
     pub fn add_message(&mut self, message: Message) -> usize {
-        let row = MessageRow { inner: message };
+        let row = MessageRow::new(message);
 
         if self.current_thread.is_none() {
             self.current_thread = Some(*row.inner.thread_id());

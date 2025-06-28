@@ -2,8 +2,9 @@
 
 use crate::tui::model::{ChatItem, MessageRow, NoticeLevel};
 use crate::tui::widgets::formatters;
+use crate::tui::widgets::formatters::helpers::style_wrap;
 use crate::tui::widgets::styles;
-use conductor_core::app::conversation::{AssistantContent, Message, ToolResult};
+use conductor_core::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,8 +12,19 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Paragraph, StatefulWidget, Widget, Wrap},
 };
+use std::collections::HashMap;
 use textwrap;
 use time::format_description::well_known::Rfc3339;
+
+/// Cache for rendered message lines
+#[derive(Debug, Clone)]
+pub struct RenderCache {
+    pub lines: Vec<Line<'static>>,
+    pub height: u16,
+}
+
+/// Key for the render cache (message ID, width, view mode)
+type CacheKey = (String, u16, ViewMode);
 
 /// View mode for message rendering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,6 +48,8 @@ pub struct ChatListState {
     last_viewport_height: u16,
     /// Track if user has manually scrolled away from bottom
     user_scrolled: bool,
+    /// Cache for rendered message lines
+    line_cache: HashMap<CacheKey, RenderCache>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +75,7 @@ impl ChatListState {
             total_content_height: 0,
             last_viewport_height: 0,
             user_scrolled: false,
+            line_cache: HashMap::new(),
         }
     }
 
@@ -161,445 +176,13 @@ impl<'a> ChatList<'a> {
         Line::from(vec![Span::styled("•", style)])
     }
 
-    fn render_chat_item(
-        &self,
-        item: &ChatItem,
-        width: u16,
-        view_mode: ViewMode,
-    ) -> (Vec<Line<'static>>, u16) {
+    fn render_non_message_item(&self, item: &ChatItem, width: u16) -> (Vec<Line<'static>>, u16) {
         let max_width = (width.saturating_sub(4)) as usize; // 4 for gutter + minimal padding
 
-        // Check if this message is hovered
-        let is_hovered = if let ChatItem::Message(row) = item {
-            self.hovered_message_id
-                .map(|id| id == row.inner.id())
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
         match item {
-            ChatItem::Message(row) => {
-                // Render the message content
-                let mut lines = vec![];
-
-                // Render the actual message based on type
-                match &row.inner {
-                    Message::User { content, .. } => {
-                        // Handle empty content
-                        if content.is_empty() {
-                            lines.push(self.render_gutter(row, is_hovered));
-                        } else {
-                            // Render user content blocks
-                            for (idx, block) in content.iter().enumerate() {
-                                match block {
-                                conductor_core::app::conversation::UserContent::Text { text } => {
-                                    // For the first line, put it inline with the gutter
-                                    let wrapped = textwrap::wrap(text, max_width);
-
-                                    for (line_idx, wrapped_line) in wrapped.iter().enumerate() {
-                                        if idx == 0 && line_idx == 0 {
-                                            // First line goes with the gutter
-                                            let mut first_line = vec![];
-                                            first_line.extend(self.render_gutter(row, is_hovered).spans);
-                                            first_line.push(Span::raw(" "));
-                                            first_line.push(Span::raw(wrapped_line.to_string()));
-                                            lines.push(Line::from(first_line));
-                                        } else {
-                                            // Continuation lines are indented
-                                            lines.push(Line::from(vec![
-                                                Span::raw("  "), // Indent to align with text after glyph
-                                                Span::raw(wrapped_line.to_string()),
-                                            ]));
-                                        }
-                                    }
-
-                                    // Add empty line between blocks
-                                    if idx + 1 < content.len() {
-                                        lines.push(Line::from(""));
-                                    }
-                                }
-                                conductor_core::app::conversation::UserContent::CommandExecution { command, stdout, stderr, exit_code } => {
-                                    // Add gutter if this is the first block
-                                    if idx == 0 {
-                                        let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
-                                        cmd_line.push(Span::raw(" "));
-                                        cmd_line.push(Span::styled("$ ", Style::default().fg(Color::Yellow)));
-                                        cmd_line.push(Span::raw(command.clone()));
-                                        lines.push(Line::from(cmd_line));
-                                    } else {
-                                        lines.push(Line::from(""));
-                                        let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
-                                        cmd_line.push(Span::raw(" "));
-                                        cmd_line.push(Span::styled("$ ", Style::default().fg(Color::Yellow)));
-                                        cmd_line.push(Span::raw(command.clone()));
-                                        lines.push(Line::from(cmd_line));
-                                    }
-
-                                    // Show exit code if non-zero
-                                    if *exit_code != 0 {
-                                        lines.push(Line::from(vec![
-                                            Span::raw("  "),
-                                            Span::styled(format!("Exit code: {}", exit_code), Style::default().fg(Color::Red)),
-                                        ]));
-                                    }
-
-                                    // Show stdout if not empty
-                                    if !stdout.is_empty() {
-                                        let stdout_wrapped = textwrap::wrap(stdout, max_width.saturating_sub(2));
-                                        for line in stdout_wrapped {
-                                            lines.push(Line::from(vec![
-                                                Span::raw("  "),
-                                                Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
-                                            ]));
-                                        }
-                                    }
-
-                                    // Show stderr if not empty
-                                    if !stderr.is_empty() {
-                                        lines.push(Line::from(vec![
-                                            Span::raw("  "),
-                                            Span::styled("Error:", Style::default().fg(Color::Red)),
-                                        ]));
-                                        let stderr_wrapped = textwrap::wrap(stderr, max_width.saturating_sub(2));
-                                        for line in stderr_wrapped {
-                                            lines.push(Line::from(vec![
-                                                Span::raw("  "),
-                                                Span::styled(line.to_string(), Style::default().fg(Color::Red)),
-                                            ]));
-                                        }
-                                    }
-                                }
-                                conductor_core::app::conversation::UserContent::AppCommand { command, response } => {
-                                    // Format command nicely
-                                    let command_str = match command {
-                                        conductor_core::app::conversation::AppCommandType::Model { target } => {
-                                            if let Some(model) = target {
-                                                format!("/model {}", model)
-                                            } else {
-                                                "/model".to_string()
-                                            }
-                                        }
-                                        conductor_core::app::conversation::AppCommandType::Compact => "/compact".to_string(),
-                                        conductor_core::app::conversation::AppCommandType::Clear => "/clear".to_string(),
-                                        conductor_core::app::conversation::AppCommandType::Cancel => "/cancel".to_string(),
-                                        conductor_core::app::conversation::AppCommandType::Help => "/help".to_string(),
-                                        conductor_core::app::conversation::AppCommandType::Unknown { command } => command.clone(),
-                                    };
-
-                                    // Add gutter if this is the first block
-                                    if idx == 0 {
-                                        let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
-                                        cmd_line.push(Span::raw(" "));
-                                        cmd_line.push(Span::styled(command_str, Style::default().fg(Color::Magenta)));
-                                        lines.push(Line::from(cmd_line));
-                                    } else {
-                                        lines.push(Line::from(""));
-                                        let mut cmd_line = vec![];
-                                        cmd_line.extend(self.render_gutter(row, is_hovered).spans);
-                                        cmd_line.push(Span::raw(" "));
-                                        cmd_line.push(Span::styled(command_str, Style::default().fg(Color::Magenta)));
-                                        lines.push(Line::from(cmd_line));
-                                    }
-
-                                    if let Some(resp) = response {
-                                        match resp {
-                                            conductor_core::app::conversation::CommandResponse::Text(text) => {
-                                                let wrapped = textwrap::wrap(text, max_width.saturating_sub(2));
-                                                for line in wrapped {
-                                                    lines.push(Line::from(vec![
-                                                        Span::raw("  "),
-                                                        Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
-                                                    ]));
-                                                }
-                                            }
-                                            conductor_core::app::conversation::CommandResponse::Compact(result) => {
-                                                let text = match result {
-                                                    conductor_core::app::conversation::CompactResult::Success(summary) => summary,
-                                                    conductor_core::app::conversation::CompactResult::Cancelled => "Cancelled",
-                                                    conductor_core::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact.",
-                                                };
-                                                let wrapped = textwrap::wrap(text, max_width.saturating_sub(2));
-                                                for line in wrapped {
-                                                    lines.push(Line::from(vec![
-                                                        Span::raw("  "),
-                                                        Span::styled(line.to_string(), Style::default().fg(Color::Green)),
-                                                    ]));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            }
-                        }
-                    }
-                    Message::Assistant { content, .. } => {
-                        let mut first_content_rendered = false;
-
-                        // Render assistant content blocks
-                        for (idx, block) in content.iter().enumerate() {
-                            match block {
-                                AssistantContent::Text { text } => {
-                                    // Skip empty text blocks
-                                    if text.trim().is_empty() {
-                                        continue;
-                                    }
-
-                                    // Wrap the text properly
-                                    let wrapped = textwrap::wrap(text, max_width.saturating_sub(3)); // Account for indent
-
-                                    for (line_idx, wrapped_line) in wrapped.iter().enumerate() {
-                                        if !first_content_rendered && line_idx == 0 {
-                                            // First line goes with the indented gutter
-                                            let mut first_line = vec![];
-                                            first_line.push(Span::raw("  ")); // Indent the glyph
-                                            first_line
-                                                .extend(self.render_gutter(row, is_hovered).spans);
-                                            first_line.push(Span::raw(" "));
-                                            first_line.push(Span::raw(wrapped_line.to_string()));
-                                            lines.push(Line::from(first_line));
-                                            first_content_rendered = true;
-                                        } else {
-                                            // Continuation lines are indented
-                                            lines.push(Line::from(vec![
-                                                Span::raw("    "), // 4 spaces to align with text after indented glyph
-                                                Span::raw(wrapped_line.to_string()),
-                                            ]));
-                                        }
-                                    }
-
-                                    // Add empty line between blocks
-                                    if idx + 1 < content.len() {
-                                        lines.push(Line::from(""));
-                                    }
-                                }
-                                AssistantContent::ToolCall { tool_call: _ } => {
-                                    // Skip rendering tool calls here - they're shown as separate Tool messages
-                                    continue;
-                                }
-                                AssistantContent::Thought { thought } => {
-                                    // Wrap the thought text properly
-                                    let thought_text = thought.display_text();
-                                    let wrapped =
-                                        textwrap::wrap(&thought_text, max_width.saturating_sub(3)); // 3 for indent
-
-                                    for (line_idx, wrapped_line) in wrapped.iter().enumerate() {
-                                        if !first_content_rendered && line_idx == 0 {
-                                            // First line goes with the indented gutter
-                                            let mut first_line = vec![];
-                                            first_line.push(Span::raw("  ")); // Indent
-                                            first_line
-                                                .extend(self.render_gutter(row, is_hovered).spans);
-                                            first_line.push(Span::raw(" "));
-                                            first_line.push(Span::styled(
-                                                wrapped_line.to_string(),
-                                                Style::default()
-                                                    .fg(Color::DarkGray)
-                                                    .add_modifier(Modifier::ITALIC),
-                                            ));
-                                            lines.push(Line::from(first_line));
-                                            first_content_rendered = true;
-                                        } else {
-                                            lines.push(Line::from(vec![
-                                                Span::raw("    "),
-                                                Span::styled(
-                                                    wrapped_line.to_string(),
-                                                    Style::default()
-                                                        .fg(Color::DarkGray)
-                                                        .add_modifier(Modifier::ITALIC),
-                                                ),
-                                            ]));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // If no content was rendered, just show the glyph
-                        if !first_content_rendered {
-                            let mut glyph_line = vec![];
-                            glyph_line.push(Span::raw("  ")); // Indent
-                            glyph_line.extend(self.render_gutter(row, is_hovered).spans);
-                            lines.push(Line::from(glyph_line));
-                        }
-                    }
-                    Message::Tool {
-                        tool_use_id,
-                        result,
-                        ..
-                    } => {
-                        // Get the tool call from the registry
-                        if let Some(item) = self.items.iter().find(|item| {
-                            if let ChatItem::Message(msg_row) = item {
-                                if let Message::Assistant { content, .. } = &msg_row.inner {
-                                    content.iter().any(|block| {
-                                        if let AssistantContent::ToolCall { tool_call } = block {
-                                            tool_call.id == *tool_use_id
-                                        } else {
-                                            false
-                                        }
-                                    })
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        }) {
-                            if let ChatItem::Message(msg_row) = item {
-                                if let Message::Assistant { content, .. } = &msg_row.inner {
-                                    // Find the specific tool call
-                                    if let Some(tool_call) = content.iter().find_map(|block| {
-                                        if let AssistantContent::ToolCall { tool_call } = block {
-                                            if tool_call.id == *tool_use_id {
-                                                Some(tool_call)
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    }) {
-                                        // Use the formatter to render the tool
-                                        let formatter = formatters::get_formatter(&tool_call.name);
-                                        let wrap_width = (width.saturating_sub(7)) as usize; // Account for indent and padding
-
-                                        let formatted_lines = match view_mode {
-                                            ViewMode::Compact => formatter.compact(
-                                                &tool_call.parameters,
-                                                &Some(result.clone()),
-                                                wrap_width,
-                                            ),
-                                            ViewMode::Detailed => formatter.detailed(
-                                                &tool_call.parameters,
-                                                &Some(result.clone()),
-                                                wrap_width,
-                                            ),
-                                        };
-
-                                        // First line with indented gutter and tool name
-                                        let mut first_line = vec![];
-                                        first_line.push(Span::raw("  ")); // Indent
-                                        first_line
-                                            .extend(self.render_gutter(row, is_hovered).spans);
-                                        first_line.push(Span::raw(" "));
-                                        first_line.push(Span::styled(
-                                            tool_call.name.clone(),
-                                            Style::default().fg(Color::Cyan),
-                                        ));
-
-                                        // For compact mode, try to fit first output on same line
-                                        if view_mode == ViewMode::Compact
-                                            && !formatted_lines.is_empty()
-                                        {
-                                            let first_output = &formatted_lines[0];
-                                            if first_output.width()
-                                                < (wrap_width - tool_call.name.len() - 5)
-                                            {
-                                                // Add status indicator or bullet
-                                                match result {
-                                                    ToolResult::Error(_) => {
-                                                        first_line.push(Span::styled(
-                                                            " ✗ ",
-                                                            styles::ERROR_TEXT,
-                                                        ));
-                                                    }
-                                                    _ => {
-                                                        first_line.push(Span::styled(
-                                                            " ✓ ",
-                                                            styles::TOOL_SUCCESS,
-                                                        ));
-                                                    }
-                                                }
-                                                first_line.extend(first_output.spans.clone());
-                                                lines.push(Line::from(first_line));
-
-                                                // Add remaining lines
-                                                for line in formatted_lines.iter().skip(1) {
-                                                    let mut indented_spans =
-                                                        vec![Span::raw("    ")]; // Align with content
-                                                    indented_spans.extend(line.spans.clone());
-                                                    lines.push(Line::from(indented_spans));
-                                                }
-                                            } else {
-                                                // Add status indicator on first line if we have result
-                                                if view_mode == ViewMode::Compact {
-                                                    match result {
-                                                        ToolResult::Error(_) => {
-                                                            first_line.push(Span::styled(
-                                                                " ✗",
-                                                                styles::ERROR_TEXT,
-                                                            ));
-                                                        }
-                                                        _ => {
-                                                            first_line.push(Span::styled(
-                                                                " ✓",
-                                                                styles::TOOL_SUCCESS,
-                                                            ));
-                                                        }
-                                                    }
-                                                }
-                                                lines.push(Line::from(first_line));
-                                                // Add all lines with indent
-                                                for line in formatted_lines {
-                                                    let mut indented_spans =
-                                                        vec![Span::raw("    ")]; // Align with content
-                                                    indented_spans.extend(line.spans.clone());
-                                                    lines.push(Line::from(indented_spans));
-                                                }
-                                            }
-                                        } else {
-                                            lines.push(Line::from(first_line));
-                                            // Add the formatted output with proper indentation
-                                            for line in formatted_lines {
-                                                let mut indented_spans = vec![Span::raw("    ")]; // Align with content
-                                                indented_spans.extend(line.spans.clone());
-                                                lines.push(Line::from(indented_spans));
-                                            }
-                                        }
-
-                                        let height = lines.len() as u16;
-                                        return (lines, height);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Fallback if we can't find the tool call (shouldn't happen)
-                        let mut fallback_line = vec![];
-                        fallback_line.push(Span::raw("  ")); // Indent
-                        fallback_line.extend(self.render_gutter(row, is_hovered).spans);
-                        fallback_line.push(Span::raw(" "));
-                        fallback_line.push(Span::styled(
-                            "Tool Result",
-                            Style::default().fg(Color::Cyan),
-                        ));
-                        lines.push(Line::from(fallback_line));
-
-                        // Show a simple message for the fallback case
-                        let color = match result {
-                            ToolResult::Error(_) => Color::Red,
-                            _ => Color::DarkGray,
-                        };
-
-                        lines.push(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled(
-                                "(Result display unavailable)",
-                                Style::default().fg(color).add_modifier(Modifier::ITALIC),
-                            ),
-                        ]));
-                    }
-                }
-
-                let height = lines.len() as u16;
-                (lines, height)
-            }
-
+            // Message items are handled via cache – this function only renders meta/non-message items
+            ChatItem::Message(_) => unreachable!("render_non_message_item called with Message"),
+        
             ChatItem::PendingToolCall { tool_call, .. } => {
                 let mut lines = vec![];
 
@@ -779,6 +362,459 @@ impl<'a> ChatList<'a> {
             }
         }
     }
+
+    /// Build cache for a single message row
+    fn build_cache_for_message(
+        &self,
+        row: &MessageRow,
+        width: u16,
+        view_mode: ViewMode,
+    ) -> RenderCache {
+        let mut all_lines = Vec::new();
+        let is_hovered = self.hovered_message_id == Some(row.id());
+        let max_width = width.saturating_sub(4) as usize; // 4 for gutter + minimal padding
+
+        match &row.inner {
+            Message::User { content, .. } => {
+                if content.is_empty() {
+                    // Empty message - just show gutter
+                    all_lines.push(self.render_gutter(row, is_hovered));
+                } else {
+                    // Process each content block
+                    for (idx, block) in content.iter().enumerate() {
+                        match block {
+                            UserContent::Text { text } => {
+                                // Parse markdown
+                                let markdown_text = tui_markdown::from_str(text);
+
+                                // Process each line from markdown
+                                for (line_idx, line) in markdown_text.lines.into_iter().enumerate()
+                                {
+                                    // Wrap the line while preserving styles
+                                    let wrapped_lines = style_wrap(line, max_width as u16);
+
+                                    for (wrap_idx, wrapped_line) in
+                                        wrapped_lines.into_iter().enumerate()
+                                    {
+                                        if idx == 0 && line_idx == 0 && wrap_idx == 0 {
+                                            // First line gets the gutter
+                                            let mut first_line =
+                                                self.render_gutter(row, is_hovered).spans;
+                                            first_line.push(Span::raw(" "));
+                                            first_line.extend(wrapped_line.spans);
+                                            all_lines.push(Line::from(first_line));
+                                        } else {
+                                            // Continuation lines are indented
+                                            let mut indented = vec![Span::raw("  ")];
+                                            indented.extend(wrapped_line.spans);
+                                            all_lines.push(Line::from(indented));
+                                        }
+                                    }
+                                }
+
+                                // Add spacing between blocks
+                                if idx + 1 < content.len() {
+                                    all_lines.push(Line::from(""));
+                                }
+                            }
+                            UserContent::CommandExecution {
+                                command,
+                                stdout,
+                                stderr,
+                                exit_code,
+                            } => {
+                                // Add gutter if this is the first block
+                                if idx == 0 {
+                                    let mut cmd_line = self.render_gutter(row, is_hovered).spans;
+                                    cmd_line.push(Span::raw(" "));
+                                    cmd_line.push(Span::styled(
+                                        "$ ",
+                                        Style::default().fg(Color::Yellow),
+                                    ));
+                                    cmd_line.push(Span::raw(command.clone()));
+                                    all_lines.push(Line::from(cmd_line));
+                                } else {
+                                    all_lines.push(Line::from(""));
+                                    let mut cmd_line = vec![Span::raw("  ")]; // Indent
+                                    cmd_line.push(Span::styled(
+                                        "$ ",
+                                        Style::default().fg(Color::Yellow),
+                                    ));
+                                    cmd_line.push(Span::raw(command.clone()));
+                                    all_lines.push(Line::from(cmd_line));
+                                }
+
+                                // Show exit code if non-zero
+                                if *exit_code != 0 {
+                                    all_lines.push(Line::from(vec![
+                                        Span::raw("  "),
+                                        Span::styled(
+                                            format!("Exit code: {}", exit_code),
+                                            Style::default().fg(Color::Red),
+                                        ),
+                                    ]));
+                                }
+
+                                // Show stdout if not empty
+                                if !stdout.is_empty() {
+                                    let stdout_wrapped =
+                                        textwrap::wrap(stdout, max_width.saturating_sub(2));
+                                    for line in stdout_wrapped {
+                                        all_lines.push(Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled(
+                                                line.to_string(),
+                                                Style::default().fg(Color::DarkGray),
+                                            ),
+                                        ]));
+                                    }
+                                }
+
+                                // Show stderr if not empty
+                                if !stderr.is_empty() {
+                                    all_lines.push(Line::from(vec![
+                                        Span::raw("  "),
+                                        Span::styled("Error:", Style::default().fg(Color::Red)),
+                                    ]));
+                                    let stderr_wrapped =
+                                        textwrap::wrap(stderr, max_width.saturating_sub(2));
+                                    for line in stderr_wrapped {
+                                        all_lines.push(Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled(
+                                                line.to_string(),
+                                                Style::default().fg(Color::Red),
+                                            ),
+                                        ]));
+                                    }
+                                }
+
+                                // Add spacing between blocks
+                                if idx + 1 < content.len() {
+                                    all_lines.push(Line::from(""));
+                                }
+                            }
+                            UserContent::AppCommand { command, response } => {
+                                // Format command nicely
+                                let command_str = match command {
+                                    conductor_core::app::conversation::AppCommandType::Model { target } => {
+                                        if let Some(model) = target {
+                                            format!("/model {}", model)
+                                        } else {
+                                            "/model".to_string()
+                                        }
+                                    }
+                                    conductor_core::app::conversation::AppCommandType::Compact => "/compact".to_string(),
+                                    conductor_core::app::conversation::AppCommandType::Clear => "/clear".to_string(),
+                                    conductor_core::app::conversation::AppCommandType::Cancel => "/cancel".to_string(),
+                                    conductor_core::app::conversation::AppCommandType::Help => "/help".to_string(),
+                                    conductor_core::app::conversation::AppCommandType::Unknown { command } => command.clone(),
+                                };
+
+                                // Add gutter if this is the first block
+                                if idx == 0 {
+                                    let mut cmd_line = self.render_gutter(row, is_hovered).spans;
+                                    cmd_line.push(Span::raw(" "));
+                                    cmd_line.push(Span::styled(
+                                        command_str,
+                                        Style::default().fg(Color::Magenta),
+                                    ));
+                                    all_lines.push(Line::from(cmd_line));
+                                } else {
+                                    all_lines.push(Line::from(""));
+                                    let mut cmd_line = vec![Span::raw("  ")]; // Indent
+                                    cmd_line.push(Span::styled(
+                                        command_str,
+                                        Style::default().fg(Color::Magenta),
+                                    ));
+                                    all_lines.push(Line::from(cmd_line));
+                                }
+
+                                if let Some(resp) = response {
+                                    match resp {
+                                        conductor_core::app::conversation::CommandResponse::Text(text) => {
+                                            let wrapped = textwrap::wrap(text, max_width.saturating_sub(2));
+                                            for line in wrapped {
+                                                all_lines.push(Line::from(vec![
+                                                    Span::raw("  "),
+                                                    Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
+                                                ]));
+                                            }
+                                        }
+                                        conductor_core::app::conversation::CommandResponse::Compact(result) => {
+                                            let text = match result {
+                                                conductor_core::app::conversation::CompactResult::Success(summary) => summary,
+                                                conductor_core::app::conversation::CompactResult::Cancelled => "Cancelled",
+                                                conductor_core::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact.",
+                                            };
+                                            let wrapped = textwrap::wrap(text, max_width.saturating_sub(2));
+                                            for line in wrapped {
+                                                all_lines.push(Line::from(vec![
+                                                    Span::raw("  "),
+                                                    Span::styled(line.to_string(), Style::default().fg(Color::Green)),
+                                                ]));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Add spacing between blocks
+                                if idx + 1 < content.len() {
+                                    all_lines.push(Line::from(""));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Message::Assistant { content, .. } => {
+                let mut first_content_rendered = false;
+
+                for (idx, block) in content.iter().enumerate() {
+                    match block {
+                        AssistantContent::Text { text } => {
+                            if text.trim().is_empty() {
+                                continue;
+                            }
+
+                            // Parse markdown
+                            let markdown_text = tui_markdown::from_str(text);
+
+                            // Process each line
+                            for line in markdown_text.lines {
+                                // Wrap with reduced width for assistant indent (3 for indent)
+                                let wrapped_lines =
+                                    style_wrap(line, max_width.saturating_sub(3) as u16);
+
+                                for wrapped_line in wrapped_lines {
+                                    if !first_content_rendered {
+                                        // First line gets indented gutter
+                                        let mut first_line = vec![Span::raw("  ")]; // Indent
+                                        first_line
+                                            .extend(self.render_gutter(row, is_hovered).spans);
+                                        first_line.push(Span::raw(" "));
+                                        first_line.extend(wrapped_line.spans);
+                                        all_lines.push(Line::from(first_line));
+                                        first_content_rendered = true;
+                                    } else {
+                                        // Continuation lines with more indent
+                                        let mut indented = vec![Span::raw("    ")]; // 4 spaces
+                                        indented.extend(wrapped_line.spans);
+                                        all_lines.push(Line::from(indented));
+                                    }
+                                }
+                            }
+
+                            // Add spacing between blocks
+                            if idx + 1 < content.len() {
+                                all_lines.push(Line::from(""));
+                            }
+                        }
+                        AssistantContent::ToolCall { .. } => {
+                            // Tool calls are rendered as separate Tool messages
+                            continue;
+                        }
+                        AssistantContent::Thought { thought } => {
+                            // Render thought with italic style
+                            let thought_text = thought.display_text();
+
+                            // Parse markdown for the thought
+                            let markdown_text = tui_markdown::from_str(&thought_text);
+
+                            // Process each line
+                            for line in markdown_text.lines {
+                                // Wrap with reduced width for assistant indent (3 for indent)
+                                let wrapped_lines =
+                                    style_wrap(line, max_width.saturating_sub(3) as u16);
+
+                                for wrapped_line in wrapped_lines {
+                                    let mut styled_spans = Vec::new();
+
+                                    // Apply italic style to all spans in the thought
+                                    for span in wrapped_line.spans {
+                                        styled_spans.push(Span::styled(
+                                            span.content.into_owned(),
+                                            span.style
+                                                .fg(Color::DarkGray)
+                                                .add_modifier(Modifier::ITALIC),
+                                        ));
+                                    }
+
+                                    if !first_content_rendered {
+                                        // First line gets indented gutter
+                                        let mut first_line = vec![Span::raw("  ")]; // Indent
+                                        first_line
+                                            .extend(self.render_gutter(row, is_hovered).spans);
+                                        first_line.push(Span::raw(" "));
+                                        first_line.extend(styled_spans);
+                                        all_lines.push(Line::from(first_line));
+                                        first_content_rendered = true;
+                                    } else {
+                                        // Continuation lines with more indent
+                                        let mut indented = vec![Span::raw("    ")]; // 4 spaces
+                                        indented.extend(styled_spans);
+                                        all_lines.push(Line::from(indented));
+                                    }
+                                }
+                            }
+
+                            // Add spacing between blocks
+                            if idx + 1 < content.len() {
+                                all_lines.push(Line::from(""));
+                            }
+                        }
+                    }
+                }
+
+                // If no content was rendered, just show the gutter
+                if !first_content_rendered {
+                    let mut glyph_line = vec![Span::raw("  ")]; // Indent
+                    glyph_line.extend(self.render_gutter(row, is_hovered).spans);
+                    all_lines.push(Line::from(glyph_line));
+                }
+            }
+            Message::Tool {
+                tool_use_id,
+                result,
+                ..
+            } => {
+                // Find the corresponding tool call
+                let tool_call = self.items.iter().find_map(|item| {
+                    if let ChatItem::Message(msg_row) = item {
+                        if let Message::Assistant { content, .. } = &msg_row.inner {
+                            content.iter().find_map(|block| {
+                                if let AssistantContent::ToolCall { tool_call } = block {
+                                    if tool_call.id == *tool_use_id {
+                                        Some(tool_call)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(tool_call) = tool_call {
+                    // Use the formatter to render the tool
+                    let formatter = formatters::get_formatter(&tool_call.name);
+                    let wrap_width = (width.saturating_sub(7)) as usize; // Account for indent and padding
+
+                    let formatted_lines = match view_mode {
+                        ViewMode::Compact => formatter.compact(
+                            &tool_call.parameters,
+                            &Some(result.clone()),
+                            wrap_width,
+                        ),
+                        ViewMode::Detailed => formatter.detailed(
+                            &tool_call.parameters,
+                            &Some(result.clone()),
+                            wrap_width,
+                        ),
+                    };
+
+                    // First line with indented gutter and tool name
+                    let mut first_line = vec![Span::raw("  ")]; // Indent
+                    first_line.extend(self.render_gutter(row, is_hovered).spans);
+                    first_line.push(Span::raw(" "));
+                    first_line.push(Span::styled(
+                        tool_call.name.clone(),
+                        Style::default().fg(Color::Cyan),
+                    ));
+
+                    // For compact mode, try to fit first output on same line
+                    if view_mode == ViewMode::Compact && !formatted_lines.is_empty() {
+                        let first_output = &formatted_lines[0];
+                        if first_output.width()
+                            < (wrap_width.saturating_sub(tool_call.name.len() + 5))
+                        {
+                            // Add status indicator
+                            match result {
+                                ToolResult::Error(_) => {
+                                    first_line.push(Span::styled(" ✗ ", styles::ERROR_TEXT));
+                                }
+                                _ => {
+                                    first_line.push(Span::styled(" ✓ ", styles::TOOL_SUCCESS));
+                                }
+                            }
+                            first_line.extend(first_output.spans.clone());
+                            all_lines.push(Line::from(first_line));
+
+                            // Add remaining lines
+                            for line in formatted_lines.iter().skip(1) {
+                                let mut indented_spans = vec![Span::raw("    ")]; // Align with content
+                                indented_spans.extend(line.spans.clone());
+                                all_lines.push(Line::from(indented_spans));
+                            }
+                        } else {
+                            // Add status indicator on first line
+                            match result {
+                                ToolResult::Error(_) => {
+                                    first_line.push(Span::styled(" ✗", styles::ERROR_TEXT));
+                                }
+                                _ => {
+                                    first_line.push(Span::styled(" ✓", styles::TOOL_SUCCESS));
+                                }
+                            }
+                            all_lines.push(Line::from(first_line));
+
+                            // Add all lines with indent
+                            for line in formatted_lines {
+                                let mut indented_spans = vec![Span::raw("    ")]; // Align with content
+                                indented_spans.extend(line.spans.clone());
+                                all_lines.push(Line::from(indented_spans));
+                            }
+                        }
+                    } else {
+                        all_lines.push(Line::from(first_line));
+                        // Add the formatted output with proper indentation
+                        for line in formatted_lines {
+                            let mut indented_spans = vec![Span::raw("    ")]; // Align with content
+                            indented_spans.extend(line.spans.clone());
+                            all_lines.push(Line::from(indented_spans));
+                        }
+                    }
+                } else {
+                    // Fallback if we can't find the tool call
+                    let mut fallback_line = vec![Span::raw("  ")]; // Indent
+                    fallback_line.extend(self.render_gutter(row, is_hovered).spans);
+                    fallback_line.push(Span::raw(" "));
+                    fallback_line.push(Span::styled(
+                        "Tool Result",
+                        Style::default().fg(Color::Cyan),
+                    ));
+                    all_lines.push(Line::from(fallback_line));
+
+                    // Show a simple message for the fallback case
+                    let color = match result {
+                        ToolResult::Error(_) => Color::Red,
+                        _ => Color::DarkGray,
+                    };
+
+                    all_lines.push(Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(
+                            "(Result display unavailable)",
+                            Style::default().fg(color).add_modifier(Modifier::ITALIC),
+                        ),
+                    ]));
+                }
+            }
+        }
+
+        let height = all_lines.len() as u16;
+
+        RenderCache {
+            lines: all_lines,
+            height,
+        }
+    }
 }
 
 impl StatefulWidget for ChatList<'_> {
@@ -798,12 +834,32 @@ impl StatefulWidget for ChatList<'_> {
             return;
         }
 
-        // Calculate total height and item positions
+        // Calculate total height and item positions, managing cache
         let mut item_positions = Vec::new();
         let mut total_height = 0u16;
 
         for (idx, item) in self.items.iter().enumerate() {
-            let (_, height) = self.render_chat_item(item, list_area.width, state.view_mode);
+            let height = match item {
+                ChatItem::Message(row) => {
+                    // Calculate available width for message content
+                    let available_width = list_area.width;
+
+                    // Create cache key
+                    let key = (row.id().to_string(), available_width, state.view_mode);
+
+                    // Get or create cache entry
+                    let cache = state.line_cache.entry(key).or_insert_with(|| {
+                        self.build_cache_for_message(row, available_width, state.view_mode)
+                    });
+
+                    cache.height
+                }
+                _ => {
+                    // For non-message items, calculate height dynamically
+                    let (_, height) = self.render_non_message_item(item, list_area.width);
+                    height
+                }
+            };
 
             item_positions.push((idx, total_height, height));
             total_height += height;
@@ -895,7 +951,24 @@ impl StatefulWidget for ChatList<'_> {
                 }
 
                 let item = &self.items[idx];
-                let (lines, _) = self.render_chat_item(item, list_area.width, state.view_mode);
+
+                // Get lines for the item
+                let lines = match item {
+                    ChatItem::Message(row) => {
+                        // Get from cache (which we know exists from the first loop)
+                        let key = (row.id().to_string(), list_area.width, state.view_mode);
+                        state
+                            .line_cache
+                            .get(&key)
+                            .map(|cache| cache.lines.clone())
+                            .unwrap_or_default()
+                    }
+                    _ => {
+                        // Render non-message items dynamically
+                        let (lines, _) = self.render_non_message_item(item, list_area.width);
+                        lines
+                    }
+                };
 
                 // Calculate where to start rendering this item
                 if item_y < visible_start {
