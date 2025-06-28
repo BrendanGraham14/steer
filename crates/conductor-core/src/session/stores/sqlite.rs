@@ -256,7 +256,7 @@ impl SessionStore for SqliteSessionStore {
             let json_result: Option<String> = row.get("payload_json");
             let result_type: Option<String> = row.get("kind");
             let error_json: Option<String> = row.get("error_json");
-            
+
             let _tool_result = if let Some(kind) = result_type.as_ref() {
                 if kind == "error" {
                     // Error result - use error_json
@@ -273,8 +273,9 @@ impl SessionStore for SqliteSessionStore {
                     })
                 } else if let Some(json_str) = json_result {
                     // Success result with payload
-                    let json_value = serde_json::from_str(&json_str)
-                        .map_err(|e| SessionStoreError::serialization(format!("Invalid JSON result: {}", e)))?;
+                    let json_value = serde_json::from_str(&json_str).map_err(|e| {
+                        SessionStoreError::serialization(format!("Invalid JSON result: {}", e))
+                    })?;
                     Some(ToolExecutionStats {
                         output: result.clone(),
                         json_output: Some(json_value),
@@ -294,9 +295,8 @@ impl SessionStore for SqliteSessionStore {
                         metadata: std::collections::HashMap::new(),
                     })
                 }
-            } else if let Some(r) = result {
-                // Legacy string result
-                Some(ToolExecutionStats {
+            } else {
+                result.map(|r| ToolExecutionStats {
                     output: Some(r),
                     json_output: None,
                     result_type: None,
@@ -304,8 +304,6 @@ impl SessionStore for SqliteSessionStore {
                     execution_time_ms: 0,
                     metadata: std::collections::HashMap::new(),
                 })
-            } else {
-                None
             };
 
             // Skip loading tool results for now - just set to None
@@ -812,7 +810,7 @@ impl SessionStore for SqliteSessionStore {
             } else {
                 "external".to_string()
             };
-            
+
             updates.push(format!("kind = ?{}", bindings.len() + 1));
             bindings.push(kind);
 
@@ -821,12 +819,16 @@ impl SessionStore for SqliteSessionStore {
                 updates.push(format!("result = ?{}", bindings.len() + 1));
                 bindings.push(output.clone());
             }
-            
+
             // Store JSON result if available
             if let Some(json_output) = &result.json_output {
                 updates.push(format!("payload_json = ?{}", bindings.len() + 1));
-                let json_str = serde_json::to_string(json_output)
-                    .map_err(|e| SessionStoreError::serialization(format!("Failed to serialize JSON result: {}", e)))?;
+                let json_str = serde_json::to_string(json_output).map_err(|e| {
+                    SessionStoreError::serialization(format!(
+                        "Failed to serialize JSON result: {}",
+                        e
+                    ))
+                })?;
                 bindings.push(json_str);
             } else if let Some(output) = &result.output {
                 // Fallback to wrapping string output as External
@@ -837,15 +839,13 @@ impl SessionStore for SqliteSessionStore {
                 });
                 bindings.push(external_json.to_string());
             }
-            
-
         }
 
         if let Some(error) = update.error {
             // Mark as error kind
             updates.push(format!("kind = ?{}", bindings.len() + 1));
             bindings.push("error".to_string());
-            
+
             // Store error in error_json
             updates.push(format!("error_json = ?{}", bindings.len() + 1));
             let error_json = serde_json::json!({
@@ -853,7 +853,7 @@ impl SessionStore for SqliteSessionStore {
                 "message": &error
             });
             bindings.push(error_json.to_string());
-            
+
             // Also store in legacy error column
             updates.push(format!("error = ?{}", bindings.len() + 1));
             bindings.push(error);

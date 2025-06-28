@@ -274,7 +274,7 @@ impl OneShotRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{AssistantContent, ToolResult, Message, UserContent};
+    use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};

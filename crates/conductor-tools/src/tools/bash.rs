@@ -7,8 +7,8 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::{ExecutionContext, ToolError};
 use crate::result::BashResult;
+use crate::{ExecutionContext, ToolError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BashParams {
@@ -92,10 +92,7 @@ async fn run_command(command: &str, context: &ExecutionContext) -> Result<BashRe
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output
-        .status
-        .code()
-        .unwrap_or(-1);
+    let exit_code = output.status.code().unwrap_or(-1);
 
     Ok(BashResult {
         stdout,

@@ -108,14 +108,15 @@ impl ToolFormatter for AstGrepFormatter {
 
                         const MAX_LINES: usize = 20;
                         let matches = &search_result.matches;
-                        
+
                         for search_match in matches.iter().take(MAX_LINES) {
-                            let formatted = format!("{}:{}: {}",
+                            let formatted = format!(
+                                "{}:{}: {}",
                                 search_match.file_path,
                                 search_match.line_number,
                                 search_match.line_content.trim()
                             );
-                            
+
                             for wrapped in textwrap::wrap(&formatted, wrap_width) {
                                 lines.push(Line::from(Span::raw(wrapped.to_string())));
                             }

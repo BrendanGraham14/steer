@@ -9,18 +9,17 @@ use crate::api::ToolCall;
 use crate::session::state::{RemoteAuth, ToolFilter};
 use crate::tools::backend::{BackendMetadata, ToolBackend};
 use crate::tools::execution_context::{ExecutionContext, ExecutionEnvironment};
-use conductor_tools::{ToolError, ToolSchema, result::ToolResult};
 use conductor_tools::result::{
-    SearchResult, SearchMatch, FileListResult, FileEntry,
-    FileContentResult, EditResult, BashResult, GlobResult, TodoListResult, TodoItem,
-    TodoWriteResult,
+    BashResult, EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch,
+    SearchResult, TodoItem, TodoListResult, TodoWriteResult,
 };
+use conductor_tools::{ToolError, ToolSchema, result::ToolResult};
 
 // Generated gRPC client from proto/remote_workspace.proto
 use conductor_proto::remote_workspace::{
     ExecuteToolRequest, HealthStatus, ToolApprovalRequirementsRequest,
+    execute_tool_response::Result as ProtoResult,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
-    execute_tool_response::{Result as ProtoResult},
 };
 
 /// Serializable version of ExecutionContext for remote transmission
@@ -237,30 +236,40 @@ impl ToolBackend for RemoteBackend {
             match response.result {
                 Some(ProtoResult::StringResult(s)) => {
                     // Legacy string result - treat as External
-                    Ok(ToolResult::External(conductor_tools::result::ExternalResult {
-                        tool_name: tool_call.name.clone(),
-                        payload: s,
-                    }))
+                    Ok(ToolResult::External(
+                        conductor_tools::result::ExternalResult {
+                            tool_name: tool_call.name.clone(),
+                            payload: s,
+                        },
+                    ))
                 }
                 Some(ProtoResult::TypedResult(typed)) => {
                     // Generic typed result - treat as External
-                    let payload = typed.summary.unwrap_or_else(|| {
-                        format!("Result of type: {}", typed.type_name)
-                    });
-                    Ok(ToolResult::External(conductor_tools::result::ExternalResult {
-                        tool_name: tool_call.name.clone(),
-                        payload,
-                    }))
+                    let payload = typed
+                        .summary
+                        .unwrap_or_else(|| format!("Result of type: {}", typed.type_name));
+                    Ok(ToolResult::External(
+                        conductor_tools::result::ExternalResult {
+                            tool_name: tool_call.name.clone(),
+                            payload,
+                        },
+                    ))
                 }
                 Some(ProtoResult::SearchResult(proto_result)) => {
                     // Convert proto SearchResult to our SearchResult
-                    let matches = proto_result.matches.into_iter().map(|m| SearchMatch {
-                        file_path: m.file_path,
-                        line_number: m.line_number as usize,
-                        line_content: m.line_content,
-                        column_range: m.column_range.map(|cr| (cr.start as usize, cr.end as usize)),
-                    }).collect();
-                    
+                    let matches = proto_result
+                        .matches
+                        .into_iter()
+                        .map(|m| SearchMatch {
+                            file_path: m.file_path,
+                            line_number: m.line_number as usize,
+                            line_content: m.line_content,
+                            column_range: m
+                                .column_range
+                                .map(|cr| (cr.start as usize, cr.end as usize)),
+                        })
+                        .collect();
+
                     Ok(ToolResult::Search(SearchResult {
                         matches,
                         total_files_searched: proto_result.total_files_searched as usize,
@@ -268,13 +277,17 @@ impl ToolBackend for RemoteBackend {
                     }))
                 }
                 Some(ProtoResult::FileListResult(proto_result)) => {
-                    let entries = proto_result.entries.into_iter().map(|e| FileEntry {
-                        path: e.path,
-                        is_directory: e.is_directory,
-                        size: e.size,
-                        permissions: e.permissions,
-                    }).collect();
-                    
+                    let entries = proto_result
+                        .entries
+                        .into_iter()
+                        .map(|e| FileEntry {
+                            path: e.path,
+                            is_directory: e.is_directory,
+                            size: e.size,
+                            permissions: e.permissions,
+                        })
+                        .collect();
+
                     Ok(ToolResult::FileList(FileListResult {
                         entries,
                         base_path: proto_result.base_path,
@@ -288,47 +301,49 @@ impl ToolBackend for RemoteBackend {
                         truncated: proto_result.truncated,
                     }))
                 }
-                Some(ProtoResult::EditResult(proto_result)) => {
-                    Ok(ToolResult::Edit(EditResult {
-                        file_path: proto_result.file_path,
-                        changes_made: proto_result.changes_made as usize,
-                        file_created: proto_result.file_created,
-                        old_content: proto_result.old_content,
-                        new_content: proto_result.new_content,
-                    }))
-                }
-                Some(ProtoResult::BashResult(proto_result)) => {
-                    Ok(ToolResult::Bash(BashResult {
-                        stdout: proto_result.stdout,
-                        stderr: proto_result.stderr,
-                        exit_code: proto_result.exit_code,
-                        command: proto_result.command,
-                    }))
-                }
-                Some(ProtoResult::GlobResult(proto_result)) => {
-                    Ok(ToolResult::Glob(GlobResult {
-                        matches: proto_result.matches,
-                        pattern: proto_result.pattern,
-                    }))
-                }
+                Some(ProtoResult::EditResult(proto_result)) => Ok(ToolResult::Edit(EditResult {
+                    file_path: proto_result.file_path,
+                    changes_made: proto_result.changes_made as usize,
+                    file_created: proto_result.file_created,
+                    old_content: proto_result.old_content,
+                    new_content: proto_result.new_content,
+                })),
+                Some(ProtoResult::BashResult(proto_result)) => Ok(ToolResult::Bash(BashResult {
+                    stdout: proto_result.stdout,
+                    stderr: proto_result.stderr,
+                    exit_code: proto_result.exit_code,
+                    command: proto_result.command,
+                })),
+                Some(ProtoResult::GlobResult(proto_result)) => Ok(ToolResult::Glob(GlobResult {
+                    matches: proto_result.matches,
+                    pattern: proto_result.pattern,
+                })),
                 Some(ProtoResult::TodoListResult(proto_result)) => {
-                    let todos = proto_result.todos.into_iter().map(|t| TodoItem {
-                        id: t.id,
-                        content: t.content,
-                        status: t.status,
-                        priority: t.priority,
-                    }).collect();
-                    
+                    let todos = proto_result
+                        .todos
+                        .into_iter()
+                        .map(|t| TodoItem {
+                            id: t.id,
+                            content: t.content,
+                            status: t.status,
+                            priority: t.priority,
+                        })
+                        .collect();
+
                     Ok(ToolResult::TodoRead(TodoListResult { todos }))
                 }
                 Some(ProtoResult::TodoWriteResult(proto_result)) => {
-                    let todos = proto_result.todos.into_iter().map(|t| TodoItem {
-                        id: t.id,
-                        content: t.content,
-                        status: t.status,
-                        priority: t.priority,
-                    }).collect();
-                    
+                    let todos = proto_result
+                        .todos
+                        .into_iter()
+                        .map(|t| TodoItem {
+                            id: t.id,
+                            content: t.content,
+                            status: t.status,
+                            priority: t.priority,
+                        })
+                        .collect();
+
                     Ok(ToolResult::TodoWrite(TodoWriteResult {
                         todos,
                         operation: proto_result.operation,
@@ -463,7 +478,11 @@ mod tests {
         ) -> Result<tonic::Response<ExecuteToolResponse>, Status> {
             Ok(tonic::Response::new(ExecuteToolResponse {
                 success: true,
-                result: Some(conductor_proto::remote_workspace::execute_tool_response::Result::StringResult("mocked".to_string())),
+                result: Some(
+                    conductor_proto::remote_workspace::execute_tool_response::Result::StringResult(
+                        "mocked".to_string(),
+                    ),
+                ),
                 ..Default::default()
             }))
         }

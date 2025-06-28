@@ -19,7 +19,8 @@ pub trait Workspace: Send + Sync {
     async fn environment(&self) -> Result<EnvironmentInfo>;
 
     /// Execute a tool in this workspace
-    async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext) -> Result<ToolResult>;
+    async fn execute_tool(&self, tool_call: &ToolCall, ctx: ExecutionContext)
+    -> Result<ToolResult>;
 
     /// Get available tools for this workspace
     async fn available_tools(&self) -> Vec<ToolSchema>;

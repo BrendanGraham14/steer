@@ -20,11 +20,13 @@ impl ToolFormatter for TodoReadFormatter {
 
         let info = match result {
             Some(ToolResult::TodoRead(todo_list)) => {
-                let pending = todo_list.todos
+                let pending = todo_list
+                    .todos
                     .iter()
                     .filter(|t| t.status == "pending")
                     .count();
-                let in_progress = todo_list.todos
+                let in_progress = todo_list
+                    .todos
                     .iter()
                     .filter(|t| t.status == "in_progress")
                     .count();
@@ -63,10 +65,7 @@ impl ToolFormatter for TodoReadFormatter {
                     lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
                     if todo_list.todos.is_empty() {
-                        lines.push(Line::from(Span::styled(
-                            "No todos",
-                            styles::ITALIC_GRAY,
-                        )));
+                        lines.push(Line::from(Span::styled("No todos", styles::ITALIC_GRAY)));
                     } else {
                         // Group by status
                         let mut by_status: std::collections::HashMap<&str, Vec<_>> =

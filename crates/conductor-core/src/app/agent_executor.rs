@@ -1,6 +1,6 @@
 use crate::api::{ApiError, Client as ApiClient, Model};
 use crate::app::conversation::Message;
-use conductor_tools::{result::ToolResult as ConductorToolResult, ToolCall, ToolError, ToolSchema};
+use conductor_tools::{ToolCall, ToolError, ToolSchema, result::ToolResult as ConductorToolResult};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

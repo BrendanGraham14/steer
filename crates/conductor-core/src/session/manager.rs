@@ -797,9 +797,9 @@ async fn update_session_state_for_event(
             ..
         } => {
             let stats = crate::session::ToolExecutionStats::success_typed(
-                serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+                serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
                 result.variant_name().to_string(),
-                0
+                0,
             );
             let update = ToolCallUpdate::set_result(stats);
             store.update_tool_call(tool_call_id, update).await?;
@@ -1091,7 +1091,7 @@ mod tests {
                     file_path: "test.txt".to_string(),
                     line_count: 1,
                     truncated: false,
-                }
+                },
             ),
             metadata: std::collections::HashMap::new(),
             model: Model::Claude3_5Sonnet20241022,

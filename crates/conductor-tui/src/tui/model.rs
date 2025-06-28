@@ -4,9 +4,7 @@
 //! that can appear in the chat panel, including both conversation messages
 //! and meta rows like slash commands and system notices.
 
-use conductor_core::app::conversation::{
-    AppCommandType, CommandResponse, Message,
-};
+use conductor_core::app::conversation::{AppCommandType, CommandResponse, Message};
 use conductor_tools::ToolCall;
 use time::OffsetDateTime;
 use uuid::Uuid;

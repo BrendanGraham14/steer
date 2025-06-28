@@ -53,11 +53,8 @@ pub trait ExecutableTool: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> String;
     fn input_schema(&self) -> &'static InputSchema;
-    async fn run(
-        &self,
-        params: Value,
-        ctx: &ExecutionContext,
-    ) -> Result<ToolResultEnum, ToolError>;
+    async fn run(&self, params: Value, ctx: &ExecutionContext)
+    -> Result<ToolResultEnum, ToolError>;
     fn requires_approval(&self) -> bool;
 }
 
@@ -67,23 +64,23 @@ where
     T: Tool + Send + Sync,
     T::Output: Into<ToolResultEnum> + Send,
 {
-    fn name(&self) -> &'static str { 
-        Tool::name(self) 
+    fn name(&self) -> &'static str {
+        Tool::name(self)
     }
-    
-    fn description(&self) -> String { 
-        Tool::description(self) 
+
+    fn description(&self) -> String {
+        Tool::description(self)
     }
-    
-    fn input_schema(&self) -> &'static InputSchema { 
-        Tool::input_schema(self) 
+
+    fn input_schema(&self) -> &'static InputSchema {
+        Tool::input_schema(self)
     }
-    
+
     async fn run(&self, p: Value, c: &ExecutionContext) -> Result<ToolResultEnum, ToolError> {
         Ok(Tool::execute(self, p, c).await?.into())
     }
-    
-    fn requires_approval(&self) -> bool { 
-        Tool::requires_approval(self) 
+
+    fn requires_approval(&self) -> bool {
+        Tool::requires_approval(self)
     }
 }

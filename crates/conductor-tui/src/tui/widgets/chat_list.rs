@@ -580,23 +580,19 @@ impl<'a> ChatList<'a> {
                         ));
                         lines.push(Line::from(fallback_line));
 
-                        let (content, color) = match result {
-                            ToolResult::Error(_) => (result.llm_format(), Color::Red),
-                            _ => (result.llm_format(), Color::Cyan),
+                        // Show a simple message for the fallback case
+                        let color = match result {
+                            ToolResult::Error(_) => Color::Red,
+                            _ => Color::DarkGray,
                         };
 
-                        let preview = if view_mode == ViewMode::Compact && content.len() > 100 {
-                            format!("{}...", &content[..100])
-                        } else {
-                            content.clone()
-                        };
-
-                        for line in preview.lines() {
-                            lines.push(Line::from(vec![
-                                Span::raw("    "),
-                                Span::styled(line.to_string(), Style::default().fg(color)),
-                            ]));
-                        }
+                        lines.push(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(
+                                "(Result display unavailable)",
+                                Style::default().fg(color).add_modifier(Modifier::ITALIC),
+                            ),
+                        ]));
                     }
                 }
 

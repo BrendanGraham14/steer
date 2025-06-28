@@ -1,8 +1,8 @@
-use crate::traits::ExecutableTool;
 use crate::tools::{
     AstGrepTool, BashTool, EditTool, GlobTool, GrepTool, LsTool, MultiEditTool, ReplaceTool,
     TodoReadTool, TodoWriteTool, ViewTool,
 };
+use crate::traits::ExecutableTool;
 
 /// Tools that operate on the workspace (files, execution, etc.)
 ///

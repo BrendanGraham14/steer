@@ -5,7 +5,10 @@ use crate::api::ToolCall;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};
 use conductor_tools::tools::{read_only_workspace_tools, workspace_tools};
-use conductor_tools::{ExecutionContext as ConductorExecutionContext, Tool, ToolError, ToolSchema, result::ToolResult, traits::ExecutableTool};
+use conductor_tools::{
+    ExecutionContext as ConductorExecutionContext, Tool, ToolError, ToolSchema, result::ToolResult,
+    traits::ExecutableTool,
+};
 
 // Tool wrappers for server-side tools
 struct FetchToolWrapper(FetchTool);
@@ -27,7 +30,11 @@ impl Tool for FetchToolWrapper {
         self.0.input_schema()
     }
 
-    async fn execute(&self, params: serde_json::Value, ctx: &ConductorExecutionContext) -> Result<Self::Output, ToolError> {
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: &ConductorExecutionContext,
+    ) -> Result<Self::Output, ToolError> {
         let result = self.0.execute(params, ctx).await?;
         Ok(ToolResult::Fetch(result))
     }
@@ -53,7 +60,11 @@ impl Tool for DispatchAgentToolWrapper {
         self.0.input_schema()
     }
 
-    async fn execute(&self, params: serde_json::Value, ctx: &ConductorExecutionContext) -> Result<Self::Output, ToolError> {
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: &ConductorExecutionContext,
+    ) -> Result<Self::Output, ToolError> {
         let result = self.0.execute(params, ctx).await?;
         Ok(ToolResult::Agent(result))
     }
@@ -132,8 +143,8 @@ impl LocalBackend {
     /// Create a LocalBackend with only server-side tools
     pub fn server_only() -> Self {
         Self::from_tools(vec![
-            Box::new(FetchToolWrapper(FetchTool)), 
-            Box::new(DispatchAgentToolWrapper(DispatchAgentTool))
+            Box::new(FetchToolWrapper(FetchTool)),
+            Box::new(DispatchAgentToolWrapper(DispatchAgentTool)),
         ])
     }
 

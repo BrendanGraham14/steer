@@ -477,7 +477,9 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .await
         {
             return Ok(Response::new(ActivateSessionResponse {
-                messages: state.messages.into_iter()
+                messages: state
+                    .messages
+                    .into_iter()
                     .map(message_to_proto)
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?,
@@ -503,10 +505,14 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                     .await
                 {
                     return Ok(Response::new(ActivateSessionResponse {
-                        messages: state.messages.into_iter()
+                        messages: state
+                            .messages
+                            .into_iter()
                             .map(message_to_proto)
                             .collect::<Result<Vec<_>, _>>()
-                            .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?,
+                            .map_err(|e| {
+                                Status::internal(format!("Failed to convert message: {}", e))
+                            })?,
                         approved_tools: state.approved_tools.into_iter().collect(),
                     }));
                 }

@@ -15,7 +15,10 @@ use conductor_core::session::state::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
     ToolVisibility, WorkspaceConfig,
 };
-use conductor_tools::{ToolError, result::{ToolResult, ExternalResult}};
+use conductor_tools::{
+    ToolError,
+    result::{ExternalResult, ToolResult},
+};
 use serde_json::json;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -147,15 +150,15 @@ prop_compose! {
             })
         } else {
             match error_variant {
-                0 => ToolResult::Error(ToolError::Execution { 
-                    tool_name: tool_name.clone(), 
-                    message: error_msg 
+                0 => ToolResult::Error(ToolError::Execution {
+                    tool_name: tool_name.clone(),
+                    message: error_msg
                 }),
                 1 => ToolResult::Error(ToolError::UnknownTool(tool_name)),
                 2 => ToolResult::Error(ToolError::Cancelled(tool_name)),
-                _ => ToolResult::Error(ToolError::InvalidParams( 
-                    tool_name, 
-                    error_msg 
+                _ => ToolResult::Error(ToolError::InvalidParams(
+                    tool_name,
+                    error_msg
                 )),
             }
         }
@@ -403,7 +406,7 @@ proptest! {
                         // Compare error types - use discriminant for enum comparison
                         prop_assert_eq!(std::mem::discriminant(err1), std::mem::discriminant(err2));
                         match (err1, err2) {
-                            (ToolError::Execution { tool_name: tn1, message: msg1 }, 
+                            (ToolError::Execution { tool_name: tn1, message: msg1 },
                              ToolError::Execution { tool_name: tn2, message: msg2 }) => {
                                 prop_assert_eq!(tn1, tn2);
                                 prop_assert_eq!(msg1, msg2);
@@ -414,7 +417,7 @@ proptest! {
                             (ToolError::Cancelled(tn1), ToolError::Cancelled(tn2)) => {
                                 prop_assert_eq!(tn1, tn2);
                             }
-                            (ToolError::InvalidParams(tn1, msg1), 
+                            (ToolError::InvalidParams(tn1, msg1),
                              ToolError::InvalidParams(tn2, msg2)) => {
                                 prop_assert_eq!(tn1, tn2);
                                 prop_assert_eq!(msg1, msg2);

@@ -1321,164 +1321,6 @@ pub fn setup_panic_hook() {
     }));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tui::widgets::formatters::ToolFormatter;
-    use crate::tui::widgets::formatters::view::ViewFormatter;
-    use anyhow::Result;
-    use async_trait::async_trait;
-    use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::{AssistantContent, Message, ToolResult};
-    use conductor_core::app::io::AppCommandSink;
-    use serde_json::json;
-
-    // Mock command sink for tests
-    struct MockCommandSink;
-
-    #[async_trait]
-    impl AppCommandSink for MockCommandSink {
-        async fn send_command(&self, _command: AppCommand) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_restore_messages_preserves_tool_call_params() {
-        // Create a TUI instance for testing
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
-        let mut tui = Tui::new(command_sink, model).unwrap();
-
-        // Build test messages: Assistant with ToolCall, then Tool result
-        let tool_id = "test_tool_123".to_string();
-        let real_params = json!({
-            "file_path": "/test/file.rs",
-            "offset": 10,
-            "limit": 100
-        });
-
-        let tool_call = conductor_tools::schema::ToolCall {
-            id: tool_id.clone(),
-            name: "view".to_string(),
-            parameters: real_params.clone(),
-        };
-
-        let messages = vec![
-            Message::Assistant {
-                id: "msg_123".to_string(),
-                content: vec![AssistantContent::ToolCall { tool_call }],
-                timestamp: 1234567890,
-            },
-            Message::Tool {
-                tool_use_id: tool_id.clone(),
-                result: Some(ToolResult::External(conductor_tools::result::ExternalResult {
-                    tool_name: "view".to_string(),
-                    payload: "file content here".to_string(),
-                })),
-                timestamp: 1234567891,
-                id: "tool_result_123".to_string(),
-            },
-        ];
-
-        // Restore the messages
-        tui.restore_messages(messages);
-
-        // Assert we have exactly one Tool message in the view model
-        let tool_messages: Vec<_> = tui
-            .view_model
-            .messages
-            .iter()
-            .filter_map(|msg| match msg {
-                MessageContent::Tool { call, .. } => Some(call),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(tool_messages.len(), 1);
-        let tool_call = tool_messages[0];
-
-        // Verify the Tool message has proper parameters (not null)
-        assert_ne!(tool_call.parameters, serde_json::Value::Null);
-        assert_eq!(tool_call.parameters, real_params);
-        assert_eq!(tool_call.name, "view");
-        assert_eq!(tool_call.id, tool_id);
-
-        // Verify the formatter can parse these parameters without error
-        let formatter = ViewFormatter;
-        let lines = formatter.compact(&tool_call.parameters, &None, 80);
-
-        let text = lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        assert!(!text.contains("Invalid view params"));
-        assert!(text.contains("file.rs"));
-    }
-
-    #[test]
-    fn test_restore_messages_handles_tool_result_before_assistant() {
-        // Test edge case where Tool result arrives before Assistant message
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
-        let mut tui = Tui::new(command_sink, model).unwrap();
-
-        let tool_id = "test_tool_456".to_string();
-        let real_params = json!({
-            "file_path": "/another/file.rs"
-        });
-
-        // Tool result comes first (unusual but possible)
-        let messages = vec![
-            Message::Tool {
-                tool_use_id: tool_id.clone(),
-                result: Some(ToolResult::External(conductor_tools::result::ExternalResult {
-                    tool_name: "view".to_string(),
-                    payload: "file content".to_string(),
-                })),
-                timestamp: 1234567890,
-                id: "tool_result_456".to_string(),
-            },
-            Message::Assistant {
-                id: "msg_456".to_string(),
-                content: vec![AssistantContent::ToolCall {
-                    tool_call: conductor_tools::schema::ToolCall {
-                        id: tool_id.clone(),
-                        name: "view".to_string(),
-                        parameters: real_params.clone(),
-                    },
-                }],
-                timestamp: 1234567891,
-            },
-        ];
-
-        tui.restore_messages(messages);
-
-        // Should still have proper parameters
-        let tool_messages: Vec<_> = tui
-            .view_model
-            .messages
-            .iter()
-            .filter_map(|msg| match msg {
-                MessageContent::Tool { call, .. } => Some(call),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(tool_messages.len(), 1);
-        let tool_call = tool_messages[0];
-        assert_eq!(tool_call.parameters, real_params);
-        assert_eq!(tool_call.name, "view");
-    }
-}
-
 /// High-level entry point for running the TUI
 pub async fn run_tui(
     client: std::sync::Arc<conductor_grpc::GrpcClientAdapter>,
@@ -1573,13 +1415,17 @@ pub async fn run_tui(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::ToolResult;
+    use conductor_core::app::AppEvent;
+    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::io::{AppCommandSink, AppEventSource};
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
+    // Mock command sink for tests
     struct MockCommandSink;
 
     #[async_trait]
@@ -1599,41 +1445,21 @@ mod tests {
         }
     }
 
-    fn create_test_tui() -> Tui {
-        let command_sink = Arc::new(MockCommandSink);
-        let event_source = Arc::new(MockEventSource);
+    #[tokio::test]
+    async fn test_restore_messages_preserves_tool_call_params() {
+        // Create a TUI instance for testing
+        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
+        let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
+        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
+        let models = vec![model];
+        let mut tui = Tui::new(command_sink, event_source, model, models)
+            .await
+            .unwrap();
 
-        Tui {
-            terminal: Terminal::new(CrosstermBackend::new(io::stdout())).unwrap(),
-            terminal_size: (80, 24),
-            input_mode: InputMode::Normal,
-            textarea: TextArea::default(),
-            previous_insert_text: String::new(),
-            editing_message_id: None,
-            command_sink,
-            is_processing: false,
-            progress_message: None,
-            spinner_state: 0,
-            last_spinner_update: Instant::now(),
-            current_tool_approval: None,
-            models: vec![Model::Claude3_5Sonnet20241022],
-            current_model: Model::Claude3_5Sonnet20241022,
-            popup_state: PopupState::default(),
-            event_pipeline: Tui::create_event_pipeline(),
-            view_model: MessageViewModel::new(),
-            edit_selection_index: 0,
-            edit_selection_messages: Vec::new(),
-            edit_selection_hovered_id: None,
-        }
-    }
-
-    #[test]
-    fn test_restore_messages_preserves_tool_call_params() {
-        let mut tui = create_test_tui();
-
-        // Create messages with a tool call
+        // Build test messages: Assistant with ToolCall, then Tool result
+        let tool_id = "test_tool_123".to_string();
         let tool_call = conductor_tools::ToolCall {
-            id: "test_tool_123".to_string(),
+            id: tool_id.clone(),
             name: "view".to_string(),
             parameters: json!({
                 "file_path": "/test/file.rs",
@@ -1654,11 +1480,15 @@ mod tests {
 
         let tool_msg = Message::Tool {
             id: "msg_tool".to_string(),
-            tool_use_id: "test_tool_123".to_string(),
-            result: Some(ToolResult::External(conductor_tools::result::ExternalResult {
-                tool_name: "view".to_string(),
-                payload: "File contents...".to_string(),
-            })),
+            tool_use_id: tool_id.clone(),
+            result: conductor_tools::ToolResult::FileContent(
+                conductor_tools::result::FileContentResult {
+                    file_path: "/test/file.rs".to_string(),
+                    content: "file content here".to_string(),
+                    line_count: 1,
+                    truncated: false,
+                },
+            ),
             timestamp: 1234567891,
             thread_id: *assistant_msg.thread_id(),
             parent_message_id: Some("msg_assistant".to_string()),
@@ -1673,54 +1503,72 @@ mod tests {
         let stored_call = tui
             .view_model
             .tool_registry
-            .get_tool_call("test_tool_123")
+            .get_tool_call(&tool_id)
             .expect("Tool call should be in registry");
         assert_eq!(stored_call.name, "view");
         assert_eq!(stored_call.parameters, tool_call.parameters);
     }
 
-    #[test]
-    fn test_restore_messages_handles_tool_result_before_assistant() {
-        let mut tui = create_test_tui();
+    #[tokio::test]
+    async fn test_restore_messages_handles_tool_result_before_assistant() {
+        // Test edge case where Tool result arrives before Assistant message
+        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
+        let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
+        let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
+        let models = vec![model];
+        let mut tui = Tui::new(command_sink, event_source, model, models)
+            .await
+            .unwrap();
 
-        let thread_id = uuid::Uuid::new_v4();
+        let tool_id = "test_tool_456".to_string();
+        let real_params = json!({
+            "file_path": "/another/file.rs"
+        });
 
-        // Create a Tool message that arrives before its corresponding Assistant message
+        let tool_call = conductor_tools::ToolCall {
+            id: tool_id.clone(),
+            name: "view".to_string(),
+            parameters: real_params.clone(),
+        };
+
+        // Tool result comes first (unusual but possible)
         let tool_msg = Message::Tool {
             id: "msg_tool".to_string(),
-            tool_use_id: "orphan_tool_123".to_string(),
-            result: Some(ToolResult::External(conductor_tools::result::ExternalResult {
-                tool_name: "unknown".to_string(),
-                payload: "Orphaned result".to_string(),
-            })),
+            tool_use_id: tool_id.clone(),
+            result: conductor_tools::ToolResult::FileContent(
+                conductor_tools::result::FileContentResult {
+                    file_path: "/another/file.rs".to_string(),
+                    content: "file content".to_string(),
+                    line_count: 1,
+                    truncated: false,
+                },
+            ),
             timestamp: 1234567890,
-            thread_id,
+            thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
 
-        // The assistant message with tool call arrives later
-        let tool_call = conductor_tools::ToolCall {
-            id: "orphan_tool_123".to_string(),
-            name: "bash".to_string(),
-            parameters: json!({"command": "ls -la"}),
-        };
-
         let assistant_msg = Message::Assistant {
-            id: "msg_assistant".to_string(),
+            id: "msg_456".to_string(),
             content: vec![AssistantContent::ToolCall {
                 tool_call: tool_call.clone(),
             }],
             timestamp: 1234567891,
-            thread_id,
+            thread_id: *tool_msg.thread_id(),
             parent_message_id: None,
         };
 
         let messages = vec![tool_msg, assistant_msg];
 
-        // Restore messages
         tui.restore_messages(messages);
 
-        // Verify the tool message was created with proper tool call info
-        assert_eq!(tui.view_model.chat_store.len(), 2);
+        // Should still have proper parameters
+        let stored_call = tui
+            .view_model
+            .tool_registry
+            .get_tool_call(&tool_id)
+            .expect("Tool call should be in registry");
+        assert_eq!(stored_call.parameters, real_params);
+        assert_eq!(stored_call.name, "view");
     }
 }

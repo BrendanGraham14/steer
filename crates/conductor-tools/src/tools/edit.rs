@@ -308,7 +308,6 @@ pub mod multi_edit {
     use super::*;
     use crate::result::MultiEditResult;
 
-
     #[derive(Deserialize, Debug, JsonSchema)]
     pub struct MultiEditParams {
         /// The absolute path to the file to edit.
@@ -316,8 +315,6 @@ pub mod multi_edit {
         /// A list of edit operations to apply sequentially.
         pub edits: Vec<SingleEditOperation>,
     }
-
-
 
     tool! {
         MultiEditTool {

@@ -6,8 +6,8 @@ use std::path::Path;
 use thiserror::Error;
 use tokio::task;
 
+use crate::result::{FileEntry, FileListResult};
 use crate::{ExecutionContext, ToolError};
-use crate::result::{FileListResult, FileEntry};
 
 #[derive(Debug, Error)]
 pub enum LsError {
@@ -126,7 +126,7 @@ fn list_directory_internal(
                 } else {
                     metadata.as_ref().map(|m| m.len())
                 };
-                
+
                 entries.push(FileEntry {
                     path: file_name.to_string(),
                     is_directory: file_path.is_dir(),

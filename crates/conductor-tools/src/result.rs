@@ -1,12 +1,12 @@
-use serde::{Deserialize, Serialize};
 use crate::error::ToolError;
+use serde::{Deserialize, Serialize};
 
 /// Core enum for all tool results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolResult {
     // One variant per built-in tool
-    Search(SearchResult),          // grep / astgrep
-    FileList(FileListResult),      // ls / glob
+    Search(SearchResult),     // grep / astgrep
+    FileList(FileListResult), // ls / glob
     FileContent(FileContentResult),
     Edit(EditResult),
     Bash(BashResult),
@@ -39,8 +39,8 @@ pub struct AgentResult {
 /// Result for external/MCP tools
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalResult {
-    pub tool_name: String,   // name reported by the MCP server
-    pub payload: String,     // raw, opaque blob (usually JSON or text)
+    pub tool_name: String, // name reported by the MCP server
+    pub payload: String,   // raw, opaque blob (usually JSON or text)
 }
 
 /// Result for grep-like search tools
@@ -127,7 +127,7 @@ pub struct TodoItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoWriteResult {
     pub todos: Vec<TodoItem>,
-    pub operation: String,  // e.g., "modified", "created"
+    pub operation: String, // e.g., "modified", "created"
 }
 
 // Newtype wrappers to avoid conflicting From impls
@@ -184,7 +184,7 @@ impl ToolResult {
                 } else {
                     let mut output = Vec::new();
                     let mut current_file = "";
-                    
+
                     for match_item in &r.matches {
                         if match_item.file_path != current_file {
                             if !output.is_empty() {
@@ -197,7 +197,7 @@ impl ToolResult {
                             match_item.file_path, match_item.line_number, match_item.line_content
                         ));
                     }
-                    
+
                     output.join("\n")
                 }
             }
@@ -219,18 +219,21 @@ impl ToolResult {
                 if r.file_created {
                     format!("Successfully created {}", r.file_path)
                 } else {
-                    format!("Successfully edited {}: {} change(s) made", r.file_path, r.changes_made)
+                    format!(
+                        "Successfully edited {}: {} change(s) made",
+                        r.file_path, r.changes_made
+                    )
                 }
             }
             ToolResult::Bash(r) => {
                 let mut output = r.stdout.clone();
-                
+
                 if r.exit_code != 0 {
                     if !output.is_empty() && !output.ends_with('\n') {
                         output.push('\n');
                     }
                     output.push_str(&format!("Exit code: {}", r.exit_code));
-                    
+
                     if !r.stderr.is_empty() {
                         output.push_str(&format!("\nError output:\n{}", r.stderr));
                     }
@@ -240,7 +243,7 @@ impl ToolResult {
                     }
                     output.push_str(&format!("Error output:\n{}", r.stderr));
                 }
-                
+
                 output
             }
             ToolResult::Glob(r) => {
@@ -256,7 +259,8 @@ impl ToolResult {
                 } else {
                     format!(
                         "Remember to continue to use update and read from the todo list as you make progress. Here is the current list:\n{}",
-                        serde_json::to_string_pretty(&r.todos).unwrap_or_else(|_| "Failed to format todos".to_string())
+                        serde_json::to_string_pretty(&r.todos)
+                            .unwrap_or_else(|_| "Failed to format todos".to_string())
                     )
                 }
             }
@@ -264,7 +268,8 @@ impl ToolResult {
                 format!(
                     "Todos have been {} successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}",
                     r.operation,
-                    serde_json::to_string_pretty(&r.todos).unwrap_or_else(|_| "Failed to format todos".to_string())
+                    serde_json::to_string_pretty(&r.todos)
+                        .unwrap_or_else(|_| "Failed to format todos".to_string())
                 )
             }
             ToolResult::Fetch(r) => {
@@ -275,7 +280,7 @@ impl ToolResult {
             ToolResult::Error(e) => format!("Error: {}", e),
         }
     }
-    
+
     /// Get the variant name as a string for metadata
     pub fn variant_name(&self) -> &'static str {
         match self {

@@ -10,8 +10,8 @@ use std::path::Path;
 use std::str::FromStr;
 use tokio::task;
 
+use crate::result::{AstGrepResult, SearchMatch, SearchResult};
 use crate::{ExecutionContext, ToolError};
-use crate::result::{AstGrepResult, SearchResult, SearchMatch};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AstGrepParams {
@@ -217,7 +217,11 @@ fn astgrep_search_internal(
     }
 
     // Sort by file path for consistent output
-    all_matches.sort_by(|a, b| a.file_path.cmp(&b.file_path).then(a.line_number.cmp(&b.line_number)));
+    all_matches.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then(a.line_number.cmp(&b.line_number))
+    });
 
     Ok(AstGrepResult(SearchResult {
         matches: all_matches,
@@ -347,7 +351,7 @@ async fn fetch_data() -> Result<String, Error> {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Only fn main() matches the pattern - functions with return types have different AST structure
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("test.rs"));
@@ -388,21 +392,23 @@ console.log("Application ready");"#,
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Only top-level console.log calls are found, not ones inside functions
         assert_eq!(result.0.matches.len(), 2);
         // Check first match
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("app.js") && 
-            m.line_number == 1 &&
-            m.line_content.contains("console.log(\"Starting application\")")
-        ));
+        assert!(result.0.matches.iter().any(|m| {
+            m.file_path.contains("app.js")
+                && m.line_number == 1
+                && m.line_content
+                    .contains("console.log(\"Starting application\")")
+        }));
         // Check second match
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("app.js") && 
-            m.line_number == 9 &&
-            m.line_content.contains("console.log(\"Application ready\")")
-        ));
+        assert!(result.0.matches.iter().any(|m| {
+            m.file_path.contains("app.js")
+                && m.line_number == 9
+                && m.line_content
+                    .contains("console.log(\"Application ready\")")
+        }));
         assert!(result.0.search_completed);
     }
 
@@ -443,7 +449,7 @@ console.log("Application ready");"#,
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Export function syntax doesn't match the pattern
         assert_eq!(result.0.matches.len(), 0);
         assert!(result.0.search_completed);
@@ -472,7 +478,7 @@ console.log("Application ready");"#,
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         assert_eq!(result.0.matches.len(), 0);
         assert!(result.0.search_completed);
     }

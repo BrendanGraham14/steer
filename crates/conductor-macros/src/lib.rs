@@ -96,10 +96,7 @@ impl Parse for ToolDefinition {
                 }
                 "name" => {
                     if name.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            field.key,
-                            "Duplicate 'name' field",
-                        ));
+                        return Err(syn::Error::new_spanned(field.key, "Duplicate 'name' field"));
                     }
                     if let syn::Expr::Lit(ref expr_lit) = field.value {
                         if let syn::Lit::Str(lit_str) = &expr_lit.lit {
@@ -184,13 +181,14 @@ impl Parse for ToolDefinition {
         }
 
         // Check for missing fields
-        let params_struct = params_struct
-            .ok_or_else(|| syn::Error::new(input.span(), "Missing 'params' field"))?;
+        let params_struct =
+            params_struct.ok_or_else(|| syn::Error::new(input.span(), "Missing 'params' field"))?;
         let output_type =
             output_type.ok_or_else(|| syn::Error::new(input.span(), "Missing 'output' field"))?;
-        let variant = variant.ok_or_else(|| syn::Error::new(input.span(), "Missing 'variant' field"))?;
-        let description =
-            description.ok_or_else(|| syn::Error::new(input.span(), "Missing 'description' field"))?;
+        let variant =
+            variant.ok_or_else(|| syn::Error::new(input.span(), "Missing 'variant' field"))?;
+        let description = description
+            .ok_or_else(|| syn::Error::new(input.span(), "Missing 'description' field"))?;
         let name = name.ok_or_else(|| syn::Error::new(input.span(), "Missing 'name' field"))?;
         let require_approval = require_approval.unwrap_or(LitBool::new(true, input.span()));
 
@@ -287,17 +285,17 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
     // Check if output_type is a newtype wrapper (ends with "Result")
     let is_newtype = if let Some(last_segment) = output_type.segments.last() {
         let ident_str = last_segment.ident.to_string();
-        ident_str == "GrepResult" || 
-        ident_str == "AstGrepResult" || 
-        ident_str == "MultiEditResult" || 
-        ident_str == "ReplaceResult"
+        ident_str == "GrepResult"
+            || ident_str == "AstGrepResult"
+            || ident_str == "MultiEditResult"
+            || ident_str == "ReplaceResult"
     } else {
         false
     };
 
     // Check if output_type is ExternalResult
     let is_external_result = if let Some(last_segment) = output_type.segments.last() {
-        last_segment.ident.to_string() == "ExternalResult"
+        last_segment.ident == "ExternalResult"
     } else {
         false
     };
@@ -323,7 +321,6 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
             }
         }
     };
-
 
     let expanded = quote! {
         // Generate a constant for the tool name
