@@ -13,7 +13,7 @@ STASH_NAME="pre-commit-hook-$(date +%s)"
 STASHED=false
 
 # Check if there are any unstaged changes
-if ! git diff --quiet || ! git diff --untracked-files=no --quiet; then
+if ! git diff --quiet || ! git diff --quiet; then
     echo "Stashing unstaged changes..."
     git stash push --keep-index --include-untracked -m "$STASH_NAME"
     STASHED=true
