@@ -6,8 +6,8 @@ use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-use crate::{ExecutionContext, ToolError};
 use crate::result::FileContentResult;
+use crate::{ExecutionContext, ToolError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ViewParams {

@@ -98,10 +98,9 @@ impl EventProcessor for ToolEventProcessor {
                 };
 
                 let _idx = ctx.chat_store.add_message(tool_msg);
-                
+
                 // Complete the tool execution in registry
-                ctx.tool_registry
-                    .complete_execution(&id, result);
+                ctx.tool_registry.complete_execution(&id, result);
 
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled

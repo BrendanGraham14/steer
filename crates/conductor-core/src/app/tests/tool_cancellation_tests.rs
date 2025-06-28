@@ -287,7 +287,10 @@ mod tests {
                             ToolResult::Error(ToolError::Cancelled(tool_name)) => {
                                 assert_eq!(tool_name, "bash");
                             }
-                            _ => panic!("Expected cancelled tool error for tool_1, got: {:?}", result),
+                            _ => panic!(
+                                "Expected cancelled tool error for tool_1, got: {:?}",
+                                result
+                            ),
                         }
                     } else if tool_use_id == "tool_2" {
                         found_tool_2 = true;
@@ -295,7 +298,10 @@ mod tests {
                             ToolResult::Error(ToolError::Cancelled(tool_name)) => {
                                 assert_eq!(tool_name, "read_file");
                             }
-                            _ => panic!("Expected cancelled tool error for tool_2, got: {:?}", result),
+                            _ => panic!(
+                                "Expected cancelled tool error for tool_2, got: {:?}",
+                                result
+                            ),
                         }
                     }
                 } else {

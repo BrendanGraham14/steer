@@ -1,5 +1,5 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum ToolError {

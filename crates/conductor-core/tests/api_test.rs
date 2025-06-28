@@ -4,8 +4,8 @@ use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
 use conductor_core::config::LlmConfig;
 use conductor_core::workspace::Workspace;
 use conductor_core::workspace::local::LocalWorkspace;
+use conductor_tools::result::{ExternalResult, ToolResult};
 use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
-use conductor_tools::result::{ToolResult, ExternalResult};
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
@@ -867,7 +867,8 @@ async fn test_api_with_cancelled_tool_execution() {
                     tool_use_id: tool_call_id.clone(),
                     result: ToolResult::External(ExternalResult {
                         tool_name: "ls".to_string(),
-                        payload: "Tool execution was cancelled by user before completion.".to_string(),
+                        payload: "Tool execution was cancelled by user before completion."
+                            .to_string(),
                     }),
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),

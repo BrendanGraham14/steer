@@ -39,7 +39,11 @@ impl ToolFormatter for BashFormatter {
 
         // Add exit code if error
         if let Some(ToolResult::Error(error)) = result {
-            if let Some(exit_code) = error.to_string().strip_prefix("Exit code: ").and_then(|s| s.parse::<i32>().ok()) {
+            if let Some(exit_code) = error
+                .to_string()
+                .strip_prefix("Exit code: ")
+                .and_then(|s| s.parse::<i32>().ok())
+            {
                 spans.push(Span::styled(
                     format!(" (exit {})", exit_code),
                     styles::ERROR_TEXT,
@@ -92,7 +96,8 @@ impl ToolFormatter for BashFormatter {
                     // Show stdout if present
                     if !bash_result.stdout.trim().is_empty() {
                         const MAX_OUTPUT_LINES: usize = 20;
-                        let (output_lines, truncated) = truncate_lines(&bash_result.stdout, MAX_OUTPUT_LINES);
+                        let (output_lines, truncated) =
+                            truncate_lines(&bash_result.stdout, MAX_OUTPUT_LINES);
 
                         for line in output_lines {
                             for wrapped in textwrap::wrap(line, wrap_width) {
@@ -110,17 +115,18 @@ impl ToolFormatter for BashFormatter {
                             )));
                         }
                     }
-                    
+
                     // Show stderr if present
                     if !bash_result.stderr.trim().is_empty() {
                         if !bash_result.stdout.trim().is_empty() {
                             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                         }
                         lines.push(Line::from(Span::styled("[stderr]", styles::ERROR_TEXT)));
-                        
+
                         const MAX_ERROR_LINES: usize = 10;
-                        let (error_lines, truncated) = truncate_lines(&bash_result.stderr, MAX_ERROR_LINES);
-                        
+                        let (error_lines, truncated) =
+                            truncate_lines(&bash_result.stderr, MAX_ERROR_LINES);
+
                         for line in error_lines {
                             for wrapped in textwrap::wrap(line, wrap_width) {
                                 lines.push(Line::from(Span::styled(
@@ -129,7 +135,7 @@ impl ToolFormatter for BashFormatter {
                                 )));
                             }
                         }
-                        
+
                         if truncated {
                             lines.push(Line::from(Span::styled(
                                 format!(
@@ -140,14 +146,16 @@ impl ToolFormatter for BashFormatter {
                             )));
                         }
                     }
-                    
+
                     // Show exit code if non-zero
                     if bash_result.exit_code != 0 {
                         lines.push(Line::from(Span::styled(
                             format!("Exit code: {}", bash_result.exit_code),
                             styles::ERROR_TEXT,
                         )));
-                    } else if bash_result.stdout.trim().is_empty() && bash_result.stderr.trim().is_empty() {
+                    } else if bash_result.stdout.trim().is_empty()
+                        && bash_result.stderr.trim().is_empty()
+                    {
                         lines.push(Line::from(Span::styled(
                             "(Command completed successfully with no output)",
                             styles::ITALIC_GRAY,

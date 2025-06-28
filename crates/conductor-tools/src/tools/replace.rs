@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
 
+use crate::result::{EditResult, ReplaceResult};
 use crate::tools::{LS_TOOL_NAME, VIEW_TOOL_NAME};
 use crate::{ExecutionContext, ToolError};
-use crate::result::{EditResult, ReplaceResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReplaceParams {
@@ -15,8 +15,6 @@ pub struct ReplaceParams {
     /// The content to write to the file
     pub content: String,
 }
-
-
 
 tool! {
     ReplaceTool {

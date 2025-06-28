@@ -12,31 +12,41 @@ use conductor_core::session::state::{
 use conductor_proto::agent as proto;
 
 /// Convert conductor_tools ToolResult to protobuf
-fn conductor_tools_result_to_proto(result: &conductor_tools::result::ToolResult) -> Result<proto::ToolResult, ConversionError> {
+fn conductor_tools_result_to_proto(
+    result: &conductor_tools::result::ToolResult,
+) -> Result<proto::ToolResult, ConversionError> {
     use conductor_tools::result::ToolResult as CoreResult;
     use proto::tool_result::Result as ProtoResult;
-    
+
     let proto_result = match result {
         CoreResult::Search(r) => ProtoResult::Search(proto::SearchResult {
-            matches: r.matches.iter().map(|m| proto::SearchMatch {
-                file_path: m.file_path.clone(),
-                line_number: m.line_number as u32,
-                line_content: m.line_content.clone(),
-                column_range: m.column_range.map(|(start, end)| proto::ColumnRange { 
-                    start: start as u32, 
-                    end: end as u32 
-                }),
-            }).collect(),
+            matches: r
+                .matches
+                .iter()
+                .map(|m| proto::SearchMatch {
+                    file_path: m.file_path.clone(),
+                    line_number: m.line_number as u32,
+                    line_content: m.line_content.clone(),
+                    column_range: m.column_range.map(|(start, end)| proto::ColumnRange {
+                        start: start as u32,
+                        end: end as u32,
+                    }),
+                })
+                .collect(),
             total_files_searched: r.total_files_searched as u32,
             search_completed: r.search_completed,
         }),
         CoreResult::FileList(r) => ProtoResult::FileList(proto::FileListResult {
-            entries: r.entries.iter().map(|e| proto::FileEntry {
-                path: e.path.clone(),
-                is_directory: e.is_directory,
-                size: e.size,
-                permissions: e.permissions.clone(),
-            }).collect(),
+            entries: r
+                .entries
+                .iter()
+                .map(|e| proto::FileEntry {
+                    path: e.path.clone(),
+                    is_directory: e.is_directory,
+                    size: e.size,
+                    permissions: e.permissions.clone(),
+                })
+                .collect(),
             base_path: r.base_path.clone(),
         }),
         CoreResult::FileContent(r) => ProtoResult::FileContent(proto::FileContentResult {
@@ -63,20 +73,28 @@ fn conductor_tools_result_to_proto(result: &conductor_tools::result::ToolResult)
             pattern: r.pattern.clone(),
         }),
         CoreResult::TodoRead(r) => ProtoResult::TodoRead(proto::TodoListResult {
-            todos: r.todos.iter().map(|t| proto::TodoItem {
-                id: t.id.clone(),
-                content: t.content.clone(),
-                status: t.status.clone(),
-                priority: t.priority.clone(),
-            }).collect(),
+            todos: r
+                .todos
+                .iter()
+                .map(|t| proto::TodoItem {
+                    id: t.id.clone(),
+                    content: t.content.clone(),
+                    status: t.status.clone(),
+                    priority: t.priority.clone(),
+                })
+                .collect(),
         }),
         CoreResult::TodoWrite(r) => ProtoResult::TodoWrite(proto::TodoWriteResult {
-            todos: r.todos.iter().map(|t| proto::TodoItem {
-                id: t.id.clone(),
-                content: t.content.clone(),
-                status: t.status.clone(),
-                priority: t.priority.clone(),
-            }).collect(),
+            todos: r
+                .todos
+                .iter()
+                .map(|t| proto::TodoItem {
+                    id: t.id.clone(),
+                    content: t.content.clone(),
+                    status: t.status.clone(),
+                    priority: t.priority.clone(),
+                })
+                .collect(),
             operation: r.operation.clone(),
         }),
         CoreResult::Fetch(r) => ProtoResult::Fetch(proto::FetchResult {
@@ -92,7 +110,7 @@ fn conductor_tools_result_to_proto(result: &conductor_tools::result::ToolResult)
         }),
         CoreResult::Error(e) => ProtoResult::Error(tool_error_to_proto(e)),
     };
-    
+
     Ok(proto::ToolResult {
         result: Some(proto_result),
     })
@@ -102,17 +120,21 @@ fn conductor_tools_result_to_proto(result: &conductor_tools::result::ToolResult)
 fn tool_error_to_proto(error: &conductor_tools::error::ToolError) -> proto::ToolError {
     use conductor_tools::error::ToolError;
     use proto::tool_error::ErrorType;
-    
+
     let error_type = match error {
         ToolError::UnknownTool(name) => ErrorType::UnknownTool(name.clone()),
-        ToolError::InvalidParams(tool_name, message) => ErrorType::InvalidParams(proto::InvalidParamsError {
-            tool_name: tool_name.clone(),
-            message: message.clone(),
-        }),
-        ToolError::Execution { tool_name, message } => ErrorType::Execution(proto::ExecutionError {
-            tool_name: tool_name.clone(),
-            message: message.clone(),
-        }),
+        ToolError::InvalidParams(tool_name, message) => {
+            ErrorType::InvalidParams(proto::InvalidParamsError {
+                tool_name: tool_name.clone(),
+                message: message.clone(),
+            })
+        }
+        ToolError::Execution { tool_name, message } => {
+            ErrorType::Execution(proto::ExecutionError {
+                tool_name: tool_name.clone(),
+                message: message.clone(),
+            })
+        }
         ToolError::Cancelled(name) => ErrorType::Cancelled(name.clone()),
         ToolError::Timeout(name) => ErrorType::Timeout(name.clone()),
         ToolError::DeniedByUser(name) => ErrorType::DeniedByUser(name.clone()),
@@ -125,39 +147,53 @@ fn tool_error_to_proto(error: &conductor_tools::error::ToolError) -> proto::Tool
         ToolError::Http(msg) => ErrorType::Http(msg.clone()),
         ToolError::Regex(msg) => ErrorType::Regex(msg.clone()),
     };
-    
+
     proto::ToolError {
         error_type: Some(error_type),
     }
 }
 
 /// Convert protobuf ToolResult to conductor_tools ToolResult
-fn proto_to_conductor_tools_result(proto_result: proto::ToolResult) -> Result<conductor_tools::result::ToolResult, ConversionError> {
+fn proto_to_conductor_tools_result(
+    proto_result: proto::ToolResult,
+) -> Result<conductor_tools::result::ToolResult, ConversionError> {
     use conductor_tools::result::*;
     use proto::tool_result::Result as ProtoResult;
-    
-    let result = proto_result.result.ok_or_else(|| ConversionError::MissingField {
-        field: "tool_result.result".to_string(),
-    })?;
-    
+
+    let result = proto_result
+        .result
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "tool_result.result".to_string(),
+        })?;
+
     Ok(match result {
         ProtoResult::Search(r) => ToolResult::Search(SearchResult {
-            matches: r.matches.into_iter().map(|m| SearchMatch {
-                file_path: m.file_path,
-                line_number: m.line_number as usize,
-                line_content: m.line_content,
-                column_range: m.column_range.map(|cr| (cr.start as usize, cr.end as usize)),
-            }).collect(),
+            matches: r
+                .matches
+                .into_iter()
+                .map(|m| SearchMatch {
+                    file_path: m.file_path,
+                    line_number: m.line_number as usize,
+                    line_content: m.line_content,
+                    column_range: m
+                        .column_range
+                        .map(|cr| (cr.start as usize, cr.end as usize)),
+                })
+                .collect(),
             total_files_searched: r.total_files_searched as usize,
             search_completed: r.search_completed,
         }),
         ProtoResult::FileList(r) => ToolResult::FileList(FileListResult {
-            entries: r.entries.into_iter().map(|e| FileEntry {
-                path: e.path,
-                is_directory: e.is_directory,
-                size: e.size,
-                permissions: e.permissions,
-            }).collect(),
+            entries: r
+                .entries
+                .into_iter()
+                .map(|e| FileEntry {
+                    path: e.path,
+                    is_directory: e.is_directory,
+                    size: e.size,
+                    permissions: e.permissions,
+                })
+                .collect(),
             base_path: r.base_path,
         }),
         ProtoResult::FileContent(r) => ToolResult::FileContent(FileContentResult {
@@ -184,29 +220,35 @@ fn proto_to_conductor_tools_result(proto_result: proto::ToolResult) -> Result<co
             pattern: r.pattern,
         }),
         ProtoResult::TodoRead(r) => ToolResult::TodoRead(TodoListResult {
-            todos: r.todos.into_iter().map(|t| TodoItem {
-                id: t.id,
-                content: t.content,
-                status: t.status,
-                priority: t.priority,
-            }).collect(),
+            todos: r
+                .todos
+                .into_iter()
+                .map(|t| TodoItem {
+                    id: t.id,
+                    content: t.content,
+                    status: t.status,
+                    priority: t.priority,
+                })
+                .collect(),
         }),
         ProtoResult::TodoWrite(r) => ToolResult::TodoWrite(TodoWriteResult {
-            todos: r.todos.into_iter().map(|t| TodoItem {
-                id: t.id,
-                content: t.content,
-                status: t.status,
-                priority: t.priority,
-            }).collect(),
+            todos: r
+                .todos
+                .into_iter()
+                .map(|t| TodoItem {
+                    id: t.id,
+                    content: t.content,
+                    status: t.status,
+                    priority: t.priority,
+                })
+                .collect(),
             operation: r.operation,
         }),
         ProtoResult::Fetch(r) => ToolResult::Fetch(FetchResult {
             url: r.url,
             content: r.content,
         }),
-        ProtoResult::Agent(r) => ToolResult::Agent(AgentResult {
-            content: r.content,
-        }),
+        ProtoResult::Agent(r) => ToolResult::Agent(AgentResult { content: r.content }),
         ProtoResult::External(r) => ToolResult::External(ExternalResult {
             tool_name: r.tool_name,
             payload: r.payload,
@@ -216,14 +258,18 @@ fn proto_to_conductor_tools_result(proto_result: proto::ToolResult) -> Result<co
 }
 
 /// Convert protobuf ToolError to conductor_tools ToolError
-fn proto_to_tool_error(proto_error: proto::ToolError) -> Result<conductor_tools::error::ToolError, ConversionError> {
+fn proto_to_tool_error(
+    proto_error: proto::ToolError,
+) -> Result<conductor_tools::error::ToolError, ConversionError> {
     use conductor_tools::error::ToolError;
     use proto::tool_error::ErrorType;
-    
-    let error_type = proto_error.error_type.ok_or_else(|| ConversionError::MissingField {
-        field: "tool_error.error_type".to_string(),
-    })?;
-    
+
+    let error_type = proto_error
+        .error_type
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "tool_error.error_type".to_string(),
+        })?;
+
     Ok(match error_type {
         ErrorType::UnknownTool(name) => ToolError::UnknownTool(name),
         ErrorType::InvalidParams(e) => ToolError::InvalidParams(e.tool_name, e.message),
@@ -789,12 +835,8 @@ pub fn proto_tool_call_to_core(
 
 /// Convert protobuf Message to internal Message
 pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage, ConversionError> {
-    use conductor_core::app::conversation::{
-        AssistantContent, ThoughtContent, UserContent,
-    };
-    use conductor_proto::agent::{
-        assistant_content, message, thought_content, user_content,
-    };
+    use conductor_core::app::conversation::{AssistantContent, ThoughtContent, UserContent};
+    use conductor_proto::agent::{assistant_content, message, thought_content, user_content};
 
     let message_variant = proto_msg
         .message
@@ -966,7 +1008,10 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
 }
 
 /// Convert AppEvent to protobuf ServerEvent
-pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Result<proto::ServerEvent, ConversionError> {
+pub fn app_event_to_server_event(
+    app_event: AppEvent,
+    sequence_num: u64,
+) -> Result<proto::ServerEvent, ConversionError> {
     let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
 
     let event = match app_event {
@@ -1014,7 +1059,7 @@ pub fn app_event_to_server_event(app_event: AppEvent, sequence_num: u64) -> Resu
                     model: model.to_string(),
                 },
             ))
-        },
+        }
         AppEvent::ToolCallFailed {
             name,
             error,
@@ -1262,9 +1307,11 @@ pub fn server_event_to_app_event(
             };
             Ok(AppEvent::ToolCallCompleted {
                 name: e.name,
-                result: proto_to_conductor_tools_result(
-                    e.result.ok_or_else(|| ConversionError::MissingField { field: "result".to_string() })?
-                )?,
+                result: proto_to_conductor_tools_result(e.result.ok_or_else(|| {
+                    ConversionError::MissingField {
+                        field: "result".to_string(),
+                    }
+                })?)?,
                 id: e.id,
                 model,
             })

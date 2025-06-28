@@ -5,7 +5,10 @@ mod tests {
     use conductor_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
     use conductor_core::config::LlmConfig;
     use conductor_core::tools::ToolError;
-    use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool, result::{ToolResult, ExternalResult}};
+    use conductor_tools::{
+        InputSchema, ToolCall, ToolSchema as Tool,
+        result::{ExternalResult, ToolResult},
+    };
     use dotenv::dotenv;
     use serde_json::json;
     use std::sync::Arc;
@@ -225,7 +228,10 @@ mod tests {
                         saw_executing = true;
                     }
                 }
-                AgentEvent::ToolResultReceived { tool_call_id, result } => {
+                AgentEvent::ToolResultReceived {
+                    tool_call_id,
+                    result,
+                } => {
                     // Log all tool results for debugging
                     println!(
                         "Test: Received ToolResultReceived event with ID: {}, result: {:?}",

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::api::ToolCall;
 use crate::tools::ExecutionContext;
-use conductor_tools::{ToolError, result::ToolResult};
 use conductor_tools::ToolSchema;
+use conductor_tools::{ToolError, result::ToolResult};
 
 /// Metadata about a tool backend for debugging and monitoring
 #[derive(Debug, Clone)]
@@ -234,13 +234,12 @@ mod tests {
             tool_call: &ToolCall,
             _context: &ExecutionContext,
         ) -> Result<ToolResult, ToolError> {
-            Ok(ToolResult::External(conductor_tools::result::ExternalResult {
-                tool_name: self.name.clone(),
-                payload: format!(
-                    "Mock execution of {} by {}",
-                    tool_call.name, self.name
-                ),
-            }))
+            Ok(ToolResult::External(
+                conductor_tools::result::ExternalResult {
+                    tool_name: self.name.clone(),
+                    payload: format!("Mock execution of {} by {}", tool_call.name, self.name),
+                },
+            ))
         }
 
         fn supported_tools(&self) -> Vec<String> {

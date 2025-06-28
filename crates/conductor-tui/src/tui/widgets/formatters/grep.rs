@@ -26,10 +26,7 @@ impl ToolFormatter for GrepFormatter {
             ))];
         };
 
-        let path_display = params
-            .path
-            .as_deref()
-            .unwrap_or(".");
+        let path_display = params.path.as_deref().unwrap_or(".");
         let include_display = params
             .include
             .as_deref()
@@ -41,11 +38,13 @@ impl ToolFormatter for GrepFormatter {
                 if search_result.matches.is_empty() {
                     "no matches".to_string()
                 } else {
-                    let unique_files: std::collections::HashSet<_> = search_result.matches
+                    let unique_files: std::collections::HashSet<_> = search_result
+                        .matches
                         .iter()
                         .map(|m| m.file_path.as_str())
                         .collect();
-                    format!("{} matches in {} files",
+                    format!(
+                        "{} matches in {} files",
                         search_result.matches.len(),
                         unique_files.len()
                     )
@@ -88,10 +87,7 @@ impl ToolFormatter for GrepFormatter {
             Style::default(),
         )));
 
-        let path_display = params
-            .path
-            .as_deref()
-            .unwrap_or("current directory");
+        let path_display = params.path.as_deref().unwrap_or("current directory");
         lines.push(Line::from(Span::styled(
             format!("Path: {}", path_display),
             Style::default(),
@@ -115,12 +111,13 @@ impl ToolFormatter for GrepFormatter {
                         let matches = &search_result.matches;
 
                         for search_match in matches.iter().take(MAX_MATCHES) {
-                            let formatted = format!("{}:{}: {}",
+                            let formatted = format!(
+                                "{}:{}: {}",
                                 search_match.file_path,
                                 search_match.line_number,
                                 search_match.line_content.trim()
                             );
-                            
+
                             for wrapped in textwrap::wrap(&formatted, wrap_width) {
                                 lines.push(Line::from(Span::styled(
                                     wrapped.to_string(),

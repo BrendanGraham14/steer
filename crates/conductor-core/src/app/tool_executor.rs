@@ -7,8 +7,8 @@ use crate::api::ToolCall;
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
 use crate::tools::{BackendRegistry, ExecutionContext};
 use crate::workspace::Workspace;
-use conductor_tools::{ToolError, result::ToolResult};
 use conductor_tools::ToolSchema;
+use conductor_tools::{ToolError, result::ToolResult};
 
 /// Manages the execution of tools called by the AI model
 #[derive(Clone)]

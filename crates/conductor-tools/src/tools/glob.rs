@@ -3,8 +3,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::{ExecutionContext, ToolError};
 use crate::result::GlobResult;
+use crate::{ExecutionContext, ToolError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GlobParams {

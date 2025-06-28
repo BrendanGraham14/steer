@@ -171,8 +171,6 @@ pub enum AssistantContent {
     Thought { thought: ThoughtContent },
 }
 
-
-
 /// A message in the conversation, with role-specific content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
@@ -267,33 +265,29 @@ impl Message {
     /// Extract text content from the message
     pub fn extract_text(&self) -> String {
         match self {
-            Message::User { content, .. } => {
-                content
-                    .iter()
-                    .filter_map(|c| match c {
-                        UserContent::Text { text } => Some(text.clone()),
-                        UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
-                        UserContent::AppCommand { response, .. } => {
-                            response.as_ref().map(|r| match r {
-                                CommandResponse::Text(t) => t.clone(),
-                                CommandResponse::Compact(CompactResult::Success(s)) => s.clone(),
-                                _ => String::new(),
-                            })
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            Message::Assistant { content, .. } => {
-                content
-                    .iter()
-                    .filter_map(|c| match c {
-                        AssistantContent::Text { text } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            Message::User { content, .. } => content
+                .iter()
+                .filter_map(|c| match c {
+                    UserContent::Text { text } => Some(text.clone()),
+                    UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
+                    UserContent::AppCommand { response, .. } => {
+                        response.as_ref().map(|r| match r {
+                            CommandResponse::Text(t) => t.clone(),
+                            CommandResponse::Compact(CompactResult::Success(s)) => s.clone(),
+                            _ => String::new(),
+                        })
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Message::Assistant { content, .. } => content
+                .iter()
+                .filter_map(|c| match c {
+                    AssistantContent::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
             Message::Tool { result, .. } => result.llm_format(),
         }
     }
@@ -505,7 +499,11 @@ impl Conversation {
         });
     }
 
-    pub fn add_tool_error(&mut self, tool_use_id: String, error: conductor_tools::error::ToolError) {
+    pub fn add_tool_error(
+        &mut self,
+        tool_use_id: String,
+        error: conductor_tools::error::ToolError,
+    ) {
         let parent_id = self.messages.last().map(|m| m.id().to_string());
         self.add_message(Message::Tool {
             tool_use_id,

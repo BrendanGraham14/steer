@@ -45,24 +45,31 @@ impl ToolFormatter for DefaultFormatter {
         if let Some(result) = result {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
 
-            // Use the llm_format method to get string representation
-            let output = result.llm_format();
+            // Show the result as pretty-printed JSON
+            match serde_json::to_string_pretty(result) {
+                Ok(pretty_result) => {
+                    const MAX_LINES: usize = 10;
+                    let (output_lines, truncated) = truncate_lines(&pretty_result, MAX_LINES);
 
-            if output.trim().is_empty() {
-                lines.push(Line::from(Span::styled("(No output)", styles::ITALIC_GRAY)));
-            } else {
-                const MAX_LINES: usize = 10;
-                let (output_lines, truncated) = truncate_lines(&output, MAX_LINES);
+                    for line in output_lines {
+                        for wrapped in textwrap::wrap(line, wrap_width) {
+                            lines.push(Line::from(Span::raw(wrapped.to_string())));
+                        }
+                    }
 
-                for line in output_lines {
-                    for wrapped in textwrap::wrap(line, wrap_width) {
-                        lines.push(Line::from(Span::raw(wrapped.to_string())));
+                    if truncated {
+                        lines.push(Line::from(Span::styled(
+                            format!(
+                                "... ({} more lines)",
+                                pretty_result.lines().count() - MAX_LINES
+                            ),
+                            styles::ITALIC_GRAY,
+                        )));
                     }
                 }
-
-                if truncated {
+                Err(_) => {
                     lines.push(Line::from(Span::styled(
-                        format!("... ({} more lines)", output.lines().count() - MAX_LINES),
+                        "(Unable to display result)",
                         styles::ITALIC_GRAY,
                     )));
                 }

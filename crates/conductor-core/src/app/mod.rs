@@ -1055,7 +1055,7 @@ async fn handle_app_command(
                 Ok(output) => {
                     // Get the formatted output from the typed result
                     let output_str = output.llm_format();
-                    
+
                     // Parse the output to extract stdout/stderr/exit code
                     // The bash tool returns output in a specific format
                     let (stdout, stderr, exit_code) = parse_bash_output(&output_str);
@@ -1232,7 +1232,10 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 model: app.current_model,
             });
         }
-        AgentEvent::ToolResultReceived { tool_call_id, result } => {
+        AgentEvent::ToolResultReceived {
+            tool_call_id,
+            result,
+        } => {
             let tool_name = app
                 .conversation
                 .lock()

@@ -4,21 +4,19 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use conductor_tools::tools::workspace_tools;
-use conductor_tools::{ExecutionContext, ToolError};
 use conductor_tools::traits::ExecutableTool;
-use conductor_tools::result::ToolResult;
+use conductor_tools::{ExecutionContext, ToolError};
 
 use crate::proto::{
-    AgentInfo, ExecuteToolRequest, ExecuteToolResponse, HealthResponse, HealthStatus,
-    ToolSchema as GrpcToolSchema, ToolSchemasResponse,
+    AgentInfo, BashResult as ProtoBashResult, ColumnRange as ProtoColumnRange,
+    EditResult as ProtoEditResult, ExecuteToolRequest, ExecuteToolResponse,
+    FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
+    FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult, HealthResponse,
+    HealthStatus, SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult,
+    TodoItem as ProtoTodoItem, TodoListResult as ProtoTodoListResult,
+    TodoWriteResult as ProtoTodoWriteResult, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
+    execute_tool_response::Result as ProtoResult,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
-    execute_tool_response::{Result as ProtoResult},
-    SearchResult as ProtoSearchResult, FileListResult as ProtoFileListResult,
-    FileContentResult as ProtoFileContentResult, EditResult as ProtoEditResult,
-    BashResult as ProtoBashResult, GlobResult as ProtoGlobResult,
-    TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
-    SearchMatch as ProtoSearchMatch, FileEntry as ProtoFileEntry,
-    TodoItem as ProtoTodoItem, ColumnRange as ProtoColumnRange,
 };
 
 /// Agent service implementation that executes tools locally
@@ -90,41 +88,51 @@ impl RemoteWorkspaceService {
     }
 
     /// Convert a typed tool output to a proto result
-    fn tool_result_to_proto_result(result: &conductor_tools::result::ToolResult) -> Option<ProtoResult> {
+    fn tool_result_to_proto_result(
+        result: &conductor_tools::result::ToolResult,
+    ) -> Option<ProtoResult> {
         // Match on the ToolResult enum variants
         match result {
             conductor_tools::result::ToolResult::Search(search_result) => {
-                let proto_matches = search_result.matches.iter().map(|m| ProtoSearchMatch {
-                    file_path: m.file_path.clone(),
-                    line_number: m.line_number as u64,
-                    line_content: m.line_content.clone(),
-                    column_range: m.column_range.map(|(start, end)| ProtoColumnRange {
-                        start: start as u64,
-                        end: end as u64,
-                    }),
-                }).collect();
-                
+                let proto_matches = search_result
+                    .matches
+                    .iter()
+                    .map(|m| ProtoSearchMatch {
+                        file_path: m.file_path.clone(),
+                        line_number: m.line_number as u64,
+                        line_content: m.line_content.clone(),
+                        column_range: m.column_range.map(|(start, end)| ProtoColumnRange {
+                            start: start as u64,
+                            end: end as u64,
+                        }),
+                    })
+                    .collect();
+
                 Some(ProtoResult::SearchResult(ProtoSearchResult {
                     matches: proto_matches,
                     total_files_searched: search_result.total_files_searched as u64,
                     search_completed: search_result.search_completed,
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::FileList(file_list) => {
-                let proto_entries = file_list.entries.iter().map(|e| ProtoFileEntry {
-                    path: e.path.clone(),
-                    is_directory: e.is_directory,
-                    size: e.size,
-                    permissions: e.permissions.clone(),
-                }).collect();
-                
+                let proto_entries = file_list
+                    .entries
+                    .iter()
+                    .map(|e| ProtoFileEntry {
+                        path: e.path.clone(),
+                        is_directory: e.is_directory,
+                        size: e.size,
+                        permissions: e.permissions.clone(),
+                    })
+                    .collect();
+
                 Some(ProtoResult::FileListResult(ProtoFileListResult {
                     entries: proto_entries,
                     base_path: file_list.base_path.clone(),
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::FileContent(file_content) => {
                 Some(ProtoResult::FileContentResult(ProtoFileContentResult {
                     content: file_content.content.clone(),
@@ -133,7 +141,7 @@ impl RemoteWorkspaceService {
                     truncated: file_content.truncated,
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::Edit(edit_result) => {
                 Some(ProtoResult::EditResult(ProtoEditResult {
                     file_path: edit_result.file_path.clone(),
@@ -143,7 +151,7 @@ impl RemoteWorkspaceService {
                     new_content: edit_result.new_content.clone(),
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::Bash(bash_result) => {
                 Some(ProtoResult::BashResult(ProtoBashResult {
                     stdout: bash_result.stdout.clone(),
@@ -152,56 +160,64 @@ impl RemoteWorkspaceService {
                     command: bash_result.command.clone(),
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::Glob(glob_result) => {
                 Some(ProtoResult::GlobResult(ProtoGlobResult {
                     matches: glob_result.matches.clone(),
                     pattern: glob_result.pattern.clone(),
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::TodoRead(todo_list) => {
-                let proto_todos = todo_list.todos.iter().map(|t| ProtoTodoItem {
-                    id: t.id.clone(),
-                    content: t.content.clone(),
-                    status: t.status.clone(),
-                    priority: t.priority.clone(),
-                }).collect();
-                
+                let proto_todos = todo_list
+                    .todos
+                    .iter()
+                    .map(|t| ProtoTodoItem {
+                        id: t.id.clone(),
+                        content: t.content.clone(),
+                        status: t.status.clone(),
+                        priority: t.priority.clone(),
+                    })
+                    .collect();
+
                 Some(ProtoResult::TodoListResult(ProtoTodoListResult {
                     todos: proto_todos,
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::TodoWrite(todo_write_result) => {
-                let proto_todos = todo_write_result.todos.iter().map(|t| ProtoTodoItem {
-                    id: t.id.clone(),
-                    content: t.content.clone(),
-                    status: t.status.clone(),
-                    priority: t.priority.clone(),
-                }).collect();
-                
+                let proto_todos = todo_write_result
+                    .todos
+                    .iter()
+                    .map(|t| ProtoTodoItem {
+                        id: t.id.clone(),
+                        content: t.content.clone(),
+                        status: t.status.clone(),
+                        priority: t.priority.clone(),
+                    })
+                    .collect();
+
                 Some(ProtoResult::TodoWriteResult(ProtoTodoWriteResult {
                     todos: proto_todos,
                     operation: todo_write_result.operation.clone(),
                 }))
             }
-            
+
             conductor_tools::result::ToolResult::Fetch(_) => {
                 // Fetch results are not handled in the remote workspace
                 None
             }
-            
+
             conductor_tools::result::ToolResult::Agent(_) => {
                 // Agent results are not handled in the remote workspace
                 None
             }
-            
+
             conductor_tools::result::ToolResult::External(_) => {
                 // External results are not handled in the remote workspace
                 None
             }
-            
+
             conductor_tools::result::ToolResult::Error(_) => {
                 // Errors are handled differently
                 None
@@ -372,26 +388,25 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             Ok(tool_result) => {
                 // Convert to a typed result
                 let proto_result = Self::tool_result_to_proto_result(&tool_result);
-                
-                let response = ExecuteToolResponse {
+
+                ExecuteToolResponse {
                     success: true,
                     result: proto_result.or_else(|| {
                         // Fallback to string result
                         Some(ProtoResult::StringResult(tool_result.llm_format()))
                     }),
                     error: String::new(),
-                started_at: Some(prost_types::Timestamp {
-                    seconds: start_time.elapsed().as_secs() as i64,
-                    nanos: 0,
-                }),
-                completed_at: Some(prost_types::Timestamp {
-                    seconds: duration.as_secs() as i64,
-                    nanos: duration.subsec_nanos() as i32,
-                }),
-                metadata: std::collections::HashMap::new(),
-            };
-            response
-            },
+                    started_at: Some(prost_types::Timestamp {
+                        seconds: start_time.elapsed().as_secs() as i64,
+                        nanos: 0,
+                    }),
+                    completed_at: Some(prost_types::Timestamp {
+                        seconds: duration.as_secs() as i64,
+                        nanos: duration.subsec_nanos() as i32,
+                    }),
+                    metadata: std::collections::HashMap::new(),
+                }
+            }
             Err(error) => {
                 // For some errors, we want to return them as successful responses
                 // with the error in the error field, rather than failing the gRPC call

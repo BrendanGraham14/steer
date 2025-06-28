@@ -48,7 +48,9 @@ impl SessionManagerExt for SessionManager {
                         .into_iter()
                         .map(message_to_proto)
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| SessionManagerError::CreationFailed { message: format!("Failed to convert message: {}", e) })?,
+                        .map_err(|e| SessionManagerError::CreationFailed {
+                            message: format!("Failed to convert message: {}", e),
+                        })?,
                     tool_calls: std::collections::HashMap::new(), // TODO: Convert tool calls
                     approved_tools: session.state.approved_tools.into_iter().collect(),
                     last_event_sequence: session.state.last_event_sequence,

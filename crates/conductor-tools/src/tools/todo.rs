@@ -89,9 +89,9 @@ fn write_todos(todos: &TodoList) -> Result<(), std::io::Error> {
 
 pub mod read {
     use super::read_todos;
+    use super::{TodoPriority, TodoStatus};
+    use crate::result::{TodoItem as TodoItemResult, TodoListResult};
     use crate::{ExecutionContext, ToolError};
-    use crate::result::{TodoListResult, TodoItem as TodoItemResult};
-    use super::{TodoStatus, TodoPriority};
     use conductor_macros::tool;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -162,9 +162,9 @@ Usage:
 }
 
 pub mod write {
-    use super::{TodoList, write_todos, TodoStatus, TodoPriority};
+    use super::{TodoList, TodoPriority, TodoStatus, write_todos};
+    use crate::result::{TodoItem as TodoItemResult, TodoWriteResult};
     use crate::{ExecutionContext, ToolError};
-    use crate::result::{TodoWriteResult, TodoItem as TodoItemResult};
     use conductor_macros::tool;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};

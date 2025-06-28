@@ -271,9 +271,12 @@ mod tests {
         let placeholder_msg = Message::Tool {
             id: "tool_msg_id".to_string(),
             tool_use_id: tool_id.clone(),
-            result: conductor_core::app::conversation::ToolResult::Success {
-                output: "Pending...".to_string(),
-            },
+            result: conductor_tools::ToolResult::External(
+                conductor_tools::result::ExternalResult {
+                    tool_name: "unknown".to_string(),
+                    payload: "Pending...".to_string(),
+                },
+            ),
             timestamp: chrono::Utc::now().timestamp() as u64,
             thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,

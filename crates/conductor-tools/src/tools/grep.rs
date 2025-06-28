@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::task;
 
-use crate::{ExecutionContext, ToolError, result::{GrepResult, SearchResult}};
+use crate::{
+    ExecutionContext, ToolError,
+    result::{GrepResult, SearchResult},
+};
 
 /// Match from grep search
 pub type GrepMatch = crate::result::SearchMatch;
@@ -182,9 +185,13 @@ fn grep_search_internal(
     // Sort matches by file modification time (newest first)
     if !all_matches.is_empty() {
         // Group matches by file
-        let mut file_groups: std::collections::HashMap<String, Vec<GrepMatch>> = std::collections::HashMap::new();
+        let mut file_groups: std::collections::HashMap<String, Vec<GrepMatch>> =
+            std::collections::HashMap::new();
         for match_item in all_matches {
-            file_groups.entry(match_item.file_path.clone()).or_default().push(match_item);
+            file_groups
+                .entry(match_item.file_path.clone())
+                .or_default()
+                .push(match_item);
         }
 
         // Get modification times and sort
@@ -292,7 +299,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("file1.txt"));
         assert_eq!(result.0.matches[0].line_number, 2);
@@ -316,7 +323,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("file2.log"));
         assert_eq!(result.0.matches[0].line_number, 3);
@@ -339,7 +346,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         assert_eq!(result.0.matches.len(), 0);
         assert!(result.0.search_completed);
         assert!(result.0.total_files_searched > 0);
@@ -360,7 +367,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("subdir/file3.txt"));
         assert_eq!(result.0.matches[0].line_number, 1);
@@ -383,7 +390,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("file2.log"));
         assert_eq!(result.0.matches[0].line_number, 1);
@@ -476,7 +483,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Should find the match in file1.txt but not in ignored files
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("file1.txt"));
@@ -507,12 +514,16 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Should find the literal match
         assert_eq!(result.0.matches.len(), 1);
         assert!(result.0.matches[0].file_path.contains("code.rs"));
         assert_eq!(result.0.matches[0].line_number, 2);
-        assert!(result.0.matches[0].line_content.contains("format_message(\"hello\");"));
+        assert!(
+            result.0.matches[0]
+                .line_content
+                .contains("format_message(\"hello\");")
+        );
         assert!(result.0.search_completed);
     }
 
@@ -553,26 +564,33 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Should find 3 matches in conductor/src files but not in other/src
         assert_eq!(result.0.matches.len(), 3);
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("conductor/src/session/state.rs") && 
-            m.line_number == 1 &&
-            m.line_content == "pub struct SessionConfig {"
-        ));
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("conductor/src/utils/session.rs") && 
-            m.line_number == 2 &&
-            m.line_content == "fn test() -> SessionConfig {"
-        ));
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("conductor/src/utils/session.rs") && 
-            m.line_number == 3 &&
-            m.line_content.contains("SessionConfig { field: \"test\".to_string() }")
-        ));
+        assert!(result.0.matches.iter().any(|m| {
+            m.file_path.contains("conductor/src/session/state.rs")
+                && m.line_number == 1
+                && m.line_content == "pub struct SessionConfig {"
+        }));
+        assert!(result.0.matches.iter().any(|m| {
+            m.file_path.contains("conductor/src/utils/session.rs")
+                && m.line_number == 2
+                && m.line_content == "fn test() -> SessionConfig {"
+        }));
+        assert!(result.0.matches.iter().any(|m| {
+            m.file_path.contains("conductor/src/utils/session.rs")
+                && m.line_number == 3
+                && m.line_content
+                    .contains("SessionConfig { field: \"test\".to_string() }")
+        }));
         // Ensure no matches from other/src
-        assert!(!result.0.matches.iter().any(|m| m.file_path.contains("other/src")));
+        assert!(
+            !result
+                .0
+                .matches
+                .iter()
+                .any(|m| m.file_path.contains("other/src"))
+        );
         assert!(result.0.search_completed);
     }
 
@@ -614,25 +632,43 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // Should find matches in src/ but not in tests/
         assert!(result.0.matches.len() >= 3);
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("src/api/client/mod.rs") && 
-            m.line_number == 1 &&
-            m.line_content == "pub mod client;"
-        ));
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("src/api/client/mod.rs") && 
-            m.line_number == 2 &&
-            m.line_content == "pub use client::ApiClient;"
-        ));
-        assert!(result.0.matches.iter().any(|m| 
-            m.file_path.contains("src/tools/grep.rs") && 
-            m.line_number == 1 &&
-            m.line_content == "pub struct GrepTool;"
-        ));
-        assert!(!result.0.matches.iter().any(|m| m.file_path.contains("tests/")));
+        assert!(
+            result
+                .0
+                .matches
+                .iter()
+                .any(|m| m.file_path.contains("src/api/client/mod.rs")
+                    && m.line_number == 1
+                    && m.line_content == "pub mod client;")
+        );
+        assert!(
+            result
+                .0
+                .matches
+                .iter()
+                .any(|m| m.file_path.contains("src/api/client/mod.rs")
+                    && m.line_number == 2
+                    && m.line_content == "pub use client::ApiClient;")
+        );
+        assert!(
+            result
+                .0
+                .matches
+                .iter()
+                .any(|m| m.file_path.contains("src/tools/grep.rs")
+                    && m.line_number == 1
+                    && m.line_content == "pub struct GrepTool;")
+        );
+        assert!(
+            !result
+                .0
+                .matches
+                .iter()
+                .any(|m| m.file_path.contains("tests/"))
+        );
         assert!(result.0.search_completed);
     }
 
@@ -659,7 +695,7 @@ mod tests {
         let params_json = serde_json::to_value(params).unwrap();
 
         let result = tool.execute(params_json, &context).await.unwrap();
-        
+
         // The result should contain a canonicalized path without "./"
         assert_eq!(result.0.matches.len(), 1);
         assert_eq!(result.0.matches[0].line_number, 2);
@@ -671,6 +707,9 @@ mod tests {
 
         // The path should be absolute and canonical
         let canonical_path = temp_dir.path().join("test.txt").canonicalize().unwrap();
-        assert_eq!(result.0.matches[0].file_path, canonical_path.display().to_string());
+        assert_eq!(
+            result.0.matches[0].file_path,
+            canonical_path.display().to_string()
+        );
     }
 }
