@@ -53,7 +53,7 @@ impl<'a, T> PopupList<'a, T> {
     /// Calculate the popup area (centered, 60% width, height based on content)
     pub fn centered_rect(area: Rect, max_height_percent: u16) -> Rect {
         let width_percent = 60;
-        let popup_width = area.width * width_percent / 100;
+        let _popup_width = area.width * width_percent / 100;
 
         // Calculate height based on content, but cap at max_height_percent
         let max_height = area.height * max_height_percent / 100;

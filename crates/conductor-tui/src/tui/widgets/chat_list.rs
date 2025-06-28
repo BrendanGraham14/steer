@@ -377,7 +377,7 @@ impl<'a> ChatList<'a> {
                                         lines.push(Line::from(""));
                                     }
                                 }
-                                AssistantContent::ToolCall { tool_call } => {
+                                AssistantContent::ToolCall { tool_call: _ } => {
                                     // Skip rendering tool calls here - they're shown as separate Tool messages
                                     continue;
                                 }

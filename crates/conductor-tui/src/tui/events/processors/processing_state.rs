@@ -1,17 +1,22 @@
 //! ProcessingStateProcessor - handles processing state events.
 //!
 //! Manages the overall processing state of the TUI, including thinking/processing
-//! indicators, spinner state, and progress messages.
+//! indicators, spinner state, progress messages, and completion notifications.
 
+use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use conductor_core::app::AppEvent;
 
 /// Processor for events that affect the overall processing state
-pub struct ProcessingStateProcessor;
+pub struct ProcessingStateProcessor {
+    notification_config: NotificationConfig,
+}
 
 impl ProcessingStateProcessor {
     pub fn new() -> Self {
-        Self
+        Self {
+            notification_config: NotificationConfig::from_env(),
+        }
     }
 }
 
@@ -37,9 +42,36 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.spinner_state = 0;
                 ProcessingResult::Handled
             }
-            AppEvent::ThinkingCompleted | AppEvent::Error { .. } => {
+            AppEvent::ThinkingCompleted => {
+                let was_processing = *ctx.is_processing;
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
+
+                // Trigger notification if we were processing
+                if was_processing {
+                    notify_with_sound(
+                        &self.notification_config,
+                        NotificationSound::ProcessingComplete,
+                        "Processing complete - waiting for input",
+                    );
+                }
+
+                ProcessingResult::Handled
+            }
+            AppEvent::Error { .. } => {
+                let was_processing = *ctx.is_processing;
+                *ctx.is_processing = false;
+                *ctx.progress_message = None;
+
+                // Trigger error notification if we were processing
+                if was_processing {
+                    notify_with_sound(
+                        &self.notification_config,
+                        NotificationSound::Error,
+                        "An error occurred during processing",
+                    );
+                }
+
                 ProcessingResult::Handled
             }
             AppEvent::OperationCancelled { info } => {

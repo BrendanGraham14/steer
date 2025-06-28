@@ -2,6 +2,7 @@
 //!
 //! Manages tool execution state, approval requests, completion, and failure events.
 
+use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItem;
 use conductor_core::app::AppEvent;
@@ -9,11 +10,15 @@ use conductor_core::app::conversation::ToolResult;
 use conductor_tools::error::ToolError;
 
 /// Processor for tool-related events
-pub struct ToolEventProcessor;
+pub struct ToolEventProcessor {
+    notification_config: NotificationConfig,
+}
 
 impl ToolEventProcessor {
     pub fn new() -> Self {
-        Self
+        Self {
+            notification_config: NotificationConfig::from_env(),
+        }
     }
 }
 
@@ -151,6 +156,14 @@ impl EventProcessor for ToolEventProcessor {
                 };
 
                 *ctx.current_tool_approval = Some(approval_info);
+
+                // Notify user about tool approval request
+                notify_with_sound(
+                    &self.notification_config,
+                    NotificationSound::ToolApproval,
+                    &format!("Tool approval needed: {}", name),
+                );
+
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,

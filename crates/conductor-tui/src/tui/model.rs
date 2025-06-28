@@ -93,7 +93,7 @@ impl ChatItem {
     /// Get the timestamp for this chat item
     pub fn timestamp(&self) -> OffsetDateTime {
         match self {
-            ChatItem::Message(row) => {
+            ChatItem::Message(_row) => {
                 // Convert from chrono to time crate
                 // For now, use current time as placeholder - this should be updated
                 // when Message includes a timestamp field

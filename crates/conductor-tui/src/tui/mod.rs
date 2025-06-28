@@ -974,7 +974,7 @@ impl Tui {
 
         // Calculate how many messages fit in the selection area
         // Input area is 5 lines, minus 2 for borders = 3 lines available
-        let max_visible = 3usize;
+        let _max_visible = 3usize;
 
         if !self.edit_selection_messages.is_empty() {
             // Start with the last (most recent) message selected
