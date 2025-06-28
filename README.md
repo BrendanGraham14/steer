@@ -70,6 +70,38 @@ conductor session delete <SESSION_ID> --force
 
 ---
 
+## Notifications
+
+Conductor provides context-aware notifications with different sounds for different events:
+
+### Notification Types
+
+1. **Processing Complete** ✅
+   - Sound: Three ascending beeps (300Hz → 450Hz → 600Hz)
+   - When: Assistant finishes processing your request
+
+2. **Tool Approval** ⚠️
+   - Sound: Urgent double beep (800Hz)
+   - When: A tool needs your approval (e.g., `bash`, `edit_file`)
+
+3. **Error** ❌
+   - Sound: Three descending beeps (600Hz → 450Hz → 300Hz)
+   - When: An error occurs during processing
+
+### Configuration
+
+Both sound and desktop notifications are enabled by default. To disable:
+
+```bash
+# Disable sound notifications
+export CONDUCTOR_NOTIFICATION_SOUND=false
+
+# Disable desktop notifications
+export CONDUCTOR_NOTIFICATION_DESKTOP=false
+```
+
+---
+
 ## API keys
 
 Conductor only looks at environment variables (optionally loaded from a `.env` file).  Set the variables that correspond to the providers you intend to use:

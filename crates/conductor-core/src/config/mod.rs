@@ -9,6 +9,23 @@ pub struct Config {
     pub model: Option<String>,
     pub history_size: Option<usize>,
     pub system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notifications: Option<NotificationSettings>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NotificationSettings {
+    pub enable_sound: Option<bool>,
+    pub enable_desktop: Option<bool>,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self {
+            enable_sound: Some(true),
+            enable_desktop: Some(true),
+        }
+    }
 }
 
 impl Config {
@@ -17,6 +34,7 @@ impl Config {
             model: Some("claude-3-7-sonnet-20250219".to_string()),
             history_size: Some(10),
             system_prompt: None,
+            notifications: Some(NotificationSettings::default()),
         }
     }
 }
