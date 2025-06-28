@@ -28,7 +28,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{
+    Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -1045,13 +1047,31 @@ impl Tui {
     ) -> Result<()> {
         let size = f.area();
 
+        // Calculate required height for input/approval area
+        let input_area_height = if let Some(tool_call) = current_approval {
+            // For approval mode: calculate based on approval text
+            let formatter = crate::tui::widgets::formatters::get_formatter(&tool_call.name);
+            let preview_lines = formatter.compact(
+                &tool_call.parameters,
+                &None,
+                size.width.saturating_sub(4) as usize,
+            );
+            // 2 lines for header + preview lines + 2 for borders + 1 for padding
+            (2 + preview_lines.len() + 3).min((size.height.saturating_sub(4) / 2) as usize) as u16
+        } else {
+            // For input mode: calculate based on textarea content
+            let line_count = textarea.lines().len().max(1);
+            // line count + 2 for borders + 1 for padding
+            (line_count + 3).min(10) as u16 // Cap at 10 lines for input
+        };
+
         // Main layout
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1),    // Messages area (flexible)
-                Constraint::Length(5), // Input area
-                Constraint::Length(1), // Status bar
+                Constraint::Min(1),                    // Messages area (flexible)
+                Constraint::Length(input_area_height), // Input area (dynamic)
+                Constraint::Length(1),                 // Status bar
             ])
             .split(size);
 
@@ -1226,7 +1246,39 @@ impl Tui {
                 let list = List::new(items).block(input_block);
                 f.render_widget(list, chunks[1]);
             } else {
+                // Render the textarea
                 f.render_widget(&textarea_with_block, chunks[1]);
+
+                // Check if we need a scrollbar
+                let textarea_height = chunks[1].height.saturating_sub(2); // Subtract borders
+                let content_lines = textarea.lines().len();
+
+                if content_lines > textarea_height as usize {
+                    // Get the cursor position
+                    let (cursor_row, _) = textarea.cursor();
+
+                    // Create scrollbar state using the cursor row as the scroll position.
+                    // `ScrollbarState::position` expects the index of the currently focused line
+                    // (usually the cursor row), *not* the offset of the first visible line.
+                    let mut scrollbar_state = ScrollbarState::new(content_lines)
+                        .position(cursor_row)
+                        .viewport_content_length(textarea_height as usize);
+
+                    // Render scrollbar on the right edge inside the border
+                    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                        .begin_symbol(Some("▲"))
+                        .end_symbol(Some("▼"))
+                        .thumb_style(Style::default().fg(Color::Gray));
+
+                    let scrollbar_area = Rect {
+                        x: chunks[1].x + chunks[1].width - 1,
+                        y: chunks[1].y + 1,
+                        width: 1,
+                        height: chunks[1].height - 2,
+                    };
+
+                    f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+                }
             }
         }
 
