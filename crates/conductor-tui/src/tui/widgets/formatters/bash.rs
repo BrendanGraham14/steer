@@ -15,7 +15,7 @@ impl ToolFormatter for BashFormatter {
         &self,
         params: &Value,
         result: &Option<ToolResult>,
-        _wrap_width: usize,
+        wrap_width: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
@@ -26,32 +26,68 @@ impl ToolFormatter for BashFormatter {
             ))];
         };
 
-        let cmd_preview = if params.command.len() > 50 {
-            format!("{}...", &params.command[..47])
+        // Wrap command if it's too long
+        let command_lines: Vec<&str> = params.command.lines().collect();
+        if command_lines.len() == 1 && params.command.len() <= wrap_width.saturating_sub(2) {
+            // Single line that fits - show inline with prompt
+            let mut spans = vec![
+                Span::styled("$ ", styles::COMMAND_PROMPT),
+                Span::styled(params.command.clone(), styles::COMMAND_TEXT),
+            ];
+
+            // Add exit code if error
+            if let Some(ToolResult::Error(error)) = result {
+                if let Some(exit_code) = error
+                    .to_string()
+                    .strip_prefix("Exit code: ")
+                    .and_then(|s| s.parse::<i32>().ok())
+                {
+                    spans.push(Span::styled(
+                        format!(" (exit {})", exit_code),
+                        styles::ERROR_TEXT,
+                    ));
+                }
+            }
+
+            lines.push(Line::from(spans));
         } else {
-            params.command.clone()
-        };
+            // Multi-line or long command - wrap it
+            for (i, line) in params.command.lines().enumerate() {
+                for (j, wrapped_line) in textwrap::wrap(line, wrap_width.saturating_sub(2))
+                    .into_iter()
+                    .enumerate()
+                {
+                    if i == 0 && j == 0 {
+                        // First line gets the prompt
+                        lines.push(Line::from(vec![
+                            Span::styled("$ ", styles::COMMAND_PROMPT),
+                            Span::styled(wrapped_line.to_string(), styles::COMMAND_TEXT),
+                        ]));
+                    } else {
+                        // Subsequent lines are indented
+                        lines.push(Line::from(vec![
+                            Span::styled("  ", Style::default()),
+                            Span::styled(wrapped_line.to_string(), styles::COMMAND_TEXT),
+                        ]));
+                    }
+                }
+            }
 
-        let mut spans = vec![
-            Span::styled("$ ", styles::COMMAND_PROMPT),
-            Span::styled(cmd_preview, styles::COMMAND_TEXT),
-        ];
-
-        // Add exit code if error
-        if let Some(ToolResult::Error(error)) = result {
-            if let Some(exit_code) = error
-                .to_string()
-                .strip_prefix("Exit code: ")
-                .and_then(|s| s.parse::<i32>().ok())
-            {
-                spans.push(Span::styled(
-                    format!(" (exit {})", exit_code),
-                    styles::ERROR_TEXT,
-                ));
+            // Add exit code on a new line if error
+            if let Some(ToolResult::Error(error)) = result {
+                if let Some(exit_code) = error
+                    .to_string()
+                    .strip_prefix("Exit code: ")
+                    .and_then(|s| s.parse::<i32>().ok())
+                {
+                    lines.push(Line::from(Span::styled(
+                        format!("(exit {})", exit_code),
+                        styles::ERROR_TEXT,
+                    )));
+                }
             }
         }
 
-        lines.push(Line::from(spans));
         lines
     }
 
