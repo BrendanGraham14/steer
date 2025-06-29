@@ -13,6 +13,8 @@ use ratatui::{
     widgets::{Block, Paragraph, StatefulWidget, Widget, Wrap},
 };
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use textwrap;
 use time::format_description::well_known::Rfc3339;
 
@@ -176,13 +178,54 @@ impl<'a> ChatList<'a> {
         Line::from(vec![Span::styled("•", style)])
     }
 
-    fn render_non_message_item(&self, item: &ChatItem, width: u16) -> (Vec<Line<'static>>, u16) {
+    fn get_item_cache_key(item: &ChatItem, width: u16, view_mode: ViewMode) -> CacheKey {
+        match item {
+            ChatItem::Message(row) => (row.id().to_string(), width, view_mode),
+            _ => {
+                // For non-message items, create a hash of the item content
+                let mut hasher = DefaultHasher::new();
+                format!("{:?}", item).hash(&mut hasher);
+                let hash = hasher.finish();
+                (format!("item_{}", hash), width, view_mode)
+            }
+        }
+    }
+
+    fn render_chat_items(
+        &self,
+        item: &ChatItem,
+        width: u16,
+        view_mode: ViewMode,
+        cache: Option<&mut HashMap<CacheKey, RenderCache>>,
+    ) -> (Vec<Line<'static>>, u16) {
+        // Try cache first if available
+        if let Some(cache_map) = cache {
+            let key = Self::get_item_cache_key(item, width, view_mode);
+            let cache_entry = cache_map.entry(key).or_insert_with(|| {
+                let (lines, height) = self.render_item_uncached(item, width, view_mode);
+                RenderCache { lines, height }
+            });
+            return (cache_entry.lines.clone(), cache_entry.height);
+        }
+
+        // No cache, render directly
+        self.render_item_uncached(item, width, view_mode)
+    }
+
+    fn render_item_uncached(
+        &self,
+        item: &ChatItem,
+        width: u16,
+        view_mode: ViewMode,
+    ) -> (Vec<Line<'static>>, u16) {
         let max_width = (width.saturating_sub(4)) as usize; // 4 for gutter + minimal padding
 
         match item {
-            // Message items are handled via cache – this function only renders meta/non-message items
-            ChatItem::Message(_) => unreachable!("render_non_message_item called with Message"),
-        
+            ChatItem::Message(row) => {
+                let cache = self.build_cache_for_message(row, width, view_mode);
+                (cache.lines, cache.height)
+            }
+
             ChatItem::PendingToolCall { tool_call, .. } => {
                 let mut lines = vec![];
 
@@ -839,27 +882,12 @@ impl StatefulWidget for ChatList<'_> {
         let mut total_height = 0u16;
 
         for (idx, item) in self.items.iter().enumerate() {
-            let height = match item {
-                ChatItem::Message(row) => {
-                    // Calculate available width for message content
-                    let available_width = list_area.width;
-
-                    // Create cache key
-                    let key = (row.id().to_string(), available_width, state.view_mode);
-
-                    // Get or create cache entry
-                    let cache = state.line_cache.entry(key).or_insert_with(|| {
-                        self.build_cache_for_message(row, available_width, state.view_mode)
-                    });
-
-                    cache.height
-                }
-                _ => {
-                    // For non-message items, calculate height dynamically
-                    let (_, height) = self.render_non_message_item(item, list_area.width);
-                    height
-                }
-            };
+            let (_, height) = self.render_chat_items(
+                item,
+                list_area.width,
+                state.view_mode,
+                Some(&mut state.line_cache),
+            );
 
             item_positions.push((idx, total_height, height));
             total_height += height;
@@ -953,22 +981,12 @@ impl StatefulWidget for ChatList<'_> {
                 let item = &self.items[idx];
 
                 // Get lines for the item
-                let lines = match item {
-                    ChatItem::Message(row) => {
-                        // Get from cache (which we know exists from the first loop)
-                        let key = (row.id().to_string(), list_area.width, state.view_mode);
-                        state
-                            .line_cache
-                            .get(&key)
-                            .map(|cache| cache.lines.clone())
-                            .unwrap_or_default()
-                    }
-                    _ => {
-                        // Render non-message items dynamically
-                        let (lines, _) = self.render_non_message_item(item, list_area.width);
-                        lines
-                    }
-                };
+                let (lines, _) = self.render_chat_items(
+                    item,
+                    list_area.width,
+                    state.view_mode,
+                    Some(&mut state.line_cache),
+                );
 
                 // Calculate where to start rendering this item
                 if item_y < visible_start {
