@@ -801,9 +801,7 @@ impl Tui {
                         self.current_model = new_model;
                         // Send model change as a slash command
                         let command = format!("/model {}", new_model);
-                        self.command_sink
-                            .send_command(AppCommand::ExecuteCommand(command))
-                            .await?;
+                        self.handle_slash_command(command).await?;
                     }
                 }
                 self.input_mode = InputMode::Normal;
@@ -862,9 +860,8 @@ impl Tui {
     }
 
     async fn handle_slash_command(&mut self, command: String) -> Result<()> {
-        // Just send the command as-is to ExecuteCommand
         self.command_sink
-            .send_command(AppCommand::ExecuteCommand(command))
+            .send_command(AppCommand::ExecuteCommand(command.trim().to_string()))
             .await?;
         Ok(())
     }
