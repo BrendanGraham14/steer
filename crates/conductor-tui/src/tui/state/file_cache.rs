@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Cache for workspace files to enable fast fuzzy searching
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FileCache {
     /// Cached file paths from the workspace
     files: Arc<RwLock<Vec<String>>>,
