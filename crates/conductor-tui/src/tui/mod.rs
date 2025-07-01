@@ -29,7 +29,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState,
 };
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
@@ -1227,21 +1228,25 @@ impl Tui {
                             .take(chunks[1].width.saturating_sub(4) as usize)
                             .collect::<String>();
 
-                        let style = if idx == edit_selection_index {
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD)
-                                .add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        };
-
-                        items.push(ListItem::new(preview).style(style));
+                        items.push(ListItem::new(preview));
                     }
-                }
 
-                let list = List::new(items).block(input_block);
-                f.render_widget(list, chunks[1]);
+                    // Create ListState with correct selected index (relative to window)
+                    let relative_selected = edit_selection_index.saturating_sub(start_idx);
+                    let mut list_state = ListState::default();
+                    list_state.select(Some(relative_selected));
+
+                    let highlight_style = Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::REVERSED);
+
+                    let list = List::new(items)
+                        .block(input_block)
+                        .highlight_style(highlight_style);
+
+                    f.render_stateful_widget(list, chunks[1], &mut list_state);
+                }
             } else {
                 // Render the textarea
                 f.render_widget(&textarea_with_block, chunks[1]);
