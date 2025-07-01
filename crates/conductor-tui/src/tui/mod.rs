@@ -930,28 +930,19 @@ impl Tui {
             return self.handle_slash_command(content).await;
         }
 
-        // Expand any @path references in the input
-        let expanded_content = match self.expand_file_references(&content).await {
-            Ok(expanded) => expanded,
-            Err(e) => {
-                warn!(target: "tui.send_message", "Failed to expand file references: {}", e);
-                content // Use original input if expansion fails
-            }
-        };
-
         // Check if we're editing a message
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
             // Send edit command which creates a new branch
             self.command_sink
                 .send_command(AppCommand::EditMessage {
                     message_id: message_id_to_edit,
-                    new_content: expanded_content,
+                    new_content: content,
                 })
                 .await?;
         } else {
             // Send regular message
             self.command_sink
-                .send_command(AppCommand::ProcessUserInput(expanded_content))
+                .send_command(AppCommand::ProcessUserInput(content))
                 .await?;
         }
         Ok(())
@@ -1433,15 +1424,6 @@ impl Tui {
         {
             warn!(target: "tui.file_cache", "Failed to request workspace files: {}", e);
         }
-    }
-
-    /// Parse and validate @path references in the input text
-    async fn expand_file_references(&self, input: &str) -> Result<String> {
-        // For now, we just pass through the input as-is
-        // The backend will handle the actual file expansion
-        // This method is here for future enhancement where we might
-        // validate paths or provide better error messages
-        Ok(input.to_string())
     }
 
     /// Calculate the input area for rendering
