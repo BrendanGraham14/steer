@@ -47,6 +47,7 @@ use crate::tui::state::view_model::MessageViewModel;
 use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
 use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderResult};
 use crate::tui::widgets::popup_list::PopupList;
+use crate::tui::widgets::render_input_panel;
 
 pub mod model;
 pub mod state;
@@ -1185,7 +1186,19 @@ impl Tui {
         let chat_list = ChatList::new(chat_items).hovered_message_id(edit_selection_hovered_id);
         f.render_stateful_widget(chat_list, chunks[0], chat_list_state);
 
-        // Render input area or approval prompt
+        render_input_panel(
+            f,
+            chunks[1],
+            textarea,
+            input_mode,
+            current_approval,
+            is_processing,
+            spinner_state,
+            edit_selection_messages,
+            edit_selection_index,
+        )?;
+
+        //
         if let Some(tool_call) = current_approval {
             // Use the formatter to create a nice preview
             let formatter = crate::tui::widgets::formatters::get_formatter(&tool_call.name);
