@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
 
 #[cfg(feature = "ui")]
 async fn run_tui_local(
-    session_id: Option<String>,
+    mut session_id: Option<String>,
     model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
@@ -141,6 +141,23 @@ async fn run_tui_local(
     // Create gRPC client
     let client = conductor_grpc::GrpcClientAdapter::from_channel(channel).await?;
 
+    // Resolve "latest" alias
+    if matches!(session_id.as_deref(), Some("latest")) {
+        let mut sessions = client.list_sessions().await?;
+        // Sort sessions by updated_at descending, fallback to created_at
+        sessions.sort_by(|a, b| {
+            let ts_to_tuple = |ts: &Option<prost_types::Timestamp>| {
+                ts.as_ref().map(|t| (t.seconds, t.nanos)).unwrap_or((0, 0))
+            };
+            ts_to_tuple(&b.updated_at).cmp(&ts_to_tuple(&a.updated_at))
+        });
+        if let Some(latest) = sessions.first() {
+            session_id = Some(latest.id.clone());
+        } else {
+            anyhow::bail!("No sessions found to resume");
+        }
+    }
+
     // Run TUI with the client
     tui::run_tui(
         Arc::new(client),
@@ -155,7 +172,7 @@ async fn run_tui_local(
 #[cfg(feature = "ui")]
 async fn run_tui_remote(
     remote_addr: String,
-    session_id: Option<String>,
+    mut session_id: Option<String>,
     model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
@@ -165,6 +182,22 @@ async fn run_tui_remote(
 
     // Connect to remote server
     let client = GrpcClientAdapter::connect(&remote_addr).await?;
+
+    // Resolve "latest" alias
+    if matches!(session_id.as_deref(), Some("latest")) {
+        let mut sessions = client.list_sessions().await?;
+        sessions.sort_by(|a, b| {
+            let ts_to_tuple = |ts: &Option<prost_types::Timestamp>| {
+                ts.as_ref().map(|t| (t.seconds, t.nanos)).unwrap_or((0, 0))
+            };
+            ts_to_tuple(&b.updated_at).cmp(&ts_to_tuple(&a.updated_at))
+        });
+        if let Some(latest) = sessions.first() {
+            session_id = Some(latest.id.clone());
+        } else {
+            anyhow::bail!("No sessions found to resume");
+        }
+    }
 
     // Run TUI with the client
     tui::run_tui(
