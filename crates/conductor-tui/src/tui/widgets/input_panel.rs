@@ -462,7 +462,7 @@ impl StatefulWidget for InputPanel<'_> {
                 match self.input_mode {
                     InputMode::Insert => " Insert (Alt-Enter to send, Esc to cancel) ",
                     InputMode::Normal =>
-                        " (i to insert, ! for bash, u/d/j/k to scroll, e to edit previous messages) ",
+                        " i to insert, ! for bash, u/d/j/k to scroll, e to edit previous messages ",
                     InputMode::BashCommand => " Bash (Enter to execute, Esc to cancel) ",
                     InputMode::AwaitingApproval => " Awaiting Approval ",
                     InputMode::SelectingModel => " Model Selection ",
@@ -470,16 +470,16 @@ impl StatefulWidget for InputPanel<'_> {
                         " Really quit? (y/Y to confirm, any other key to cancel) ",
                     InputMode::EditMessageSelection =>
                         " Select message to edit (↑↓ to navigate, Enter to select, Esc to cancel) ",
-                    InputMode::FuzzyFinder => " File Finder (↑↓ to navigate, Enter to select, Esc to cancel) ",
+                    InputMode::FuzzyFinder => " ↑↓ to navigate, Enter to select, Esc to cancel ",
                 }
             ))
             .style(match self.input_mode {
-                InputMode::Insert => Style::default().fg(Color::Green),
+                InputMode::Insert => Style::default().fg(Color::Gray),
                 InputMode::Normal => Style::default().fg(Color::DarkGray),
                 InputMode::BashCommand => Style::default().fg(Color::Cyan),
                 InputMode::ConfirmExit => Style::default().fg(Color::Red),
                 InputMode::EditMessageSelection => Style::default().fg(Color::Yellow),
-                InputMode::FuzzyFinder => Style::default().fg(Color::Cyan),
+                InputMode::FuzzyFinder => Style::default().fg(Color::Gray),
                 _ => Style::default(),
             });
 

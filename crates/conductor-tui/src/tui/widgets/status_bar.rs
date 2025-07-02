@@ -20,7 +20,7 @@ impl<'a> StatusBar<'a> {
     pub fn new(current_model: &'a Model) -> Self {
         Self {
             current_model,
-            style: Style::default().fg(Color::Gray),
+            style: Style::default().fg(Color::LightCyan),
         }
     }
 
