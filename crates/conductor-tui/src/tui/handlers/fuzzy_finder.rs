@@ -23,10 +23,31 @@ impl Tui {
                     offset += line.len() + 1;
                 }
             }
-            if offset == 0 {
-                false
+            // Check if we have a stored trigger position
+            if let Some(at_pos) = self.input_panel_state.fuzzy_finder.trigger_position() {
+                // Check if cursor is past the @ and no whitespace between
+                if offset <= at_pos {
+                    false // Cursor before the @
+                } else {
+                    let bytes = content.as_bytes();
+                    // Check for whitespace between @ and cursor
+                    let mut still_in_word = true;
+                    for idx in at_pos + 1..offset {
+                        if idx >= bytes.len() {
+                            break;
+                        }
+                        match bytes[idx] {
+                            b' ' | b'\t' | b'\n' => {
+                                still_in_word = false;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    still_in_word
+                }
             } else {
-                content[..offset].ends_with('@')
+                false // No trigger position stored
             }
         };
 
@@ -44,7 +65,7 @@ impl Tui {
                     self.input_mode = InputMode::Insert;
                 }
                 FuzzyFinderResult::Select(path) => {
-                    self.input_panel_state.insert_str(&path);
+                    self.input_panel_state.complete_fuzzy_finder(&path);
                     self.input_panel_state.deactivate_fuzzy();
                     self.input_mode = InputMode::Insert;
                 }

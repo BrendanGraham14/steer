@@ -59,6 +59,59 @@ impl InputPanelState {
         self.textarea.input(input);
     }
 
+    /// Complete fuzzy finder by replacing the query text with the selected path
+    pub fn complete_fuzzy_finder(&mut self, selected_path: &str) {
+        if let Some(at_pos) = self.fuzzy_finder.trigger_position() {
+            // Get current cursor position
+            let (row, col) = self.textarea.cursor();
+
+            // Calculate absolute positions
+            let lines = self.textarea.lines();
+            let mut cursor_offset = 0usize;
+            for (i, line) in lines.iter().enumerate() {
+                if i == row {
+                    cursor_offset += col;
+                    break;
+                } else {
+                    cursor_offset += line.len() + 1; // +1 for newline
+                }
+            }
+
+            // Convert content to string and replace the query portion
+            let content = self.content();
+            let mut new_content = String::new();
+
+            // Keep everything up to and including the @
+            new_content.push_str(&content[..=at_pos]);
+
+            // Add the selected path
+            new_content.push_str(selected_path);
+
+            // Keep everything after the cursor
+            if cursor_offset < content.len() {
+                new_content.push_str(&content[cursor_offset..]);
+            }
+
+            // Replace the entire content
+            let lines: Vec<&str> = new_content.lines().collect();
+            self.set_content_from_lines(lines);
+
+            // Position cursor after the inserted path
+            let new_cursor_pos = at_pos + 1 + selected_path.len();
+            let mut pos = 0;
+            for (i, line) in self.textarea.lines().iter().enumerate() {
+                if pos + line.len() >= new_cursor_pos {
+                    // Cursor should be on this line
+                    let col = new_cursor_pos - pos;
+                    self.textarea
+                        .move_cursor(tui_textarea::CursorMove::Jump(i as u16, col as u16));
+                    break;
+                }
+                pos += line.len() + 1; // +1 for newline
+            }
+        }
+    }
+
     /// Insert a string (e.g., for paste operations)
     pub fn insert_str(&mut self, s: &str) {
         self.textarea.insert_str(s);
@@ -185,7 +238,28 @@ impl InputPanelState {
 
     /// Activate fuzzy finder
     pub fn activate_fuzzy(&mut self) {
-        self.fuzzy_finder.activate();
+        // Calculate the position of the @ that was just typed
+        let (row, col) = self.textarea.cursor();
+        let lines = self.textarea.lines();
+
+        // Calculate absolute byte offset of cursor
+        let mut offset = 0usize;
+        for (i, line) in lines.iter().enumerate() {
+            if i == row {
+                offset += col;
+                break;
+            } else {
+                offset += line.len() + 1; // +1 for newline
+            }
+        }
+
+        // The @ is one character before the cursor (since we just typed it)
+        if offset > 0 {
+            self.fuzzy_finder.activate(offset - 1);
+        } else {
+            // Shouldn't happen, but handle gracefully
+            self.fuzzy_finder.activate(0);
+        }
     }
 
     /// Deactivate fuzzy finder
@@ -216,20 +290,55 @@ impl InputPanelState {
             // Ensure cursor stays on the same line after we exit by scrolling to keep it visible
             self.textarea.scroll(Scrolling::Delta { rows: 0, cols: 0 });
 
-            // Get current content and find the last @ character
-            let content = self.content();
-            if let Some(at_pos) = content.rfind('@') {
-                // Extract everything after the @ as the query (up to cursor / end)
-                let query = &content[at_pos + 1..];
-                // If the query is empty OR contains whitespace/newlines, we are no longer immediately after the trigger → close
-                if query.is_empty() || query.chars().any(|c| c.is_whitespace()) {
+            // Get current cursor position
+            let (row, col) = self.textarea.cursor();
+            let lines = self.textarea.lines();
+
+            // Calculate absolute byte offset of cursor
+            let mut offset = 0usize;
+            for (i, line) in lines.iter().enumerate() {
+                if i == row {
+                    offset += col;
+                    break;
+                } else {
+                    offset += line.len() + 1; // +1 for newline
+                }
+            }
+
+            // Get the stored trigger position
+            if let Some(at_pos) = self.fuzzy_finder.trigger_position() {
+                let content = self.content();
+                let bytes = content.as_bytes();
+
+                // Check if cursor is still within the word that started with @
+                // by scanning between the @ and cursor for whitespace
+                if offset <= at_pos {
+                    // Cursor is before the @, close fuzzy finder
                     return Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close);
                 }
-                // Otherwise update results normally
+
+                // Check for whitespace between @ and cursor
+                for idx in at_pos + 1..offset {
+                    if idx >= bytes.len() {
+                        break;
+                    }
+                    match bytes[idx] {
+                        b' ' | b'\t' | b'\n' => {
+                            // Found whitespace between @ and cursor
+                            return Some(
+                                crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Extract query from @ to cursor position
+                let query = &content[at_pos + 1..offset];
                 let results = self.file_cache.fuzzy_search(query, Some(10)).await;
                 self.fuzzy_finder.update_results(results);
             } else {
-                // No @ found at all, close the fuzzy finder
+                // No trigger position stored, close fuzzy finder
                 return Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close);
             }
         }
