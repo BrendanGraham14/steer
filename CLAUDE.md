@@ -72,4 +72,3 @@ conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc
 4. **Clean boundaries**: Each crate has a single, clear responsibility
 5. **Path references**: When referencing files outside crates (e.g., `include_str!`), remember to account for the extra directory level: `../../` becomes `../../../` or `../../../../`
 
-See docs/grpc_architecture.md for full details.
