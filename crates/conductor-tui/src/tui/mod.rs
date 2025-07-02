@@ -1029,6 +1029,15 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
+    /// RAII guard to ensure terminal state is restored after a test, even on panic.
+    struct TerminalCleanupGuard;
+
+    impl Drop for TerminalCleanupGuard {
+        fn drop(&mut self) {
+            cleanup_terminal();
+        }
+    }
+
     // Mock command sink for tests
     struct MockCommandSink;
 
@@ -1051,6 +1060,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_messages_preserves_tool_call_params() {
+        let _guard = TerminalCleanupGuard;
         // Create a TUI instance for testing
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
@@ -1116,6 +1126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_messages_handles_tool_result_before_assistant() {
+        let _guard = TerminalCleanupGuard;
         // Test edge case where Tool result arrives before Assistant message
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
