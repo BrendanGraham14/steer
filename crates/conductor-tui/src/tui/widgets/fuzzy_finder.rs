@@ -117,17 +117,17 @@ impl FuzzyFinder {
                 }
             }
             (KeyCode::Up, _) => {
-                // Move selection up
-                if self.selected > 0 {
-                    self.selected -= 1;
+                // Move selection up (visually down in reversed list)
+                if self.selected + 1 < self.results.len() {
+                    self.selected += 1;
                     self.list_state.select(Some(self.selected));
                 }
                 None
             }
             (KeyCode::Down, _) => {
-                // Move selection down
-                if self.selected + 1 < self.results.len() {
-                    self.selected += 1;
+                // Move selection down (visually up in reversed list)
+                if self.selected > 0 {
+                    self.selected -= 1;
                     self.list_state.select(Some(self.selected));
                 }
                 None
