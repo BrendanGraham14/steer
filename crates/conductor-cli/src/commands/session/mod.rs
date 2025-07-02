@@ -35,14 +35,12 @@ impl Command for SessionCommand {
                 cmd.execute().await
             }
             SessionCommands::Create {
-                tool_policy,
-                pre_approved_tools,
+                session_config,
                 metadata,
                 system_prompt,
             } => {
                 let cmd = CreateSessionCommand {
-                    tool_policy: tool_policy.clone(),
-                    pre_approved_tools: pre_approved_tools.clone(),
+                    session_config: session_config.clone(),
                     metadata: metadata.clone(),
                     remote: self.remote.clone(),
                     system_prompt: system_prompt.clone(),

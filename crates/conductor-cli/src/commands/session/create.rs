@@ -3,21 +3,18 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use super::super::Command;
+use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use conductor_core::api::Model;
 use conductor_core::app::AppConfig;
 use conductor_core::config::LlmConfig;
 use conductor_core::events::StreamEventWithMetadata;
-use conductor_core::session::{
-    SessionConfig, SessionManager, SessionManagerConfig, SessionToolConfig, WorkspaceConfig,
-};
+use conductor_core::session::{SessionManager, SessionManagerConfig};
 use conductor_core::utils::session::{
-    create_session_store_with_config, parse_metadata, parse_tool_policy,
-    resolve_session_store_config,
+    create_session_store_with_config, resolve_session_store_config,
 };
 
 pub struct CreateSessionCommand {
-    pub tool_policy: String,
-    pub pre_approved_tools: Option<String>,
+    pub session_config: Option<std::path::PathBuf>,
     pub metadata: Option<String>,
     pub remote: Option<String>,
     pub system_prompt: Option<String>,
@@ -27,19 +24,16 @@ pub struct CreateSessionCommand {
 #[async_trait]
 impl Command for CreateSessionCommand {
     async fn execute(&self) -> Result<()> {
-        let policy = parse_tool_policy(&self.tool_policy, self.pre_approved_tools.as_deref())?;
-        let session_metadata = parse_metadata(self.metadata.as_deref())?;
-
-        // TODO: Allow customizing from CLI args, a file, and/or env vars
-        let mut tool_config = SessionToolConfig::default();
-        tool_config.approval_policy = policy;
-
-        let session_config = SessionConfig {
-            workspace: WorkspaceConfig::default(),
-            tool_config,
+        // Create the loader with optional config path
+        let overrides = SessionConfigOverrides {
             system_prompt: self.system_prompt.clone(),
-            metadata: session_metadata,
+            metadata: self.metadata.clone(),
         };
+
+        let loader =
+            SessionConfigLoader::new(self.session_config.clone()).with_overrides(overrides);
+
+        let session_config = loader.load().await?;
 
         // If remote is specified, handle via gRPC
         if let Some(remote_addr) = &self.remote {

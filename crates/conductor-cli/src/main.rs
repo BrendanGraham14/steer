@@ -6,6 +6,7 @@ use conductor_cli::commands::{
     Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
 };
+use conductor_cli::session_config::{SessionConfigLoader, SessionConfigOverrides};
 
 #[cfg(feature = "ui")]
 use conductor_tui::tui::{self, cleanup_terminal, setup_panic_hook};
@@ -31,15 +32,21 @@ async fn main() -> Result<()> {
 
     // If no subcommand specified, default to TUI
     let cmd = cli.command.clone().unwrap_or(Commands::Tui {
-        remote: None, // Will use global --remote if set
+        remote: None,         // Will use global --remote if set
+        session_config: None, // Will use global --session-config if set
     });
 
     match cmd {
-        Commands::Tui { remote } => {
+        Commands::Tui {
+            remote,
+            session_config,
+        } => {
             #[cfg(feature = "ui")]
             {
                 // Use subcommand remote if provided, otherwise fall back to global
                 let remote_addr = remote.or(cli.remote.clone());
+                // Use subcommand session_config if provided, otherwise fall back to global
+                let session_config_path = session_config.or(cli.session_config.clone());
 
                 // Set panic hook for terminal cleanup
                 setup_panic_hook();
@@ -47,7 +54,15 @@ async fn main() -> Result<()> {
                 // Launch TUI with appropriate backend
                 if let Some(addr) = remote_addr {
                     // Connect to remote server
-                    run_tui_remote(addr, cli.session, model, cli.directory, cli.system_prompt).await
+                    run_tui_remote(
+                        addr,
+                        cli.session,
+                        model,
+                        cli.directory,
+                        cli.system_prompt,
+                        session_config_path,
+                    )
+                    .await
                 } else {
                     // Launch with in-process server
                     run_tui_local(
@@ -56,6 +71,7 @@ async fn main() -> Result<()> {
                         cli.directory,
                         cli.system_prompt,
                         cli.session_db,
+                        session_config_path,
                     )
                     .await
                 }
@@ -75,7 +91,7 @@ async fn main() -> Result<()> {
             model: headless_model,
             messages_json,
             session,
-            tool_config,
+            session_config,
             system_prompt,
             remote,
         } => {
@@ -88,7 +104,7 @@ async fn main() -> Result<()> {
                 messages_json,
                 global_model: effective_model,
                 session,
-                tool_config,
+                session_config,
                 system_prompt: system_prompt.or(cli.system_prompt),
                 remote: remote_addr,
                 directory: cli.directory,
@@ -122,6 +138,7 @@ async fn run_tui_local(
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
     session_db: Option<std::path::PathBuf>,
+    session_config_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
     use conductor_grpc::local_server;
     use std::sync::Arc;
@@ -158,13 +175,32 @@ async fn run_tui_local(
         }
     }
 
+    // If no session_id, we need to create a new session
+    if session_id.is_none() && (session_config_path.is_some() || system_prompt.is_some()) {
+        // Load session config from file if provided
+        let overrides = SessionConfigOverrides {
+            system_prompt: system_prompt.clone(),
+            ..Default::default()
+        };
+
+        let loader = SessionConfigLoader::new(session_config_path).with_overrides(overrides);
+
+        let session_config = loader.load().await?;
+
+        // Create the session
+        let new_session_id = client.create_session(session_config).await?;
+        tracing::info!("Created session from config: {}", new_session_id);
+        println!("Session ID: {}", new_session_id);
+        session_id = Some(new_session_id);
+    }
+
     // Run TUI with the client
     tui::run_tui(
         Arc::new(client),
         session_id,
         model,
         directory,
-        system_prompt,
+        None, // system_prompt is already applied to the session
     )
     .await
 }
@@ -176,6 +212,7 @@ async fn run_tui_remote(
     model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
+    session_config_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
     use conductor_grpc::GrpcClientAdapter;
     use std::sync::Arc;
@@ -199,13 +236,32 @@ async fn run_tui_remote(
         }
     }
 
+    // If no session_id, we need to create a new session
+    if session_id.is_none() && (session_config_path.is_some() || system_prompt.is_some()) {
+        // Load session config from file if provided
+        let overrides = SessionConfigOverrides {
+            system_prompt: system_prompt.clone(),
+            ..Default::default()
+        };
+
+        let loader = SessionConfigLoader::new(session_config_path).with_overrides(overrides);
+
+        let session_config = loader.load().await?;
+
+        // Create the session
+        let new_session_id = client.create_session(session_config).await?;
+        tracing::info!("Created session from config: {}", new_session_id);
+        println!("Session ID: {}", new_session_id);
+        session_id = Some(new_session_id);
+    }
+
     // Run TUI with the client
     tui::run_tui(
         Arc::new(client),
         session_id,
         model,
         directory,
-        system_prompt,
+        None, // system_prompt is already applied to the session
     )
     .await
 }
