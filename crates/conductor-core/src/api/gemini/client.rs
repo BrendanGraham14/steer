@@ -741,10 +741,13 @@ impl Provider for GeminiClient {
                     provider: self.name().to_string(),
                     details: error_text,
                 },
-                400 | 404 => ApiError::InvalidRequest {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }, // 404 might mean invalid model
+                400 | 404 => {
+                    error!(target: "Gemini API Error Response", "Status: {}, Body: {}, Request: {}", status, error_text, serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize request".to_string()));
+                    ApiError::InvalidRequest {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    }
+                } // 404 might mean invalid model
                 500..=599 => ApiError::ServerError {
                     provider: self.name().to_string(),
                     status_code: status.as_u16(),
