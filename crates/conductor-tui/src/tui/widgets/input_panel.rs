@@ -54,6 +54,61 @@ impl InputPanelState {
         }
     }
 
+    /// Get the byte offset of the cursor in the textarea content.
+    pub fn get_cursor_byte_offset(&self) -> usize {
+        let (row, col) = self.textarea.cursor();
+        let lines = self.textarea.lines();
+        let mut offset = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if i < row {
+                offset += line.len() + 1; // +1 for newline
+            } else {
+                // `col` is a grapheme cluster count, find the byte offset for that.
+                offset += line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
+                break;
+            }
+        }
+        offset
+    }
+
+    /// Checks if the fuzzy finder is active and the cursor is in a valid query position.
+    /// This method does not allocate and is suitable for checks on every tick.
+    pub fn is_in_fuzzy_query(&self) -> bool {
+        if !self.fuzzy_finder.is_active() {
+            return false;
+        }
+
+        let Some(at_pos) = self.fuzzy_finder.trigger_position() else {
+            return false;
+        };
+
+        let cursor_offset = self.get_cursor_byte_offset();
+        if cursor_offset <= at_pos {
+            return false; // Cursor is before or on the trigger character
+        }
+
+        let content = self.content();
+        // The part of the string that could be the query
+        let query_candidate = &content[at_pos + 1..cursor_offset];
+
+        // If it contains whitespace, it's not a valid query anymore
+        !query_candidate.chars().any(char::is_whitespace)
+    }
+
+    /// If the fuzzy finder is active and the cursor is in a valid query position,
+    /// returns the query string. Otherwise, returns None.
+    pub fn get_current_fuzzy_query(&self) -> Option<String> {
+        if self.is_in_fuzzy_query() {
+            let at_pos = self.fuzzy_finder.trigger_position().unwrap(); // Safe due to check above
+            let cursor_offset = self.get_cursor_byte_offset();
+            let content = self.content();
+            let query_candidate = &content[at_pos + 1..cursor_offset];
+            Some(query_candidate.to_string())
+        } else {
+            None
+        }
+    }
+
     /// Handle input in insert/bash modes
     pub fn handle_input(&mut self, input: Input) {
         self.textarea.input(input);
@@ -62,20 +117,7 @@ impl InputPanelState {
     /// Complete fuzzy finder by replacing the query text with the selected path
     pub fn complete_fuzzy_finder(&mut self, selected_path: &str) {
         if let Some(at_pos) = self.fuzzy_finder.trigger_position() {
-            // Get current cursor position
-            let (row, col) = self.textarea.cursor();
-
-            // Calculate absolute positions
-            let lines = self.textarea.lines();
-            let mut cursor_offset = 0usize;
-            for (i, line) in lines.iter().enumerate() {
-                if i == row {
-                    cursor_offset += col;
-                    break;
-                } else {
-                    cursor_offset += line.len() + 1; // +1 for newline
-                }
-            }
+            let cursor_offset = self.get_cursor_byte_offset();
 
             // Convert content to string and replace the query portion
             let content = self.content();
@@ -96,18 +138,25 @@ impl InputPanelState {
             let lines: Vec<&str> = new_content.lines().collect();
             self.set_content_from_lines(lines);
 
-            // Position cursor after the inserted path
-            let new_cursor_pos = at_pos + 1 + selected_path.len();
-            let mut pos = 0;
-            for (i, line) in self.textarea.lines().iter().enumerate() {
-                if pos + line.len() >= new_cursor_pos {
-                    // Cursor should be on this line
-                    let col = new_cursor_pos - pos;
-                    self.textarea
-                        .move_cursor(tui_textarea::CursorMove::Jump(i as u16, col as u16));
+            // Position cursor after the inserted path (which is a byte position)
+            let new_cursor_pos_bytes = at_pos + 1 + selected_path.len();
+
+            // Now, convert this byte position to a (row, col) grapheme position
+            let mut bytes_traversed = 0;
+            for (row_idx, line) in self.textarea.lines().iter().enumerate() {
+                let line_len_bytes = line.len();
+                if bytes_traversed + line_len_bytes >= new_cursor_pos_bytes {
+                    // The cursor should be on this line
+                    let byte_offset_in_line = new_cursor_pos_bytes - bytes_traversed;
+                    // Convert byte offset in line to character/grapheme column
+                    let char_col = line[..byte_offset_in_line].chars().count();
+                    self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+                        row_idx as u16,
+                        char_col as u16,
+                    ));
                     break;
                 }
-                pos += line.len() + 1; // +1 for newline
+                bytes_traversed += line_len_bytes + 1; // +1 for newline
             }
         }
     }
@@ -238,24 +287,11 @@ impl InputPanelState {
 
     /// Activate fuzzy finder
     pub fn activate_fuzzy(&mut self) {
-        // Calculate the position of the @ that was just typed
-        let (row, col) = self.textarea.cursor();
-        let lines = self.textarea.lines();
-
-        // Calculate absolute byte offset of cursor
-        let mut offset = 0usize;
-        for (i, line) in lines.iter().enumerate() {
-            if i == row {
-                offset += col;
-                break;
-            } else {
-                offset += line.len() + 1; // +1 for newline
-            }
-        }
-
         // The @ is one character before the cursor (since we just typed it)
-        if offset > 0 {
-            self.fuzzy_finder.activate(offset - 1);
+        let cursor_pos = self.get_cursor_byte_offset();
+        if cursor_pos > 0 {
+            // The trigger is the @ just before the cursor
+            self.fuzzy_finder.activate(cursor_pos - 1);
         } else {
             // Shouldn't happen, but handle gracefully
             self.fuzzy_finder.activate(0);
@@ -279,71 +315,29 @@ impl InputPanelState {
     ) -> Option<crate::tui::widgets::fuzzy_finder::FuzzyFinderResult> {
         use tui_textarea::Input;
 
-        // First handle the key in the fuzzy finder
+        // First handle navigation/selection in the fuzzy finder itself
         let result = self.fuzzy_finder.handle_input(key);
 
-        // If no result (key was not handled by fuzzy finder), handle text input
-        if result.is_none() {
-            // Pass the key to the main textarea for text input
-            let input = Input::from(key);
-            self.textarea.input(input);
-            // Ensure cursor stays on the same line after we exit by scrolling to keep it visible
-            self.textarea.scroll(Scrolling::Delta { rows: 0, cols: 0 });
-
-            // Get current cursor position
-            let (row, col) = self.textarea.cursor();
-            let lines = self.textarea.lines();
-
-            // Calculate absolute byte offset of cursor
-            let mut offset = 0usize;
-            for (i, line) in lines.iter().enumerate() {
-                if i == row {
-                    offset += col;
-                    break;
-                } else {
-                    offset += line.len() + 1; // +1 for newline
-                }
-            }
-
-            // Get the stored trigger position
-            if let Some(at_pos) = self.fuzzy_finder.trigger_position() {
-                let content = self.content();
-                let bytes = content.as_bytes();
-
-                // Check if cursor is still within the word that started with @
-                // by scanning between the @ and cursor for whitespace
-                if offset <= at_pos {
-                    // Cursor is before the @, close fuzzy finder
-                    return Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close);
-                }
-
-                // Check for whitespace between @ and cursor
-                for idx in at_pos + 1..offset {
-                    if idx >= bytes.len() {
-                        break;
-                    }
-                    match bytes[idx] {
-                        b' ' | b'\t' | b'\n' => {
-                            // Found whitespace between @ and cursor
-                            return Some(
-                                crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close,
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Extract query from @ to cursor position
-                let query = &content[at_pos + 1..offset];
-                let results = self.file_cache.fuzzy_search(query, Some(10)).await;
-                self.fuzzy_finder.update_results(results);
-            } else {
-                // No trigger position stored, close fuzzy finder
-                return Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close);
-            }
+        if result.is_some() {
+            // Key was handled (e.g., selection, closing), so just return the result
+            return result;
         }
 
-        result
+        // Key was not for navigation, so treat it as text input
+        let input = Input::from(key);
+        self.textarea.input(input);
+        self.textarea.scroll(Scrolling::Delta { rows: 0, cols: 0 });
+
+        // After input, check if we are still in a valid query.
+        // If so, update results. If not, the finder should close.
+        if let Some(query) = self.get_current_fuzzy_query() {
+            let results = self.file_cache.fuzzy_search(&query, Some(10)).await;
+            self.fuzzy_finder.update_results(results);
+            None // Not a final result, just an update
+        } else {
+            // No longer a valid query, signal to close.
+            Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close)
+        }
     }
 
     /// Get file cache reference
