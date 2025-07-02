@@ -19,6 +19,8 @@ pub struct FuzzyFinder {
     selected: usize,
     /// List state for scrolling
     list_state: ListState,
+    /// The byte position of the @ that triggered this fuzzy finder
+    trigger_position: Option<usize>,
 }
 
 impl Default for FuzzyFinder {
@@ -35,6 +37,7 @@ impl FuzzyFinder {
             results: Vec::new(),
             selected: 0,
             list_state: ListState::default(),
+            trigger_position: None,
         }
     }
 
@@ -43,12 +46,13 @@ impl FuzzyFinder {
         self.active
     }
 
-    /// Activate the fuzzy finder
-    pub fn activate(&mut self) {
+    /// Activate the fuzzy finder with the position of the @ that triggered it
+    pub fn activate(&mut self, trigger_position: usize) {
         self.active = true;
         self.selected = 0;
         self.results.clear();
         self.list_state = ListState::default();
+        self.trigger_position = Some(trigger_position);
     }
 
     /// Deactivate the fuzzy finder
@@ -57,6 +61,12 @@ impl FuzzyFinder {
         self.results.clear();
         self.selected = 0;
         self.list_state = ListState::default();
+        self.trigger_position = None;
+    }
+
+    /// Get the trigger position (@ character position)
+    pub fn trigger_position(&self) -> Option<usize> {
+        self.trigger_position
     }
 
     /// Get the current selected index
