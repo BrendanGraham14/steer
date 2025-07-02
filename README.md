@@ -4,6 +4,14 @@ Conductor is an AI-powered CLI assistant for software engineering tasks. It prov
 
 ---
 
+## Installation
+
+```bash
+cargo install --git ssh://git@github.com/brendangraham14/conductor conductor-cli --locked
+```
+
+---
+
 ## Quick start
 
 ```bash
