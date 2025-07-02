@@ -313,6 +313,7 @@ impl InputPanelState {
         &mut self,
         key: ratatui::crossterm::event::KeyEvent,
     ) -> Option<crate::tui::widgets::fuzzy_finder::FuzzyFinderResult> {
+        use ratatui::crossterm::event::KeyCode;
         use tui_textarea::Input;
 
         // First handle navigation/selection in the fuzzy finder itself
@@ -321,6 +322,15 @@ impl InputPanelState {
         if result.is_some() {
             // Key was handled (e.g., selection, closing), so just return the result
             return result;
+        }
+
+        // Block up/down arrows from reaching the textarea when fuzzy finder is active
+        match key.code {
+            KeyCode::Up | KeyCode::Down => {
+                // These keys are for fuzzy finder navigation only
+                return None;
+            }
+            _ => {}
         }
 
         // Key was not for navigation, so treat it as text input
