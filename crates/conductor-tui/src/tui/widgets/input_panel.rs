@@ -6,7 +6,7 @@ use ratatui::widgets::{
     Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
     ScrollbarState,
 };
-use tui_textarea::{Input, Scrolling, TextArea};
+use tui_textarea::{Input, TextArea};
 
 use conductor_core::app::conversation::{Message, UserContent};
 use conductor_tools::schema::ToolCall;
@@ -337,7 +337,6 @@ impl InputPanelState {
         // Key was not for navigation, so treat it as text input
         let input = Input::from(key);
         self.textarea.input(input);
-        self.textarea.scroll(Scrolling::Delta { rows: 0, cols: 0 });
 
         // After input, check if we are still in a valid query.
         // If so, update results. If not, the finder should close.
