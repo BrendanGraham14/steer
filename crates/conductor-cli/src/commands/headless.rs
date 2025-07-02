@@ -12,16 +12,16 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 use super::Command;
+use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{Message, UserContent};
-use conductor_core::session::SessionToolConfig;
 
 pub struct HeadlessCommand {
     pub model: Option<Model>,
     pub messages_json: Option<PathBuf>,
     pub global_model: Model,
     pub session: Option<String>,
-    pub tool_config: Option<PathBuf>,
+    pub session_config: Option<PathBuf>,
     pub system_prompt: Option<String>,
     pub remote: Option<String>,
     pub directory: Option<PathBuf>,
@@ -62,17 +62,28 @@ impl Command for HeadlessCommand {
         // Use model override if provided, otherwise use the global setting
         let model_to_use = self.model.unwrap_or(self.global_model);
 
-        // Load tool configuration if provided
-        let tool_config = if let Some(config_path) = &self.tool_config {
-            let config_content = fs::read_to_string(config_path)
-                .map_err(|e| anyhow!("Failed to read tool config file: {}", e))?;
+        // Load session configuration if provided
+        let session_config = if let Some(config_path) = &self.session_config {
+            let overrides = SessionConfigOverrides {
+                system_prompt: self.system_prompt.clone(),
+                ..Default::default()
+            };
 
-            let config: SessionToolConfig = serde_json::from_str(&config_content)
-                .map_err(|e| anyhow!("Failed to parse tool config JSON: {}", e))?;
+            let loader =
+                SessionConfigLoader::new(Some(config_path.clone())).with_overrides(overrides);
 
-            Some(config)
+            Some(loader.load().await?)
         } else {
             None
+        };
+
+        // Extract tool config and system prompt from session config if available
+        let (tool_config, system_prompt_to_use) = match &session_config {
+            Some(config) => (
+                Some(config.tool_config.clone()),
+                config.system_prompt.clone().or(self.system_prompt.clone()),
+            ),
+            None => (None, self.system_prompt.clone()),
         };
 
         // Create session manager
@@ -148,7 +159,7 @@ impl Command for HeadlessCommand {
                     model_to_use,
                     tool_config,
                     Some(auto_approve_policy),
-                    self.system_prompt.clone(),
+                    system_prompt_to_use,
                 )
                 .await?
             }

@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod commands;
+pub mod session_config;
 
 // Re-export modules from conductor-core
 pub use conductor_core::{api, app, config, events, runners, session, tools, utils, workspace};

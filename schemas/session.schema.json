@@ -1,0 +1,505 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Conductor Session Configuration",
+  "description": "Configuration file for Conductor sessions, including workspace settings, tool configurations, and AI behavior customization.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "URL to the JSON schema file",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "system_prompt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool_config": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PartialToolConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "workspace": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PartialWorkspaceConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "BackendConfig": {
+      "description": "Backend configuration for different tool execution environments",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "tool_filter",
+            "type"
+          ],
+          "properties": {
+            "tool_filter": {
+              "description": "Tool filtering configuration for the local backend",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ToolFilter"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "local"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "endpoint",
+            "name",
+            "tool_filter",
+            "type"
+          ],
+          "properties": {
+            "auth": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RemoteAuth"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "tool_filter": {
+              "$ref": "#/definitions/ToolFilter"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "remote"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "image",
+            "runtime",
+            "tool_filter",
+            "type"
+          ],
+          "properties": {
+            "image": {
+              "type": "string"
+            },
+            "runtime": {
+              "$ref": "#/definitions/ContainerRuntime"
+            },
+            "tool_filter": {
+              "$ref": "#/definitions/ToolFilter"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "container"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "command",
+            "server_name",
+            "tool_filter",
+            "transport",
+            "type"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "tool_filter": {
+              "$ref": "#/definitions/ToolFilter"
+            },
+            "transport": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "mcp"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ContainerRuntime": {
+      "description": "Container runtime configuration",
+      "type": "string",
+      "enum": [
+        "Docker",
+        "Podman"
+      ]
+    },
+    "PartialToolConfig": {
+      "type": "object",
+      "properties": {
+        "approval_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ToolApprovalPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backends": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/BackendConfig"
+          }
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ToolVisibilityConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PartialWorkspaceConfig": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "local"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "agent_address",
+            "type"
+          ],
+          "properties": {
+            "agent_address": {
+              "type": "string"
+            },
+            "auth": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RemoteAuth"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "remote"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "image",
+            "runtime",
+            "type"
+          ],
+          "properties": {
+            "image": {
+              "type": "string"
+            },
+            "runtime": {
+              "$ref": "#/definitions/ContainerRuntime"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "container"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "RemoteAuth": {
+      "description": "Authentication configuration for remote backends",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "Bearer"
+          ],
+          "properties": {
+            "Bearer": {
+              "type": "object",
+              "required": [
+                "token"
+              ],
+              "properties": {
+                "token": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "ApiKey"
+          ],
+          "properties": {
+            "ApiKey": {
+              "type": "object",
+              "required": [
+                "key"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ToolApprovalPolicy": {
+      "description": "Tool approval policy configuration",
+      "oneOf": [
+        {
+          "description": "Always ask for approval before executing any tool",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "always_ask"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Pre-approved tools execute without asking",
+          "type": "object",
+          "required": [
+            "tools",
+            "type"
+          ],
+          "properties": {
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "pre_approved"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Mixed policy: some tools pre-approved, others require approval",
+          "type": "object",
+          "required": [
+            "ask_for_others",
+            "pre_approved",
+            "type"
+          ],
+          "properties": {
+            "ask_for_others": {
+              "type": "boolean"
+            },
+            "pre_approved": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "mixed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ToolApprovalPolicyConfig": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/definitions/ToolApprovalPolicy"
+        }
+      ]
+    },
+    "ToolFilter": {
+      "description": "Tool filtering configuration for backends",
+      "oneOf": [
+        {
+          "description": "Include all available tools",
+          "type": "string",
+          "enum": [
+            "all"
+          ]
+        },
+        {
+          "description": "Include only the specified tools",
+          "type": "object",
+          "required": [
+            "include"
+          ],
+          "properties": {
+            "include": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Include all tools except the specified ones",
+          "type": "object",
+          "required": [
+            "exclude"
+          ],
+          "properties": {
+            "exclude": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ToolVisibilityConfig": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/definitions/ToolVisibilityObject"
+        }
+      ]
+    },
+    "ToolVisibilityObject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "whitelist"
+          ],
+          "properties": {
+            "whitelist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "blacklist"
+          ],
+          "properties": {
+            "blacklist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

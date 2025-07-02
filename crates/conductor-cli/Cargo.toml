@@ -9,6 +9,10 @@ authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 name = "conductor"
 path = "src/main.rs"
 
+[[bin]]
+name = "schema-generator"
+path = "src/bin/schema_generator.rs"
+
 
 [dependencies]
 # CLI framework
@@ -98,12 +102,17 @@ tokio-stream = "0.1"
 gethostname = "0.5"
 tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 lazy_static = "1.5.0"
-conductor-core = { version = "0.1.0", path = "../conductor-core" }
+conductor-core = { version = "0.1.0", path = "../conductor-core", features = ["schema"] }
 conductor-grpc = { version = "0.1.0", path = "../conductor-grpc" }
 conductor-tui = { version = "0.1.0", path = "../conductor-tui", optional = true }
+toml = "0.8.23"
+which = "8.0.0"
 
 [build-dependencies]
 
 [features]
 default = ["ui"]
 ui = ["conductor-tui"]
+
+[dev-dependencies]
+tempfile = "3.19.1"

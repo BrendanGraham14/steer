@@ -24,6 +24,9 @@ conductor --directory /path/to/project
 # Use a specific model (run `conductor /model` at runtime to list models)
 conductor --model opus
 
+# Start with a session configuration file
+conductor --session-config session.toml
+
 # Point the client at a remote gRPC server instead of running locally
 conductor --remote 127.0.0.1:50051
 ```
@@ -40,8 +43,8 @@ conductor headless --messages-json /tmp/messages.json --model gemini-pro
 # Run inside an existing session (keeps history / tool approvals)
 conductor headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
 
-# Supply a custom tool-visibility / pre-approval configuration
-conductor headless --tool-config tools.json < prompt.txt
+# Supply a custom session configuration (tool approvals, MCP backends, etc.)
+conductor headless --session-config session.toml < prompt.txt
 ```
 
 ### gRPC server / remote mode
@@ -62,7 +65,63 @@ conductor session list --limit 20
 
 # Delete a session
 conductor session delete <SESSION_ID> --force
+
+# Create a new session with a config file
+conductor session create --session-config session.toml
+
+# Create with overrides
+conductor session create --session-config session.toml --system-prompt "Custom prompt"
 ```
+
+### Session Configuration Files
+
+You can create sessions using TOML configuration files. This is useful for:
+- Consistent project-specific configurations
+- Setting up MCP (Model Context Protocol) backends
+- Pre-approving tools for automation
+- Sharing configurations with your team
+
+#### Example: Minimal Configuration
+```toml
+# session-minimal.toml
+[tool_config]
+backends = [
+  { type = "mcp", server_name = "calculator", transport = "unix", command = "python", args = ["-m", "mcp_calculator"], tool_filter = "all" }
+]
+```
+
+#### Example: Pre-approved Tools
+```toml
+# session-preapproved.toml
+system_prompt = "You are a helpful coding assistant."
+
+[tool_config]
+visibility = "all"
+approval_policy = { type = "pre_approved", tools = ["grep", "ls", "view", "glob", "todo_read"] }
+```
+
+#### Example: Full Configuration
+```toml
+# session-full.toml
+system_prompt = "You are a helpful assistant with access to calculator and web tools."
+
+[workspace]
+type = "local"
+
+[tool_config]
+backends = [
+  { type = "mcp", server_name = "calculator", transport = "unix", command = "python", args = ["-m", "mcp_calculator"], tool_filter = "all" },
+  { type = "mcp", server_name = "web-tools", transport = "tcp", command = "mcp-server-web", args = ["--port", "3000"], tool_filter = "all" }
+]
+visibility = "all"
+approval_policy = "always_ask"
+
+[metadata]
+project = "my-project"
+environment = "development"
+```
+
+See the `examples/` directory for more configuration examples.
 
 ---
 

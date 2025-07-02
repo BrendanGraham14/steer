@@ -60,6 +60,10 @@ pub struct Cli {
     #[arg(long, env = "CONDUCTOR_SESSION_DB")]
     pub session_db: Option<PathBuf>,
 
+    /// Path to session configuration file (TOML format) for new sessions
+    #[arg(long)]
+    pub session_config: Option<PathBuf>,
+
     /// Subcommands
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -72,6 +76,9 @@ pub enum Commands {
         /// Connect to a remote gRPC server (overrides global --remote)
         #[arg(long)]
         remote: Option<String>,
+        /// Path to session configuration file (TOML format) for new sessions (overrides global)
+        #[arg(long)]
+        session_config: Option<PathBuf>,
     },
     /// Initialize a new config file
     Init {
@@ -93,9 +100,9 @@ pub enum Commands {
         #[arg(long)]
         session: Option<String>,
 
-        /// Path to JSON file containing SessionToolConfig for new sessions
+        /// Path to session configuration file (TOML format) for new sessions
         #[arg(long)]
-        tool_config: Option<PathBuf>,
+        session_config: Option<PathBuf>,
 
         /// Custom system prompt to use instead of the default
         #[arg(long)]
@@ -135,12 +142,9 @@ pub enum SessionCommands {
     },
     /// Create a new session
     Create {
-        /// Tool approval policy (always_ask, pre_approved, mixed)
-        #[arg(long, default_value = "always_ask")]
-        tool_policy: String,
-        /// Pre-approved tools (comma-separated)
+        /// Path to session configuration file (TOML format)
         #[arg(long)]
-        pre_approved_tools: Option<String>,
+        session_config: Option<PathBuf>,
         /// Session metadata (key=value pairs, comma-separated)
         #[arg(long)]
         metadata: Option<String>,
