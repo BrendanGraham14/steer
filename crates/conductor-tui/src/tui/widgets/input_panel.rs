@@ -126,8 +126,9 @@ impl InputPanelState {
             // Keep everything up to and including the @
             new_content.push_str(&content[..=at_pos]);
 
-            // Add the selected path
+            // Add the selected path and a space
             new_content.push_str(selected_path);
+            new_content.push(' ');
 
             // Keep everything after the cursor
             if cursor_offset < content.len() {
@@ -138,8 +139,8 @@ impl InputPanelState {
             let lines: Vec<&str> = new_content.lines().collect();
             self.set_content_from_lines(lines);
 
-            // Position cursor after the inserted path (which is a byte position)
-            let new_cursor_pos_bytes = at_pos + 1 + selected_path.len();
+            // Position cursor after the inserted path and space (which is a byte position)
+            let new_cursor_pos_bytes = at_pos + 1 + selected_path.len() + 1;
 
             // Now, convert this byte position to a (row, col) grapheme position
             let mut bytes_traversed = 0;
