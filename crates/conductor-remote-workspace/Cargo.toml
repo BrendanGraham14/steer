@@ -5,6 +5,9 @@ edition = "2024"
 description = "Remote workspace for Conductor."
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "conductor-remote-workspace"
 path = "src/main.rs"

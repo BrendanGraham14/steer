@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Terminal UI library for Conductor"
 
+[lints]
+workspace = true
+
 [dependencies]
 conductor-core = { path = "../conductor-core" }
 conductor-grpc = { path = "../conductor-grpc" }

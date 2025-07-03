@@ -3,6 +3,9 @@ name = "conductor-grpc"
 version = "0.1.0"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [dependencies]
 conductor-core = { path = "../conductor-core" }
 conductor-proto = { path = "../conductor-proto" }
