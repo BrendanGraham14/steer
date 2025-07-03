@@ -2,10 +2,12 @@ use crate::api::Model;
 use crate::config::LlmConfig;
 use crate::tools::ToolError;
 use conductor_macros::tool_external as tool;
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug, JsonSchema)]
+#[derive(Deserialize, Debug)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct FetchParams {
     /// The URL to fetch content from
     pub url: String,
