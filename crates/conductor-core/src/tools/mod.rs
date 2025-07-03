@@ -2,6 +2,7 @@
 pub mod backend;
 pub mod execution_context;
 pub mod local_backend;
+pub mod mcp_backend;
 pub mod remote_backend;
 
 pub use backend::{BackendMetadata, BackendRegistry, ToolBackend};
@@ -9,6 +10,7 @@ pub use backend::{BackendMetadata, BackendRegistry, ToolBackend};
 pub use conductor_tools::{ToolError, ToolSchema};
 pub use execution_context::{AuthMethod, ExecutionContext, ExecutionEnvironment, VolumeMount};
 pub use local_backend::LocalBackend;
+pub use mcp_backend::McpBackend;
 pub use remote_backend::RemoteBackend;
 
 // Export the remaining main-app specific tool modules
@@ -18,3 +20,6 @@ pub mod fetch;
 
 pub use dispatch_agent::DispatchAgentTool;
 pub use fetch::FetchTool;
+
+#[cfg(test)]
+mod mcp_backend_test;

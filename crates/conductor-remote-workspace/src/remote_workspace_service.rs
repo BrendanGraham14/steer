@@ -87,6 +87,13 @@ impl RemoteWorkspaceService {
             ToolError::Serialization(e) => Status::internal(format!("Serialization error: {}", e)),
             ToolError::Http(e) => Status::internal(format!("HTTP error: {}", e)),
             ToolError::Regex(e) => Status::internal(format!("Regex error: {}", e)),
+            ToolError::McpConnectionFailed {
+                server_name,
+                message,
+            } => Status::internal(format!(
+                "MCP server {} connection failed: {}",
+                server_name, message
+            )),
         }
     }
 

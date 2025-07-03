@@ -26,11 +26,13 @@ mod tests {
         Arc::new(workspace) as Arc<dyn crate::workspace::Workspace>
     }
 
-    fn create_test_tool_executor(
+    async fn create_test_tool_executor(
         workspace: Arc<dyn crate::workspace::Workspace>,
     ) -> Arc<ToolExecutor> {
         let mut backend_registry = BackendRegistry::new();
-        backend_registry.register("local".to_string(), Arc::new(LocalBackend::full()));
+        backend_registry
+            .register("local".to_string(), Arc::new(LocalBackend::full()))
+            .await;
 
         Arc::new(ToolExecutor::with_components(
             Some(workspace),
@@ -49,7 +51,7 @@ mod tests {
         let initial_model = Model::Claude3_7Sonnet20250219;
 
         let workspace = create_test_workspace().await;
-        let tool_executor = create_test_tool_executor(workspace.clone());
+        let tool_executor = create_test_tool_executor(workspace.clone()).await;
 
         let mut app = App::new(
             app_config,
@@ -140,7 +142,7 @@ mod tests {
         let initial_model = Model::Claude3_7Sonnet20250219;
 
         let workspace = create_test_workspace().await;
-        let tool_executor = create_test_tool_executor(workspace.clone());
+        let tool_executor = create_test_tool_executor(workspace.clone()).await;
 
         let mut app = App::new(
             app_config,
@@ -214,7 +216,7 @@ mod tests {
         let initial_model = Model::Claude3_7Sonnet20250219;
 
         let workspace = create_test_workspace().await;
-        let tool_executor = create_test_tool_executor(workspace.clone());
+        let tool_executor = create_test_tool_executor(workspace.clone()).await;
 
         let mut app = App::new(
             app_config,

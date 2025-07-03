@@ -108,24 +108,52 @@ impl OneShotRunner {
         system_prompt: Option<String>,
     ) -> Result<RunOnceResult> {
         // 1. Create ephemeral session with specified tool policy
-        let mut final_tool_config = tool_config.unwrap_or_default();
-        // Apply the tool policy if provided
-        if let Some(policy) = tool_policy {
-            final_tool_config.approval_policy = policy;
-        }
+        let session_config = if let Some(config) = tool_config {
+            // Use provided tool config
+            let mut final_tool_config = config;
+            // Apply the tool policy if provided
+            if let Some(policy) = tool_policy {
+                final_tool_config.approval_policy = policy;
+            }
 
-        let session_config = SessionConfig {
-            workspace: WorkspaceConfig::default(),
-            tool_config: final_tool_config,
-            system_prompt,
-            metadata: [
+            SessionConfig {
+                workspace: WorkspaceConfig::default(),
+                tool_config: final_tool_config,
+                system_prompt,
+                metadata: [
+                    ("mode".to_string(), "headless".to_string()),
+                    ("ephemeral".to_string(), "true".to_string()),
+                    ("created_by".to_string(), "one_shot_runner".to_string()),
+                    ("model".to_string(), model.to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            }
+        } else {
+            // Use the default session config
+            let mut default_config = crate::utils::session::create_default_session_config();
+
+            // Apply the tool policy if provided
+            if let Some(policy) = tool_policy {
+                default_config.tool_config.approval_policy = policy;
+            }
+
+            // Update metadata
+            default_config.metadata = [
                 ("mode".to_string(), "headless".to_string()),
                 ("ephemeral".to_string(), "true".to_string()),
                 ("created_by".to_string(), "one_shot_runner".to_string()),
                 ("model".to_string(), model.to_string()),
             ]
             .into_iter()
-            .collect(),
+            .collect();
+
+            // Apply custom system prompt if provided
+            if system_prompt.is_some() {
+                default_config.system_prompt = system_prompt;
+            }
+
+            default_config
         };
 
         let app_config = AppConfig {

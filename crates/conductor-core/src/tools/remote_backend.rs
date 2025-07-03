@@ -365,7 +365,7 @@ impl ToolBackend for RemoteBackend {
         }
     }
 
-    fn supported_tools(&self) -> Vec<String> {
+    async fn supported_tools(&self) -> Vec<String> {
         self.supported_tools.clone()
     }
 
@@ -582,8 +582,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(backend.supported_tools().len(), 3);
-        assert!(backend.supported_tools().contains(&"tool1".to_string()));
+        assert_eq!(backend.supported_tools().await.len(), 3);
+        assert!(
+            backend
+                .supported_tools()
+                .await
+                .contains(&"tool1".to_string())
+        );
     }
 
     #[tokio::test]
@@ -603,7 +608,7 @@ mod tests {
         .await
         .unwrap();
 
-        let supported = backend.supported_tools();
+        let supported = backend.supported_tools().await;
         assert_eq!(supported.len(), 2);
         assert!(supported.contains(&"tool1".to_string()));
         assert!(supported.contains(&"bash".to_string()));
@@ -626,6 +631,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(backend.agent_address(), format!("http://{}", addr));
-        assert_eq!(backend.supported_tools().len(), 1);
+        assert_eq!(backend.supported_tools().await.len(), 1);
     }
 }
