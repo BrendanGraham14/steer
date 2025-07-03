@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use git2::Repository;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Information about the environment
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,14 +70,9 @@ impl EnvironmentInfo {
 
     /// Check if the specified directory is in a git repo
     fn is_git_repo(path: &Path) -> Result<bool> {
-        let output = Command::new("git")
-            .args(["rev-parse", "--is-inside-work-tree"])
-            .current_dir(path)
-            .output();
-
-        match output {
-            Ok(output) if output.status.success() => Ok(true),
-            _ => Ok(false),
+        match Repository::discover(path) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
         }
     }
 
@@ -168,51 +163,97 @@ impl EnvironmentInfo {
 
     /// Get git status information for a specific path
     fn get_git_status(path: &Path) -> Result<String> {
-        // TODO: We should use the git crate instead.
         let mut result = String::new();
 
-        // Get current branch
-        let branch_output = Command::new("git")
-            .args(["branch", "--show-current"])
-            .current_dir(path)
-            .output()
-            .context("Failed to run git branch")?;
+        let repo = Repository::discover(path).context("Failed to open git repository")?;
 
-        let branch = String::from_utf8_lossy(&branch_output.stdout)
-            .trim()
-            .to_string();
-        result.push_str(&format!("Current branch: {}\n\n", branch));
+        // Get current branch
+        match repo.head() {
+            Ok(head) => {
+                let branch = if head.is_branch() {
+                    head.shorthand().unwrap_or("<unknown>")
+                } else {
+                    "HEAD (detached)"
+                };
+                result.push_str(&format!("Current branch: {}\n\n", branch));
+            }
+            Err(e) => {
+                // Handle case where HEAD doesn't exist (new repo)
+                if e.code() == git2::ErrorCode::UnbornBranch {
+                    result.push_str("Current branch: <unborn>\n\n");
+                } else {
+                    return Err(anyhow::anyhow!("Failed to get HEAD: {}", e));
+                }
+            }
+        }
 
         // Get status
-        let status_output = Command::new("git")
-            .args(["status", "--short"])
-            .current_dir(path)
-            .output()
-            .context("Failed to run git status")?;
-
-        let status = String::from_utf8_lossy(&status_output.stdout)
-            .trim()
-            .to_string();
+        let statuses = repo.statuses(None).context("Failed to get git status")?;
         result.push_str("Status:\n");
-        if status.is_empty() {
+        if statuses.is_empty() {
             result.push_str("Working tree clean\n");
         } else {
-            result.push_str(&status);
-            result.push('\n');
+            for entry in statuses.iter() {
+                let status = entry.status();
+                let path = entry.path().unwrap_or("<unknown>");
+
+                let status_char = if status.contains(git2::Status::INDEX_NEW) {
+                    "A"
+                } else if status.contains(git2::Status::INDEX_MODIFIED) {
+                    "M"
+                } else if status.contains(git2::Status::INDEX_DELETED) {
+                    "D"
+                } else if status.contains(git2::Status::WT_NEW) {
+                    "?"
+                } else if status.contains(git2::Status::WT_MODIFIED) {
+                    "M"
+                } else if status.contains(git2::Status::WT_DELETED) {
+                    "D"
+                } else {
+                    " "
+                };
+
+                let wt_char = if status.contains(git2::Status::WT_NEW) {
+                    "?"
+                } else if status.contains(git2::Status::WT_MODIFIED) {
+                    "M"
+                } else if status.contains(git2::Status::WT_DELETED) {
+                    "D"
+                } else {
+                    " "
+                };
+
+                result.push_str(&format!("{}{} {}\n", status_char, wt_char, path));
+            }
         }
 
         // Get recent commits
-        let log_output = Command::new("git")
-            .args(["log", "--oneline", "-n", "5"])
-            .current_dir(path)
-            .output()
-            .context("Failed to run git log")?;
-
-        let log = String::from_utf8_lossy(&log_output.stdout)
-            .trim()
-            .to_string();
         result.push_str("\nRecent commits:\n");
-        result.push_str(&log);
+        match repo.revwalk() {
+            Ok(mut revwalk) => {
+                if let Ok(()) = revwalk.push_head() {
+                    let mut count = 0;
+                    for oid in revwalk {
+                        if count >= 5 {
+                            break;
+                        }
+                        if let Ok(oid) = oid {
+                            if let Ok(commit) = repo.find_commit(oid) {
+                                let summary = commit.summary().unwrap_or("<no summary>");
+                                let id = commit.id();
+                                result.push_str(&format!("{:.7} {}\n", id, summary));
+                                count += 1;
+                            }
+                        }
+                    }
+                } else {
+                    result.push_str("<no commits>\n");
+                }
+            }
+            Err(_) => {
+                result.push_str("<no commits>\n");
+            }
+        }
 
         Ok(result)
     }
