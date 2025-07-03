@@ -506,6 +506,7 @@ message ToolError {
     string serialization = 9;
     string http = 10;
     string regex = 11;
+    McpConnectionFailedError mcp_connection_failed = 12;
   }
 }
 
@@ -521,6 +522,11 @@ message ExecutionError {
 
 message IoError {
   string tool_name = 1;
+  string message = 2;
+}
+
+message McpConnectionFailedError {
+  string server_name = 1;
   string message = 2;
 }
 

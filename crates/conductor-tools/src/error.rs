@@ -35,6 +35,12 @@ pub enum ToolError {
 
     #[error("Regex error: {0}")]
     Regex(String),
+
+    #[error("MCP server connection failed for {server_name}: {message}")]
+    McpConnectionFailed {
+        server_name: String,
+        message: String,
+    },
 }
 
 impl ToolError {
@@ -54,5 +60,15 @@ impl ToolError {
 
     pub fn invalid_params<T: Into<String>, M: Into<String>>(tool_name: T, message: M) -> Self {
         ToolError::InvalidParams(tool_name.into(), message.into())
+    }
+
+    pub fn mcp_connection_failed<T: Into<String>, M: Into<String>>(
+        server_name: T,
+        message: M,
+    ) -> Self {
+        ToolError::McpConnectionFailed {
+            server_name: server_name.into(),
+            message: message.into(),
+        }
     }
 }

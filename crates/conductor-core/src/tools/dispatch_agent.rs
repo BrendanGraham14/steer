@@ -66,7 +66,7 @@ Usage notes:
         let agent_executor = AgentExecutor::new(api_client);
 
         let mut backend_registry = crate::tools::BackendRegistry::new();
-        backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only()));
+        backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only())).await;
         let tool_executor = Arc::new(ToolExecutor::with_components(
             None, // No workspace for agent dispatch
             Arc::new(backend_registry),

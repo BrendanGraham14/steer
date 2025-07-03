@@ -146,6 +146,13 @@ fn tool_error_to_proto(error: &conductor_tools::error::ToolError) -> proto::Tool
         ToolError::Serialization(msg) => ErrorType::Serialization(msg.clone()),
         ToolError::Http(msg) => ErrorType::Http(msg.clone()),
         ToolError::Regex(msg) => ErrorType::Regex(msg.clone()),
+        ToolError::McpConnectionFailed {
+            server_name,
+            message,
+        } => ErrorType::McpConnectionFailed(proto::McpConnectionFailedError {
+            server_name: server_name.clone(),
+            message: message.clone(),
+        }),
     };
 
     proto::ToolError {
@@ -288,6 +295,10 @@ fn proto_to_tool_error(
         ErrorType::Serialization(msg) => ToolError::Serialization(msg),
         ErrorType::Http(msg) => ToolError::Http(msg),
         ErrorType::Regex(msg) => ToolError::Regex(msg),
+        ErrorType::McpConnectionFailed(e) => ToolError::McpConnectionFailed {
+            server_name: e.server_name,
+            message: e.message,
+        },
     })
 }
 

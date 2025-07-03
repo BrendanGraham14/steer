@@ -103,7 +103,9 @@ impl SessionConfig {
                             LocalBackend::without_tools(excluded.clone())
                         }
                     };
-                    registry.register(format!("user_local_{}", idx), Arc::new(backend));
+                    registry
+                        .register(format!("user_local_{}", idx), Arc::new(backend))
+                        .await;
                 }
                 BackendConfig::Remote {
                     name,
@@ -131,14 +133,41 @@ impl SessionConfig {
                 BackendConfig::Mcp {
                     server_name,
                     transport: _,
-                    command: _,
-                    args: _,
-                    tool_filter: _,
+                    command,
+                    args,
+                    tool_filter,
                 } => {
-                    tracing::warn!(
-                        "User-defined MCP backend '{}' not yet supported, skipping.",
-                        server_name
+                    tracing::info!(
+                        "Attempting to initialize MCP backend '{}' with command: {} {:?}",
+                        server_name,
+                        command,
+                        args
                     );
+                    match crate::tools::McpBackend::new(
+                        server_name.clone(),
+                        command.clone(),
+                        args.clone(),
+                        tool_filter.clone(),
+                    )
+                    .await
+                    {
+                        Ok(mcp_backend) => {
+                            tracing::info!(
+                                "Successfully initialized MCP backend '{}'",
+                                server_name
+                            );
+                            registry
+                                .register(format!("mcp_{}", server_name), Arc::new(mcp_backend))
+                                .await;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to initialize MCP backend '{}': {}",
+                                server_name,
+                                e
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -146,8 +175,10 @@ impl SessionConfig {
         // 2. Register SERVER tools (like dispatch_agent and web_fetch).
         // These are external tools, not workspace tools.
         let server_backend = LocalBackend::server_only();
-        if !server_backend.supported_tools().is_empty() {
-            registry.register("server".to_string(), Arc::new(server_backend));
+        if !server_backend.supported_tools().await.is_empty() {
+            registry
+                .register("server".to_string(), Arc::new(server_backend))
+                .await;
         }
 
         // Note: Workspace tools are no longer registered here.

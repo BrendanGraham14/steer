@@ -62,7 +62,7 @@ pub trait ToolBackend: Send + Sync {
     ///
     /// Returns a vector of tool names that this backend supports.
     /// The backend registry uses this to map tools to backends.
-    fn supported_tools(&self) -> Vec<String>;
+    async fn supported_tools(&self) -> Vec<String>;
 
     /// Get API tool descriptions for this backend
     ///
@@ -129,9 +129,9 @@ impl BackendRegistry {
     /// # Arguments
     /// * `name` - A unique name for this backend instance
     /// * `backend` - The backend implementation
-    pub fn register(&mut self, name: String, backend: Arc<dyn ToolBackend>) {
+    pub async fn register(&mut self, name: String, backend: Arc<dyn ToolBackend>) {
         // Map each tool this backend supports
-        for tool_name in backend.supported_tools() {
+        for tool_name in backend.supported_tools().await {
             self.tool_mapping
                 .insert(tool_name.to_string(), backend.clone());
         }
@@ -166,7 +166,7 @@ impl BackendRegistry {
     /// Check which tools are supported
     ///
     /// Returns a vector of all tool names that have registered backends.
-    pub fn supported_tools(&self) -> Vec<String> {
+    pub async fn supported_tools(&self) -> Vec<String> {
         self.tool_mapping.keys().cloned().collect()
     }
 
@@ -199,10 +199,15 @@ impl BackendRegistry {
     /// Collects and returns all API tool descriptions from all registered backends.
     /// This provides a unified view of all available tools across all backends.
     pub async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
-        let mut all_tools = Vec::new();
+        let futures = self
+            .backends
+            .iter()
+            .map(|(_, backend)| backend.get_tool_schemas());
+        let all_schemas = futures::future::join_all(futures).await;
 
-        for (_, backend) in &self.backends {
-            all_tools.extend(backend.get_tool_schemas().await);
+        let mut all_tools = Vec::new();
+        for schemas in all_schemas {
+            all_tools.extend(schemas);
         }
 
         all_tools
@@ -242,7 +247,7 @@ mod tests {
             ))
         }
 
-        fn supported_tools(&self) -> Vec<String> {
+        async fn supported_tools(&self) -> Vec<String> {
             self.tools.iter().map(|&s| s.to_string()).collect()
         }
 
@@ -269,8 +274,12 @@ mod tests {
             tools: vec!["tool3", "tool4"],
         });
 
-        registry.register("backend1".to_string(), backend1.clone());
-        registry.register("backend2".to_string(), backend2.clone());
+        registry
+            .register("backend1".to_string(), backend1.clone())
+            .await;
+        registry
+            .register("backend2".to_string(), backend2.clone())
+            .await;
 
         // Test tool mappings
         assert!(registry.get_backend_for_tool("tool1").is_some());
@@ -278,7 +287,7 @@ mod tests {
         assert!(registry.get_backend_for_tool("unknown_tool").is_none());
 
         // Test supported tools
-        let supported = registry.supported_tools();
+        let supported = registry.supported_tools().await;
         assert_eq!(supported.len(), 4);
         assert!(supported.contains(&"tool1".to_string()));
         assert!(supported.contains(&"tool4".to_string()));

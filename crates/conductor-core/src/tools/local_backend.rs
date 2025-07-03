@@ -201,7 +201,7 @@ impl ToolBackend for LocalBackend {
             .await
     }
 
-    fn supported_tools(&self) -> Vec<String> {
+    async fn supported_tools(&self) -> Vec<String> {
         // Return the tools we currently have in the registry
         self.registry.keys().cloned().collect()
     }
@@ -284,7 +284,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_backend_supported_tools() {
         let backend = LocalBackend::full();
-        let supported = backend.supported_tools();
+        let supported = backend.supported_tools().await;
 
         assert!(!supported.is_empty());
         assert!(supported.contains(&BASH_TOOL_NAME.to_string()));

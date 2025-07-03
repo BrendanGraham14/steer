@@ -61,7 +61,11 @@ sqlx = { version = "0.7", features = [
     "json",
     "migrate",
 ] }
-# gRPC
+rmcp = { git = "https://github.com/BrendanGraham14/rust-sdk", features = [
+    "client",
+    "transport-child-process",
+    "transport-io",
+] }
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
@@ -71,6 +75,7 @@ lazy_static = "1.5.0"
 schemars = { version = "0.8", optional = true }
 fuzzy-matcher = "0.3.7"
 git2 = "0.20.2"
+nix = { version = "0.30.1", features = ["signal"] }
 
 [build-dependencies]
 
