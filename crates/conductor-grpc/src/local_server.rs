@@ -18,7 +18,7 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
     let svc = AgentServiceServer::new(service);
 
     // Spawn the server with a listener on localhost
-    let _server_handle = tokio::spawn(async move {
+    let server_handle: tokio::task::JoinHandle<()> = tokio::spawn(async move {
         // Bind to port 0 to get a random available port
         let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -37,6 +37,10 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
 
     // Wait for the server to be ready and get its address
     let addr = rx.await?;
+
+    // Note: The server task handle is not awaited here as it runs for the lifetime
+    // of the application. Proper shutdown should be handled by the caller if needed.
+    let _ = server_handle;
 
     // Use tonic::transport::Endpoint for proper URI parsing
     let endpoint =

@@ -281,7 +281,7 @@ async fn setup_signal_handlers() {
         use tokio::signal::unix::{SignalKind, signal};
 
         let sigterm_terminal = terminal_clone.clone();
-        tokio::spawn(async move {
+        let _sigterm_task = tokio::spawn(async move {
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("Failed to set up SIGTERM handler");
             sigterm.recv().await;
@@ -294,7 +294,7 @@ async fn setup_signal_handlers() {
         });
 
         let sigint_terminal = terminal_clone.clone();
-        tokio::spawn(async move {
+        let _sigint_task = tokio::spawn(async move {
             let mut sigint =
                 signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
             sigint.recv().await;
@@ -310,7 +310,7 @@ async fn setup_signal_handlers() {
     #[cfg(windows)]
     {
         let windows_terminal = terminal_clone;
-        tokio::spawn(async move {
+        let _ctrl_c_task = tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
             if windows_terminal.load(Ordering::Relaxed) {
                 cleanup_terminal();

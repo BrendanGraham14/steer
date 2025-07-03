@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
@@ -672,7 +673,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         let (tx, rx) = mpsc::channel(100);
 
         // Spawn task to stream the files
-        tokio::spawn(async move {
+        let list_task: JoinHandle<()> = tokio::spawn(async move {
             let mut files = Vec::new();
 
             // Walk the current directory, respecting .gitignore
@@ -701,7 +702,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error walking directory: {}", e);
+                        tracing::error!("Error walking directory: {}", e);
                     }
                 }
             }
@@ -742,12 +743,17 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                     paths: chunk.to_vec(),
                 };
 
+                // If the receiver is dropped (client cancelled), this will fail and exit the loop
                 if let Err(e) = tx.send(Ok(response)).await {
-                    eprintln!("Failed to send file list chunk: {}", e);
+                    tracing::debug!("Client cancelled file list stream: {}", e);
                     break;
                 }
             }
         });
+
+        // Note: The task handle is stored but not awaited here because the gRPC
+        // streaming response will consume the receiver. The task will complete
+        // when either all files are sent or the receiver is dropped (client cancellation).
 
         Ok(Response::new(ReceiverStream::new(rx)))
     }
