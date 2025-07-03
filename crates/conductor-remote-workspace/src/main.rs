@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
     // Handle shutdown signals
-    tokio::spawn(async move {
+    let _signal_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
         warn!("Received Ctrl+C, shutting down gracefully...");
         let _ = tx.send(());

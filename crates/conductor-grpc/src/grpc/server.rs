@@ -33,7 +33,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         // Clone session manager for the stream handler task
         let session_manager = self.session_manager.clone();
 
-        tokio::spawn(async move {
+        let _stream_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             // Handle the first message to establish the session connection
             let (session_id, mut event_rx) = if let Some(client_message_result) =
                 client_stream.message().await.transpose()
@@ -586,7 +586,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let (tx, rx) = mpsc::channel(100);
 
         // Spawn task to stream the files
-        tokio::spawn(async move {
+        let _list_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             // Get the file list from the workspace
             let query = if req.query.is_empty() {
                 None
@@ -812,7 +812,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(async move {
+        let _server_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(agent_service_server::AgentServiceServer::new(service))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
