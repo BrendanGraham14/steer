@@ -235,11 +235,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         // Create a git repo
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(temp_dir.path())
-            .output()
-            .unwrap();
+        git2::Repository::init(temp_dir.path()).unwrap();
 
         let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
             .await

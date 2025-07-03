@@ -278,48 +278,114 @@ impl RemoteWorkspaceService {
     }
 
     /// Get git status information
-    fn get_git_status(&self) -> Result<String, std::io::Error> {
-        use std::process::Command;
+    async fn get_git_status(&self) -> Result<String, std::io::Error> {
+        use git2::Repository;
 
         let mut result = String::new();
 
+        let repo = Repository::discover(".").map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to open git repository: {}", e),
+            )
+        })?;
+
         // Get current branch
-        if let Ok(output) = Command::new("git")
-            .args(["branch", "--show-current"])
-            .output()
-        {
-            if output.status.success() {
-                let branch_output = String::from_utf8_lossy(&output.stdout);
-                let branch = branch_output.trim().to_string();
+        match repo.head() {
+            Ok(head) => {
+                let branch = if head.is_branch() {
+                    head.shorthand().unwrap_or("<unknown>")
+                } else {
+                    "HEAD (detached)"
+                };
                 result.push_str(&format!("Current branch: {}\n\n", branch));
             }
-        }
-
-        // Get status
-        if let Ok(output) = Command::new("git").args(["status", "--short"]).output() {
-            if output.status.success() {
-                let status_output = String::from_utf8_lossy(&output.stdout);
-                let status = status_output.trim().to_string();
-                result.push_str("Status:\n");
-                if status.is_empty() {
-                    result.push_str("Working tree clean\n");
+            Err(e) => {
+                // Handle case where HEAD doesn't exist (new repo)
+                if e.code() == git2::ErrorCode::UnbornBranch {
+                    result.push_str("Current branch: <unborn>\n\n");
                 } else {
-                    result.push_str(&status);
-                    result.push('\n');
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to get HEAD: {}", e),
+                    ));
                 }
             }
         }
 
+        // Get status
+        let statuses = repo.statuses(None).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to get git status: {}", e),
+            )
+        })?;
+        result.push_str("Status:\n");
+        if statuses.is_empty() {
+            result.push_str("Working tree clean\n");
+        } else {
+            for entry in statuses.iter() {
+                let status = entry.status();
+                let path = entry.path().unwrap_or("<unknown>");
+
+                let status_char = if status.contains(git2::Status::INDEX_NEW) {
+                    "A"
+                } else if status.contains(git2::Status::INDEX_MODIFIED) {
+                    "M"
+                } else if status.contains(git2::Status::INDEX_DELETED) {
+                    "D"
+                } else if status.contains(git2::Status::WT_NEW) {
+                    "?"
+                } else if status.contains(git2::Status::WT_MODIFIED) {
+                    "M"
+                } else if status.contains(git2::Status::WT_DELETED) {
+                    "D"
+                } else {
+                    " "
+                };
+
+                let wt_char = if status.contains(git2::Status::WT_NEW) {
+                    "?"
+                } else if status.contains(git2::Status::WT_MODIFIED) {
+                    "M"
+                } else if status.contains(git2::Status::WT_DELETED) {
+                    "D"
+                } else {
+                    " "
+                };
+
+                result.push_str(&format!("{}{} {}\n", status_char, wt_char, path));
+            }
+        }
+
         // Get recent commits
-        if let Ok(output) = Command::new("git")
-            .args(["log", "--oneline", "-n", "5"])
-            .output()
-        {
-            if output.status.success() {
-                let log_output = String::from_utf8_lossy(&output.stdout);
-                let log = log_output.trim().to_string();
-                result.push_str("\nRecent commits:\n");
-                result.push_str(&log);
+        result.push_str("\nRecent commits:\n");
+        match repo.revwalk() {
+            Ok(mut revwalk) => {
+                if let Ok(()) = revwalk.push_head() {
+                    let mut count = 0;
+                    for oid in revwalk {
+                        if count >= 5 {
+                            break;
+                        }
+                        if let Ok(oid) = oid {
+                            if let Ok(commit) = repo.find_commit(oid) {
+                                let summary = commit.summary().unwrap_or("<no summary>");
+                                let id = commit.id();
+                                result.push_str(&format!("{:.7} {}\n", id, summary));
+                                count += 1;
+                            }
+                        }
+                    }
+                    if count == 0 {
+                        result.push_str("<no commits>\n");
+                    }
+                } else {
+                    result.push_str("<no commits>\n");
+                }
+            }
+            Err(_) => {
+                result.push_str("<no commits>\n");
             }
         }
 
@@ -510,8 +576,6 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         &self,
         request: Request<crate::proto::GetEnvironmentInfoRequest>,
     ) -> Result<Response<crate::proto::GetEnvironmentInfoResponse>, Status> {
-        use std::process::Command;
-
         let req = request.into_inner();
 
         // Use the provided working directory or current directory
@@ -534,13 +598,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         }
 
         // Check if it's a git repo
-        let is_git_repo = std::path::Path::new(".git").exists() || {
-            Command::new("git")
-                .args(["rev-parse", "--is-inside-work-tree"])
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false)
-        };
+        let is_git_repo = git2::Repository::discover(&working_directory).is_ok();
 
         // Get platform information
         let platform = if cfg!(target_os = "windows") {
@@ -567,7 +625,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
 
         // Get git status if it's a git repo
         let git_status = if is_git_repo {
-            self.get_git_status().ok()
+            self.get_git_status().await.ok()
         } else {
             None
         };
