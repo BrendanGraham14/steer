@@ -1,8 +1,20 @@
 # Commands
 
-cargo test
-cargo run -p conductor-cli
-cargo build
+just check        # Quick compilation check without building
+just test         # Run all tests with all features
+just run          # Run conductor CLI (can add args like: just run --help)
+just build        # Build the project with all features
+just ci           # Run all checks (fmt, clippy, test)
+just fix          # Auto-fix issues and format code
+
+# Other useful commands:
+# just              # Show all available commands
+# just release      # Build release version
+# just test-package conductor-core  # Test specific package
+# just test-specific test_name      # Run specific test
+# just fmt          # Format code
+# just clippy       # Run clippy linting
+# just clean        # Clean build artifacts
 
 
 # Commits

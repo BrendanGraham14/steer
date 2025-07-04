@@ -35,7 +35,7 @@ release:
 
 # Run conductor CLI
 run *args:
-    cargo run -p conductor-cli -- {{args}}
+    cargo run --bin conductor -- {{args}}
 
 # Clean build artifacts
 clean:
