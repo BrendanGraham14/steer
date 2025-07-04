@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 
 use crate::api::Model;
 use crate::app::Message;
-use crate::tools::{BackendRegistry, LocalBackend, ToolBackend};
+use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
 use conductor_tools::tools::read_only_workspace_tools;
 use conductor_tools::{ToolCall, result::ToolResult};
 
@@ -132,21 +132,17 @@ impl SessionConfig {
                 }
                 BackendConfig::Mcp {
                     server_name,
-                    transport: _,
-                    command,
-                    args,
+                    transport,
                     tool_filter,
                 } => {
                     tracing::info!(
-                        "Attempting to initialize MCP backend '{}' with command: {} {:?}",
+                        "Attempting to initialize MCP backend '{}' with transport: {:?}",
                         server_name,
-                        command,
-                        args
+                        transport
                     );
                     match crate::tools::McpBackend::new(
                         server_name.clone(),
-                        command.clone(),
-                        args.clone(),
+                        transport.clone(),
                         tool_filter.clone(),
                     )
                     .await
@@ -350,9 +346,7 @@ pub enum BackendConfig {
     },
     Mcp {
         server_name: String,
-        transport: String,
-        command: String,
-        args: Vec<String>,
+        transport: McpTransport,
         tool_filter: ToolFilter,
     },
 }
@@ -930,9 +924,10 @@ mod tests {
         // Test Mcp variant
         let mcp_config = BackendConfig::Mcp {
             server_name: "test-mcp".to_string(),
-            transport: "stdio".to_string(),
-            command: "python".to_string(),
-            args: vec!["-m".to_string(), "test_server".to_string()],
+            transport: crate::tools::McpTransport::Stdio {
+                command: "python".to_string(),
+                args: vec!["-m".to_string(), "test_server".to_string()],
+            },
             tool_filter: ToolFilter::All,
         };
 
@@ -940,14 +935,16 @@ mod tests {
             BackendConfig::Mcp {
                 server_name,
                 transport,
-                command,
-                args,
                 ..
             } => {
                 assert_eq!(server_name, "test-mcp");
-                assert_eq!(transport, "stdio");
-                assert_eq!(command, "python");
-                assert_eq!(args.len(), 2);
+                match transport {
+                    crate::tools::McpTransport::Stdio { command, args } => {
+                        assert_eq!(command, "python");
+                        assert_eq!(args.len(), 2);
+                    }
+                    _ => panic!("Expected Stdio transport"),
+                }
             }
             _ => panic!("Expected Mcp variant"),
         }

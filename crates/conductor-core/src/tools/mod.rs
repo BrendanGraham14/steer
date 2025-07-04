@@ -10,7 +10,7 @@ pub use backend::{BackendMetadata, BackendRegistry, ToolBackend};
 pub use conductor_tools::{ToolError, ToolSchema};
 pub use execution_context::{AuthMethod, ExecutionContext, ExecutionEnvironment, VolumeMount};
 pub use local_backend::LocalBackend;
-pub use mcp_backend::McpBackend;
+pub use mcp_backend::{McpBackend, McpTransport};
 pub use remote_backend::RemoteBackend;
 
 // Export the remaining main-app specific tool modules
@@ -23,3 +23,5 @@ pub use fetch::FetchTool;
 
 #[cfg(test)]
 mod mcp_backend_test;
+#[cfg(test)]
+mod mcp_test_servers;

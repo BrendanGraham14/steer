@@ -184,6 +184,40 @@ prop_compose! {
 }
 
 prop_compose! {
+    fn arb_mcp_transport()(
+        variant in 0..5usize,
+        command in "[a-z/]+",
+        args in prop::collection::vec("[a-z]+", 0..3),
+        host in "[a-z.]+",
+        port in 1024..65535u16,
+        path in "/tmp/[a-z]+.sock",
+        url in "https://[a-z.]+",
+        header_keys in prop::collection::vec("[a-zA-Z-]+", 0..3),
+        header_values in prop::collection::vec("[a-zA-Z0-9]+", 0..3),
+    ) -> conductor_core::tools::McpTransport {
+        let headers: Option<HashMap<String, String>> = if header_keys.is_empty() {
+            None
+        } else {
+            let map: HashMap<String, String> = header_keys.into_iter()
+                .zip(header_values.into_iter())
+                .collect();
+            Some(map)
+        };
+
+        match variant {
+            0 => conductor_core::tools::McpTransport::Stdio { command, args },
+            1 => conductor_core::tools::McpTransport::Tcp { host, port },
+            #[cfg(unix)]
+            2 => conductor_core::tools::McpTransport::Unix { path },
+            #[cfg(not(unix))]
+            2 => conductor_core::tools::McpTransport::Stdio { command, args },
+            3 => conductor_core::tools::McpTransport::Sse { url: url.clone(), headers: headers.clone() },
+            4 | _ => conductor_core::tools::McpTransport::Http { url, headers },
+        }
+    }
+}
+
+prop_compose! {
     fn arb_backend_config()(
         variant in 0..4usize,
         name in "[a-z]+",
@@ -192,16 +226,18 @@ prop_compose! {
         image in "[a-z]+:[a-z]+",
         runtime in prop::sample::select(vec![ContainerRuntime::Docker, ContainerRuntime::Podman]),
         server_name in "[a-z_]+",
-        transport in "stdio|http",
-        command in "[a-z/]+",
-        args in prop::collection::vec("[a-z]+", 0..3),
+        transport in arb_mcp_transport(),
         tool_filter in arb_tool_filter(),
     ) -> BackendConfig {
         match variant {
             0 => BackendConfig::Local { tool_filter },
             1 => BackendConfig::Remote { name, endpoint, auth, tool_filter },
             2 => BackendConfig::Container { image, runtime, tool_filter },
-            _ => BackendConfig::Mcp { server_name, transport, command, args, tool_filter },
+            _ => BackendConfig::Mcp {
+                server_name,
+                transport,
+                tool_filter
+            },
         }
     }
 }
@@ -470,12 +506,38 @@ proptest! {
                     }
                     prop_assert_eq!(tf1, tf2);
                 }
-                (BackendConfig::Mcp { server_name: s1, transport: t1, command: c1, args: a1, tool_filter: tf1 },
-                 BackendConfig::Mcp { server_name: s2, transport: t2, command: c2, args: a2, tool_filter: tf2 }) => {
+                (BackendConfig::Mcp { server_name: s1, transport: t1, tool_filter: tf1 },
+                 BackendConfig::Mcp { server_name: s2, transport: t2, tool_filter: tf2 }) => {
                     prop_assert_eq!(s1, s2);
-                    prop_assert_eq!(t1, t2);
-                    prop_assert_eq!(c1, c2);
-                    prop_assert_eq!(a1, a2);
+                    // Compare transports manually since McpTransport might not implement PartialEq
+                    match (t1, t2) {
+                        (conductor_core::tools::McpTransport::Stdio { command: c1, args: a1 },
+                         conductor_core::tools::McpTransport::Stdio { command: c2, args: a2 }) => {
+                            prop_assert_eq!(c1, c2);
+                            prop_assert_eq!(a1, a2);
+                        }
+                        (conductor_core::tools::McpTransport::Tcp { host: h1, port: p1 },
+                         conductor_core::tools::McpTransport::Tcp { host: h2, port: p2 }) => {
+                            prop_assert_eq!(h1, h2);
+                            prop_assert_eq!(p1, p2);
+                        }
+                        #[cfg(unix)]
+                        (conductor_core::tools::McpTransport::Unix { path: p1 },
+                         conductor_core::tools::McpTransport::Unix { path: p2 }) => {
+                            prop_assert_eq!(p1, p2);
+                        }
+                        (conductor_core::tools::McpTransport::Sse { url: u1, headers: h1 },
+                         conductor_core::tools::McpTransport::Sse { url: u2, headers: h2 }) => {
+                            prop_assert_eq!(u1, u2);
+                            prop_assert_eq!(h1, h2);
+                        }
+                        (conductor_core::tools::McpTransport::Http { url: u1, headers: h1 },
+                         conductor_core::tools::McpTransport::Http { url: u2, headers: h2 }) => {
+                            prop_assert_eq!(u1, u2);
+                            prop_assert_eq!(h1, h2);
+                        }
+                        _ => prop_assert!(false, "Transport type mismatch"),
+                    }
                     prop_assert_eq!(tf1, tf2);
                 }
                 _ => prop_assert!(false, "Backend variant mismatch"),

@@ -7,7 +7,39 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use thiserror::Error;
 use tokio::fs;
+
+/// Session configuration validation errors
+#[derive(Debug, Error)]
+pub enum SessionConfigError {
+    #[error("MCP backend server_name cannot be empty")]
+    EmptyServerName,
+
+    #[error("MCP stdio transport command cannot be empty")]
+    EmptyStdioCommand,
+
+    #[error("MCP TCP transport host cannot be empty")]
+    EmptyTcpHost,
+
+    #[error("MCP TCP transport port cannot be 0")]
+    InvalidTcpPort,
+
+    #[error("MCP Unix transport path cannot be empty")]
+    EmptyUnixPath,
+
+    #[error("MCP SSE transport url cannot be empty")]
+    EmptySseUrl,
+
+    #[error("MCP HTTP transport url cannot be empty")]
+    EmptyHttpUrl,
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("TOML parse error: {0}")]
+    TomlParse(#[from] toml::de::Error),
+}
 
 /// Partial session configuration that can be loaded from a TOML file.
 /// All fields are optional so users can specify only what they want to override.
@@ -112,10 +144,7 @@ impl SessionConfigLoader {
             }
         };
 
-        // Apply CLI overrides
         self.apply_overrides(&mut config)?;
-
-        // Validate the final config
         self.validate_config(&config)?;
 
         Ok(config)
@@ -205,30 +234,59 @@ impl SessionConfigLoader {
         Ok(())
     }
 
-    fn validate_config(&self, config: &SessionConfig) -> Result<()> {
+    fn validate_config(&self, config: &SessionConfig) -> Result<(), SessionConfigError> {
         // Validate MCP backends have required fields
         for backend in &config.tool_config.backends {
             if let BackendConfig::Mcp {
                 server_name,
-                command,
+                transport,
                 ..
             } = backend
             {
                 if server_name.is_empty() {
-                    return Err(eyre::eyre!("MCP backend server_name cannot be empty"));
-                }
-                if command.is_empty() {
-                    return Err(eyre::eyre!("MCP backend command cannot be empty"));
+                    return Err(SessionConfigError::EmptyServerName);
                 }
 
-                // Check if command exists in PATH
-                if which::which(command).is_err() {
-                    // Log warning but don't fail - the command might be a full path or available later
-                    tracing::warn!(
-                        "MCP command '{}' for server '{}' not found in PATH",
-                        command,
-                        server_name
-                    );
+                // Validate transport-specific requirements
+                match transport {
+                    conductor_core::tools::McpTransport::Stdio { command, .. } => {
+                        if command.is_empty() {
+                            return Err(SessionConfigError::EmptyStdioCommand);
+                        }
+                        // Check if command exists in PATH
+                        if which::which(command).is_err() {
+                            // Log warning but don't fail - the command might be a full path or available later
+                            tracing::warn!(
+                                "MCP command '{}' for server '{}' not found in PATH",
+                                command,
+                                server_name
+                            );
+                        }
+                    }
+                    conductor_core::tools::McpTransport::Tcp { host, port } => {
+                        if host.is_empty() {
+                            return Err(SessionConfigError::EmptyTcpHost);
+                        }
+                        if *port == 0 {
+                            return Err(SessionConfigError::InvalidTcpPort);
+                        }
+                    }
+                    #[cfg(unix)]
+                    conductor_core::tools::McpTransport::Unix { path } => {
+                        if path.is_empty() {
+                            return Err(SessionConfigError::EmptyUnixPath);
+                        }
+                    }
+                    conductor_core::tools::McpTransport::Sse { url, .. } => {
+                        if url.is_empty() {
+                            return Err(SessionConfigError::EmptySseUrl);
+                        }
+                    }
+                    conductor_core::tools::McpTransport::Http { url, .. } => {
+                        if url.is_empty() {
+                            return Err(SessionConfigError::EmptyHttpUrl);
+                        }
+                    }
                 }
             }
         }
@@ -247,9 +305,10 @@ mod tests {
         // Test that we can serialize and deserialize BackendConfig
         let backend = BackendConfig::Mcp {
             server_name: "test".to_string(),
-            transport: "stdio".to_string(),
-            command: "python".to_string(),
-            args: vec!["-m".to_string(), "test".to_string()],
+            transport: conductor_core::tools::McpTransport::Stdio {
+                command: "python".to_string(),
+                args: vec!["-m".to_string(), "test".to_string()],
+            },
             tool_filter: ToolFilter::All,
         };
 
@@ -258,8 +317,19 @@ mod tests {
 
         let backend2: BackendConfig = serde_json::from_str(&json).unwrap();
         match backend2 {
-            BackendConfig::Mcp { server_name, .. } => {
+            BackendConfig::Mcp {
+                server_name,
+                transport,
+                ..
+            } => {
                 assert_eq!(server_name, "test");
+                match transport {
+                    conductor_core::tools::McpTransport::Stdio { command, args } => {
+                        assert_eq!(command, "python");
+                        assert_eq!(args, vec!["-m", "test"]);
+                    }
+                    _ => panic!("Expected Stdio transport"),
+                }
             }
             _ => panic!("Wrong variant"),
         }
@@ -430,7 +500,7 @@ approval_policy = "invalid_policy"
         writeln!(temp_file, r#"
 [tool_config]
 backends = [
-  {{ type = "mcp", server_name = "", transport = "stdio", command = "python", args = ["-m", "test"], tool_filter = "all" }}
+  {{ type = "mcp", server_name = "", transport = {{ type = "stdio", command = "python", args = ["-m", "test"] }}, tool_filter = "all" }}
 ]
 "#).unwrap();
 
@@ -454,7 +524,7 @@ backends = [
         writeln!(temp_file, r#"
 [tool_config]
 backends = [
-  {{ type = "mcp", server_name = "test", transport = "stdio", command = "", args = ["-m", "test"], tool_filter = "all" }}
+  {{ type = "mcp", server_name = "test", transport = {{ type = "stdio", command = "", args = ["-m", "test"] }}, tool_filter = "all" }}
 ]
 "#).unwrap();
 
@@ -465,7 +535,7 @@ backends = [
         let err = result.unwrap_err();
         assert!(
             err.to_string()
-                .contains("MCP backend command cannot be empty")
+                .contains("MCP stdio transport command cannot be empty")
         );
     }
 

@@ -63,9 +63,17 @@ sqlx = { version = "0.7", features = [
 ] }
 rmcp = { git = "https://github.com/BrendanGraham14/rust-sdk", rev = "97c45fd4cf1c715be16f5acc0f726cdd758f8e6b", features = [
     "client",
+    "server",
     "transport-child-process",
     "transport-io",
+    "transport-sse-client",
+    "transport-sse-server",
+    "transport-streamable-http-client",
+    "transport-streamable-http-server",
+    "transport-streamable-http-server-session",
+    "reqwest",
 ] }
+axum = "0.8"
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
@@ -80,7 +88,7 @@ nix = { version = "0.30.1", features = ["signal"] }
 [build-dependencies]
 
 [features]
-default = []
+default = ["schema"]
 schema = ["dep:schemars", "serde/derive"]
 
 [dev-dependencies]
