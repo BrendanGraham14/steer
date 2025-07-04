@@ -627,14 +627,20 @@ pub fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendConfig {
         BackendConfig::Mcp {
             server_name,
             transport,
-            command,
-            args,
             tool_filter,
         } => Backend::Mcp(proto::McpBackendConfig {
             server_name: server_name.clone(),
-            transport: transport.clone(),
-            command: command.clone(),
-            args: args.clone(),
+            // Serialize the McpTransport enum to JSON string for proto compatibility
+            transport: serde_json::to_string(&transport).unwrap_or_else(|_| "{}".to_string()),
+            // Proto still expects command and args separately, extract from transport
+            command: match transport {
+                conductor_core::tools::McpTransport::Stdio { command, .. } => command.clone(),
+                _ => String::new(),
+            },
+            args: match transport {
+                conductor_core::tools::McpTransport::Stdio { args, .. } => args.clone(),
+                _ => Vec::new(),
+            },
             tool_filter: Some(tool_filter_to_proto(tool_filter)),
         }),
     };
@@ -810,13 +816,30 @@ pub fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> SessionTo
                         tool_filter: proto_to_tool_filter(container.tool_filter),
                     }
                 }
-                Some(proto::backend_config::Backend::Mcp(mcp)) => BackendConfig::Mcp {
-                    server_name: mcp.server_name,
-                    transport: mcp.transport,
-                    command: mcp.command,
-                    args: mcp.args,
-                    tool_filter: proto_to_tool_filter(mcp.tool_filter),
-                },
+                Some(proto::backend_config::Backend::Mcp(mcp)) => {
+                    // Try to deserialize transport from JSON string
+                    let transport = if !mcp.transport.is_empty() && mcp.transport != "{}" {
+                        serde_json::from_str(&mcp.transport).unwrap_or_else(|_| {
+                            // Fallback to stdio transport using command/args from proto
+                            conductor_core::tools::McpTransport::Stdio {
+                                command: mcp.command.clone(),
+                                args: mcp.args.clone(),
+                            }
+                        })
+                    } else {
+                        // Fallback for old proto format
+                        conductor_core::tools::McpTransport::Stdio {
+                            command: mcp.command.clone(),
+                            args: mcp.args.clone(),
+                        }
+                    };
+
+                    BackendConfig::Mcp {
+                        server_name: mcp.server_name,
+                        transport,
+                        tool_filter: proto_to_tool_filter(mcp.tool_filter),
+                    }
+                }
                 None => BackendConfig::Local {
                     tool_filter: ToolFilter::All,
                 }, // Default fallback

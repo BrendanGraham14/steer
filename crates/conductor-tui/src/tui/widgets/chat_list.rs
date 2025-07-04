@@ -230,16 +230,14 @@ impl<'a> ChatList<'a> {
                 let mut lines = vec![];
 
                 // Render the pending tool call
-                let mut first_line = vec![];
-                first_line.push(Span::raw("  ")); // Indent
-                first_line.push(Span::styled("⚙", Style::default().fg(Color::Cyan)));
-                first_line.push(Span::raw(" "));
-                first_line.push(Span::styled(
-                    tool_call.name.clone(),
-                    Style::default().fg(Color::Cyan),
-                ));
-                first_line.push(Span::styled(" ⋯ ", styles::DIM_TEXT));
-                first_line.push(Span::styled("Pending...", styles::ITALIC_GRAY));
+                let first_line = vec![
+                    Span::raw("  "), // Indent
+                    Span::styled("⚙", Style::default().fg(Color::Cyan)),
+                    Span::raw(" "),
+                    Span::styled(tool_call.name.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(" ⋯ ", styles::DIM_TEXT),
+                    Span::styled("Pending...", styles::ITALIC_GRAY),
+                ];
                 lines.push(Line::from(first_line));
 
                 let height = lines.len() as u16;

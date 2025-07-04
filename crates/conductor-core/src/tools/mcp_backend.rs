@@ -4,12 +4,17 @@
 
 use async_trait::async_trait;
 use rmcp::transport::ConfigureCommandExt;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
+
+use tokio::net::TcpStream;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 
 use crate::api::ToolCall;
 use crate::session::state::ToolFilter;
@@ -22,14 +27,42 @@ use conductor_tools::{
 use rmcp::{
     model::{CallToolRequestParam, Tool},
     service::{RoleClient, RunningService, ServiceExt},
-    transport::TokioChildProcess,
+    transport::{SseClientTransport, StreamableHttpClientTransport, TokioChildProcess},
 };
+
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
+
+/// MCP transport configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransport {
+    /// Standard I/O transport (child process)
+    Stdio { command: String, args: Vec<String> },
+    /// TCP transport
+    Tcp { host: String, port: u16 },
+    /// Unix domain socket transport
+    #[cfg(unix)]
+    Unix { path: String },
+    /// Server-Sent Events transport
+    Sse {
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        headers: Option<HashMap<String, String>>,
+    },
+    /// HTTP streamable transport
+    Http {
+        url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        headers: Option<HashMap<String, String>>,
+    },
+}
 
 /// Tool backend for executing tools via MCP servers
 pub struct McpBackend {
     server_name: String,
-    command: String,
-    args: Vec<String>,
+    transport: McpTransport,
     tool_filter: ToolFilter,
     client: Arc<RwLock<Option<RunningService<RoleClient, ()>>>>,
     tools: Arc<RwLock<HashMap<String, Tool>>>,
@@ -39,55 +72,140 @@ impl McpBackend {
     /// Create a new MCP backend
     pub async fn new(
         server_name: String,
-        command: String,
-        args: Vec<String>,
+        transport: McpTransport,
         tool_filter: ToolFilter,
     ) -> Result<Self, ToolError> {
         info!(
-            "Creating MCP backend '{}' with command: {} {:?}",
-            server_name, command, args
+            "Creating MCP backend '{}' with transport: {:?}",
+            server_name, transport
         );
 
-        let (transport, stderr) =
-            TokioChildProcess::builder(Command::new(&command).configure(|cmd| {
-                cmd.args(&args);
-            }))
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                error!("Failed to create MCP process: {}", e);
-                ToolError::mcp_connection_failed(
-                    &server_name,
-                    format!("Failed to create MCP process: {}", e),
-                )
-            })?;
+        let client = match &transport {
+            McpTransport::Stdio { command, args } => {
+                let (transport, stderr) =
+                    TokioChildProcess::builder(Command::new(&command).configure(|cmd| {
+                        cmd.args(args);
+                    }))
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|e| {
+                        error!("Failed to create MCP process: {}", e);
+                        ToolError::mcp_connection_failed(
+                            &server_name,
+                            format!("Failed to create MCP process: {}", e),
+                        )
+                    })?;
 
-        if let Some(stderr) = stderr {
-            let server_name_for_logging = server_name.clone();
-            tokio::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                let mut reader = BufReader::new(stderr);
-                let mut line = String::new();
+                if let Some(stderr) = stderr {
+                    let server_name_for_logging = server_name.clone();
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut reader = BufReader::new(stderr);
+                        let mut line = String::new();
 
-                while let Ok(len) = reader.read_line(&mut line).await {
-                    if len == 0 {
-                        break;
-                    }
-                    debug!(
-                        target: "mcp_server",
-                        "[{}] {}",
-                        server_name_for_logging,
-                        line.trim()
-                    );
-                    line.clear();
+                        while let Ok(len) = reader.read_line(&mut line).await {
+                            if len == 0 {
+                                break;
+                            }
+                            debug!(
+                                target: "mcp_server",
+                                "[{}] {}",
+                                server_name_for_logging,
+                                line.trim()
+                            );
+                            line.clear();
+                        }
+                    });
                 }
-            });
-        }
 
-        let client = ().serve(transport).await.map_err(|e| {
-            error!("Failed to serve MCP: {}", e);
-            ToolError::mcp_connection_failed(&server_name, format!("Failed to serve MCP: {}", e))
-        })?;
+                ().serve(transport).await.map_err(|e| {
+                    error!("Failed to serve MCP: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to serve MCP: {}", e),
+                    )
+                })?
+            }
+            McpTransport::Tcp { host, port } => {
+                let stream = TcpStream::connect((host.as_str(), *port))
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to connect to TCP MCP server: {}", e);
+                        ToolError::mcp_connection_failed(
+                            &server_name,
+                            format!("Failed to connect to {}:{} - {}", host, port, e),
+                        )
+                    })?;
+
+                ().serve(stream).await.map_err(|e| {
+                    error!("Failed to serve MCP over TCP: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to serve MCP over TCP: {}", e),
+                    )
+                })?
+            }
+            #[cfg(unix)]
+            McpTransport::Unix { path } => {
+                let stream = UnixStream::connect(path).await.map_err(|e| {
+                    error!("Failed to connect to Unix socket MCP server: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to connect to Unix socket {} - {}", path, e),
+                    )
+                })?;
+
+                ().serve(stream).await.map_err(|e| {
+                    error!("Failed to serve MCP over Unix socket: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to serve MCP over Unix socket: {}", e),
+                    )
+                })?
+            }
+            McpTransport::Sse { url, headers } => {
+                // Use the dedicated SSE client transport for SSE connections
+                if headers.is_some() && !headers.as_ref().unwrap().is_empty() {
+                    info!(
+                        "SSE transport with custom headers requested; headers may not be applied"
+                    );
+                }
+
+                let transport = SseClientTransport::start(url.clone()).await.map_err(|e| {
+                    error!("Failed to start SSE transport: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to start SSE transport: {}", e),
+                    )
+                })?;
+
+                ().serve(transport).await.map_err(|e| {
+                    error!("Failed to serve MCP over SSE: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to serve MCP over SSE: {}", e),
+                    )
+                })?
+            }
+            McpTransport::Http { url, headers } => {
+                // Use the simpler from_uri method
+                let transport = StreamableHttpClientTransport::from_uri(url.clone());
+
+                if headers.is_some() && !headers.as_ref().unwrap().is_empty() {
+                    info!(
+                        "HTTP transport with custom headers requested; headers may not be applied"
+                    );
+                }
+
+                ().serve(transport).await.map_err(|e| {
+                    error!("Failed to serve MCP over HTTP: {}", e);
+                    ToolError::mcp_connection_failed(
+                        &server_name,
+                        format!("Failed to serve MCP over HTTP: {}", e),
+                    )
+                })?
+            }
+        };
 
         let server_info = client.peer_info();
         info!("Connected to server: {server_info:#?}");
@@ -130,8 +248,7 @@ impl McpBackend {
 
         let backend = Self {
             server_name,
-            command,
-            args,
+            transport,
             tool_filter,
             client: Arc::new(RwLock::new(Some(client))),
             tools: Arc::new(RwLock::new(tools)),
@@ -279,9 +396,40 @@ impl ToolBackend for McpBackend {
     }
 
     fn metadata(&self) -> BackendMetadata {
-        BackendMetadata::new(self.server_name.clone(), "MCP".to_string())
-            .with_info("command".to_string(), self.command.clone())
-            .with_info("args".to_string(), self.args.join(" "))
+        let mut metadata = BackendMetadata::new(self.server_name.clone(), "MCP".to_string());
+
+        match &self.transport {
+            McpTransport::Stdio { command, args } => {
+                metadata = metadata
+                    .with_info("transport".to_string(), "stdio".to_string())
+                    .with_info("command".to_string(), command.clone())
+                    .with_info("args".to_string(), args.join(" "));
+            }
+            McpTransport::Tcp { host, port } => {
+                metadata = metadata
+                    .with_info("transport".to_string(), "tcp".to_string())
+                    .with_info("host".to_string(), host.clone())
+                    .with_info("port".to_string(), port.to_string());
+            }
+            #[cfg(unix)]
+            McpTransport::Unix { path } => {
+                metadata = metadata
+                    .with_info("transport".to_string(), "unix".to_string())
+                    .with_info("path".to_string(), path.clone());
+            }
+            McpTransport::Sse { url, .. } => {
+                metadata = metadata
+                    .with_info("transport".to_string(), "sse".to_string())
+                    .with_info("url".to_string(), url.clone());
+            }
+            McpTransport::Http { url, .. } => {
+                metadata = metadata
+                    .with_info("transport".to_string(), "http".to_string())
+                    .with_info("url".to_string(), url.clone());
+            }
+        }
+
+        metadata
     }
 
     async fn health_check(&self) -> bool {
@@ -312,6 +460,7 @@ impl Drop for McpBackend {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn test_tool_name_extraction() {
@@ -324,5 +473,63 @@ mod tests {
         };
 
         assert_eq!(actual_name, "some_tool");
+    }
+
+    #[test]
+    fn test_mcp_transport_serialization() {
+        // Test stdio transport
+        let stdio = McpTransport::Stdio {
+            command: "python".to_string(),
+            args: vec!["-m".to_string(), "test_server".to_string()],
+        };
+        let json = serde_json::to_string(&stdio).unwrap();
+        assert!(json.contains("\"type\":\"stdio\""));
+        assert!(json.contains("\"command\":\"python\""));
+
+        // Test TCP transport
+        let tcp = McpTransport::Tcp {
+            host: "localhost".to_string(),
+            port: 3000,
+        };
+        let json = serde_json::to_string(&tcp).unwrap();
+        assert!(json.contains("\"type\":\"tcp\""));
+        assert!(json.contains("\"host\":\"localhost\""));
+        assert!(json.contains("\"port\":3000"));
+
+        // Test Unix transport
+        #[cfg(unix)]
+        {
+            let unix = McpTransport::Unix {
+                path: "/tmp/test.sock".to_string(),
+            };
+            let json = serde_json::to_string(&unix).unwrap();
+            assert!(json.contains("\"type\":\"unix\""));
+            assert!(json.contains("\"path\":\"/tmp/test.sock\""));
+        }
+    }
+
+    #[test]
+    fn test_mcp_transport_deserialization() {
+        // Test stdio transport
+        let json = r#"{"type":"stdio","command":"node","args":["server.js"]}"#;
+        let transport: McpTransport = serde_json::from_str(json).unwrap();
+        match transport {
+            McpTransport::Stdio { command, args } => {
+                assert_eq!(command, "node");
+                assert_eq!(args, vec!["server.js"]);
+            }
+            _ => panic!("Expected Stdio transport"),
+        }
+
+        // Test TCP transport
+        let json = r#"{"type":"tcp","host":"127.0.0.1","port":8080}"#;
+        let transport: McpTransport = serde_json::from_str(json).unwrap();
+        match transport {
+            McpTransport::Tcp { host, port } => {
+                assert_eq!(host, "127.0.0.1");
+                assert_eq!(port, 8080);
+            }
+            _ => panic!("Expected TCP transport"),
+        }
     }
 }

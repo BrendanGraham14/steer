@@ -90,7 +90,7 @@ You can create sessions using TOML configuration files. This is useful for:
 # session-minimal.toml
 [tool_config]
 backends = [
-  { type = "mcp", server_name = "calculator", transport = "unix", command = "python", args = ["-m", "mcp_calculator"], tool_filter = "all" }
+  { type = "mcp", server_name = "calculator", transport = { type = "stdio", command = "python", args = ["-m", "mcp_calculator"] }, tool_filter = "all" }
 ]
 ```
 
@@ -114,8 +114,8 @@ type = "local"
 
 [tool_config]
 backends = [
-  { type = "mcp", server_name = "calculator", transport = "unix", command = "python", args = ["-m", "mcp_calculator"], tool_filter = "all" },
-  { type = "mcp", server_name = "web-tools", transport = "tcp", command = "mcp-server-web", args = ["--port", "3000"], tool_filter = "all" }
+  { type = "mcp", server_name = "calculator", transport = { type = "stdio", command = "python", args = ["-m", "mcp_calculator"] }, tool_filter = "all" },
+  { type = "mcp", server_name = "web-tools", transport = { type = "tcp", host = "127.0.0.1", port = 3000 }, tool_filter = "all" }
 ]
 visibility = "all"
 approval_policy = "always_ask"
@@ -126,6 +126,40 @@ environment = "development"
 ```
 
 See the `examples/` directory for more configuration examples.
+
+### MCP Transport Options
+
+Conductor supports multiple transport types for connecting to MCP servers:
+
+#### Stdio Transport (Default)
+For MCP servers that communicate via standard input/output:
+```toml
+transport = { type = "stdio", command = "python", args = ["-m", "mcp_server"] }
+```
+
+#### TCP Transport
+For MCP servers listening on a TCP port:
+```toml
+transport = { type = "tcp", host = "127.0.0.1", port = 3000 }
+```
+
+#### Unix Socket Transport
+For MCP servers using Unix domain sockets (Unix/macOS only):
+```toml
+transport = { type = "unix", path = "/tmp/mcp.sock" }
+```
+
+#### SSE Transport
+For MCP servers using Server-Sent Events:
+```toml
+transport = { type = "sse", url = "http://localhost:3000/events", headers = { "Authorization" = "Bearer token" } }
+```
+
+#### HTTP Transport
+For MCP servers using streamable HTTP:
+```toml
+transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-Key" = "secret" } }
+```
 
 ---
 
