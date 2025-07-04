@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use conductor_core::error::Result;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -12,6 +12,9 @@ use crate::grpc::conversions::{
     session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
+
+type GrpcResult<T> = std::result::Result<T, GrpcError>;
+
 use conductor_core::app::conversation::Message;
 use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::{AppCommand, AppEvent};
@@ -33,12 +36,10 @@ pub struct GrpcClientAdapter {
 
 impl GrpcClientAdapter {
     /// Connect to a gRPC server
-    pub async fn connect(addr: &str) -> Result<Self> {
+    pub async fn connect(addr: &str) -> GrpcResult<Self> {
         info!("Connecting to gRPC server at {}", addr);
 
-        let client = AgentServiceClient::connect(addr.to_string())
-            .await
-            .map_err(|e| anyhow!("Failed to connect to gRPC server: {}", e))?;
+        let client = AgentServiceClient::connect(addr.to_string()).await?;
 
         info!("Successfully connected to gRPC server");
 
@@ -52,7 +53,7 @@ impl GrpcClientAdapter {
     }
 
     /// Create client from an existing channel (for in-memory connections)
-    pub async fn from_channel(channel: Channel) -> Result<Self> {
+    pub async fn from_channel(channel: Channel) -> GrpcResult<Self> {
         info!("Creating gRPC client from provided channel");
 
         let client = AgentServiceClient::new(channel);
@@ -70,14 +71,14 @@ impl GrpcClientAdapter {
     pub async fn local(
         llm_config: conductor_core::config::LlmConfig,
         default_model: conductor_core::api::Model,
-    ) -> Result<Self> {
+    ) -> GrpcResult<Self> {
         use crate::local_server::setup_local_grpc;
         let channel = setup_local_grpc(llm_config, default_model, None).await?;
         Self::from_channel(channel).await
     }
 
     /// Create a new session on the server
-    pub async fn create_session(&self, config: SessionConfig) -> Result<String> {
+    pub async fn create_session(&self, config: SessionConfig) -> GrpcResult<String> {
         debug!("Creating new session with gRPC server");
 
         let tool_policy = tool_approval_policy_to_proto(&config.tool_config.approval_policy);
@@ -105,7 +106,7 @@ impl GrpcClientAdapter {
     pub async fn activate_session(
         &self,
         session_id: String,
-    ) -> Result<(Vec<Message>, Vec<String>)> {
+    ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
         info!("Activating remote session: {}", session_id);
 
         let response = self
@@ -124,7 +125,7 @@ impl GrpcClientAdapter {
             match proto_to_message(proto_msg) {
                 Ok(msg) => messages.push(msg),
                 Err(e) => {
-                    return Err(GrpcError::ConversionError(e).into());
+                    return Err(GrpcError::ConversionError(e));
                 }
             }
         }
@@ -134,15 +135,15 @@ impl GrpcClientAdapter {
     }
 
     /// Start bidirectional streaming with the server
-    pub async fn start_streaming(&self) -> Result<()> {
+    pub async fn start_streaming(&self) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
             .await
             .as_ref()
             .cloned()
-            .ok_or_else(|| {
-                anyhow!("No session ID - call create_session or activate_session first")
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No session ID - call create_session or activate_session first".to_string(),
             })?;
 
         debug!("Starting bidirectional stream for session: {}", session_id);
@@ -170,7 +171,7 @@ impl GrpcClientAdapter {
         cmd_tx
             .send(subscribe_msg)
             .await
-            .map_err(|_| anyhow!("Failed to send subscribe message"))?;
+            .map_err(|_| GrpcError::StreamError("Failed to send subscribe message".to_string()))?;
 
         // Spawn task to handle incoming server events
         let session_id_clone = session_id.clone();
@@ -228,14 +229,16 @@ impl GrpcClientAdapter {
     }
 
     /// Send a command to the server
-    pub async fn send_command(&self, command: AppCommand) -> Result<()> {
+    pub async fn send_command(&self, command: AppCommand) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
             .await
             .as_ref()
             .cloned()
-            .ok_or_else(|| anyhow!("No active session"))?;
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
 
         let command_tx = self
             .command_tx
@@ -243,15 +246,16 @@ impl GrpcClientAdapter {
             .await
             .as_ref()
             .cloned()
-            .ok_or_else(|| anyhow!("Streaming not started - call start_streaming first"))?;
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "Streaming not started - call start_streaming first".to_string(),
+            })?;
 
         let message = convert_app_command_to_client_message(command, &session_id)?;
 
         if let Some(message) = message {
-            command_tx
-                .send(message)
-                .await
-                .map_err(|_| anyhow!("Failed to send command - stream may be closed"))?;
+            command_tx.send(message).await.map_err(|_| {
+                GrpcError::StreamError("Failed to send command - stream may be closed".to_string())
+            })?;
         }
 
         Ok(())
@@ -263,7 +267,7 @@ impl GrpcClientAdapter {
     }
 
     /// List sessions on the remote server
-    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
+    pub async fn list_sessions(&self) -> GrpcResult<Vec<SessionInfo>> {
         debug!("Listing sessions from gRPC server");
 
         let request = Request::new(ListSessionsRequest {
@@ -279,7 +283,7 @@ impl GrpcClientAdapter {
     }
 
     /// Get session details from the remote server
-    pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionState>> {
+    pub async fn get_session(&self, session_id: &str) -> GrpcResult<Option<SessionState>> {
         debug!("Getting session {} from gRPC server", session_id);
 
         let request = Request::new(GetSessionRequest {
@@ -292,12 +296,12 @@ impl GrpcClientAdapter {
                 Ok(Some(session_state))
             }
             Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
-            Err(e) => Err(anyhow!("Failed to get session: {}", e)),
+            Err(e) => Err(GrpcError::CallFailed(e)),
         }
     }
 
     /// Delete a session on the remote server
-    pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
+    pub async fn delete_session(&self, session_id: &str) -> GrpcResult<bool> {
         debug!("Deleting session {} from gRPC server", session_id);
 
         let request = Request::new(DeleteSessionRequest {
@@ -310,12 +314,15 @@ impl GrpcClientAdapter {
                 Ok(true)
             }
             Err(status) if status.code() == tonic::Code::NotFound => Ok(false),
-            Err(e) => Err(anyhow!("Failed to delete session: {}", e)),
+            Err(e) => Err(GrpcError::CallFailed(e)),
         }
     }
 
     /// Get the current conversation for a session
-    pub async fn get_conversation(&self, session_id: &str) -> Result<(Vec<Message>, Vec<String>)> {
+    pub async fn get_conversation(
+        &self,
+        session_id: &str,
+    ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
         info!(
             "Client adapter getting conversation for session: {}",
             session_id
@@ -344,7 +351,7 @@ impl GrpcClientAdapter {
             match proto_to_message(proto_msg) {
                 Ok(msg) => messages.push(msg),
                 Err(e) => {
-                    return Err(GrpcError::ConversionError(e).into());
+                    return Err(GrpcError::ConversionError(e));
                 }
             }
         }
@@ -374,7 +381,9 @@ impl GrpcClientAdapter {
 #[async_trait]
 impl AppCommandSink for GrpcClientAdapter {
     async fn send_command(&self, command: AppCommand) -> Result<()> {
-        self.send_command(command).await
+        self.send_command(command)
+            .await
+            .map_err(|e| conductor_core::error::Error::InvalidOperation(e.to_string()))
     }
 }
 

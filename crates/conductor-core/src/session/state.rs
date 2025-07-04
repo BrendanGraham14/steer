@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -446,7 +446,7 @@ impl SessionState {
         &mut self,
         tool_call_id: &str,
         status: ToolCallStatus,
-    ) -> Result<(), String> {
+    ) -> std::result::Result<(), String> {
         let tool_call = self
             .tool_calls
             .get_mut(tool_call_id)
@@ -478,7 +478,7 @@ impl SessionState {
     }
 
     /// Validate internal consistency
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> std::result::Result<(), String> {
         // Check that all tool calls referenced in messages exist
         for message in &self.messages {
             let tool_calls = self.extract_tool_calls_from_message(message);
@@ -519,7 +519,10 @@ impl SessionState {
     }
 
     /// Apply an event to the session state
-    pub fn apply_event(&mut self, event: &crate::events::StreamEvent) -> Result<(), String> {
+    pub fn apply_event(
+        &mut self,
+        event: &crate::events::StreamEvent,
+    ) -> std::result::Result<(), String> {
         use crate::events::StreamEvent;
 
         match event {

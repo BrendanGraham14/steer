@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use conductor_core::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
 use conductor_core::tools::fetch::FETCH_TOOL_NAME;
@@ -7,6 +6,7 @@ use conductor_tools::tools::{
     MULTI_EDIT_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME,
     VIEW_TOOL_NAME,
 };
+use eyre::{Result, eyre};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -34,20 +34,20 @@ impl Command for HeadlessCommand {
         let messages = if let Some(json_path) = &self.messages_json {
             // Read messages from JSON file
             let json_content = fs::read_to_string(json_path)
-                .map_err(|e| anyhow!("Failed to read messages JSON file: {}", e))?;
+                .map_err(|e| eyre!("Failed to read messages JSON file: {}", e))?;
 
             serde_json::from_str::<Vec<Message>>(&json_content)
-                .map_err(|e| anyhow!("Failed to parse messages JSON: {}", e))?
+                .map_err(|e| eyre!("Failed to parse messages JSON: {}", e))?
         } else {
             // Read prompt from stdin
             let mut buffer = String::new();
             match io::stdin().read_to_string(&mut buffer) {
                 Ok(_) => {
                     if buffer.trim().is_empty() {
-                        return Err(anyhow!("No input provided via stdin"));
+                        return Err(eyre!("No input provided via stdin"));
                     }
                 }
-                Err(e) => return Err(anyhow!("Failed to read from stdin: {}", e)),
+                Err(e) => return Err(eyre!("Failed to read from stdin: {}", e)),
             }
             // Create a single user message from stdin content
             vec![Message::User {
@@ -94,7 +94,7 @@ impl Command for HeadlessCommand {
             Some(session_id) => {
                 // Run in existing session
                 if messages.len() != 1 {
-                    return Err(anyhow!(
+                    return Err(eyre!(
                         "When using --session, only single message input is supported (use stdin, not --messages-json)"
                     ));
                 }
@@ -105,14 +105,14 @@ impl Command for HeadlessCommand {
                         match content.first() {
                             Some(UserContent::Text { text }) => text.clone(),
                             _ => {
-                                return Err(anyhow!(
+                                return Err(eyre!(
                                     "Only text messages are supported when using --session"
                                 ));
                             }
                         }
                     }
                     _ => {
-                        return Err(anyhow!(
+                        return Err(eyre!(
                             "Only user messages are supported when using --session"
                         ));
                     }
@@ -151,7 +151,7 @@ impl Command for HeadlessCommand {
                     .collect();
 
                 let app_messages =
-                    app_messages.map_err(|e| anyhow!("Failed to convert messages: {}", e))?;
+                    app_messages.map_err(|e| eyre!("Failed to convert messages: {}", e))?;
 
                 crate::run_once_ephemeral(
                     &session_manager,
@@ -167,7 +167,7 @@ impl Command for HeadlessCommand {
 
         // Output the result as JSON
         let json_output = serde_json::to_string_pretty(&result)
-            .map_err(|e| anyhow!("Failed to serialize result to JSON: {}", e))?;
+            .map_err(|e| eyre!("Failed to serialize result to JSON: {}", e))?;
 
         println!("{}", json_output);
         Ok(())

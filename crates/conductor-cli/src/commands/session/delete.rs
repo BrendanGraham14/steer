@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use eyre::{Result, eyre};
 use std::io::{self, Write};
 use tokio::sync::mpsc;
 
@@ -59,12 +59,12 @@ impl Command for DeleteSessionCommand {
         let deleted = session_manager
             .delete_session(&self.session_id)
             .await
-            .map_err(|e| anyhow!("Failed to delete session: {}", e))?;
+            .map_err(|e| eyre!("Failed to delete session: {}", e))?;
 
         if deleted {
             println!("Session {} deleted.", self.session_id);
         } else {
-            return Err(anyhow!("Session not found: {}", self.session_id));
+            return Err(eyre!("Session not found: {}", self.session_id));
         }
 
         Ok(())
@@ -77,7 +77,7 @@ impl DeleteSessionCommand {
 
         // Connect to the gRPC server
         let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
-            anyhow!(
+            eyre!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,
                 e
@@ -103,12 +103,12 @@ impl DeleteSessionCommand {
         let deleted = client
             .delete_session(&self.session_id)
             .await
-            .map_err(|e| anyhow!("Failed to delete remote session: {}", e))?;
+            .map_err(|e| eyre!("Failed to delete remote session: {}", e))?;
 
         if deleted {
             println!("Remote session {} deleted.", self.session_id);
         } else {
-            return Err(anyhow!("Remote session not found: {}", self.session_id));
+            return Err(eyre!("Remote session not found: {}", self.session_id));
         }
 
         Ok(())

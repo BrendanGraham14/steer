@@ -1,11 +1,11 @@
 use crate::api::Model;
 use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
+use crate::error::{Error, Result};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate,
 };
-use anyhow::Result;
 use conductor_tools::ToolCall;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -227,7 +227,7 @@ impl SessionManager {
         &self,
         config: SessionConfig,
         app_config: AppConfig,
-    ) -> Result<(String, mpsc::Sender<AppCommand>), SessionManagerError> {
+    ) -> Result<(String, mpsc::Sender<AppCommand>)> {
         let session_config = config;
 
         // Create session in store
@@ -249,7 +249,8 @@ impl SessionManager {
                 return Err(SessionManagerError::CapacityExceeded {
                     current: sessions.len(),
                     max: self.config.max_concurrent_sessions,
-                });
+                }
+                .into());
             }
         }
 
@@ -292,10 +293,7 @@ impl SessionManager {
     }
 
     /// Take the event receiver for a session (can only be called once per session)
-    pub async fn take_event_receiver(
-        &self,
-        session_id: &str,
-    ) -> Result<mpsc::Receiver<AppEvent>, SessionManagerError> {
+    pub async fn take_event_receiver(&self, session_id: &str) -> Result<mpsc::Receiver<AppEvent>> {
         let mut sessions = self.active_sessions.write().await;
         match sessions.get_mut(session_id) {
             Some(managed_session) => {
@@ -304,20 +302,19 @@ impl SessionManager {
                 } else {
                     Err(SessionManagerError::SessionAlreadyHasListener {
                         session_id: session_id.to_string(),
-                    })
+                    }
+                    .into())
                 }
             }
             None => Err(SessionManagerError::SessionNotActive {
                 session_id: session_id.to_string(),
-            }),
+            }
+            .into()),
         }
     }
 
     /// Get session information
-    pub async fn get_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<SessionInfo>, SessionStoreError> {
+    pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionInfo>> {
         // First check if it's active
         {
             let sessions = self.active_sessions.read().await;
@@ -338,7 +335,7 @@ impl SessionManager {
     pub async fn get_session_workspace(
         &self,
         session_id: &str,
-    ) -> Result<Option<Arc<dyn crate::workspace::Workspace>>, SessionManagerError> {
+    ) -> Result<Option<Arc<dyn crate::workspace::Workspace>>> {
         // First check if session is active
         {
             let active_sessions = self.active_sessions.read().await;
@@ -374,7 +371,7 @@ impl SessionManager {
         &self,
         session_id: &str,
         app_config: AppConfig,
-    ) -> Result<mpsc::Sender<AppCommand>, SessionManagerError> {
+    ) -> Result<mpsc::Sender<AppCommand>> {
         // Check if already active
         {
             let sessions = self.active_sessions.read().await;
@@ -385,13 +382,19 @@ impl SessionManager {
         }
 
         // Load from store
-        let session = match self.store.get_session(session_id).await? {
+        let session = match self
+            .store
+            .get_session(session_id)
+            .await
+            .map_err(SessionManagerError::Storage)?
+        {
             Some(session) => session,
             None => {
                 debug!(session_id = %session_id, "Session not found in store");
                 return Err(SessionManagerError::SessionNotActive {
                     session_id: session_id.to_string(),
-                });
+                }
+                .into());
             }
         };
 
@@ -472,7 +475,7 @@ impl SessionManager {
     }
 
     /// Suspend a session (save to storage and deactivate)
-    pub async fn suspend_session(&self, session_id: &str) -> Result<bool, SessionStoreError> {
+    pub async fn suspend_session(&self, session_id: &str) -> Result<bool> {
         let managed_session = {
             let mut sessions = self.active_sessions.write().await;
             sessions.remove(session_id)
@@ -502,7 +505,7 @@ impl SessionManager {
     }
 
     /// Delete a session permanently
-    pub async fn delete_session(&self, session_id: &str) -> Result<bool, SessionStoreError> {
+    pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
         // Remove from active sessions first
         {
             let mut sessions = self.active_sessions.write().await;
@@ -517,11 +520,8 @@ impl SessionManager {
     }
 
     /// List sessions with filtering
-    pub async fn list_sessions(
-        &self,
-        filter: SessionFilter,
-    ) -> Result<Vec<SessionInfo>, SessionStoreError> {
-        self.store.list_sessions(filter).await
+    pub async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionInfo>> {
+        Ok(self.store.list_sessions(filter).await?)
     }
 
     /// Get active session IDs
@@ -537,22 +537,20 @@ impl SessionManager {
     }
 
     /// Send a command to an active session
-    pub async fn send_command(
-        &self,
-        session_id: &str,
-        command: AppCommand,
-    ) -> Result<(), SessionManagerError> {
+    pub async fn send_command(&self, session_id: &str, command: AppCommand) -> Result<()> {
         let sessions = self.active_sessions.read().await;
         if let Some(managed_session) = sessions.get(session_id) {
             managed_session.command_tx.send(command).await.map_err(|_| {
-                SessionManagerError::SessionNotActive {
+                Error::SessionManager(SessionManagerError::SessionNotActive {
                     session_id: session_id.to_string(),
-                }
+                })
             })
         } else {
-            Err(SessionManagerError::SessionNotActive {
-                session_id: session_id.to_string(),
-            })
+            Err(Error::SessionManager(
+                SessionManagerError::SessionNotActive {
+                    session_id: session_id.to_string(),
+                },
+            ))
         }
     }
 
@@ -561,7 +559,7 @@ impl SessionManager {
         &self,
         session_id: &str,
         update_fn: impl FnOnce(&mut SessionState),
-    ) -> Result<(), SessionManagerError> {
+    ) -> Result<()> {
         {
             let mut sessions = self.active_sessions.write().await;
             if let Some(managed_session) = sessions.get_mut(session_id) {
@@ -576,7 +574,8 @@ impl SessionManager {
             } else {
                 return Err(SessionManagerError::SessionNotActive {
                     session_id: session_id.to_string(),
-                });
+                }
+                .into());
             }
         }
 
@@ -650,10 +649,7 @@ impl SessionManager {
     }
 
     /// Increment the subscriber count for a session
-    pub async fn increment_subscriber_count(
-        &self,
-        session_id: &str,
-    ) -> Result<(), SessionManagerError> {
+    pub async fn increment_subscriber_count(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.active_sessions.write().await;
         if let Some(managed_session) = sessions.get_mut(session_id) {
             managed_session.subscriber_count += 1;
@@ -667,15 +663,13 @@ impl SessionManager {
         } else {
             Err(SessionManagerError::SessionNotActive {
                 session_id: session_id.to_string(),
-            })
+            }
+            .into())
         }
     }
 
     /// Decrement the subscriber count for a session
-    pub async fn decrement_subscriber_count(
-        &self,
-        session_id: &str,
-    ) -> Result<(), SessionManagerError> {
+    pub async fn decrement_subscriber_count(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.active_sessions.write().await;
         if let Some(managed_session) = sessions.get_mut(session_id) {
             managed_session.subscriber_count = managed_session.subscriber_count.saturating_sub(1);
@@ -694,7 +688,7 @@ impl SessionManager {
     }
 
     /// Touch a session to update its last activity timestamp
-    pub async fn touch_session(&self, session_id: &str) -> Result<(), SessionManagerError> {
+    pub async fn touch_session(&self, session_id: &str) -> Result<()> {
         let mut sessions = self.active_sessions.write().await;
         if let Some(managed_session) = sessions.get_mut(session_id) {
             managed_session.touch();
@@ -706,10 +700,7 @@ impl SessionManager {
     }
 
     /// Check if a session should be suspended due to no subscribers
-    pub async fn maybe_suspend_idle_session(
-        &self,
-        session_id: &str,
-    ) -> Result<(), SessionManagerError> {
+    pub async fn maybe_suspend_idle_session(&self, session_id: &str) -> Result<()> {
         // Check if session has no subscribers
         let should_suspend = {
             let sessions = self.active_sessions.read().await;
@@ -732,7 +723,7 @@ impl SessionManager {
     pub async fn get_session_state(
         &self,
         session_id: &str,
-    ) -> Result<Option<crate::session::SessionState>, SessionManagerError> {
+    ) -> Result<Option<crate::session::SessionState>> {
         info!("get_session_state called for session: {}", session_id);
 
         // Always load from store to get the most up-to-date state
@@ -751,7 +742,7 @@ impl SessionManager {
             }
             Err(e) => {
                 error!("Error loading session from store: {}", e);
-                Err(SessionManagerError::Storage(e))
+                Err(SessionManagerError::Storage(e).into())
             }
         }
     }
@@ -824,7 +815,7 @@ async fn update_session_state_for_event(
     store: &Arc<dyn SessionStore>,
     session_id: &str,
     event: &StreamEvent,
-) -> Result<(), SessionStoreError> {
+) -> Result<()> {
     match event {
         StreamEvent::MessageComplete { message, .. } => {
             store.append_message(session_id, message).await?;
@@ -1045,7 +1036,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            SessionManagerError::CapacityExceeded { current, max } => {
+            crate::error::Error::SessionManager(SessionManagerError::CapacityExceeded {
+                current,
+                max,
+            }) => {
                 assert_eq!(current, 1);
                 assert_eq!(max, 1);
             }

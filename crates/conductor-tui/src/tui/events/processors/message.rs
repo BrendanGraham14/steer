@@ -187,11 +187,11 @@ mod tests {
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::chat_list::ChatListState;
-    use anyhow::Result;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
     use conductor_core::app::conversation::{AssistantContent, Message};
     use conductor_core::app::io::AppCommandSink;
+    use conductor_core::error::Result;
     use conductor_tools::schema::ToolCall;
     use serde_json::json;
     use std::sync::Arc;

@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use eyre::{Result, eyre};
 use tokio::sync::mpsc;
 
 use super::super::Command;
@@ -42,7 +42,7 @@ impl Command for ShowSessionCommand {
         let session_info = session_manager
             .get_session(&self.session_id)
             .await
-            .map_err(|e| anyhow!("Failed to get session: {}", e))?;
+            .map_err(|e| eyre!("Failed to get session: {}", e))?;
 
         match session_info {
             Some(info) => {
@@ -72,7 +72,7 @@ impl Command for ShowSessionCommand {
                 }
             }
             None => {
-                return Err(anyhow!("Session not found: {}", self.session_id));
+                return Err(eyre!("Session not found: {}", self.session_id));
             }
         }
 
@@ -86,7 +86,7 @@ impl ShowSessionCommand {
 
         // Connect to the gRPC server
         let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
-            anyhow!(
+            eyre!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,
                 e
@@ -96,7 +96,7 @@ impl ShowSessionCommand {
         let session_state = client
             .get_session(&self.session_id)
             .await
-            .map_err(|e| anyhow!("Failed to get remote session: {}", e))?;
+            .map_err(|e| eyre!("Failed to get remote session: {}", e))?;
 
         match session_state {
             Some(state) => {
@@ -135,7 +135,7 @@ impl ShowSessionCommand {
                 }
             }
             None => {
-                return Err(anyhow!("Remote session not found: {}", self.session_id));
+                return Err(eyre!("Remote session not found: {}", self.session_id));
             }
         }
 

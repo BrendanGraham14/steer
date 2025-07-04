@@ -1,4 +1,3 @@
-use anyhow::Result;
 use conductor_tools::{ToolCall, ToolSchema};
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
@@ -16,8 +15,8 @@ use crate::{
 
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
 use crate::config::LlmConfig;
-use crate::tools::ToolError;
 use conductor_macros::tool_external as tool;
+use conductor_tools::ToolError;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -56,7 +55,7 @@ Usage notes:
         _tool: &DispatchAgentTool,
         params: DispatchAgentParams,
         context: &conductor_tools::ExecutionContext,
-    ) -> Result<conductor_tools::result::AgentResult, ToolError> {
+    ) -> std::result::Result<conductor_tools::result::AgentResult, ToolError> {
         let token = context.cancellation_token.clone();
 
         // --- Setup AgentExecutor dependencies ---
@@ -158,7 +157,7 @@ Usage notes:
     }
 }
 
-pub fn create_dispatch_agent_system_prompt() -> Result<String> {
+pub fn create_dispatch_agent_system_prompt() -> crate::error::Result<String> {
     let env_info = crate::app::EnvironmentInfo::collect()?;
     let dispatch_prompt = format!(
         r#"You are an agent for a CLI-based coding tool. Given the user's prompt, you should use the tools available to you to answer the user's question.

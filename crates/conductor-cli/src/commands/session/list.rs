@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
+use eyre::{Result, eyre};
 use tokio::sync::mpsc;
 
 use super::super::Command;
@@ -52,7 +52,7 @@ impl Command for ListSessionCommand {
         let sessions = session_manager
             .list_sessions(filter)
             .await
-            .map_err(|e| anyhow!("Failed to list sessions: {}", e))?;
+            .map_err(|e| eyre!("Failed to list sessions: {}", e))?;
 
         if sessions.is_empty() {
             println!("No sessions found.");
@@ -94,7 +94,7 @@ impl ListSessionCommand {
 
         // Connect to the gRPC server
         let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
-            anyhow!(
+            eyre!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,
                 e
@@ -105,7 +105,7 @@ impl ListSessionCommand {
         let sessions = client
             .list_sessions()
             .await
-            .map_err(|e| anyhow!("Failed to list remote sessions: {}", e))?;
+            .map_err(|e| eyre!("Failed to list remote sessions: {}", e))?;
 
         if sessions.is_empty() {
             println!("No remote sessions found.");

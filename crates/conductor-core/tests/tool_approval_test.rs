@@ -1,4 +1,4 @@
-use anyhow::Result;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use conductor_core::api::Model;
 use conductor_core::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
 use conductor_core::config::LlmConfig;
@@ -252,7 +252,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     command_tx_to_actor.send(AppCommand::Shutdown).await?;
     match timeout(Duration::from_secs(1), actor_handle).await {
         Ok(Ok(_)) => { /* Actor shut down cleanly */ }
-        Ok(Err(e)) => return Err(anyhow::anyhow!("Actor task panicked: {:?}", e)),
+        Ok(Err(e)) => return Err(format!("Actor task panicked: {:?}", e).into()),
         Err(_) => warn!("Timeout waiting for actor to shut down."),
     }
 

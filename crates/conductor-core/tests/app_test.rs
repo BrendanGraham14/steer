@@ -1,4 +1,4 @@
-use anyhow::Result;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use conductor_core::api::Model;
 use conductor_core::app::{App, AppConfig, AppEvent, ToolExecutor};
 use conductor_core::config::LlmConfig;

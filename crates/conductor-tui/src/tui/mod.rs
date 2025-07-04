@@ -1019,12 +1019,12 @@ pub async fn run_tui(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
     use conductor_core::app::AppEvent;
     use conductor_core::app::conversation::{AssistantContent, Message};
     use conductor_core::app::io::{AppCommandSink, AppEventSource};
+    use conductor_core::error::Result;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;

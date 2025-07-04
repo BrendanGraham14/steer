@@ -38,9 +38,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_repr = "0.1"
 similar = { version = "2.5.0", features = ["inline"] }
-
-# Utilities
-anyhow = "1.0"
 thiserror = "1.0"
 dirs = "5.0"
 colored = "2.0"
@@ -110,6 +107,8 @@ conductor-grpc = { version = "0.1.0", path = "../conductor-grpc" }
 conductor-tui = { version = "0.1.0", path = "../conductor-tui", optional = true }
 toml = "0.8.23"
 which = "8.0.0"
+eyre = "0.6.12"
+color-eyre = "0.6.5"
 
 [build-dependencies]
 

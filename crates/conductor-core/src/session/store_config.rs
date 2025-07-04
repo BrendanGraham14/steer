@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -28,9 +29,10 @@ impl SessionStoreConfig {
     }
 
     /// Get the default session store configuration
-    pub fn default_sqlite() -> anyhow::Result<Self> {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+    pub fn default_sqlite() -> Result<Self> {
+        let home_dir = dirs::home_dir().ok_or_else(|| {
+            Error::Configuration("Could not determine home directory".to_string())
+        })?;
         let db_path = home_dir.join(".conductor").join("sessions.db");
         Ok(Self::sqlite(db_path))
     }

@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use eyre::{Result, eyre};
 use tracing::info;
 
 use super::Command;
@@ -18,7 +18,7 @@ impl Command for ServeCommand {
     async fn execute(&self) -> Result<()> {
         let addr = format!("{}:{}", self.bind, self.port)
             .parse()
-            .map_err(|e| anyhow!("Invalid bind address: {}", e))?;
+            .map_err(|e| eyre!("Invalid bind address: {}", e))?;
 
         info!("Starting gRPC server on {}", addr);
 
@@ -38,8 +38,12 @@ impl Command for ServeCommand {
             bind_addr: addr,
         };
 
-        let mut host = conductor_grpc::ServiceHost::new(config).await?;
-        host.start().await?;
+        let mut host = conductor_grpc::ServiceHost::new(config)
+            .await
+            .map_err(|e| eyre!("Failed to create service host: {}", e))?;
+        host.start()
+            .await
+            .map_err(|e| eyre!("Failed to start server: {}", e))?;
 
         info!("gRPC server started on {}", addr);
         println!("Server listening on {}", addr);
@@ -49,7 +53,9 @@ impl Command for ServeCommand {
         tokio::signal::ctrl_c().await?;
         info!("Shutdown signal received");
 
-        host.shutdown().await?;
+        host.shutdown()
+            .await
+            .map_err(|e| eyre!("Failed to shutdown server: {}", e))?;
         info!("Server shutdown complete");
 
         Ok(())

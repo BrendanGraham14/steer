@@ -1,7 +1,8 @@
 use crate::grpc::conversions::{
     message_to_proto, proto_to_tool_config, proto_to_workspace_config, session_config_to_proto,
 };
-use conductor_core::session::{SessionConfig, SessionManager, SessionManagerError};
+use crate::grpc::error::GrpcError;
+use conductor_core::session::{SessionConfig, SessionManager};
 use conductor_proto::agent as proto;
 
 /// Extension trait for SessionManager that adds gRPC-specific functionality
@@ -11,14 +12,14 @@ pub trait SessionManagerExt {
     async fn get_session_proto(
         &self,
         session_id: &str,
-    ) -> Result<Option<proto::SessionState>, SessionManagerError>;
+    ) -> Result<Option<proto::SessionState>, GrpcError>;
 
     /// Create session for gRPC
     async fn create_session_grpc(
         &self,
         config: proto::CreateSessionRequest,
         app_config: conductor_core::app::AppConfig,
-    ) -> Result<(String, proto::SessionInfo), SessionManagerError>;
+    ) -> Result<(String, proto::SessionInfo), GrpcError>;
 }
 
 #[async_trait::async_trait]
@@ -26,7 +27,7 @@ impl SessionManagerExt for SessionManager {
     async fn get_session_proto(
         &self,
         session_id: &str,
-    ) -> Result<Option<proto::SessionState>, SessionManagerError> {
+    ) -> Result<Option<proto::SessionState>, GrpcError> {
         match self.store().get_session(session_id).await {
             Ok(Some(session)) => {
                 // Use the conversion function to convert config
@@ -48,9 +49,7 @@ impl SessionManagerExt for SessionManager {
                         .into_iter()
                         .map(message_to_proto)
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| SessionManagerError::CreationFailed {
-                            message: format!("Failed to convert message: {}", e),
-                        })?,
+                        .map_err(GrpcError::ConversionError)?,
                     tool_calls: std::collections::HashMap::new(), // TODO: Convert tool calls
                     approved_tools: session.state.approved_tools.into_iter().collect(),
                     last_event_sequence: session.state.last_event_sequence,
@@ -59,7 +58,7 @@ impl SessionManagerExt for SessionManager {
                 Ok(Some(proto_state))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(SessionManagerError::Storage(e)),
+            Err(e) => Err(GrpcError::CoreError(e.into())),
         }
     }
 
@@ -67,7 +66,7 @@ impl SessionManagerExt for SessionManager {
         &self,
         config: proto::CreateSessionRequest,
         app_config: conductor_core::app::AppConfig,
-    ) -> Result<(String, proto::SessionInfo), SessionManagerError> {
+    ) -> Result<(String, proto::SessionInfo), GrpcError> {
         use conductor_core::session::ToolApprovalPolicy;
 
         // Convert protobuf config to internal SessionConfig
@@ -115,11 +114,12 @@ impl SessionManagerExt for SessionManager {
         let (session_id, _command_tx) = self.create_session(session_config, app_config).await?;
 
         // Get session info for response
-        let session_info = self.get_session(&session_id).await?.ok_or_else(|| {
-            SessionManagerError::SessionNotActive {
-                session_id: session_id.clone(),
-            }
-        })?;
+        let session_info =
+            self.get_session(&session_id)
+                .await?
+                .ok_or_else(|| GrpcError::SessionNotFound {
+                    session_id: session_id.clone(),
+                })?;
 
         let proto_info = proto::SessionInfo {
             id: session_info.id,

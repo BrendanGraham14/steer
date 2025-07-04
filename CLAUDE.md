@@ -22,12 +22,31 @@ Follow the conventional commits format.
 
 
 # Conventions
-- Prefer to use well-typed errors vs. using strings or stringifying them into anyhow errors. Prefer to preserve the original error rather than swallowing it and re-raising a new error type. Swallowing errors and raising new ones in their stead typically means that we'll lose information about the root cause of the error.
+- NEVER use anyhow errors. Always use well-typed errors with thiserror.
+- If you need to convert errors to a fuzzy representation for user-facing messages, use eyre, NEVER anyhow.
+- Prefer to preserve the original error rather than swallowing it and re-raising a new error type. Swallowing errors and raising new ones in their stead typically means that we'll lose information about the root cause of the error.
 - Algebraic data types are useful. Use them where appropriate to write more ergonomic, well-typed programs.
 - You generally should not implement the `Default` trait for structs unless explicitly instructed.
 - DO NOT unwrap errors. Use the try operator `?` and propagate errors appropriately.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
 - The workspace Cargo.toml uses glob pattern `crates/*` to include all crates in the workspace.
+
+
+# Error Handling
+
+**IMPORTANT**: Never use `anyhow` for error handling in this codebase. All errors must be well-typed using `thiserror`.
+
+The conductor-core crate uses typed errors with `thiserror`. The main error type is `crate::error::Error` which contains variants for all core error types:
+- `Api(ApiError)` - For API-related errors
+- `Session(SessionError)` - For session management errors  
+- `Tool(ToolError)` - For tool execution errors
+- `Validation(ValidationError)` - For input validation errors
+- `Io(std::io::Error)` - For I/O operations
+- And other domain-specific variants
+
+Each module typically defines its own error type (e.g., `ApiError`, `SessionError`) that gets included in the main `Error` enum. This approach provides better error context and type safety compared to string-based errors.
+
+**Note**: If you need to present errors to users in a more readable format, use `eyre` for error reporting at the UI boundary, but NEVER use `anyhow`. The core logic should always use typed errors.
 
 
 # Crate Architecture

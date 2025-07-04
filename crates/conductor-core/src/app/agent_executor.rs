@@ -46,12 +46,6 @@ pub enum AgentExecutorError {
     UnexpectedResponse,
 }
 
-impl AgentExecutorError {
-    pub fn into_anyhow_error(self) -> anyhow::Error {
-        anyhow::Error::msg(self.to_string())
-    }
-}
-
 impl<T> From<mpsc::error::SendError<T>> for AgentExecutorError {
     fn from(err: mpsc::error::SendError<T>) -> Self {
         AgentExecutorError::SendError(err.to_string())

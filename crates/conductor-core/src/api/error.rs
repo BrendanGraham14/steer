@@ -42,3 +42,16 @@ pub enum ApiError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 }
+
+impl From<crate::error::Error> for ApiError {
+    fn from(err: crate::error::Error) -> Self {
+        match err {
+            crate::error::Error::Api(api_err) => api_err,
+            crate::error::Error::Configuration(msg) => ApiError::Configuration(msg),
+            other => ApiError::Unknown {
+                provider: "internal".to_string(),
+                details: format!("Unexpected internal error: {}", other),
+            },
+        }
+    }
+}

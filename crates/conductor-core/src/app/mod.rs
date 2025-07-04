@@ -1,7 +1,7 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
 use crate::app::conversation::{AssistantContent, CompactResult, ToolResult, UserContent};
-use crate::tools::ToolError;
-use anyhow::Result;
+use crate::error::{Error, Result};
+use conductor_tools::ToolError;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -201,7 +201,7 @@ impl App {
         // Check if the provider is available (has API key)
         let provider = model.provider();
         if self.config.llm_config.key_for(provider).is_none() {
-            return Err(anyhow::anyhow!(
+            return Err(crate::error::Error::Configuration(format!(
                 "Cannot set model to {}: missing API key for {} provider",
                 model.as_ref(),
                 match provider {
@@ -209,7 +209,7 @@ impl App {
                     ProviderKind::OpenAI => "OpenAI",
                     ProviderKind::Google => "Google",
                 }
-            ));
+            )));
         }
 
         // Set the model
@@ -309,8 +309,8 @@ impl App {
         let op_context = match &mut self.current_op_context {
             Some(ctx) => ctx,
             None => {
-                return Err(anyhow::anyhow!(
-                    "No operation context available to spawn agent operation",
+                return Err(crate::error::Error::InvalidOperation(
+                    "No operation context available to spawn agent operation".to_string(),
                 ));
             }
         };
@@ -584,7 +584,7 @@ impl App {
         // Run directly but make it cancellable.
         let result = tokio::select! {
             biased;
-            res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res?,
+            res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res.map_err(|e| Error::InvalidOperation(format!("Compact failed: {}", e)))?,
             _ = token.cancelled() => {
                  info!(target:"App.compact_conversation", "Compaction cancelled.");
                  return Ok(CompactResult::Cancelled);

@@ -1,5 +1,6 @@
+use crate::grpc::error::GrpcError;
 use crate::grpc::server::AgentServiceImpl;
-use anyhow::Result;
+type Result<T> = std::result::Result<T, GrpcError>;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
 use conductor_proto::agent::agent_service_server::AgentServiceServer;
@@ -36,7 +37,9 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
     });
 
     // Wait for the server to be ready and get its address
-    let addr = rx.await?;
+    let addr = rx
+        .await
+        .map_err(|e| GrpcError::ChannelError(format!("Failed to receive server address: {}", e)))?;
 
     // Note: The server task handle is not awaited here as it runs for the lifetime
     // of the application. Proper shutdown should be handled by the caller if needed.

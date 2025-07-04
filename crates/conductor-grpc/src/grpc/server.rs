@@ -52,7 +52,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                 debug!("Session {} is already active, TUI should call GetConversation to retrieve history", session_id);
                                 receiver
                             },
-                            Err(conductor_core::session::manager::SessionManagerError::SessionNotActive { session_id }) => {
+                            Err(conductor_core::error::Error::SessionManager(conductor_core::session::manager::SessionManagerError::SessionNotActive { session_id })) => {
                                 info!("Session {} not active, attempting to resume", session_id);
 
                                 // Try to resume the session
@@ -82,7 +82,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                     }
                                 }
                             }
-                            Err(conductor_core::session::manager::SessionManagerError::SessionAlreadyHasListener { session_id }) => {
+                            Err(conductor_core::error::Error::SessionManager(conductor_core::session::manager::SessionManagerError::SessionAlreadyHasListener { session_id })) => {
                                 error!("Session already has an active stream: {}", session_id);
                                 let _ = tx
                                     .send(Err(Status::already_exists(format!(
@@ -251,7 +251,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             Ok((_session_id, session_info)) => Ok(Response::new(session_info)),
             Err(e) => {
                 error!("Failed to create session: {}", e);
-                Err(Status::internal(format!("Failed to create session: {}", e)))
+                Err(e.into())
             }
         }
     }
@@ -651,10 +651,12 @@ async fn try_resume_session(
             // TUI will call GetCurrentConversation when it connects
             Ok(())
         }
-        Err(conductor_core::session::manager::SessionManagerError::CapacityExceeded {
-            current,
-            max,
-        }) => {
+        Err(conductor_core::error::Error::SessionManager(
+            conductor_core::session::manager::SessionManagerError::CapacityExceeded {
+                current,
+                max,
+            },
+        )) => {
             warn!(
                 "Cannot resume session {}: server at capacity ({}/{})",
                 session_id, current, max

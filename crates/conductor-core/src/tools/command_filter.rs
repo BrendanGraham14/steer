@@ -1,6 +1,6 @@
 use crate::api::Model;
 use crate::config::LlmConfig;
-use anyhow::Result;
+use crate::error::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -78,7 +78,9 @@ pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Resu
 
 /// Get the prefix of a command
 pub async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<String> {
-    let config = LlmConfig::from_env()?;
+    let config = LlmConfig::from_env().map_err(|e| {
+        crate::error::Error::Configuration(format!("Failed to get LLM config: {}", e))
+    })?;
     let client = crate::api::Client::new(&config);
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
