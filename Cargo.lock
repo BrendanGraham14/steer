@@ -972,7 +972,6 @@ dependencies = [
  "conductor-grpc",
  "conductor-proto",
  "conductor-tools",
- "crossterm",
  "fuzzy-matcher",
  "lazy_static",
  "notify-rust",

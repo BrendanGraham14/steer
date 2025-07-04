@@ -9,7 +9,7 @@ pub mod normal;
 
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
-use crossterm::event::KeyEvent;
+use ratatui::crossterm::event::KeyEvent;
 
 impl Tui {
     pub async fn handle_key_event(&mut self, key: KeyEvent) -> Result<bool> {

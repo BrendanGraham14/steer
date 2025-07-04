@@ -1,7 +1,7 @@
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
 use conductor_core::app::AppCommand;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl Tui {
     pub async fn handle_bash_mode(&mut self, key: KeyEvent) -> Result<bool> {

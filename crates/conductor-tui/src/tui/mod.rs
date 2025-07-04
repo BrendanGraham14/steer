@@ -12,19 +12,19 @@ use conductor_core::app::conversation::{AssistantContent, Message};
 use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::{AppCommand, AppEvent};
 use conductor_tools::schema::ToolCall;
-use crossterm::event::{
+use ratatui::backend::CrosstermBackend;
+use ratatui::crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, MouseEvent,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use crossterm::execute;
-use crossterm::terminal::{
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::{
+use ratatui::crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::SetTitle,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders};
@@ -159,7 +159,7 @@ impl Tui {
             EnterAlternateScreen,
             EnableBracketedPaste,
             PushKeyboardEnhancementFlags(
-                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                ratatui::crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
             ),
             EnableMouseCapture,
             SetTitle("Conductor")
@@ -898,7 +898,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 /// Free function for best-effort terminal cleanup (raw mode, alt screen, mouse, etc.)
 pub fn cleanup_terminal() {
-    use crossterm::{
+    use ratatui::crossterm::{
         event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags},
         execute,
         terminal::{LeaveAlternateScreen, disable_raw_mode},
