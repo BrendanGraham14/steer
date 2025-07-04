@@ -49,7 +49,7 @@ impl Command for DeleteSessionCommand {
 
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: Model::ClaudeSonnet4_20250514,
+            default_model: Model::default(),
             auto_persist: true,
         };
 

@@ -79,6 +79,11 @@ pub enum Model {
 }
 
 impl Model {
+    /// Returns the default model to use throughout the application
+    pub fn default() -> Self {
+        Model::ClaudeOpus4_20250514
+    }
+
     pub fn provider(&self) -> ProviderKind {
         match self {
             Model::Claude3_7Sonnet20250219

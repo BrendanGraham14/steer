@@ -76,7 +76,7 @@ pub async fn create_session_manager() -> anyhow::Result<SessionManager> {
     let (event_tx, _event_rx) = mpsc::channel(100);
     let config = SessionManagerConfig {
         max_concurrent_sessions: 10,
-        default_model: Model::ClaudeSonnet4_20250514,
+        default_model: Model::default(),
         auto_persist: true,
     };
 

@@ -926,7 +926,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
-            default_model: Model::ClaudeSonnet4_20250514,
+            default_model: Model::default(),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config, event_tx);
@@ -1018,7 +1018,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 1, // Set to 1 for testing
-            default_model: Model::ClaudeSonnet4_20250514,
+            default_model: Model::default(),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config, event_tx);
