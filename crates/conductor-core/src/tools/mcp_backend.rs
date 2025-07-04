@@ -5,6 +5,7 @@
 use async_trait::async_trait;
 use rmcp::transport::ConfigureCommandExt;
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
@@ -47,18 +48,21 @@ impl McpBackend {
             server_name, command, args
         );
 
-        let mut child_process = TokioChildProcess::new(Command::new(&command).configure(|cmd| {
-            cmd.args(&args);
-        }))
-        .map_err(|e| {
-            error!("Failed to create MCP process: {}", e);
-            ToolError::mcp_connection_failed(
-                &server_name,
-                format!("Failed to create MCP process: {}", e),
-            )
-        })?;
+        let (transport, stderr) =
+            TokioChildProcess::builder(Command::new(&command).configure(|cmd| {
+                cmd.args(&args);
+            }))
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                error!("Failed to create MCP process: {}", e);
+                ToolError::mcp_connection_failed(
+                    &server_name,
+                    format!("Failed to create MCP process: {}", e),
+                )
+            })?;
 
-        if let Some(stderr) = child_process.take_stderr() {
+        if let Some(stderr) = stderr {
             let server_name_for_logging = server_name.clone();
             tokio::spawn(async move {
                 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -80,7 +84,7 @@ impl McpBackend {
             });
         }
 
-        let client = ().serve(child_process).await.map_err(|e| {
+        let client = ().serve(transport).await.map_err(|e| {
             error!("Failed to serve MCP: {}", e);
             ToolError::mcp_connection_failed(&server_name, format!("Failed to serve MCP: {}", e))
         })?;
