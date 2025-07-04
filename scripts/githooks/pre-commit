@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 
 # Git pre-commit hook: fix issues and run the full test suite
+# Requires: just (https://github.com/casey/just)
 set -euo pipefail
 
 echo "Running pre-commit checks..."
+
+# Check if just is installed
+if ! command -v just &> /dev/null; then
+    echo "✗ Error: 'just' command not found"
+    echo "Please install just: https://github.com/casey/just#installation"
+    exit 1
+fi
 
 # Get list of staged files before any modifications
 STAGED_FILES=$(git diff --staged --name-only)
@@ -33,30 +41,12 @@ restore_stash() {
 # Ensure we restore the stash on exit
 trap restore_stash EXIT
 
-# Run cargo fix to fix compiler warnings
-echo "Running: cargo fix --allow-staged"
-if cargo fix --allow-staged; then
-    echo "✓ cargo fix completed"
+# Run just fix to fix compiler warnings, clippy warnings, and formatting
+echo "Running: just fix"
+if just fix; then
+    echo "✓ just fix completed (cargo fix, clippy, fmt)"
 else
-    echo "✗ cargo fix failed"
-    exit 1
-fi
-
-# Run cargo clippy --fix to fix clippy warnings
-echo "Running: cargo clippy --fix --allow-staged"
-if cargo clippy --fix --allow-staged -- -D warnings; then
-    echo "✓ cargo clippy --fix completed"
-else
-    echo "✗ cargo clippy --fix failed"
-    exit 1
-fi
-
-# Run cargo fmt to fix formatting issues
-echo "Running: cargo fmt"
-if cargo fmt; then
-    echo "✓ cargo fmt completed"
-else
-    echo "✗ cargo fmt failed"
+    echo "✗ just fix failed"
     exit 1
 fi
 
@@ -83,8 +73,8 @@ if [ "$MODIFIED" = true ]; then
 fi
 
 # Run tests
-echo "Running: cargo test"
-if cargo test; then
+echo "Running: just test"
+if just test; then
     echo "✓ All tests passed"
 else
     echo "✗ Tests failed"

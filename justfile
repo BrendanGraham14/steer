@@ -6,8 +6,8 @@ default:
 
 fix:
     cargo fix --all-features --allow-staged
-    cargo clippy --all-features --allow-staged
-    cargo fmt --allow-staged
+    cargo clippy --fix --all-features --allow-staged -- -D warnings
+    cargo fmt
 
 # Run all tests with all features
 test:
