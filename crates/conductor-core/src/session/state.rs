@@ -1,11 +1,9 @@
 use crate::error::Result;
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
 
 use crate::api::Model;
 use crate::app::Message;
@@ -14,8 +12,7 @@ use conductor_tools::tools::read_only_workspace_tools;
 use conductor_tools::{ToolCall, result::ToolResult};
 
 /// Defines the primary execution environment for a session's workspace
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceConfig {
     Local,
@@ -74,8 +71,7 @@ impl Session {
 }
 
 /// Session configuration - immutable once created
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionConfig {
     pub workspace: WorkspaceConfig,
     pub tool_config: SessionToolConfig,
@@ -224,8 +220,7 @@ impl SessionConfig {
 }
 
 /// Tool visibility configuration - controls which tools are shown to the AI agent
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolVisibility {
     /// Show all registered tools to the AI
@@ -248,8 +243,7 @@ impl Default for ToolVisibility {
 }
 
 /// Tool approval policy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolApprovalPolicy {
     /// Always ask for approval before executing any tool
@@ -290,16 +284,14 @@ impl ToolApprovalPolicy {
 }
 
 /// Authentication configuration for remote backends
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum RemoteAuth {
     Bearer { token: String },
     ApiKey { key: String },
 }
 
 /// Tool filtering configuration for backends
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolFilter {
     /// Include all available tools
@@ -317,16 +309,14 @@ impl Default for ToolFilter {
 }
 
 /// Container runtime configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum ContainerRuntime {
     Docker,
     Podman,
 }
 
 /// Backend configuration for different tool execution environments
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendConfig {
     Local {
@@ -352,8 +342,7 @@ pub enum BackendConfig {
 }
 
 /// Tool configuration for the session
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionToolConfig {
     /// Backend configurations for this session
     pub backends: Vec<BackendConfig>,
