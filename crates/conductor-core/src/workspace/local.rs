@@ -1,4 +1,3 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use fuzzy_matcher::FuzzyMatcher;
@@ -11,6 +10,7 @@ use tracing::info;
 
 use super::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
 use crate::app::EnvironmentInfo;
+use crate::error::{Result, WorkspaceError};
 use crate::tools::{ExecutionContext, LocalBackend, ToolBackend};
 
 /// Local filesystem workspace
@@ -85,7 +85,9 @@ impl Workspace for LocalWorkspace {
         self.tool_backend
             .execute(tool_call, &ctx)
             .await
-            .map_err(|e| anyhow::anyhow!("Tool execution failed: {}", e))
+            .map_err(|e| {
+                WorkspaceError::ToolExecution(format!("Tool execution failed: {}", e)).into()
+            })
     }
 
     async fn available_tools(&self) -> Vec<ToolSchema> {
@@ -96,7 +98,10 @@ impl Workspace for LocalWorkspace {
         self.tool_backend
             .requires_approval(tool_name)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to check tool approval: {}", e))
+            .map_err(|e| {
+                WorkspaceError::ToolExecution(format!("Failed to check tool approval: {}", e))
+                    .into()
+            })
     }
 
     fn metadata(&self) -> WorkspaceMetadata {

@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
@@ -6,6 +5,7 @@ use crate::api::Model;
 use crate::app::conversation::UserContent;
 use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfig;
+use crate::error::{Error, Result};
 use crate::session::state::WorkspaceConfig;
 
 /// Record of a tool execution for audit purposes
@@ -56,25 +56,16 @@ impl OneShotRunner {
     ) -> Result<RunOnceResult> {
         // 1. Resume or activate the session if not already active
         let app_config = AppConfig {
-            llm_config: LlmConfig::from_env()?,
+            llm_config: LlmConfig::from_env()
+                .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {}", e)))?,
         };
 
         let command_tx = session_manager
             .resume_session(&session_id, app_config)
-            .await
-            .map_err(|e| anyhow!("Failed to resume session {}: {}", session_id, e))?;
+            .await?;
 
         // 2. Take the event receiver for this session (like TUI does)
-        let event_rx = session_manager
-            .take_event_receiver(&session_id)
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to take event receiver for session {}: {}",
-                    session_id,
-                    e
-                )
-            })?;
+        let event_rx = session_manager.take_event_receiver(&session_id).await?;
 
         info!(session_id = %session_id, message = %message, "Sending message to session");
 
@@ -82,7 +73,12 @@ impl OneShotRunner {
         command_tx
             .send(AppCommand::ProcessUserInput(message))
             .await
-            .map_err(|e| anyhow!("Failed to send message to session {}: {}", session_id, e))?;
+            .map_err(|e| {
+                Error::InvalidOperation(format!(
+                    "Failed to send message to session {}: {}",
+                    session_id, e
+                ))
+            })?;
 
         // 4. Process events to build the result (similar to TUI's event loop)
         let result = Self::process_events(event_rx, &session_id).await;
@@ -157,13 +153,13 @@ impl OneShotRunner {
         };
 
         let app_config = AppConfig {
-            llm_config: LlmConfig::from_env()?,
+            llm_config: LlmConfig::from_env()
+                .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {}", e)))?,
         };
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)
-            .await
-            .map_err(|e| anyhow!("Failed to create ephemeral session: {}", e))?;
+            .await?;
 
         // 3. Process the final user message (this triggers the actual processing)
         let user_content = match init_msgs.last() {
@@ -177,13 +173,25 @@ impl OneShotRunner {
                         });
                         match text_content {
                             Some(content) => content,
-                            None => return Err(anyhow!("Last message must contain text content")),
+                            None => {
+                                return Err(Error::InvalidOperation(
+                                    "Last message must contain text content".to_string(),
+                                ));
+                            }
                         }
                     }
-                    _ => return Err(anyhow!("Last message must be from User")),
+                    _ => {
+                        return Err(Error::InvalidOperation(
+                            "Last message must be from User".to_string(),
+                        ));
+                    }
                 }
             }
-            None => return Err(anyhow!("No user message to process")),
+            None => {
+                return Err(Error::InvalidOperation(
+                    "No user message to process".to_string(),
+                ));
+            }
         };
 
         // 4. Run the main task using the session
@@ -267,7 +275,10 @@ impl OneShotRunner {
 
                 AppEvent::Error { message } => {
                     error!(session_id = %session_id, error = %message, "Error event");
-                    return Err(anyhow!("Error during processing: {}", message));
+                    return Err(Error::InvalidOperation(format!(
+                        "Error during processing: {}",
+                        message
+                    )));
                 }
 
                 AppEvent::RequestToolApproval { .. } => {
@@ -294,7 +305,9 @@ impl OneShotRunner {
                     tool_results,
                 })
             }
-            None => Err(anyhow!("No assistant response received")),
+            None => Err(Error::InvalidOperation(
+                "No assistant response received".to_string(),
+            )),
         }
     }
 }
@@ -657,7 +670,7 @@ mod tests {
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("Failed to resume session")
+                .contains("Session not active")
         );
     }
 

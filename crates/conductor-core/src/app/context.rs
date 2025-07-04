@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::collections::HashMap;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -7,7 +6,6 @@ use crate::app::agent_executor::AgentExecutorError;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::AppCommand;
 use crate::app::conversation::Message;
-use conductor_tools::ToolError;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -18,10 +16,10 @@ static COMMAND_TX: OnceCell<Arc<mpsc::Sender<AppCommand>>> = OnceCell::new();
 #[derive(Debug)]
 pub enum TaskOutcome {
     AgentOperationComplete {
-        result: Result<Message, AgentExecutorError>,
+        result: std::result::Result<Message, AgentExecutorError>,
     },
     DispatchAgentResult {
-        result: Result<String, ToolError>,
+        result: std::result::Result<String, conductor_tools::ToolError>,
     },
 }
 

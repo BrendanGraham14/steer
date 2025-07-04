@@ -1,4 +1,5 @@
-use anyhow::{Result, anyhow};
+use crate::grpc::error::GrpcError;
+type Result<T> = std::result::Result<T, GrpcError>;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -65,7 +66,9 @@ impl ServiceHost {
     /// Start the gRPC server
     pub async fn start(&mut self) -> Result<()> {
         if self.server_handle.is_some() {
-            return Err(anyhow!("Server is already running"));
+            return Err(GrpcError::InvalidSessionState {
+                reason: "Server is already running".to_string(),
+            });
         }
 
         let service = AgentServiceImpl::new(self.session_manager.clone());
@@ -83,7 +86,7 @@ impl ServiceHost {
                     info!("gRPC server shutdown signal received");
                 })
                 .await
-                .map_err(|e| anyhow!("gRPC server error: {}", e))
+                .map_err(GrpcError::ConnectionFailed)
         });
 
         // Start periodic cleanup task
@@ -161,10 +164,15 @@ impl ServiceHost {
         if let Some(server_handle) = &mut self.server_handle {
             match server_handle.await {
                 Ok(result) => result,
-                Err(e) => Err(anyhow!("Server task panicked: {}", e)),
+                Err(e) => Err(GrpcError::StreamError(format!(
+                    "Server task panicked: {}",
+                    e
+                ))),
             }
         } else {
-            Err(anyhow!("Server is not running"))
+            Err(GrpcError::InvalidSessionState {
+                reason: "Server is not running".to_string(),
+            })
         }
     }
 }
@@ -175,7 +183,11 @@ async fn create_session_store(db_path: &std::path::Path) -> Result<Arc<dyn Sessi
     use conductor_core::utils::session::create_session_store_with_config;
 
     let config = SessionStoreConfig::sqlite(db_path.to_path_buf());
-    create_session_store_with_config(config).await
+    create_session_store_with_config(config)
+        .await
+        .map_err(|e| GrpcError::InvalidSessionState {
+            reason: format!("Failed to create session store: {}", e),
+        })
 }
 
 #[cfg(test)]

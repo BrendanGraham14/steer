@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::{Error, Result};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error, instrument};
@@ -64,20 +64,26 @@ impl ToolExecutor {
         if let Some(workspace) = &self.workspace {
             let workspace_tools = workspace.available_tools().await;
             if workspace_tools.iter().any(|t| &t.name == tool_name) {
-                return workspace
-                    .requires_approval(tool_name)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to check approval requirement: {}", e));
+                return workspace.requires_approval(tool_name).await.map_err(|e| {
+                    Error::Tool(conductor_tools::ToolError::InternalError(format!(
+                        "Failed to check approval requirement: {}",
+                        e
+                    )))
+                });
             }
         }
 
         // Otherwise check external backends
         match self.backend_registry.get_backend_for_tool(tool_name) {
-            Some(backend) => backend
-                .requires_approval(tool_name)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to check approval requirement: {}", e)),
-            None => Err(anyhow::anyhow!("Unknown tool: {}", tool_name)),
+            Some(backend) => backend.requires_approval(tool_name).await.map_err(|e| {
+                Error::Tool(conductor_tools::ToolError::InternalError(format!(
+                    "Failed to check approval requirement: {}",
+                    e
+                )))
+            }),
+            None => Err(Error::Tool(conductor_tools::ToolError::UnknownTool(
+                tool_name.to_string(),
+            ))),
         }
     }
 
@@ -111,7 +117,7 @@ impl ToolExecutor {
         &self,
         tool_call: &ToolCall,
         token: CancellationToken,
-    ) -> Result<ToolResult, ToolError> {
+    ) -> std::result::Result<ToolResult, conductor_tools::ToolError> {
         let tool_name = &tool_call.name;
         let tool_id = &tool_call.id;
 
@@ -196,7 +202,7 @@ impl ToolExecutor {
         &self,
         tool_call: &ToolCall,
         token: CancellationToken,
-    ) -> Result<ToolResult, ToolError> {
+    ) -> std::result::Result<ToolResult, conductor_tools::ToolError> {
         let tool_name = &tool_call.name;
         let tool_id = &tool_call.id;
 

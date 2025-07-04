@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use eyre::{Result, eyre};
 use tokio::sync::mpsc;
 
 use super::super::Command;
@@ -41,7 +41,7 @@ impl Command for CreateSessionCommand {
 
             // TODO: The TUI functionality has been moved to conductor-tui crate
             // For now, just create the session without launching the TUI
-            return Err(anyhow!(
+            return Err(eyre!(
                 "Remote session creation with TUI is not available in this command. Use the conductor-tui binary instead."
             ));
         }
@@ -61,13 +61,14 @@ impl Command for CreateSessionCommand {
             SessionManager::new(session_store, session_manager_config, global_event_tx);
 
         let app_config = AppConfig {
-            llm_config: LlmConfig::from_env()?,
+            llm_config: LlmConfig::from_env()
+                .map_err(|e| eyre!("Failed to load LLM config: {}", e))?,
         };
 
         let (session_id, _) = session_manager
             .create_session(session_config, app_config)
             .await
-            .map_err(|e| anyhow!("Failed to create session: {}", e))?;
+            .map_err(|e| eyre!("Failed to create session: {}", e))?;
 
         println!("Created session: {}", session_id);
         Ok(())

@@ -9,6 +9,7 @@ use conductor_core::api::Model;
 use conductor_core::app::Message;
 use conductor_core::runners::{OneShotRunner, RunOnceResult};
 use conductor_core::session::{SessionManager, SessionToolConfig};
+use eyre::Result;
 
 /// Runs the agent once in an existing session.
 ///
@@ -20,8 +21,10 @@ pub async fn run_once_in_session(
     session_manager: &SessionManager,
     session_id: String,
     message: String,
-) -> anyhow::Result<RunOnceResult> {
-    OneShotRunner::run_in_session(session_manager, session_id, message).await
+) -> Result<RunOnceResult> {
+    OneShotRunner::run_in_session(session_manager, session_id, message)
+        .await
+        .map_err(|e| eyre::eyre!("Failed to run in session: {}", e))
 }
 
 /// Runs the agent once in a new ephemeral session.
@@ -39,7 +42,7 @@ pub async fn run_once_ephemeral(
     tool_config: Option<SessionToolConfig>,
     tool_policy: Option<conductor_core::session::ToolApprovalPolicy>,
     system_prompt: Option<String>,
-) -> anyhow::Result<RunOnceResult> {
+) -> Result<RunOnceResult> {
     OneShotRunner::run_ephemeral(
         session_manager,
         init_msgs,
@@ -49,6 +52,7 @@ pub async fn run_once_ephemeral(
         system_prompt,
     )
     .await
+    .map_err(|e| eyre::eyre!("Failed to run ephemeral session: {}", e))
 }
 
 /// Convenience function for simple one-shot runs with default tool configuration.
@@ -56,7 +60,7 @@ pub async fn run_once_ephemeral(
 ///
 /// * `init_msgs`     – seed conversation (system + user or multi-turn)
 /// * `model`         – which LLM to use
-pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> anyhow::Result<RunOnceResult> {
+pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> Result<RunOnceResult> {
     // Only create temporary session manager for the simple convenience function
     let session_manager = create_session_manager().await?;
     run_once_ephemeral(&session_manager, init_msgs, model, None, None, None).await
@@ -66,12 +70,14 @@ pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> anyhow::Result<R
 ///
 /// This is the recommended way to create a SessionManager for one-shot operations
 /// when you want to reuse it across multiple calls.
-pub async fn create_session_manager() -> anyhow::Result<SessionManager> {
+pub async fn create_session_manager() -> Result<SessionManager> {
     use conductor_core::session::SessionManagerConfig;
     use tokio::sync::mpsc;
 
     // Use the same session store as normal operation (~/.conductor/sessions.db)
-    let store = conductor_core::utils::session::create_session_store().await?;
+    let store = conductor_core::utils::session::create_session_store()
+        .await
+        .map_err(|e| eyre::eyre!("Failed to create session store: {}", e))?;
 
     let (event_tx, _event_rx) = mpsc::channel(100);
     let config = SessionManagerConfig {

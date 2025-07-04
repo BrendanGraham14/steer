@@ -1,4 +1,3 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use std::sync::Arc;
@@ -7,6 +6,7 @@ use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
 use crate::app::EnvironmentInfo;
+use crate::error::{Error, Result, WorkspaceError};
 use crate::session::state::{RemoteAuth, ToolFilter};
 use crate::tools::remote_backend::RemoteBackend;
 use crate::tools::{ExecutionContext, ToolBackend};
@@ -29,7 +29,9 @@ pub struct RemoteWorkspace {
 impl RemoteWorkspace {
     pub async fn new(address: String, auth: Option<RemoteAuth>) -> Result<Self> {
         // Create gRPC client
-        let client = RemoteWorkspaceServiceClient::connect(format!("http://{}", address)).await?;
+        let client = RemoteWorkspaceServiceClient::connect(format!("http://{}", address))
+            .await
+            .map_err(|e| Error::Transport(format!("Failed to connect: {}", e)))?;
 
         // Create remote tool backend
         let tool_backend = Arc::new(
@@ -39,7 +41,8 @@ impl RemoteWorkspace {
                 auth.clone(),
                 ToolFilter::All, // Allow all tools from remote workspace
             )
-            .await?,
+            .await
+            .map_err(Error::Tool)?,
         );
 
         let metadata = WorkspaceMetadata {
@@ -66,7 +69,10 @@ impl RemoteWorkspace {
             working_directory: None, // Use remote default
         });
 
-        let response = client.get_environment_info(request).await?;
+        let response = client
+            .get_environment_info(request)
+            .await
+            .map_err(|e| Error::Status(format!("Failed to get environment info: {}", e)))?;
         let env_response = response.into_inner();
 
         Self::convert_environment_response(env_response)
@@ -123,7 +129,9 @@ impl Workspace for RemoteWorkspace {
         self.tool_backend
             .execute(tool_call, &ctx)
             .await
-            .map_err(|e| anyhow::anyhow!("Tool execution failed: {}", e))
+            .map_err(|e| {
+                WorkspaceError::ToolExecution(format!("Tool execution failed: {}", e)).into()
+            })
     }
 
     async fn available_tools(&self) -> Vec<ToolSchema> {
@@ -134,7 +142,10 @@ impl Workspace for RemoteWorkspace {
         self.tool_backend
             .requires_approval(tool_name)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to check tool approval: {}", e))
+            .map_err(|e| {
+                WorkspaceError::ToolExecution(format!("Failed to check tool approval: {}", e))
+                    .into()
+            })
     }
 
     fn metadata(&self) -> WorkspaceMetadata {
@@ -158,11 +169,19 @@ impl Workspace for RemoteWorkspace {
             max_results: max_results.unwrap_or(0) as u32,
         });
 
-        let mut stream = client.list_files(request).await?.into_inner();
+        let mut stream = client
+            .list_files(request)
+            .await
+            .map_err(|e| Error::Status(format!("Failed to list files: {}", e)))?
+            .into_inner();
         let mut all_files = Vec::new();
 
         // Collect all files from the stream
-        while let Some(response) = stream.message().await? {
+        while let Some(response) = stream
+            .message()
+            .await
+            .map_err(|e| Error::Status(format!("Stream error: {}", e)))?
+        {
             all_files.extend(response.paths);
         }
 

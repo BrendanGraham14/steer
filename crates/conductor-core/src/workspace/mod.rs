@@ -1,4 +1,3 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use serde::{Deserialize, Serialize};
@@ -6,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::EnvironmentInfo;
+use crate::error::{Result, WorkspaceError};
 use crate::session::state::WorkspaceConfig;
 use crate::tools::ExecutionContext;
 
@@ -99,15 +99,16 @@ pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Worksp
         WorkspaceConfig::Remote { .. } => {
             // Remote workspaces are not supported in conductor-core
             // They must be created through conductor-grpc
-            Err(anyhow::anyhow!(
-                "Remote workspaces require conductor-grpc. Use conductor-grpc to create remote workspaces."
-            ))
+            Err(WorkspaceError::NotSupported(
+                "Remote workspaces require conductor-grpc. Use conductor-grpc to create remote workspaces.".to_string()
+            ).into())
         }
         WorkspaceConfig::Container { .. } => {
             // For now, container workspaces are not supported
-            Err(anyhow::anyhow!(
-                "Container workspaces are not yet supported."
-            ))
+            Err(WorkspaceError::NotSupported(
+                "Container workspaces are not yet supported.".to_string(),
+            )
+            .into())
         }
     }
 }

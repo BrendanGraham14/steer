@@ -1,11 +1,10 @@
-use anyhow::Result;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::api::ToolCall;
 use crate::app::ToolExecutor;
-use conductor_tools::{ToolError, result::ToolResult};
+use conductor_tools::result::ToolResult;
 
 // Removed the old execute_tool_with_context function.
 
@@ -19,7 +18,7 @@ pub async fn execute_tool_task_logic(
     // conversation: Arc<Mutex<Conversation>>,
     // event_sender: Option<Sender<AppEvent>>,
     token: CancellationToken,
-) -> Result<ToolResult, ToolError> {
+) -> std::result::Result<ToolResult, conductor_tools::ToolError> {
     // Return Result<String, ToolError> instead of TaskResult
     let tool_id = tool_call.id.clone();
     let tool_name = tool_call.name.clone();
@@ -32,7 +31,10 @@ pub async fn execute_tool_task_logic(
     // Check for cancellation before starting
     if token.is_cancelled() {
         // Return ToolError::Cancelled
-        return Err(ToolError::Cancelled(format!("{} ({})", tool_name, tool_id)));
+        return Err(conductor_tools::ToolError::Cancelled(format!(
+            "{} ({})",
+            tool_name, tool_id
+        )));
     }
 
     // Use the cancellation-aware tool execution method

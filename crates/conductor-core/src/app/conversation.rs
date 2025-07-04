@@ -536,7 +536,7 @@ impl Conversation {
         &mut self,
         api_client: &ApiClient,
         token: CancellationToken,
-    ) -> anyhow::Result<CompactResult> {
+    ) -> crate::error::Result<CompactResult> {
         // Skip if we don't have enough messages to compact
         if self.messages.len() < 10 {
             return Ok(CompactResult::InsufficientMessages);
@@ -561,7 +561,7 @@ impl Conversation {
                 None,
                 None,
                 token.clone(),
-            ) => result?,
+            ) => result.map_err(crate::error::Error::Api)?,
             _ = token.cancelled() => {
                 return Ok(CompactResult::Cancelled);
             }

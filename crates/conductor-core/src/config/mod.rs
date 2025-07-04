@@ -1,5 +1,5 @@
 use crate::api::ProviderKind;
-use anyhow::{Context, Result};
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -42,10 +42,11 @@ impl Config {
 /// Get the path to the config file
 pub fn get_config_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
-        .context("Could not find config directory")?
+        .ok_or_else(|| Error::Configuration("Could not find config directory".to_string()))?
         .join("conductor");
 
-    fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
+    fs::create_dir_all(&config_dir)
+        .map_err(|e| Error::Configuration(format!("Failed to create config directory: {}", e)))?;
 
     Ok(config_dir.join("config.json"))
 }
@@ -58,10 +59,11 @@ pub fn load_config() -> Result<Config> {
         return Ok(Config::new());
     }
 
-    let config_str = fs::read_to_string(&config_path).context("Failed to read config file")?;
+    let config_str = fs::read_to_string(&config_path)
+        .map_err(|e| Error::Configuration(format!("Failed to read config file: {}", e)))?;
 
-    let config: Config =
-        serde_json::from_str(&config_str).context("Failed to parse config file")?;
+    let config: Config = serde_json::from_str(&config_str)
+        .map_err(|e| Error::Configuration(format!("Failed to parse config file: {}", e)))?;
 
     Ok(config)
 }
@@ -71,16 +73,17 @@ pub fn init_config(force: bool) -> Result<()> {
     let config_path = get_config_path()?;
 
     if config_path.exists() && !force {
-        return Err(anyhow::anyhow!(
-            "Config file already exists. Use --force to overwrite."
+        return Err(Error::Configuration(
+            "Config file already exists. Use --force to overwrite.".to_string(),
         ));
     }
 
     let config = Config::new();
-    let config_json =
-        serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| Error::Configuration(format!("Failed to serialize config: {}", e)))?;
 
-    fs::write(&config_path, config_json).context("Failed to write config file")?;
+    fs::write(&config_path, config_json)
+        .map_err(|e| Error::Configuration(format!("Failed to write config file: {}", e)))?;
 
     Ok(())
 }
@@ -88,10 +91,11 @@ pub fn init_config(force: bool) -> Result<()> {
 /// Save the configuration
 pub fn save_config(config: &Config) -> Result<()> {
     let config_path = get_config_path()?;
-    let config_json =
-        serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| Error::Configuration(format!("Failed to serialize config: {}", e)))?;
 
-    fs::write(&config_path, config_json).context("Failed to write config file")?;
+    fs::write(&config_path, config_json)
+        .map_err(|e| Error::Configuration(format!("Failed to write config file: {}", e)))?;
 
     Ok(())
 }
@@ -104,7 +108,7 @@ pub struct LlmConfig {
 }
 
 impl LlmConfig {
-    pub fn from_env() -> anyhow::Result<Self> {
+    pub fn from_env() -> Result<Self> {
         let cfg = Self {
             anthropic_api_key: std::env::var("CLAUDE_API_KEY")
                 .ok()

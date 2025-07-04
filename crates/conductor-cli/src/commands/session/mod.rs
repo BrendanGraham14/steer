@@ -1,5 +1,5 @@
-use anyhow::Result;
 use async_trait::async_trait;
+use eyre::Result;
 
 use super::Command;
 use crate::cli::SessionCommands;

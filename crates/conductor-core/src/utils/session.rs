@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::error::{Error, Result};
 use crate::session::{
     Session, SessionStoreConfig,
     state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy, WorkspaceConfig},
@@ -10,7 +10,8 @@ use crate::session::{
 };
 
 pub fn create_session_store_path() -> Result<std::path::PathBuf> {
-    let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| Error::Configuration("Could not determine home directory".to_string()))?;
     let db_path = home_dir.join(".conductor").join("sessions.db");
     Ok(db_path)
 }
@@ -22,7 +23,9 @@ pub fn resolve_session_store_config(
 ) -> Result<SessionStoreConfig> {
     match session_db_path {
         Some(path) => Ok(SessionStoreConfig::sqlite(path)),
-        None => SessionStoreConfig::default_sqlite(),
+        None => SessionStoreConfig::default_sqlite().map_err(|e| {
+            Error::Configuration(format!("Failed to get default sqlite config: {}", e))
+        }),
     }
 }
 
@@ -40,17 +43,16 @@ pub async fn create_session_store_with_config(
         SessionStoreConfig::Sqlite { path } => {
             // Create directory if it doesn't exist
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("Failed to create sessions directory: {}", e))?;
+                std::fs::create_dir_all(parent)?;
             }
 
-            let store = SqliteSessionStore::new(&path)
-                .await
-                .map_err(|e| anyhow!("Failed to create session store: {}", e))?;
+            let store = SqliteSessionStore::new(&path).await?;
 
             Ok(Arc::new(store))
         }
-        _ => Err(anyhow!("Unsupported session store type")),
+        _ => Err(Error::Configuration(
+            "Unsupported session store type".to_string(),
+        )),
     }
 }
 
@@ -73,8 +75,8 @@ pub fn parse_tool_policy(
             let tools = if let Some(tools_str) = pre_approved_tools {
                 tools_str.split(',').map(|s| s.trim().to_string()).collect()
             } else {
-                return Err(anyhow!(
-                    "pre_approved_tools is required when using pre_approved policy"
+                return Err(Error::Configuration(
+                    "pre_approved_tools is required when using pre_approved policy".to_string(),
                 ));
             };
             Ok(ToolApprovalPolicy::PreApproved { tools })
@@ -90,10 +92,10 @@ pub fn parse_tool_policy(
                 ask_for_others: true,
             })
         }
-        _ => Err(anyhow!(
+        _ => Err(Error::Configuration(format!(
             "Invalid tool policy: {}. Valid options: always_ask, pre_approved, mixed",
             policy_str
-        )),
+        ))),
     }
 }
 
@@ -104,8 +106,9 @@ pub fn parse_metadata(metadata_str: Option<&str>) -> Result<HashMap<String, Stri
         for pair in meta_str.split(',') {
             let parts: Vec<&str> = pair.split('=').collect();
             if parts.len() != 2 {
-                return Err(anyhow!(
+                return Err(Error::Configuration(
                     "Invalid metadata format. Expected key=value pairs separated by commas"
+                        .to_string(),
                 ));
             }
             metadata.insert(parts[0].trim().to_string(), parts[1].trim().to_string());

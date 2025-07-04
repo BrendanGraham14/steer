@@ -1,5 +1,5 @@
-use anyhow::Result;
 use clap::Parser;
+use eyre::Result;
 
 use conductor_cli::cli::{Cli, Commands};
 use conductor_cli::commands::{
@@ -13,6 +13,9 @@ use conductor_tui::tui::{self, cleanup_terminal, setup_panic_hook};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install color-eyre for better error reports
+    color_eyre::install()?;
+
     let cli = Cli::parse();
 
     // Load .env file if it exists
@@ -78,7 +81,7 @@ async fn main() -> Result<()> {
             }
             #[cfg(not(feature = "ui"))]
             {
-                anyhow::bail!(
+                eyre::bail!(
                     "Terminal UI not available. This binary was compiled without the 'ui' feature."
                 );
             }
@@ -153,14 +156,21 @@ async fn run_tui_local(
         .expect("Failed to load LLM configuration from environment variables.");
 
     // Create in-memory channel
-    let channel = local_server::setup_local_grpc(llm_config, model, session_db).await?;
+    let channel = local_server::setup_local_grpc(llm_config, model, session_db)
+        .await
+        .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
 
     // Create gRPC client
-    let client = conductor_grpc::GrpcClientAdapter::from_channel(channel).await?;
+    let client = conductor_grpc::GrpcClientAdapter::from_channel(channel)
+        .await
+        .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
 
     // Resolve "latest" alias
     if matches!(session_id.as_deref(), Some("latest")) {
-        let mut sessions = client.list_sessions().await?;
+        let mut sessions = client
+            .list_sessions()
+            .await
+            .map_err(|e| eyre::eyre!("Failed to list sessions: {}", e))?;
         // Sort sessions by updated_at descending, fallback to created_at
         sessions.sort_by(|a, b| {
             let ts_to_tuple = |ts: &Option<prost_types::Timestamp>| {
@@ -171,7 +181,7 @@ async fn run_tui_local(
         if let Some(latest) = sessions.first() {
             session_id = Some(latest.id.clone());
         } else {
-            anyhow::bail!("No sessions found to resume");
+            eyre::bail!("No sessions found to resume");
         }
     }
 
@@ -188,7 +198,10 @@ async fn run_tui_local(
         let session_config = loader.load().await?;
 
         // Create the session
-        let new_session_id = client.create_session(session_config).await?;
+        let new_session_id = client
+            .create_session(session_config)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
         println!("Session ID: {}", new_session_id);
         session_id = Some(new_session_id);
@@ -203,6 +216,7 @@ async fn run_tui_local(
         None, // system_prompt is already applied to the session
     )
     .await
+    .map_err(|e| eyre::eyre!("TUI error: {}", e))
 }
 
 #[cfg(feature = "ui")]
@@ -218,11 +232,16 @@ async fn run_tui_remote(
     use std::sync::Arc;
 
     // Connect to remote server
-    let client = GrpcClientAdapter::connect(&remote_addr).await?;
+    let client = GrpcClientAdapter::connect(&remote_addr)
+        .await
+        .map_err(|e| eyre::eyre!("Failed to connect to remote server: {}", e))?;
 
     // Resolve "latest" alias
     if matches!(session_id.as_deref(), Some("latest")) {
-        let mut sessions = client.list_sessions().await?;
+        let mut sessions = client
+            .list_sessions()
+            .await
+            .map_err(|e| eyre::eyre!("Failed to list sessions: {}", e))?;
         sessions.sort_by(|a, b| {
             let ts_to_tuple = |ts: &Option<prost_types::Timestamp>| {
                 ts.as_ref().map(|t| (t.seconds, t.nanos)).unwrap_or((0, 0))
@@ -232,7 +251,7 @@ async fn run_tui_remote(
         if let Some(latest) = sessions.first() {
             session_id = Some(latest.id.clone());
         } else {
-            anyhow::bail!("No sessions found to resume");
+            eyre::bail!("No sessions found to resume");
         }
     }
 
@@ -249,7 +268,10 @@ async fn run_tui_remote(
         let session_config = loader.load().await?;
 
         // Create the session
-        let new_session_id = client.create_session(session_config).await?;
+        let new_session_id = client
+            .create_session(session_config)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
         println!("Session ID: {}", new_session_id);
         session_id = Some(new_session_id);
@@ -264,6 +286,7 @@ async fn run_tui_remote(
         None, // system_prompt is already applied to the session
     )
     .await
+    .map_err(|e| eyre::eyre!("TUI error: {}", e))
 }
 
 #[cfg(feature = "ui")]

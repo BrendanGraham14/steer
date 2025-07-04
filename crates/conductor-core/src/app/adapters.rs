@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -25,10 +25,9 @@ impl LocalAdapter {
 #[async_trait]
 impl AppCommandSink for LocalAdapter {
     async fn send_command(&self, command: AppCommand) -> Result<()> {
-        self.command_tx
-            .send(command)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send command: {}", e))
+        self.command_tx.send(command).await.map_err(|e| {
+            crate::error::Error::InvalidOperation(format!("Failed to send command: {}", e))
+        })
     }
 }
 

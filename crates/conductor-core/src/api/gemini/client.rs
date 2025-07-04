@@ -1,4 +1,3 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::{Client as HttpClient, StatusCode};
 use serde::{Deserialize, Serialize};

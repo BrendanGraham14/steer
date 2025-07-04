@@ -4,7 +4,7 @@ pub mod gemini;
 pub mod openai;
 pub mod provider;
 
-use anyhow::{Result, anyhow};
+use crate::error::Result;
 pub use claude::AnthropicClient;
 pub use conductor_tools::{InputSchema, ToolCall, ToolSchema};
 pub use error::ApiError;
@@ -173,11 +173,10 @@ impl Client {
         // If still not found, create and insert
         let provider_kind = model.provider();
         let key = self.config.key_for(provider_kind).ok_or_else(|| {
-            anyhow!(
+            crate::error::Error::Api(ApiError::Configuration(format!(
                 "API key missing for {:?} needed by model {:?}",
-                provider_kind,
-                model
-            )
+                provider_kind, model
+            )))
         })?;
         let provider_instance: Arc<dyn Provider> = match provider_kind {
             ProviderKind::Anthropic => Arc::new(AnthropicClient::new(key)),
@@ -195,10 +194,8 @@ impl Client {
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse, ApiError> {
-        let provider = self
-            .get_or_create_provider(model)
-            .map_err(|e| ApiError::Configuration(e.to_string()))?;
+    ) -> std::result::Result<CompletionResponse, ApiError> {
+        let provider = self.get_or_create_provider(model).map_err(ApiError::from)?;
 
         if token.is_cancelled() {
             return Err(ApiError::Cancelled {
@@ -219,7 +216,7 @@ impl Client {
         tools: &Option<Vec<ToolSchema>>,
         token: CancellationToken,
         max_attempts: usize,
-    ) -> Result<CompletionResponse, ApiError> {
+    ) -> std::result::Result<CompletionResponse, ApiError> {
         let mut attempts = 0;
 
         loop {

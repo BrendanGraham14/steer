@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{Result, WorkspaceError};
 use git2::Repository;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
@@ -21,8 +21,9 @@ pub struct EnvironmentInfo {
 impl EnvironmentInfo {
     /// Collect information about the environment
     pub fn collect() -> Result<Self> {
-        let working_directory =
-            std::env::current_dir().context("Failed to get current directory")?;
+        let working_directory = std::env::current_dir().map_err(|e| {
+            WorkspaceError::EnvironmentCollection(format!("Failed to get current directory: {}", e))
+        })?;
         Self::collect_for_path(&working_directory)
     }
 
@@ -126,10 +127,17 @@ impl EnvironmentInfo {
         gitignore_globset: &Option<GlobSet>,
         paths: &mut Vec<String>, // Renamed to relative_paths in caller, but param name is fine
     ) -> Result<()> {
-        let entries = fs::read_dir(current_dir).context("Failed to read directory")?;
+        let entries = fs::read_dir(current_dir).map_err(|e| {
+            WorkspaceError::EnvironmentCollection(format!("Failed to read directory: {}", e))
+        })?;
 
         for entry in entries {
-            let entry = entry.context("Failed to read directory entry")?;
+            let entry = entry.map_err(|e| {
+                WorkspaceError::EnvironmentCollection(format!(
+                    "Failed to read directory entry: {}",
+                    e
+                ))
+            })?;
             let path = entry.path();
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
@@ -165,7 +173,9 @@ impl EnvironmentInfo {
     fn get_git_status(path: &Path) -> Result<String> {
         let mut result = String::new();
 
-        let repo = Repository::discover(path).context("Failed to open git repository")?;
+        let repo = Repository::discover(path).map_err(|e| {
+            WorkspaceError::EnvironmentCollection(format!("Failed to open git repository: {}", e))
+        })?;
 
         // Get current branch
         match repo.head() {
@@ -182,13 +192,15 @@ impl EnvironmentInfo {
                 if e.code() == git2::ErrorCode::UnbornBranch {
                     result.push_str("Current branch: <unborn>\n\n");
                 } else {
-                    return Err(anyhow::anyhow!("Failed to get HEAD: {}", e));
+                    return Err(WorkspaceError::Git(e).into());
                 }
             }
         }
 
         // Get status
-        let statuses = repo.statuses(None).context("Failed to get git status")?;
+        let statuses = repo.statuses(None).map_err(|e| {
+            WorkspaceError::EnvironmentCollection(format!("Failed to get git status: {}", e))
+        })?;
         result.push_str("Status:\n");
         if statuses.is_empty() {
             result.push_str("Working tree clean\n");
@@ -278,10 +290,12 @@ impl EnvironmentInfo {
         }
 
         // If the file exists but cannot be read, return an error
-        let content = fs::read_to_string(&gitignore_path).context(format!(
-            "Failed to read .gitignore file at {:?}",
-            gitignore_path
-        ))?;
+        let content = fs::read_to_string(&gitignore_path).map_err(|e| {
+            WorkspaceError::EnvironmentCollection(format!(
+                "Failed to read .gitignore file at {:?}: {}",
+                gitignore_path, e
+            ))
+        })?;
 
         let mut builder = GlobSetBuilder::new();
         #[allow(unused_assignments)]
@@ -324,11 +338,11 @@ impl EnvironmentInfo {
                     }
                     Err(e) => {
                         // Return error for invalid patterns
-                        return Err(anyhow::anyhow!(
+                        return Err(WorkspaceError::EnvironmentCollection(format!(
                             "Invalid glob pattern '{}' in .gitignore: {}",
-                            dir_pattern,
-                            e
-                        ));
+                            dir_pattern, e
+                        ))
+                        .into());
                     }
                 }
                 // Add pattern with ** to match contents
@@ -342,11 +356,11 @@ impl EnvironmentInfo {
                 }
                 Err(e) => {
                     // Return error for invalid patterns
-                    return Err(anyhow::anyhow!(
+                    return Err(WorkspaceError::EnvironmentCollection(format!(
                         "Invalid glob pattern '{}' in .gitignore: {}",
-                        pattern,
-                        e
-                    ));
+                        pattern, e
+                    ))
+                    .into());
                 }
             }
         }
@@ -358,10 +372,11 @@ impl EnvironmentInfo {
 
         match builder.build() {
             Ok(globset) => Ok(Some(globset)),
-            Err(e) => Err(anyhow::anyhow!(
+            Err(e) => Err(WorkspaceError::EnvironmentCollection(format!(
                 "Error building globset from .gitignore: {}",
                 e
-            )),
+            ))
+            .into()),
         }
     }
 

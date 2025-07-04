@@ -3,6 +3,7 @@
 pub mod api;
 pub mod app;
 pub mod config;
+pub mod error;
 pub mod events;
 pub mod runners;
 pub mod session;
@@ -26,7 +27,7 @@ pub async fn run_once_in_session(
     session_manager: &SessionManager,
     session_id: String,
     message: String,
-) -> anyhow::Result<RunOnceResult> {
+) -> crate::error::Result<RunOnceResult> {
     OneShotRunner::run_in_session(session_manager, session_id, message).await
 }
 
@@ -45,7 +46,7 @@ pub async fn run_once_ephemeral(
     tool_config: Option<SessionToolConfig>,
     tool_policy: Option<session::ToolApprovalPolicy>,
     system_prompt: Option<String>,
-) -> anyhow::Result<RunOnceResult> {
+) -> crate::error::Result<RunOnceResult> {
     OneShotRunner::run_ephemeral(
         session_manager,
         init_msgs,
@@ -62,7 +63,10 @@ pub async fn run_once_ephemeral(
 ///
 /// * `init_msgs`     – seed conversation (system + user or multi-turn)
 /// * `model`         – which LLM to use
-pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> anyhow::Result<RunOnceResult> {
+pub async fn run_once(
+    init_msgs: Vec<Message>,
+    model: Model,
+) -> crate::error::Result<RunOnceResult> {
     // Only create temporary session manager for the simple convenience function
     let session_manager = create_session_manager().await?;
     run_once_ephemeral(&session_manager, init_msgs, model, None, None, None).await
@@ -72,7 +76,7 @@ pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> anyhow::Result<R
 ///
 /// This is the recommended way to create a SessionManager for one-shot operations
 /// when you want to reuse it across multiple calls.
-pub async fn create_session_manager() -> anyhow::Result<SessionManager> {
+pub async fn create_session_manager() -> crate::error::Result<SessionManager> {
     use session::SessionManagerConfig;
     use tokio::sync::mpsc;
 

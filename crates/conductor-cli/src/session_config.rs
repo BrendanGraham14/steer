@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
 use conductor_core::session::{
     BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolVisibility, WorkspaceConfig,
 };
+use eyre::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -145,7 +145,7 @@ impl SessionConfigLoader {
                     "all" => ToolVisibility::All,
                     "read_only" => ToolVisibility::ReadOnly,
                     _ => {
-                        return Err(anyhow::anyhow!(
+                        return Err(eyre::eyre!(
                             "Invalid visibility string: {}. Expected 'all' or 'read_only'",
                             s
                         ));
@@ -162,7 +162,7 @@ impl SessionConfigLoader {
                 Some(ToolApprovalPolicyConfig::String(s)) => match s.as_str() {
                     "always_ask" => ToolApprovalPolicy::AlwaysAsk,
                     _ => {
-                        return Err(anyhow::anyhow!(
+                        return Err(eyre::eyre!(
                             "Invalid approval policy string: {}. Expected 'always_ask'",
                             s
                         ));
@@ -215,10 +215,10 @@ impl SessionConfigLoader {
             } = backend
             {
                 if server_name.is_empty() {
-                    return Err(anyhow::anyhow!("MCP backend server_name cannot be empty"));
+                    return Err(eyre::eyre!("MCP backend server_name cannot be empty"));
                 }
                 if command.is_empty() {
-                    return Err(anyhow::anyhow!("MCP backend command cannot be empty"));
+                    return Err(eyre::eyre!("MCP backend command cannot be empty"));
                 }
 
                 // Check if command exists in PATH
