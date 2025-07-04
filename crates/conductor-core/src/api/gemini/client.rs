@@ -246,6 +246,7 @@ enum GeminiFinishReason {
     ToolCodeError,
     #[serde(rename = "TOOL_EXECUTION_HALT")]
     ToolExecutionHalt,
+    MalformedFunctionCall,
 }
 
 #[derive(Debug, Deserialize)]
@@ -593,6 +594,9 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
             }
             GeminiFinishReason::Recitation => {
                 warn!(target: "gemini::convert_response", "Response stopped due to potential recitation. Citations: {:?}", candidate.citation_metadata);
+            }
+            GeminiFinishReason::MalformedFunctionCall => {
+                warn!(target: "gemini::convert_response", "Response stopped due to malformed function call.");
             }
             _ => {
                 info!(target: "gemini::convert_response", "Response finished with reason: {:?}", reason);
