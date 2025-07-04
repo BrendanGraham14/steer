@@ -9,6 +9,7 @@ pub mod bash;
 pub mod default;
 pub mod dispatch_agent;
 pub mod edit;
+pub mod external;
 pub mod fetch;
 pub mod glob;
 pub mod grep;
@@ -25,11 +26,13 @@ use self::bash::BashFormatter;
 use self::default::DefaultFormatter;
 use self::dispatch_agent::DispatchAgentFormatter;
 use self::edit::EditFormatter;
+use self::external::ExternalFormatter;
 use self::fetch::FetchFormatter;
 use self::glob::GlobFormatter;
 use self::grep::GrepFormatter;
 use self::ls::LsFormatter;
 use self::replace::ReplaceFormatter;
+
 use self::todo_read::TodoReadFormatter;
 use self::todo_write::TodoWriteFormatter;
 use self::view::ViewFormatter;
@@ -73,16 +76,22 @@ lazy_static! {
         map.insert(conductor_core::tools::fetch::FETCH_TOOL_NAME, Box::new(FetchFormatter));
         map.insert(conductor_core::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME, Box::new(DispatchAgentFormatter));
 
+        // Catch-all formatter for external/MCP tools (name prefix "mcp__") will be handled in get_formatter
+
         map
     };
 
     static ref DEFAULT_FORMATTER: Box<dyn ToolFormatter> = Box::new(DefaultFormatter);
+    static ref EXTERNAL_FORMATTER: Box<dyn ToolFormatter> = Box::new(ExternalFormatter);
 }
 
 /// Get formatter for a tool name, falling back to default
 pub fn get_formatter(tool_name: &str) -> &'static dyn ToolFormatter {
-    FORMATTERS
-        .get(tool_name)
-        .map(|f| f.as_ref())
-        .unwrap_or(DEFAULT_FORMATTER.as_ref())
+    if let Some(fmt) = FORMATTERS.get(tool_name) {
+        fmt.as_ref()
+    } else if tool_name.starts_with("mcp__") {
+        EXTERNAL_FORMATTER.as_ref()
+    } else {
+        DEFAULT_FORMATTER.as_ref()
+    }
 }
