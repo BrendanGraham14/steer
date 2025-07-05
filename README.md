@@ -2,6 +2,10 @@
 
 Conductor is an AI-powered CLI assistant for software engineering tasks. It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
 
+> *AI guides your code*  
+> *Terminal wisdom flows free*  
+> *Tasks complete with ease*
+
 ---
 
 ## Installation
@@ -144,15 +148,15 @@ Conductor provides context-aware notifications with different sounds for differe
 ### Notification Types
 
 1. **Processing Complete** ✅
-   - Sound: Three ascending beeps (300Hz → 450Hz → 600Hz)
+   - Sound: Pleasant completion tone (Glass on macOS, message-new-instant on Linux)
    - When: Assistant finishes processing your request
 
 2. **Tool Approval** ⚠️
-   - Sound: Urgent double beep (800Hz)
+   - Sound: Attention-getting alert (Ping on macOS, dialog-warning on Linux)
    - When: A tool needs your approval (e.g., `bash`, `edit_file`)
 
 3. **Error** ❌
-   - Sound: Three descending beeps (600Hz → 450Hz → 300Hz)
+   - Sound: Error tone (Basso on macOS, dialog-error on Linux)
    - When: An error occurs during processing
 
 ### Configuration
