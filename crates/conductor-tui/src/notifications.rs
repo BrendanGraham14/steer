@@ -117,9 +117,14 @@ pub fn notify_with_sound(config: &NotificationConfig, sound: NotificationSound, 
         } else {
             None
         };
-        if let Err(e) = show_notification_with_sound("Conductor", message, sound_option) {
-            debug!("Failed to show desktop notification: {}", e);
-        }
+        let message = message.to_string();
+
+        // Spawn blocking task to avoid blocking the async runtime
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = show_notification_with_sound("Conductor", &message, sound_option) {
+                debug!("Failed to show desktop notification: {}", e);
+            }
+        });
     }
 }
 
@@ -136,8 +141,14 @@ pub fn notify_with_title_and_sound(
         } else {
             None
         };
-        if let Err(e) = show_notification_with_sound(title, message, sound_option) {
-            debug!("Failed to show desktop notification: {}", e);
-        }
+        let title = title.to_string();
+        let message = message.to_string();
+
+        // Spawn blocking task to avoid blocking the async runtime
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = show_notification_with_sound(&title, &message, sound_option) {
+                debug!("Failed to show desktop notification: {}", e);
+            }
+        });
     }
 }
