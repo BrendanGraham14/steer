@@ -65,8 +65,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                                 error!("Failed to get event receiver after resuming session {}: {}", session_id, e);
                                                 let _ = tx
                                                     .send(Err(Status::internal(format!(
-                                                        "Failed to establish stream after resuming session: {}",
-                                                        e
+                                                        "Failed to establish stream after resuming session: {e}"
                                                     ))))
                                                     .await;
                                                 return;
@@ -86,8 +85,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                 error!("Session already has an active stream: {}", session_id);
                                 let _ = tx
                                     .send(Err(Status::already_exists(format!(
-                                        "Session {} already has an active stream",
-                                        session_id
+                                        "Session {session_id} already has an active stream"
                                     ))))
                                     .await;
                                 return;
@@ -96,8 +94,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                 error!("Error taking event receiver: {}", e);
                                 let _ = tx
                                     .send(Err(Status::internal(format!(
-                                        "Error establishing stream: {}",
-                                        e
+                                        "Error establishing stream: {e}"
                                     ))))
                                     .await;
                                 return;
@@ -111,8 +108,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                             error!("Error handling first client message: {}", e);
                             let _ = tx
                                 .send(Err(Status::internal(format!(
-                                    "Error processing message: {}",
-                                    e
+                                    "Error processing message: {e}"
                                 ))))
                                 .await;
                             return;
@@ -188,8 +184,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                             error!("Error handling client message: {}", e);
                             let _ = tx
                                 .send(Err(Status::internal(format!(
-                                    "Error processing message: {}",
-                                    e
+                                    "Error processing message: {e}"
                                 ))))
                                 .await;
                             break;
@@ -239,7 +234,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 
         // Load LLM config from environment properly
         let llm_config = conductor_core::config::LlmConfig::from_env()
-            .map_err(|e| Status::internal(format!("Failed to load LLM config: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to load LLM config: {e}")))?;
 
         let app_config = conductor_core::app::AppConfig { llm_config };
 
@@ -292,7 +287,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }
             Err(e) => {
                 error!("Failed to list sessions: {}", e);
-                Err(Status::internal(format!("Failed to list sessions: {}", e)))
+                Err(Status::internal(format!("Failed to list sessions: {e}")))
             }
         }
     }
@@ -315,7 +310,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             ))),
             Err(e) => {
                 error!("Failed to get session: {}", e);
-                Err(Status::internal(format!("Failed to get session: {}", e)))
+                Err(Status::internal(format!("Failed to get session: {e}")))
             }
         }
     }
@@ -334,7 +329,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             ))),
             Err(e) => {
                 error!("Failed to delete session: {}", e);
-                Err(Status::internal(format!("Failed to delete session: {}", e)))
+                Err(Status::internal(format!("Failed to delete session: {e}")))
             }
         }
     }
@@ -369,7 +364,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                         proto_msg
                     })
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?;
+                    .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
 
                 info!("Converted {} messages to proto format", messages.len());
 
@@ -387,10 +382,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }
             Err(e) => {
                 error!("Failed to get conversation: {}", e);
-                Err(Status::internal(format!(
-                    "Failed to get conversation: {}",
-                    e
-                )))
+                Err(Status::internal(format!("Failed to get conversation: {e}")))
             }
         }
     }
@@ -423,7 +415,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }
             Err(e) => {
                 error!("Failed to send message: {}", e);
-                Err(Status::internal(format!("Failed to send message: {}", e)))
+                Err(Status::internal(format!("Failed to send message: {e}")))
             }
         }
     }
@@ -459,7 +451,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             Ok(()) => Ok(Response::new(())),
             Err(e) => {
                 error!("Failed to approve tool: {}", e);
-                Err(Status::internal(format!("Failed to approve tool: {}", e)))
+                Err(Status::internal(format!("Failed to approve tool: {e}")))
             }
         }
     }
@@ -483,14 +475,14 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                     .into_iter()
                     .map(message_to_proto)
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| Status::internal(format!("Failed to convert message: {}", e)))?,
+                    .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?,
                 approved_tools: state.approved_tools.into_iter().collect(),
             }));
         }
 
         // Load LLM config
         let llm_config = conductor_core::config::LlmConfig::from_env()
-            .map_err(|e| Status::internal(format!("Failed to load LLM config: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to load LLM config: {e}")))?;
         let app_config = conductor_core::app::AppConfig { llm_config };
 
         match self
@@ -512,7 +504,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                             .map(message_to_proto)
                             .collect::<Result<Vec<_>, _>>()
                             .map_err(|e| {
-                                Status::internal(format!("Failed to convert message: {}", e))
+                                Status::internal(format!("Failed to convert message: {e}"))
                             })?,
                         approved_tools: state.approved_tools.into_iter().collect(),
                     }));
@@ -521,10 +513,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                     "Activation succeeded but state unavailable",
                 ))
             }
-            Err(e) => Err(Status::internal(format!(
-                "Failed to activate session: {}",
-                e
-            ))),
+            Err(e) => Err(Status::internal(format!("Failed to activate session: {e}"))),
         }
     }
 
@@ -544,10 +533,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             Ok(()) => Ok(Response::new(())),
             Err(e) => {
                 error!("Failed to cancel operation: {}", e);
-                Err(Status::internal(format!(
-                    "Failed to cancel operation: {}",
-                    e
-                )))
+                Err(Status::internal(format!("Failed to cancel operation: {e}")))
             }
         }
     }
@@ -576,8 +562,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             Err(e) => {
                 error!("Failed to get session workspace: {}", e);
                 return Err(Status::internal(format!(
-                    "Failed to get session workspace: {}",
-                    e
+                    "Failed to get session workspace: {e}"
                 )));
             }
         };
@@ -617,10 +602,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                 Err(e) => {
                     error!("Failed to list files: {}", e);
                     let _ = tx
-                        .send(Err(Status::internal(format!(
-                            "Failed to list files: {}",
-                            e
-                        ))))
+                        .send(Err(Status::internal(format!("Failed to list files: {e}"))))
                         .await;
                 }
             }
@@ -636,10 +618,7 @@ async fn try_resume_session(
 ) -> Result<(), Status> {
     // Load LLM config from environment
     let llm_config = conductor_core::config::LlmConfig::from_env().map_err(|e| {
-        Status::internal(format!(
-            "Failed to load LLM config for session resume: {}",
-            e
-        ))
+        Status::internal(format!("Failed to load LLM config for session resume: {e}"))
     })?;
 
     let app_config = conductor_core::app::AppConfig { llm_config };
@@ -662,13 +641,12 @@ async fn try_resume_session(
                 session_id, current, max
             );
             Err(Status::resource_exhausted(format!(
-                "Server at maximum capacity ({}/{}). Cannot resume session.",
-                current, max
+                "Server at maximum capacity ({current}/{max}). Cannot resume session."
             )))
         }
         Err(e) => {
             error!("Failed to resume session {}: {}", session_id, e);
-            Err(Status::internal(format!("Failed to resume session: {}", e)))
+            Err(Status::internal(format!("Failed to resume session: {e}")))
         }
     }
 }
@@ -692,7 +670,7 @@ async fn handle_client_message(
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
-                    .map_err(|e| format!("Failed to send message: {}", e))?;
+                    .map_err(|e| format!("Failed to send message: {e}"))?;
             }
 
             client_message::Message::ToolApproval(approval) => {
@@ -715,7 +693,7 @@ async fn handle_client_message(
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
-                    .map_err(|e| format!("Failed to approve tool: {}", e))?;
+                    .map_err(|e| format!("Failed to approve tool: {e}"))?;
             }
 
             client_message::Message::Cancel(_cancel) => {
@@ -725,7 +703,7 @@ async fn handle_client_message(
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
-                    .map_err(|e| format!("Failed to cancel operation: {}", e))?;
+                    .map_err(|e| format!("Failed to cancel operation: {e}"))?;
             }
 
             client_message::Message::Subscribe(_subscribe_request) => {
@@ -744,7 +722,7 @@ async fn handle_client_message(
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
-                    .map_err(|e| format!("Failed to execute command: {}", e))?;
+                    .map_err(|e| format!("Failed to execute command: {e}"))?;
             }
 
             client_message::Message::ExecuteBashCommand(execute_bash_command) => {
@@ -754,7 +732,7 @@ async fn handle_client_message(
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
-                    .map_err(|e| format!("Failed to execute bash command: {}", e))?;
+                    .map_err(|e| format!("Failed to execute bash command: {e}"))?;
             }
 
             client_message::Message::EditMessage(edit_message) => {
@@ -765,7 +743,7 @@ async fn handle_client_message(
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
-                    .map_err(|e| format!("Failed to edit message: {}", e))?;
+                    .map_err(|e| format!("Failed to edit message: {e}"))?;
             }
         }
     }
@@ -825,7 +803,7 @@ mod tests {
         // Give server time to start
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        let url = format!("http://{}", addr);
+        let url = format!("http://{addr}");
         (url, session_manager, temp_dir)
     }
 

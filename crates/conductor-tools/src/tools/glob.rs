@@ -64,7 +64,7 @@ tool! {
                         Err(e) => {
                             return Err(ToolError::execution(
                                 GLOB_TOOL_NAME,
-                                format!("Error matching glob pattern '{}': {}", glob_pattern, e),
+                                format!("Error matching glob pattern '{glob_pattern}': {e}"),
                             ));
                         }
                     }
@@ -73,7 +73,7 @@ tool! {
             Err(e) => {
                 return Err(ToolError::execution(
                     GLOB_TOOL_NAME,
-                    format!("Invalid glob pattern '{}': {}", glob_pattern, e),
+                    format!("Invalid glob pattern '{glob_pattern}': {e}"),
                 ));
             }
         }

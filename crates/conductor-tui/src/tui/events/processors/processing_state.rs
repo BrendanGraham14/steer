@@ -83,7 +83,7 @@ impl EventProcessor for ProcessingStateProcessor {
                 let chat_item = crate::tui::model::ChatItem::SystemNotice {
                     id: crate::tui::model::generate_row_id(),
                     level: crate::tui::model::NoticeLevel::Info,
-                    text: format!("Operation cancelled: {}", info),
+                    text: format!("Operation cancelled: {info}"),
                     ts: time::OffsetDateTime::now_utc(),
                 };
                 ctx.chat_store.push(chat_item);

@@ -63,7 +63,7 @@ fn get_todo_file_path() -> Result<PathBuf, std::io::Error> {
         }
     };
     let dir = get_todos_dir()?;
-    Ok(dir.join(format!("{}.json", workspace_id)))
+    Ok(dir.join(format!("{workspace_id}.json")))
 }
 
 // Helper function to read todos from file

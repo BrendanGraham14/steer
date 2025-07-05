@@ -42,9 +42,9 @@ impl ToolFormatter for ViewFormatter {
                     let line_count = file_result.line_count;
                     let size = format_size(file_result.content.len());
                     if file_result.truncated {
-                        format!("{} lines (truncated), {}", line_count, size)
+                        format!("{line_count} lines (truncated), {size}")
                     } else {
-                        format!("{} lines, {}", line_count, size)
+                        format!("{line_count} lines, {size}")
                     }
                 }
                 ToolResult::Error(_) => "failed".to_string(),
@@ -55,8 +55,8 @@ impl ToolFormatter for ViewFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(format!("{} ", file_name), Style::default()),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("{file_name} "), Style::default()),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -85,13 +85,13 @@ impl ToolFormatter for ViewFormatter {
         // Add file info if available
         if let Some(offset) = params.offset {
             lines.push(Line::from(Span::styled(
-                format!("Starting from line: {}", offset),
+                format!("Starting from line: {offset}"),
                 styles::DIM_TEXT,
             )));
         }
         if let Some(limit) = params.limit {
             lines.push(Line::from(Span::styled(
-                format!("Max lines: {}", limit),
+                format!("Max lines: {limit}"),
                 styles::DIM_TEXT,
             )));
         }

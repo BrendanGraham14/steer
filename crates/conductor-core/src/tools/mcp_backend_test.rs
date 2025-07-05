@@ -45,13 +45,13 @@ mod tests {
                                     let _ = client.waiting().await;
                                 }
                                 Err(e) => {
-                                    eprintln!("Error serving connection: {}", e);
+                                    eprintln!("Error serving connection: {e}");
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        eprintln!("Error accepting connection: {}", e);
+                        eprintln!("Error accepting connection: {e}");
                         break;
                     }
                 }
@@ -139,13 +139,13 @@ mod tests {
                                     let _ = client.waiting().await;
                                 }
                                 Err(e) => {
-                                    eprintln!("Error serving connection: {}", e);
+                                    eprintln!("Error serving connection: {e}");
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        eprintln!("Error accepting connection: {}", e);
+                        eprintln!("Error accepting connection: {e}");
                         break;
                     }
                 }
@@ -223,13 +223,13 @@ mod tests {
                                     let _ = client.waiting().await;
                                 }
                                 Err(e) => {
-                                    eprintln!("Error serving Unix connection: {}", e);
+                                    eprintln!("Error serving Unix connection: {e}");
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        eprintln!("Error accepting Unix connection: {}", e);
+                        eprintln!("Error accepting Unix connection: {e}");
                         break;
                     }
                 }
@@ -289,7 +289,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let bind_addr = format!("127.0.0.1:{}", port);
+        let bind_addr = format!("127.0.0.1:{port}");
         let ct = start_sse_server(bind_addr.clone())
             .await
             .expect("Failed to start SSE server");
@@ -302,7 +302,7 @@ mod tests {
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "sse-server".to_string(),
             transport: McpTransport::Sse {
-                url: format!("http://127.0.0.1:{}/sse", port),
+                url: format!("http://127.0.0.1:{port}/sse"),
                 headers: None,
             },
             tool_filter: ToolFilter::All,
@@ -325,7 +325,7 @@ mod tests {
             .iter()
             .map(|(name, _)| name.clone())
             .collect();
-        println!("Registered backends: {:?}", registered_backends);
+        println!("Registered backends: {registered_backends:?}");
         assert!(registered_backends.contains(&"mcp_sse-server".to_string()));
 
         // List tools from the SSE backend
@@ -382,7 +382,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let bind_addr = format!("127.0.0.1:{}", port);
+        let bind_addr = format!("127.0.0.1:{port}");
         let ct = start_sse_server(bind_addr.clone())
             .await
             .expect("Failed to start SSE server");
@@ -399,7 +399,7 @@ mod tests {
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "sse-auth-server".to_string(),
             transport: McpTransport::Sse {
-                url: format!("http://127.0.0.1:{}/sse", port),
+                url: format!("http://127.0.0.1:{port}/sse"),
                 headers: Some(headers.clone()),
             },
             tool_filter: ToolFilter::All,
@@ -453,7 +453,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let bind_addr = format!("127.0.0.1:{}", port);
+        let bind_addr = format!("127.0.0.1:{port}");
         start_http_server(bind_addr.clone())
             .await
             .expect("Failed to start HTTP server");
@@ -466,7 +466,7 @@ mod tests {
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "http-server".to_string(),
             transport: McpTransport::Http {
-                url: format!("http://127.0.0.1:{}/mcp", port),
+                url: format!("http://127.0.0.1:{port}/mcp"),
                 headers: None,
             },
             tool_filter: ToolFilter::All,
@@ -543,7 +543,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let bind_addr = format!("127.0.0.1:{}", port);
+        let bind_addr = format!("127.0.0.1:{port}");
         start_http_server(bind_addr.clone())
             .await
             .expect("Failed to start HTTP server");
@@ -559,7 +559,7 @@ mod tests {
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "http-auth-server".to_string(),
             transport: McpTransport::Http {
-                url: format!("http://127.0.0.1:{}/mcp", port),
+                url: format!("http://127.0.0.1:{port}/mcp"),
                 headers: Some(headers.clone()),
             },
             tool_filter: ToolFilter::All,
@@ -630,10 +630,10 @@ mod tests {
         // Test that we correctly add and remove the mcp_servername_ prefix
         let server_name = "myserver";
         let tool_name = "mytool";
-        let prefixed_name = format!("mcp__{}__{}", server_name, tool_name);
+        let prefixed_name = format!("mcp__{server_name}__{tool_name}");
 
         // Test extraction
-        let prefix = format!("mcp__{}__", server_name);
+        let prefix = format!("mcp__{server_name}__");
         let extracted = if prefixed_name.starts_with(&prefix) {
             &prefixed_name[prefix.len()..]
         } else {
@@ -739,7 +739,7 @@ mod tests {
                         let _ = client.waiting().await;
                     }
                     Err(e) => {
-                        eprintln!("Error serving connection: {}", e);
+                        eprintln!("Error serving connection: {e}");
                     }
                 }
             }
@@ -855,7 +855,7 @@ mod tests {
                         let _ = client.waiting().await;
                     }
                     Err(e) => {
-                        eprintln!("Error serving Unix connection: {}", e);
+                        eprintln!("Error serving Unix connection: {e}");
                     }
                 }
             }

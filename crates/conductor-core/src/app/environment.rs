@@ -22,7 +22,7 @@ impl EnvironmentInfo {
     /// Collect information about the environment
     pub fn collect() -> Result<Self> {
         let working_directory = std::env::current_dir().map_err(|e| {
-            WorkspaceError::EnvironmentCollection(format!("Failed to get current directory: {}", e))
+            WorkspaceError::EnvironmentCollection(format!("Failed to get current directory: {e}"))
         })?;
         Self::collect_for_path(&working_directory)
     }
@@ -117,7 +117,7 @@ impl EnvironmentInfo {
 
         // Join all paths with newline and add a trailing newline
         let result = all_paths.join("\n");
-        Ok(format!("{}\n", result)) // Ensure trailing newline
+        Ok(format!("{result}\n")) // Ensure trailing newline
     }
 
     /// Recursively collect paths in the directory, filtering by gitignore
@@ -128,14 +128,13 @@ impl EnvironmentInfo {
         paths: &mut Vec<String>, // Renamed to relative_paths in caller, but param name is fine
     ) -> Result<()> {
         let entries = fs::read_dir(current_dir).map_err(|e| {
-            WorkspaceError::EnvironmentCollection(format!("Failed to read directory: {}", e))
+            WorkspaceError::EnvironmentCollection(format!("Failed to read directory: {e}"))
         })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
                 WorkspaceError::EnvironmentCollection(format!(
-                    "Failed to read directory entry: {}",
-                    e
+                    "Failed to read directory entry: {e}"
                 ))
             })?;
             let path = entry.path();
@@ -155,7 +154,7 @@ impl EnvironmentInfo {
             if let Ok(rel_path) = path.strip_prefix(base_dir) {
                 let path_str = rel_path.to_string_lossy().to_string();
                 if path.is_dir() {
-                    paths.push(format!("{}/", path_str));
+                    paths.push(format!("{path_str}/"));
 
                     // Recursively process subdirectories
                     // Pass the same 'paths' vec down
@@ -174,7 +173,7 @@ impl EnvironmentInfo {
         let mut result = String::new();
 
         let repo = Repository::discover(path).map_err(|e| {
-            WorkspaceError::EnvironmentCollection(format!("Failed to open git repository: {}", e))
+            WorkspaceError::EnvironmentCollection(format!("Failed to open git repository: {e}"))
         })?;
 
         // Get current branch
@@ -185,7 +184,7 @@ impl EnvironmentInfo {
                 } else {
                     "HEAD (detached)"
                 };
-                result.push_str(&format!("Current branch: {}\n\n", branch));
+                result.push_str(&format!("Current branch: {branch}\n\n"));
             }
             Err(e) => {
                 // Handle case where HEAD doesn't exist (new repo)
@@ -199,7 +198,7 @@ impl EnvironmentInfo {
 
         // Get status
         let statuses = repo.statuses(None).map_err(|e| {
-            WorkspaceError::EnvironmentCollection(format!("Failed to get git status: {}", e))
+            WorkspaceError::EnvironmentCollection(format!("Failed to get git status: {e}"))
         })?;
         result.push_str("Status:\n");
         if statuses.is_empty() {
@@ -235,7 +234,7 @@ impl EnvironmentInfo {
                     " "
                 };
 
-                result.push_str(&format!("{}{} {}\n", status_char, wt_char, path));
+                result.push_str(&format!("{status_char}{wt_char} {path}\n"));
             }
         }
 
@@ -253,7 +252,7 @@ impl EnvironmentInfo {
                             if let Ok(commit) = repo.find_commit(oid) {
                                 let summary = commit.summary().unwrap_or("<no summary>");
                                 let id = commit.id();
-                                result.push_str(&format!("{:.7} {}\n", id, summary));
+                                result.push_str(&format!("{id:.7} {summary}\n"));
                                 count += 1;
                             }
                         }
@@ -273,10 +272,7 @@ impl EnvironmentInfo {
     /// Read a file if it exists at a specific path
     fn read_file_if_exists(path: &Path, filename: &str) -> Option<String> {
         let file_path = path.join(filename);
-        match fs::read_to_string(file_path) {
-            Ok(content) => Some(content),
-            Err(_) => None,
-        }
+        fs::read_to_string(file_path).ok()
     }
 
     /// Read gitignore patterns from .gitignore file and build a GlobSet
@@ -292,8 +288,7 @@ impl EnvironmentInfo {
         // If the file exists but cannot be read, return an error
         let content = fs::read_to_string(&gitignore_path).map_err(|e| {
             WorkspaceError::EnvironmentCollection(format!(
-                "Failed to read .gitignore file at {:?}: {}",
-                gitignore_path, e
+                "Failed to read .gitignore file at {gitignore_path:?}: {e}"
             ))
         })?;
 
@@ -320,7 +315,7 @@ impl EnvironmentInfo {
             // Convert pattern to work with globset
             // If pattern doesn't start with *, make it match anywhere in path
             if !pattern.starts_with('*') && !pattern.starts_with('/') {
-                pattern = format!("**/{}", pattern);
+                pattern = format!("**/{pattern}");
             }
 
             // If pattern starts with /, remove it (globset assumes patterns are relative)
@@ -339,14 +334,13 @@ impl EnvironmentInfo {
                     Err(e) => {
                         // Return error for invalid patterns
                         return Err(WorkspaceError::EnvironmentCollection(format!(
-                            "Invalid glob pattern '{}' in .gitignore: {}",
-                            dir_pattern, e
+                            "Invalid glob pattern '{dir_pattern}' in .gitignore: {e}"
                         ))
                         .into());
                     }
                 }
                 // Add pattern with ** to match contents
-                pattern = format!("{}**", pattern);
+                pattern = format!("{pattern}**");
             }
 
             match Glob::new(&pattern) {
@@ -357,8 +351,7 @@ impl EnvironmentInfo {
                 Err(e) => {
                     // Return error for invalid patterns
                     return Err(WorkspaceError::EnvironmentCollection(format!(
-                        "Invalid glob pattern '{}' in .gitignore: {}",
-                        pattern, e
+                        "Invalid glob pattern '{pattern}' in .gitignore: {e}"
                     ))
                     .into());
                 }
@@ -373,8 +366,7 @@ impl EnvironmentInfo {
         match builder.build() {
             Ok(globset) => Ok(Some(globset)),
             Err(e) => Err(WorkspaceError::EnvironmentCollection(format!(
-                "Error building globset from .gitignore: {}",
-                e
+                "Error building globset from .gitignore: {e}"
             ))
             .into()),
         }
@@ -425,20 +417,18 @@ Below is a snapshot of this project's file structure at the start of the convers
             context.push_str(&format!(r#"<git_status>
 This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.
 
-{}
+{git_status}
 </git_status>
-"#,
-                git_status));
+"#));
         }
 
         if let Some(readme) = &self.readme_content {
             context.push_str(&format!(r#"<file name="README.md">
 This is the README.md file at the start of the conversation. Note that this README is a snapshot in time, and will not update during the conversation.
 
-{}
+{readme}
 </file>
-"#,
-                readme
+"#
             ));
         }
 
@@ -446,10 +436,9 @@ This is the README.md file at the start of the conversation. Note that this READ
             context.push_str(&format!(r#"<file name="CLAUDE.md">
 This is the CLAUDE.md file at the start of the conversation. Note that this CLAUDE is a snapshot in time, and will not update during the conversation.
 
-{}
+{claude_md}
 </file>
-"#,
-                claude_md
+"#
             ));
         }
 

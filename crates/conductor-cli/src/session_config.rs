@@ -313,7 +313,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&backend).unwrap();
-        println!("Backend JSON: {}", json);
+        println!("Backend JSON: {json}");
 
         let backend2: BackendConfig = serde_json::from_str(&json).unwrap();
         match backend2 {

@@ -203,7 +203,7 @@ async fn run_tui_local(
             .await
             .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
-        println!("Session ID: {}", new_session_id);
+        println!("Session ID: {new_session_id}");
         session_id = Some(new_session_id);
     }
 
@@ -273,7 +273,7 @@ async fn run_tui_remote(
             .await
             .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
-        println!("Session ID: {}", new_session_id);
+        println!("Session ID: {new_session_id}");
         session_id = Some(new_session_id);
     }
 

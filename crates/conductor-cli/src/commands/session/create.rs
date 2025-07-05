@@ -37,7 +37,7 @@ impl Command for CreateSessionCommand {
 
         // If remote is specified, handle via gRPC
         if let Some(remote_addr) = &self.remote {
-            println!("Creating remote session at {}", remote_addr);
+            println!("Creating remote session at {remote_addr}");
 
             // TODO: The TUI functionality has been moved to conductor-tui crate
             // For now, just create the session without launching the TUI

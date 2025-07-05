@@ -34,12 +34,12 @@ impl SqliteSessionStore {
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                SessionStoreError::connection(format!("Failed to create directory: {}", e))
+                SessionStoreError::connection(format!("Failed to create directory: {e}"))
             })?;
         }
 
         let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
-            .map_err(|e| SessionStoreError::connection(format!("Invalid SQLite path: {}", e)))?
+            .map_err(|e| SessionStoreError::connection(format!("Invalid SQLite path: {e}")))?
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
@@ -50,7 +50,7 @@ impl SqliteSessionStore {
             .connect_with(options)
             .await
             .map_err(|e| {
-                SessionStoreError::connection(format!("Failed to connect to SQLite: {}", e))
+                SessionStoreError::connection(format!("Failed to connect to SQLite: {e}"))
             })?;
 
         // Run migrations
@@ -58,7 +58,7 @@ impl SqliteSessionStore {
             .run(&pool)
             .await
             .map_err(|e| SessionStoreError::Migration {
-                message: format!("Failed to run migrations: {}", e),
+                message: format!("Failed to run migrations: {e}"),
             })?;
 
         Ok(Self { pool })
@@ -70,7 +70,7 @@ impl SqliteSessionStore {
         pre_approved_json: &str,
     ) -> Result<ToolApprovalPolicy, SessionStoreError> {
         let pre_approved: Vec<String> = serde_json::from_str(pre_approved_json).map_err(|e| {
-            SessionStoreError::serialization(format!("Invalid pre_approved_tools: {}", e))
+            SessionStoreError::serialization(format!("Invalid pre_approved_tools: {e}"))
         })?;
 
         match policy_type {
@@ -83,8 +83,7 @@ impl SqliteSessionStore {
                 ask_for_others: true,
             }),
             _ => Err(SessionStoreError::validation(format!(
-                "Invalid tool policy type: {}",
-                policy_type
+                "Invalid tool policy type: {policy_type}"
             ))),
         }
     }
@@ -119,13 +118,13 @@ impl SessionStore for SqliteSessionStore {
         let (policy_type, pre_approved_json) =
             Self::serialize_tool_policy(&config.tool_config.approval_policy);
         let metadata_json = serde_json::to_string(&config.metadata).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize metadata: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize metadata: {e}"))
         })?;
         let tool_config_json = serde_json::to_string(&config.tool_config).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize tool_config: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize tool_config: {e}"))
         })?;
         let workspace_config_json = serde_json::to_string(&config.workspace).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize workspace_config: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize workspace_config: {e}"))
         })?;
 
         sqlx::query(
@@ -147,7 +146,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&config.system_prompt)
         .execute(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to create session: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to create session: {e}")))?;
 
         Ok(Session {
             id: id.clone(),
@@ -170,7 +169,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to get session: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to get session: {e}")))?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -182,15 +181,14 @@ impl SessionStore for SqliteSessionStore {
         )?;
 
         let metadata: std::collections::HashMap<String, String> =
-            serde_json::from_str(&row.get::<String, _>("metadata")).map_err(|e| {
-                SessionStoreError::serialization(format!("Invalid metadata: {}", e))
-            })?;
+            serde_json::from_str(&row.get::<String, _>("metadata"))
+                .map_err(|e| SessionStoreError::serialization(format!("Invalid metadata: {e}")))?;
 
         let tool_config = serde_json::from_str(&row.get::<String, _>("tool_config"))
-            .map_err(|e| SessionStoreError::serialization(format!("Invalid tool_config: {}", e)))?;
+            .map_err(|e| SessionStoreError::serialization(format!("Invalid tool_config: {e}")))?;
         let workspace_config = serde_json::from_str(&row.get::<String, _>("workspace_config"))
             .map_err(|e| {
-                SessionStoreError::serialization(format!("Invalid workspace_config: {}", e))
+                SessionStoreError::serialization(format!("Invalid workspace_config: {e}"))
             })?;
 
         let mut tool_config: crate::session::SessionToolConfig = tool_config;
@@ -219,7 +217,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(session_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to load tool calls: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to load tool calls: {e}")))?;
 
         let mut tool_calls = std::collections::HashMap::new();
         for row in tool_calls_rows {
@@ -238,8 +236,7 @@ impl SessionStore for SqliteSessionStore {
                 },
                 _ => {
                     return Err(SessionStoreError::validation(format!(
-                        "Invalid tool call status: {}",
-                        status_str
+                        "Invalid tool call status: {status_str}"
                     )));
                 }
             };
@@ -248,7 +245,7 @@ impl SessionStore for SqliteSessionStore {
                 id: id.clone(),
                 name: row.get("tool_name"),
                 parameters: serde_json::from_str(&row.get::<String, _>("parameters")).map_err(
-                    |e| SessionStoreError::serialization(format!("Invalid tool parameters: {}", e)),
+                    |e| SessionStoreError::serialization(format!("Invalid tool parameters: {e}")),
                 )?,
             };
 
@@ -274,7 +271,7 @@ impl SessionStore for SqliteSessionStore {
                 } else if let Some(json_str) = json_result {
                     // Success result with payload
                     let json_value = serde_json::from_str(&json_str).map_err(|e| {
-                        SessionStoreError::serialization(format!("Invalid JSON result: {}", e))
+                        SessionStoreError::serialization(format!("Invalid JSON result: {e}"))
                     })?;
                     Some(ToolExecutionStats {
                         output: result.clone(),
@@ -327,7 +324,7 @@ impl SessionStore for SqliteSessionStore {
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| {
-                    SessionStoreError::database(format!("Failed to get last event sequence: {}", e))
+                    SessionStoreError::database(format!("Failed to get last event sequence: {e}"))
                 })?;
 
         let state = SessionState {
@@ -349,16 +346,15 @@ impl SessionStore for SqliteSessionStore {
 
     async fn update_session(&self, session: &Session) -> Result<(), SessionStoreError> {
         let metadata_json = serde_json::to_string(&session.config.metadata).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize metadata: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize metadata: {e}"))
         })?;
         let tool_config_json = serde_json::to_string(&session.config.tool_config).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize tool_config: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize tool_config: {e}"))
         })?;
         let workspace_config_json =
             serde_json::to_string(&session.config.workspace).map_err(|e| {
                 SessionStoreError::serialization(format!(
-                    "Failed to serialize workspace_config: {}",
-                    e
+                    "Failed to serialize workspace_config: {e}"
                 ))
             })?;
         let (policy_type, pre_approved_json) =
@@ -381,7 +377,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&workspace_config_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to update session: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to update session: {e}")))?;
 
         Ok(())
     }
@@ -391,7 +387,7 @@ impl SessionStore for SqliteSessionStore {
             .bind(session_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| SessionStoreError::database(format!("Failed to delete session: {}", e)))?;
+            .map_err(|e| SessionStoreError::database(format!("Failed to delete session: {e}")))?;
 
         Ok(())
     }
@@ -468,14 +464,14 @@ impl SessionStore for SqliteSessionStore {
             crate::session::OrderDirection::Descending => "DESC",
         };
 
-        query.push_str(&format!(" ORDER BY {} {}", order_column, order_direction));
+        query.push_str(&format!(" ORDER BY {order_column} {order_direction}"));
 
         // Add pagination
         if let Some(limit) = filter.limit {
-            query.push_str(&format!(" LIMIT {}", limit));
+            query.push_str(&format!(" LIMIT {limit}"));
         }
         if let Some(offset) = filter.offset {
-            query.push_str(&format!(" OFFSET {}", offset));
+            query.push_str(&format!(" OFFSET {offset}"));
         }
 
         // Execute query with dynamic bindings
@@ -487,13 +483,13 @@ impl SessionStore for SqliteSessionStore {
         let rows = q
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| SessionStoreError::database(format!("Failed to list sessions: {}", e)))?;
+            .map_err(|e| SessionStoreError::database(format!("Failed to list sessions: {e}")))?;
 
         let mut sessions = Vec::new();
         for row in rows {
             let metadata: std::collections::HashMap<String, String> =
                 serde_json::from_str(&row.get::<String, _>("metadata")).map_err(|e| {
-                    SessionStoreError::serialization(format!("Invalid metadata: {}", e))
+                    SessionStoreError::serialization(format!("Invalid metadata: {e}"))
                 })?;
 
             // Count messages for this session (if not already done in query)
@@ -505,7 +501,7 @@ impl SessionStore for SqliteSessionStore {
                     .fetch_one(&self.pool)
                     .await
                     .map_err(|e| {
-                        SessionStoreError::database(format!("Failed to count messages: {}", e))
+                        SessionStoreError::database(format!("Failed to count messages: {e}"))
                     })?
             };
 
@@ -513,7 +509,7 @@ impl SessionStore for SqliteSessionStore {
             let last_model =
                 if let Some(event_json) = row.get::<Option<String>, _>("last_event_data") {
                     let event: StreamEvent = serde_json::from_str(&event_json).map_err(|e| {
-                        SessionStoreError::serialization(format!("Invalid event data: {}", e))
+                        SessionStoreError::serialization(format!("Invalid event data: {e}"))
                     })?;
 
                     match event {
@@ -554,15 +550,14 @@ impl SessionStore for SqliteSessionStore {
         .bind(session_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to get next sequence: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to get next sequence: {e}")))?;
 
         // Serialize the message based on its variant
         let (role, content_json) = match message {
             Message::User { content, .. } => {
                 let json = serde_json::to_string(&content).map_err(|e| {
                     SessionStoreError::serialization(format!(
-                        "Failed to serialize user content: {}",
-                        e
+                        "Failed to serialize user content: {e}"
                     ))
                 })?;
                 ("user", json)
@@ -570,8 +565,7 @@ impl SessionStore for SqliteSessionStore {
             Message::Assistant { content, .. } => {
                 let json = serde_json::to_string(&content).map_err(|e| {
                     SessionStoreError::serialization(format!(
-                        "Failed to serialize assistant content: {}",
-                        e
+                        "Failed to serialize assistant content: {e}"
                     ))
                 })?;
                 ("assistant", json)
@@ -593,8 +587,7 @@ impl SessionStore for SqliteSessionStore {
                 };
                 let json = serde_json::to_string(&stored).map_err(|e| {
                     SessionStoreError::serialization(format!(
-                        "Failed to serialize tool message: {}",
-                        e
+                        "Failed to serialize tool message: {e}"
                     ))
                 })?;
                 ("tool", json)
@@ -621,7 +614,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(parent_message_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to append message: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to append message: {e}")))?;
 
         Ok(())
     }
@@ -657,7 +650,7 @@ impl SessionStore for SqliteSessionStore {
         let rows = query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| SessionStoreError::database(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SessionStoreError::database(format!("Failed to get messages: {e}")))?;
 
         let mut messages = Vec::new();
         for row in rows {
@@ -676,8 +669,7 @@ impl SessionStore for SqliteSessionStore {
                     let content: Vec<UserContent> =
                         serde_json::from_str(&content).map_err(|e| {
                             SessionStoreError::serialization(format!(
-                                "Failed to deserialize user content: {}",
-                                e
+                                "Failed to deserialize user content: {e}"
                             ))
                         })?;
                     Message::User {
@@ -692,8 +684,7 @@ impl SessionStore for SqliteSessionStore {
                     let content: Vec<AssistantContent> =
                         serde_json::from_str(&content).map_err(|e| {
                             SessionStoreError::serialization(format!(
-                                "Failed to deserialize assistant content: {}",
-                                e
+                                "Failed to deserialize assistant content: {e}"
                             ))
                         })?;
                     Message::Assistant {
@@ -713,8 +704,7 @@ impl SessionStore for SqliteSessionStore {
                     let stored: StoredToolMessage =
                         serde_json::from_str(&content).map_err(|e| {
                             SessionStoreError::serialization(format!(
-                                "Failed to deserialize tool message: {}",
-                                e
+                                "Failed to deserialize tool message: {e}"
                             ))
                         })?;
                     Message::Tool {
@@ -728,8 +718,7 @@ impl SessionStore for SqliteSessionStore {
                 }
                 _ => {
                     return Err(SessionStoreError::serialization(format!(
-                        "Unknown message role: {}",
-                        role
+                        "Unknown message role: {role}"
                     )));
                 }
             };
@@ -746,7 +735,7 @@ impl SessionStore for SqliteSessionStore {
         tool_call: &ToolCall,
     ) -> Result<(), SessionStoreError> {
         let parameters_json = serde_json::to_string(&tool_call.parameters).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize parameters: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize parameters: {e}"))
         })?;
 
         sqlx::query(
@@ -763,7 +752,7 @@ impl SessionStore for SqliteSessionStore {
         .bind("external") // Default to external, will be updated when result comes in
         .execute(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to create tool call: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to create tool call: {e}")))?;
 
         Ok(())
     }
@@ -825,8 +814,7 @@ impl SessionStore for SqliteSessionStore {
                 updates.push(format!("payload_json = ?{}", bindings.len() + 1));
                 let json_str = serde_json::to_string(json_output).map_err(|e| {
                     SessionStoreError::serialization(format!(
-                        "Failed to serialize JSON result: {}",
-                        e
+                        "Failed to serialize JSON result: {e}"
                     ))
                 })?;
                 bindings.push(json_str);
@@ -873,9 +861,9 @@ impl SessionStore for SqliteSessionStore {
             q = q.bind(binding);
         }
 
-        q.execute(&self.pool).await.map_err(|e| {
-            SessionStoreError::database(format!("Failed to update tool call: {}", e))
-        })?;
+        q.execute(&self.pool)
+            .await
+            .map_err(|e| SessionStoreError::database(format!("Failed to update tool call: {e}")))?;
 
         Ok(())
     }
@@ -896,14 +884,14 @@ impl SessionStore for SqliteSessionStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
-            SessionStoreError::database(format!("Failed to get pending tool calls: {}", e))
+            SessionStoreError::database(format!("Failed to get pending tool calls: {e}"))
         })?;
 
         let mut tool_calls = Vec::new();
         for row in rows {
             let parameters: serde_json::Value =
                 serde_json::from_str(&row.get::<String, _>("parameters")).map_err(|e| {
-                    SessionStoreError::serialization(format!("Invalid parameters: {}", e))
+                    SessionStoreError::serialization(format!("Invalid parameters: {e}"))
                 })?;
 
             tool_calls.push(ToolCall {
@@ -940,7 +928,7 @@ impl SessionStore for SqliteSessionStore {
         };
 
         let event_data = serde_json::to_string(event).map_err(|e| {
-            SessionStoreError::serialization(format!("Failed to serialize event: {}", e))
+            SessionStoreError::serialization(format!("Failed to serialize event: {e}"))
         })?;
 
         // Get the next sequence number
@@ -950,7 +938,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(session_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to get next sequence: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to get next sequence: {e}")))?;
 
         sqlx::query(
             r#"
@@ -965,7 +953,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(Utc::now())
         .execute(&self.pool)
         .await
-        .map_err(|e| SessionStoreError::database(format!("Failed to append event: {}", e)))?;
+        .map_err(|e| SessionStoreError::database(format!("Failed to append event: {e}")))?;
 
         Ok(next_seq as u64)
     }
@@ -1005,14 +993,14 @@ impl SessionStore for SqliteSessionStore {
         let rows = query
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| SessionStoreError::database(format!("Failed to get events: {}", e)))?;
+            .map_err(|e| SessionStoreError::database(format!("Failed to get events: {e}")))?;
 
         let mut events = Vec::new();
         for row in rows {
             let seq: i64 = row.get("sequence_num");
             let event: StreamEvent = serde_json::from_str(&row.get::<String, _>("event_data"))
                 .map_err(|e| {
-                    SessionStoreError::serialization(format!("Invalid event data: {}", e))
+                    SessionStoreError::serialization(format!("Invalid event data: {e}"))
                 })?;
 
             events.push((seq as u64, event));
@@ -1031,7 +1019,7 @@ impl SessionStore for SqliteSessionStore {
             .bind(before_sequence as i64)
             .execute(&self.pool)
             .await
-            .map_err(|e| SessionStoreError::database(format!("Failed to delete events: {}", e)))?;
+            .map_err(|e| SessionStoreError::database(format!("Failed to delete events: {e}")))?;
 
         Ok(result.rows_affected())
     }

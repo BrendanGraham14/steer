@@ -50,7 +50,7 @@ impl EventProcessor for ToolEventProcessor {
                 ctx.tool_registry.debug_dump("At ToolCallStarted");
 
                 *ctx.spinner_state = 0;
-                *ctx.progress_message = Some(format!("Executing tool: {}", name));
+                *ctx.progress_message = Some(format!("Executing tool: {name}"));
 
                 // Get the tool call from the registry
                 let tool_call = if let Some(call) = ctx.tool_registry.get_tool_call(&id) {
@@ -161,7 +161,7 @@ impl EventProcessor for ToolEventProcessor {
                 notify_with_sound(
                     &self.notification_config,
                     NotificationSound::ToolApproval,
-                    &format!("Tool approval needed: {}", name),
+                    &format!("Tool approval needed: {name}"),
                 );
 
                 ProcessingResult::Handled

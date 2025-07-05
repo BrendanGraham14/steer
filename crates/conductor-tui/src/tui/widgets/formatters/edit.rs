@@ -36,7 +36,7 @@ impl EditFormatter {
             for line in params.new_string.lines() {
                 for wrapped_line in textwrap::wrap(line, wrap_width) {
                     lines.push(Line::from(Span::styled(
-                        format!("+ {}", wrapped_line),
+                        format!("+ {wrapped_line}"),
                         styles::TOOL_SUCCESS,
                     )));
                 }
@@ -76,7 +76,7 @@ impl EditFormatter {
                         } else {
                             for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
                                 lines.push(Line::from(Span::styled(
-                                    format!("{} {}", sign, wrapped_line),
+                                    format!("{sign} {wrapped_line}"),
                                     style,
                                 )));
                             }
@@ -174,15 +174,15 @@ impl ToolFormatter for EditFormatter {
         };
 
         let info = if result.is_some() {
-            format!("{} lines changed", line_change)
+            format!("{line_change} lines changed")
         } else {
-            format!("{} lines", line_change)
+            format!("{line_change} lines")
         };
 
         lines.push(Line::from(vec![
-            Span::styled(format!("{} ", action), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("{} ", file_path), Style::default()),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("{action} "), Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{file_path} "), Style::default()),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -212,7 +212,7 @@ impl ToolFormatter for EditFormatter {
         if let Some(ToolResult::Error(error)) = result {
             lines.push(separator_line(wrap_width, styles::DIM_TEXT));
             lines.push(Line::from(Span::styled(
-                format!("Error: {}", error),
+                format!("Error: {error}"),
                 styles::ERROR_TEXT,
             )));
         }

@@ -132,7 +132,9 @@ pub mod test_servers {
     }
 
     /// Start an HTTP streamable server for testing
-    pub async fn start_http_server(bind_addr: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn start_http_server(
+        bind_addr: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let service = StreamableHttpService::new(
             || Ok(TestMcpService::new()),
             LocalSessionManager::default().into(),

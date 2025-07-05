@@ -57,7 +57,7 @@ impl OneShotRunner {
         // 1. Resume or activate the session if not already active
         let app_config = AppConfig {
             llm_config: LlmConfig::from_env()
-                .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {}", e)))?,
+                .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {e}")))?,
         };
 
         let command_tx = session_manager
@@ -75,8 +75,7 @@ impl OneShotRunner {
             .await
             .map_err(|e| {
                 Error::InvalidOperation(format!(
-                    "Failed to send message to session {}: {}",
-                    session_id, e
+                    "Failed to send message to session {session_id}: {e}"
                 ))
             })?;
 
@@ -154,7 +153,7 @@ impl OneShotRunner {
 
         let app_config = AppConfig {
             llm_config: LlmConfig::from_env()
-                .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {}", e)))?,
+                .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {e}")))?,
         };
 
         let (session_id, _command_tx) = session_manager
@@ -276,8 +275,7 @@ impl OneShotRunner {
                 AppEvent::Error { message } => {
                     error!(session_id = %session_id, error = %message, "Error event");
                     return Err(Error::InvalidOperation(format!(
-                        "Error during processing: {}",
-                        message
+                        "Error during processing: {message}"
                     )));
                 }
 
@@ -409,8 +407,7 @@ mod tests {
                 // For "What is 2 + 2?", we expect the answer to contain "4"
                 assert!(
                     content.contains("4"),
-                    "Expected response to contain '4', got: {}",
-                    content
+                    "Expected response to contain '4', got: {content}"
                 );
             } else {
                 panic!("No text content found in assistant message");
@@ -510,8 +507,7 @@ mod tests {
                         // The answer should mention Paris
                         assert!(
                             content.to_lowercase().contains("paris"),
-                            "Expected response to contain 'Paris', got: {}",
-                            content
+                            "Expected response to contain 'Paris', got: {content}"
                         );
                     } else {
                         panic!("Expected text response");
@@ -546,13 +542,12 @@ mod tests {
             }
             Err(e) => {
                 // If no API key is configured, this is expected
-                println!("Session run failed (expected if no API key): {}", e);
+                println!("Session run failed (expected if no API key): {e}");
                 assert!(
                     e.to_string().contains("API key")
                         || e.to_string().contains("authentication")
                         || e.to_string().contains("timed out"),
-                    "Unexpected error: {}",
-                    e
+                    "Unexpected error: {e}"
                 );
             }
         }
@@ -976,8 +971,7 @@ mod tests {
                 // If it doesn't remember perfectly, it should at least acknowledge the user
                 assert!(
                     content_lower.contains("alice") || content_lower.contains("name"),
-                    "Expected response to reference the name or context, got: {}",
-                    content
+                    "Expected response to reference the name or context, got: {content}"
                 );
             } else {
                 panic!("Expected text response in assistant message");

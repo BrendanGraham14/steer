@@ -39,7 +39,7 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
     // Wait for the server to be ready and get its address
     let addr = rx
         .await
-        .map_err(|e| GrpcError::ChannelError(format!("Failed to receive server address: {}", e)))?;
+        .map_err(|e| GrpcError::ChannelError(format!("Failed to receive server address: {e}")))?;
 
     // Note: The server task handle is not awaited here as it runs for the lifetime
     // of the application. Proper shutdown should be handled by the caller if needed.
@@ -47,7 +47,7 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
 
     // Use tonic::transport::Endpoint for proper URI parsing
     let endpoint =
-        tonic::transport::Endpoint::try_from(format!("http://{}", addr))?.tcp_nodelay(true);
+        tonic::transport::Endpoint::try_from(format!("http://{addr}"))?.tcp_nodelay(true);
     let channel = endpoint.connect().await?;
 
     Ok(channel)

@@ -29,9 +29,9 @@ pub struct RemoteWorkspace {
 impl RemoteWorkspace {
     pub async fn new(address: String, auth: Option<RemoteAuth>) -> Result<Self> {
         // Create gRPC client
-        let client = RemoteWorkspaceServiceClient::connect(format!("http://{}", address))
+        let client = RemoteWorkspaceServiceClient::connect(format!("http://{address}"))
             .await
-            .map_err(|e| Error::Transport(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| Error::Transport(format!("Failed to connect: {e}")))?;
 
         // Create remote tool backend
         let tool_backend = Arc::new(
@@ -46,7 +46,7 @@ impl RemoteWorkspace {
         );
 
         let metadata = WorkspaceMetadata {
-            id: format!("remote:{}", address),
+            id: format!("remote:{address}"),
             workspace_type: WorkspaceType::Remote,
             location: address.clone(),
         };
@@ -72,7 +72,7 @@ impl RemoteWorkspace {
         let response = client
             .get_environment_info(request)
             .await
-            .map_err(|e| Error::Status(format!("Failed to get environment info: {}", e)))?;
+            .map_err(|e| Error::Status(format!("Failed to get environment info: {e}")))?;
         let env_response = response.into_inner();
 
         Self::convert_environment_response(env_response)
@@ -130,7 +130,7 @@ impl Workspace for RemoteWorkspace {
             .execute(tool_call, &ctx)
             .await
             .map_err(|e| {
-                WorkspaceError::ToolExecution(format!("Tool execution failed: {}", e)).into()
+                WorkspaceError::ToolExecution(format!("Tool execution failed: {e}")).into()
             })
     }
 
@@ -143,8 +143,7 @@ impl Workspace for RemoteWorkspace {
             .requires_approval(tool_name)
             .await
             .map_err(|e| {
-                WorkspaceError::ToolExecution(format!("Failed to check tool approval: {}", e))
-                    .into()
+                WorkspaceError::ToolExecution(format!("Failed to check tool approval: {e}")).into()
             })
     }
 
@@ -172,7 +171,7 @@ impl Workspace for RemoteWorkspace {
         let mut stream = client
             .list_files(request)
             .await
-            .map_err(|e| Error::Status(format!("Failed to list files: {}", e)))?
+            .map_err(|e| Error::Status(format!("Failed to list files: {e}")))?
             .into_inner();
         let mut all_files = Vec::new();
 
@@ -180,7 +179,7 @@ impl Workspace for RemoteWorkspace {
         while let Some(response) = stream
             .message()
             .await
-            .map_err(|e| Error::Status(format!("Stream error: {}", e)))?
+            .map_err(|e| Error::Status(format!("Stream error: {e}")))?
         {
             all_files.extend(response.paths);
         }
@@ -199,7 +198,7 @@ mod tests {
 
         // This test will fail if no remote backend is running, but we can test metadata creation
         let metadata = WorkspaceMetadata {
-            id: format!("remote:{}", address),
+            id: format!("remote:{address}"),
             workspace_type: WorkspaceType::Remote,
             location: address.clone(),
         };

@@ -67,7 +67,7 @@ async fn test_tool_executor() -> Result<()> {
     let formatted = output.llm_format();
     assert!(!formatted.is_empty(), "Tool output should not be empty");
 
-    println!("Tool result: {}", formatted);
+    println!("Tool result: {formatted}");
     println!("Tool executor test passed successfully!");
     Ok(())
 }

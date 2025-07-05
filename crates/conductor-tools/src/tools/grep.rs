@@ -70,7 +70,7 @@ tool! {
 
         match result {
             Ok(search_result) => search_result.map_err(|e| ToolError::execution(GREP_TOOL_NAME, e)),
-            Err(e) => Err(ToolError::execution(GREP_TOOL_NAME, format!("Task join error: {}", e))),
+            Err(e) => Err(ToolError::execution(GREP_TOOL_NAME, format!("Task join error: {e}"))),
         }
     }
 }
@@ -97,7 +97,7 @@ fn grep_search_internal(
             RegexMatcherBuilder::new()
                 .line_terminator(Some(b'\n'))
                 .build(&escaped)
-                .map_err(|e| format!("Failed to create matcher: {}", e))?
+                .map_err(|e| format!("Failed to create matcher: {e}"))?
         }
     };
 
@@ -115,7 +115,7 @@ fn grep_search_internal(
     walker.git_exclude(true); // Respect .git/info/exclude
 
     let include_pattern = include
-        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid glob pattern: {}", e)))
+        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid glob pattern: {e}")))
         .transpose()?;
 
     let mut all_matches = Vec::new();

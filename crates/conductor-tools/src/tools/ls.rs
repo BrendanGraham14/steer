@@ -136,7 +136,7 @@ fn list_directory_internal(
             }
             Err(e) => {
                 // Log errors but don't include in the output
-                eprintln!("Error accessing entry: {}", e);
+                eprintln!("Error accessing entry: {e}");
             }
         }
     }

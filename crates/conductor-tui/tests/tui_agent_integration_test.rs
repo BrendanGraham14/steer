@@ -118,7 +118,7 @@ async fn test_tui_agent_service_file_listing() -> Result<()> {
     info!("Started gRPC server at: {}", bind_addr);
 
     // Create gRPC client
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))?
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))?
         .connect()
         .await?;
     let mut grpc_client = AgentServiceClient::new(channel.clone());
@@ -166,8 +166,7 @@ async fn test_tui_agent_service_file_listing() -> Result<()> {
     );
     assert!(
         all_files.iter().any(|f| f.ends_with("main.rs")),
-        "Should have main.rs in: {:?}",
-        all_files
+        "Should have main.rs in: {all_files:?}"
     );
     assert!(
         all_files.iter().any(|f| f.ends_with("lib.rs")),
@@ -207,21 +206,18 @@ async fn test_tui_agent_service_file_listing() -> Result<()> {
     );
     assert!(
         filtered_files.iter().all(|f| f.contains("main")),
-        "All results should contain 'main': {:?}",
-        filtered_files
+        "All results should contain 'main': {filtered_files:?}"
     );
 
     // Test 4: Verify file paths are relative to workspace
     for file in &all_files {
         assert!(
             !file.starts_with('/'),
-            "File paths should be relative, got: {}",
-            file
+            "File paths should be relative, got: {file}"
         );
         assert!(
             !file.contains(&workspace_path.to_string_lossy().to_string()),
-            "File paths should not contain absolute workspace path: {}",
-            file
+            "File paths should not contain absolute workspace path: {file}"
         );
     }
 
@@ -255,7 +251,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() -> Result<()> {
     service_host.start().await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))?
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))?
         .connect()
         .await?;
 
@@ -358,7 +354,7 @@ async fn test_workspace_changed_event_flow() -> Result<()> {
     service_host.start().await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))?
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))?
         .connect()
         .await?;
 
@@ -412,7 +408,7 @@ async fn test_workspace_changed_event_flow() -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Stream error: {}", e);
+                    eprintln!("Stream error: {e}");
                     break;
                 }
             }

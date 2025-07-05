@@ -154,8 +154,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
             assert_eq!(id, tool_call_id_1);
         }
         _ => panic!(
-            "Unexpected event received instead of RequestToolApproval for call 1: {:?}",
-            event1
+            "Unexpected event received instead of RequestToolApproval for call 1: {event1:?}"
         ),
     }
 
@@ -186,8 +185,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
                 } => {
                     if unexpected_id == &tool_call_id_2 {
                         panic!(
-                            "Received RequestToolApproval for tool_call_id_2 prematurely: {:?}",
-                            unexpected_event
+                            "Received RequestToolApproval for tool_call_id_2 prematurely: {unexpected_event:?}"
                         );
                     }
                 }
@@ -240,8 +238,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
                 // Ignore workspace-related events
             }
             AppEvent::RequestToolApproval { .. } => panic!(
-                "Unexpected third AppEvent::RequestToolApproval received after 'always' approval and cascade: {:?}",
-                event
+                "Unexpected third AppEvent::RequestToolApproval received after 'always' approval and cascade: {event:?}"
             ),
             _ => { /* Other events are fine */ }
         },
@@ -252,7 +249,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     command_tx_to_actor.send(AppCommand::Shutdown).await?;
     match timeout(Duration::from_secs(1), actor_handle).await {
         Ok(Ok(_)) => { /* Actor shut down cleanly */ }
-        Ok(Err(e)) => return Err(format!("Actor task panicked: {:?}", e).into()),
+        Ok(Err(e)) => return Err(format!("Actor task panicked: {e:?}").into()),
         Err(_) => warn!("Timeout waiting for actor to shut down."),
     }
 

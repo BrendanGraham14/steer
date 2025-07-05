@@ -164,10 +164,7 @@ impl ServiceHost {
         if let Some(server_handle) = &mut self.server_handle {
             match server_handle.await {
                 Ok(result) => result,
-                Err(e) => Err(GrpcError::StreamError(format!(
-                    "Server task panicked: {}",
-                    e
-                ))),
+                Err(e) => Err(GrpcError::StreamError(format!("Server task panicked: {e}"))),
             }
         } else {
             Err(GrpcError::InvalidSessionState {
@@ -186,7 +183,7 @@ async fn create_session_store(db_path: &std::path::Path) -> Result<Arc<dyn Sessi
     create_session_store_with_config(config)
         .await
         .map_err(|e| GrpcError::InvalidSessionState {
-            reason: format!("Failed to create session store: {}", e),
+            reason: format!("Failed to create session store: {e}"),
         })
 }
 

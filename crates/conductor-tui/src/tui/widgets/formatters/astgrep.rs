@@ -43,8 +43,8 @@ impl ToolFormatter for AstGrepFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("pattern='{}' ", params.pattern), Style::default()),
-            Span::styled(format!("path={} ", path_display), styles::DIM_TEXT),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("path={path_display} "), styles::DIM_TEXT),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -76,25 +76,25 @@ impl ToolFormatter for AstGrepFormatter {
 
         if let Some(lang) = &params.lang {
             lines.push(Line::from(Span::styled(
-                format!("  Lang: {}", lang),
+                format!("  Lang: {lang}"),
                 Style::default(),
             )));
         }
         if let Some(path) = &params.path {
             lines.push(Line::from(Span::styled(
-                format!("  Path: {}", path),
+                format!("  Path: {path}"),
                 Style::default(),
             )));
         }
         if let Some(include) = &params.include {
             lines.push(Line::from(Span::styled(
-                format!("  Include: {}", include),
+                format!("  Include: {include}"),
                 Style::default(),
             )));
         }
         if let Some(exclude) = &params.exclude {
             lines.push(Line::from(Span::styled(
-                format!("  Exclude: {}", exclude),
+                format!("  Exclude: {exclude}"),
                 Style::default(),
             )));
         }

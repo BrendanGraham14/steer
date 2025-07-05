@@ -43,7 +43,7 @@ impl ToolFormatter for BashFormatter {
                     .and_then(|s| s.parse::<i32>().ok())
                 {
                     spans.push(Span::styled(
-                        format!(" (exit {})", exit_code),
+                        format!(" (exit {exit_code})"),
                         styles::ERROR_TEXT,
                     ));
                 }
@@ -81,7 +81,7 @@ impl ToolFormatter for BashFormatter {
                     .and_then(|s| s.parse::<i32>().ok())
                 {
                     lines.push(Line::from(Span::styled(
-                        format!("(exit {})", exit_code),
+                        format!("(exit {exit_code})"),
                         styles::ERROR_TEXT,
                     )));
                 }
@@ -118,7 +118,7 @@ impl ToolFormatter for BashFormatter {
 
         if let Some(timeout) = params.timeout {
             lines.push(Line::from(Span::styled(
-                format!("Timeout: {}ms", timeout),
+                format!("Timeout: {timeout}ms"),
                 styles::DIM_TEXT,
             )));
         }

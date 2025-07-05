@@ -60,7 +60,7 @@ Usage notes:
 
         // --- Setup AgentExecutor dependencies ---
         let llm_config = LlmConfig::from_env()
-             .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to load LLM config: {}", e)))?;
+             .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to load LLM config: {e}")))?;
         let api_client = Arc::new(ApiClient::new(&llm_config)); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
@@ -96,7 +96,7 @@ Usage notes:
         }];
 
         let system_prompt = create_dispatch_agent_system_prompt()
-            .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to create system prompt: {}", e)))?;
+            .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to create system prompt: {e}")))?;
 
         // Use a channel to receive events, though we might just aggregate the final result here.
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);

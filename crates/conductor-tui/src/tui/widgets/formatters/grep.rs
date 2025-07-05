@@ -30,7 +30,7 @@ impl ToolFormatter for GrepFormatter {
         let include_display = params
             .include
             .as_deref()
-            .map(|i| format!(" ({})", i))
+            .map(|i| format!(" ({i})"))
             .unwrap_or_default();
 
         let info = match result {
@@ -58,10 +58,10 @@ impl ToolFormatter for GrepFormatter {
         lines.push(Line::from(vec![
             Span::styled(format!("pattern='{}' ", params.pattern), Style::default()),
             Span::styled(
-                format!("path={}{} ", path_display, include_display),
+                format!("path={path_display}{include_display} "),
                 styles::DIM_TEXT,
             ),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -89,13 +89,13 @@ impl ToolFormatter for GrepFormatter {
 
         let path_display = params.path.as_deref().unwrap_or("current directory");
         lines.push(Line::from(Span::styled(
-            format!("Path: {}", path_display),
+            format!("Path: {path_display}"),
             Style::default(),
         )));
 
         if let Some(include) = &params.include {
             lines.push(Line::from(Span::styled(
-                format!("  Include: {}", include),
+                format!("  Include: {include}"),
                 Style::default(),
             )));
         }

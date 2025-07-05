@@ -89,7 +89,7 @@ Automatically respects .gitignore files"#,
 
         match result {
             Ok(search_result) => search_result.map_err(|e| ToolError::execution(AST_GREP_TOOL_NAME, e)),
-            Err(e) => Err(ToolError::execution(AST_GREP_TOOL_NAME, format!("Task join error: {}", e))),
+            Err(e) => Err(ToolError::execution(AST_GREP_TOOL_NAME, format!("Task join error: {e}"))),
         }
     }
 }
@@ -114,11 +114,11 @@ fn astgrep_search_internal(
     walker.git_exclude(true); // Respect .git/info/exclude
 
     let include_pattern = include
-        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid include glob pattern: {}", e)))
+        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid include glob pattern: {e}")))
         .transpose()?;
 
     let exclude_pattern = exclude
-        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid exclude glob pattern: {}", e)))
+        .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid exclude glob pattern: {e}")))
         .transpose()?;
 
     let mut all_matches = Vec::new();
@@ -198,7 +198,7 @@ fn astgrep_search_internal(
         // Create pattern matcher
         let pattern_matcher = match Pattern::try_new(pattern, language) {
             Ok(p) => p,
-            Err(e) => return Err(format!("Invalid pattern: {}", e)),
+            Err(e) => return Err(format!("Invalid pattern: {e}")),
         };
 
         // Find all matches in the file

@@ -14,7 +14,7 @@ impl Tui {
                         let new_model = self.models[selected];
                         self.current_model = new_model;
                         // Send model change as a slash command
-                        let command = format!("/model {}", new_model);
+                        let command = format!("/model {new_model}");
                         self.handle_slash_command(command).await?;
                     }
                 }

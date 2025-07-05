@@ -83,7 +83,7 @@ impl McpBackend {
         let client = match &transport {
             McpTransport::Stdio { command, args } => {
                 let (transport, stderr) =
-                    TokioChildProcess::builder(Command::new(&command).configure(|cmd| {
+                    TokioChildProcess::builder(Command::new(command).configure(|cmd| {
                         cmd.args(args);
                     }))
                     .stderr(Stdio::piped())
@@ -92,7 +92,7 @@ impl McpBackend {
                         error!("Failed to create MCP process: {}", e);
                         ToolError::mcp_connection_failed(
                             &server_name,
-                            format!("Failed to create MCP process: {}", e),
+                            format!("Failed to create MCP process: {e}"),
                         )
                     })?;
 
@@ -122,7 +122,7 @@ impl McpBackend {
                     error!("Failed to serve MCP: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to serve MCP: {}", e),
+                        format!("Failed to serve MCP: {e}"),
                     )
                 })?
             }
@@ -133,7 +133,7 @@ impl McpBackend {
                         error!("Failed to connect to TCP MCP server: {}", e);
                         ToolError::mcp_connection_failed(
                             &server_name,
-                            format!("Failed to connect to {}:{} - {}", host, port, e),
+                            format!("Failed to connect to {host}:{port} - {e}"),
                         )
                     })?;
 
@@ -141,7 +141,7 @@ impl McpBackend {
                     error!("Failed to serve MCP over TCP: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to serve MCP over TCP: {}", e),
+                        format!("Failed to serve MCP over TCP: {e}"),
                     )
                 })?
             }
@@ -151,7 +151,7 @@ impl McpBackend {
                     error!("Failed to connect to Unix socket MCP server: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to connect to Unix socket {} - {}", path, e),
+                        format!("Failed to connect to Unix socket {path} - {e}"),
                     )
                 })?;
 
@@ -159,7 +159,7 @@ impl McpBackend {
                     error!("Failed to serve MCP over Unix socket: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to serve MCP over Unix socket: {}", e),
+                        format!("Failed to serve MCP over Unix socket: {e}"),
                     )
                 })?
             }
@@ -175,7 +175,7 @@ impl McpBackend {
                     error!("Failed to start SSE transport: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to start SSE transport: {}", e),
+                        format!("Failed to start SSE transport: {e}"),
                     )
                 })?;
 
@@ -183,7 +183,7 @@ impl McpBackend {
                     error!("Failed to serve MCP over SSE: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to serve MCP over SSE: {}", e),
+                        format!("Failed to serve MCP over SSE: {e}"),
                     )
                 })?
             }
@@ -201,7 +201,7 @@ impl McpBackend {
                     error!("Failed to serve MCP over HTTP: {}", e);
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to serve MCP over HTTP: {}", e),
+                        format!("Failed to serve MCP over HTTP: {e}"),
                     )
                 })?
             }
@@ -225,7 +225,7 @@ impl McpBackend {
                 .map_err(|e| {
                     ToolError::mcp_connection_failed(
                         &server_name,
-                        format!("Failed to list tools: {}", e),
+                        format!("Failed to list tools: {e}"),
                     )
                 })?;
 
@@ -351,7 +351,7 @@ impl ToolBackend for McpBackend {
             })
             .await
             .map_err(|e| {
-                ToolError::execution(&tool_call.name, format!("Tool execution failed: {}", e))
+                ToolError::execution(&tool_call.name, format!("Tool execution failed: {e}"))
             })?;
 
         // Convert result to string

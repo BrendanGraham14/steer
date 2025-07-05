@@ -26,7 +26,7 @@ impl LocalAdapter {
 impl AppCommandSink for LocalAdapter {
     async fn send_command(&self, command: AppCommand) -> Result<()> {
         self.command_tx.send(command).await.map_err(|e| {
-            crate::error::Error::InvalidOperation(format!("Failed to send command: {}", e))
+            crate::error::Error::InvalidOperation(format!("Failed to send command: {e}"))
         })
     }
 }
