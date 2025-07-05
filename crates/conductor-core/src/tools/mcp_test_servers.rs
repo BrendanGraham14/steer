@@ -104,7 +104,7 @@ pub mod test_servers {
     /// Start an SSE server for testing
     pub async fn start_sse_server(
         bind_addr: String,
-    ) -> Result<tokio_util::sync::CancellationToken, anyhow::Error> {
+    ) -> Result<tokio_util::sync::CancellationToken, Box<dyn std::error::Error + Send + Sync>> {
         let config = SseServerConfig {
             bind: bind_addr.parse()?,
             sse_path: "/sse".to_string(),
@@ -132,7 +132,7 @@ pub mod test_servers {
     }
 
     /// Start an HTTP streamable server for testing
-    pub async fn start_http_server(bind_addr: String) -> Result<(), anyhow::Error> {
+    pub async fn start_http_server(bind_addr: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let service = StreamableHttpService::new(
             || Ok(TestMcpService::new()),
             LocalSessionManager::default().into(),
