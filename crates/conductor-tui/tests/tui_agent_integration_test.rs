@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
+use anyhow::Result;
 use conductor_core::session::SessionManagerConfig;
 use conductor_grpc::{ServiceHost, ServiceHostConfig};
 use conductor_proto::agent::{
     CreateSessionRequest, ListFilesRequest, SendMessageRequest, SubscribeRequest, WorkspaceConfig,
     agent_service_client::AgentServiceClient, client_message,
 };
-use conductor_tui::error::Result;
 use tempfile::TempDir;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
@@ -14,7 +14,7 @@ use tracing::{debug, info};
 
 /// Create a test workspace with some files
 async fn setup_test_workspace() -> Result<(TempDir, PathBuf)> {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let workspace_path = temp_dir.path().to_path_buf();
 
     // Create some test files
@@ -31,15 +31,13 @@ version = "0.1.0"
 edition = "2024"
 "#,
     )
-    .await
-    .unwrap();
+    .await?;
 
     tokio::fs::write(
         workspace_path.join("README.md"),
         "# Test Project\n\nThis is a test project for fuzzy finder testing.\n",
     )
-    .await
-    .unwrap();
+    .await?;
 
     tokio::fs::write(
         workspace_path.join("src/main.rs"),
@@ -48,8 +46,7 @@ edition = "2024"
 }
 "#,
     )
-    .await
-    .unwrap();
+    .await?;
 
     tokio::fs::write(
         workspace_path.join("src/lib.rs"),
@@ -87,20 +84,20 @@ fn test_something() {
 }
 
 #[tokio::test]
-async fn test_tui_agent_service_file_listing() {
+async fn test_tui_agent_service_file_listing() -> Result<()> {
     // Initialize logging
     let _ = tracing_subscriber::fmt::try_init();
 
     // Setup test workspace
-    let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
+    let (_temp_dir, workspace_path) = setup_test_workspace().await?;
     info!("Created test workspace at: {:?}", workspace_path);
 
     // Change to the test directory so LocalWorkspace uses it
-    std::env::set_current_dir(&workspace_path).unwrap();
+    std::env::set_current_dir(&workspace_path)?;
 
     // Create ServiceHost configuration with explicit port
     let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50051".parse().unwrap(); // Use fixed port for testing
+    let bind_addr = "127.0.0.1:50051".parse()?; // Use fixed port for testing
     let config = ServiceHostConfig {
         db_path,
         session_manager_config: SessionManagerConfig {
@@ -112,8 +109,8 @@ async fn test_tui_agent_service_file_listing() {
     };
 
     // Start the service host
-    let mut service_host = ServiceHost::new(config).await.unwrap();
-    service_host.start().await.unwrap();
+    let mut service_host = ServiceHost::new(config).await?;
+    service_host.start().await?;
 
     // Wait a bit for server to be ready
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -121,11 +118,9 @@ async fn test_tui_agent_service_file_listing() {
     info!("Started gRPC server at: {}", bind_addr);
 
     // Create gRPC client
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))
-        .unwrap()
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))?
         .connect()
-        .await
-        .unwrap();
+        .await?;
     let mut grpc_client = AgentServiceClient::new(channel.clone());
 
     // Test 1: Create a session with local workspace
@@ -141,7 +136,7 @@ async fn test_tui_agent_service_file_listing() {
         ..Default::default()
     };
 
-    let create_resp = grpc_client.create_session(create_req).await.unwrap();
+    let create_resp = grpc_client.create_session(create_req).await?;
     let session_info = create_resp.into_inner();
     let session_id = session_info.id.clone();
     info!("Created session: {}", session_id);
@@ -153,14 +148,10 @@ async fn test_tui_agent_service_file_listing() {
         max_results: 0,       // 0 means no limit
     };
 
-    let mut file_stream = grpc_client
-        .list_files(list_files_req)
-        .await
-        .unwrap()
-        .into_inner();
+    let mut file_stream = grpc_client.list_files(list_files_req).await?.into_inner();
     let mut all_files = Vec::new();
 
-    while let Some(response) = file_stream.message().await.unwrap() {
+    while let Some(response) = file_stream.message().await? {
         debug!("Received {} files in chunk", response.paths.len());
         all_files.extend(response.paths);
     }
@@ -201,14 +192,10 @@ async fn test_tui_agent_service_file_listing() {
         max_results: 10,
     };
 
-    let mut file_stream = grpc_client
-        .list_files(list_files_req)
-        .await
-        .unwrap()
-        .into_inner();
+    let mut file_stream = grpc_client.list_files(list_files_req).await?.into_inner();
     let mut filtered_files = Vec::new();
 
-    while let Some(response) = file_stream.message().await.unwrap() {
+    while let Some(response) = file_stream.message().await? {
         filtered_files.extend(response.paths);
     }
 
@@ -235,20 +222,21 @@ async fn test_tui_agent_service_file_listing() {
     }
 
     // Cleanup
-    service_host.shutdown().await.unwrap();
+    service_host.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_tui_fuzzy_finder_with_grpc_events() {
+async fn test_tui_fuzzy_finder_with_grpc_events() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Setup
-    let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
-    std::env::set_current_dir(&workspace_path).unwrap();
+    let (_temp_dir, workspace_path) = setup_test_workspace().await?;
+    std::env::set_current_dir(&workspace_path)?;
 
     // Start service
     let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50052".parse().unwrap(); // Use different port for each test
+    let bind_addr = "127.0.0.1:50052".parse()?; // Use different port for each test
     let config = ServiceHostConfig {
         db_path,
         session_manager_config: SessionManagerConfig {
@@ -259,13 +247,14 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
         bind_addr,
     };
 
-    let mut service_host = ServiceHost::new(config).await.unwrap();
-    service_host.start().await.unwrap();
+    let mut service_host = ServiceHost::new(config).await?;
+    service_host.start().await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))
-        .await
-        .unwrap();
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))?
+        .connect()
+        .await?;
+
     // Create session
     let mut grpc_client = AgentServiceClient::new(channel.clone());
     let create_req = CreateSessionRequest {
@@ -279,8 +268,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
 
     let session_id = grpc_client
         .create_session(create_req)
-        .await
-        .unwrap()
+        .await?
         .into_inner()
         .id;
 
@@ -291,10 +279,10 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
         max_results: 100,
     };
 
-    let mut file_stream = grpc_client.list_files(list_req).await.unwrap().into_inner();
+    let mut file_stream = grpc_client.list_files(list_req).await?.into_inner();
     let mut files = Vec::new();
 
-    while let Some(response) = file_stream.message().await.unwrap() {
+    while let Some(response) = file_stream.message().await? {
         files.extend(response.paths);
     }
 
@@ -337,20 +325,21 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     let all_files: Vec<String> = files.iter().take(20).cloned().collect(); // Limit to 20 like TUI does
     assert!(!all_files.is_empty(), "Should return files for empty query");
 
-    service_host.shutdown().await.unwrap();
+    service_host.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_workspace_changed_event_flow() {
+async fn test_workspace_changed_event_flow() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Setup
-    let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
-    std::env::set_current_dir(&workspace_path).unwrap();
+    let (_temp_dir, workspace_path) = setup_test_workspace().await?;
+    std::env::set_current_dir(&workspace_path)?;
 
     // Start service
     let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50053".parse().unwrap(); // Use different port for each test
+    let bind_addr = "127.0.0.1:50053".parse()?; // Use different port for each test
     let config = ServiceHostConfig {
         db_path,
         session_manager_config: SessionManagerConfig {
@@ -361,15 +350,13 @@ async fn test_workspace_changed_event_flow() {
         bind_addr,
     };
 
-    let mut service_host = ServiceHost::new(config).await.unwrap();
-    service_host.start().await.unwrap();
+    let mut service_host = ServiceHost::new(config).await?;
+    service_host.start().await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))
-        .unwrap()
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))?
         .connect()
-        .await
-        .unwrap();
+        .await?;
 
     // Create session
     let mut grpc_client = AgentServiceClient::new(channel.clone());
@@ -384,8 +371,7 @@ async fn test_workspace_changed_event_flow() {
 
     let session_id = grpc_client
         .create_session(create_req)
-        .await
-        .unwrap()
+        .await?
         .into_inner()
         .id;
 
@@ -405,7 +391,7 @@ async fn test_workspace_changed_event_flow() {
 
     // Create a bidirectional stream
     let outbound = tokio_stream::iter(vec![msg]);
-    let response = grpc_client.stream_session(outbound).await.unwrap();
+    let response = grpc_client.stream_session(outbound).await?;
     let mut inbound = response.into_inner();
 
     // Spawn task to collect events
@@ -449,5 +435,6 @@ async fn test_workspace_changed_event_flow() {
     // Cancel the event collector
     event_collector.abort();
 
-    service_host.shutdown().await.unwrap();
+    service_host.shutdown().await?;
+    Ok(())
 }

@@ -964,6 +964,7 @@ dependencies = [
 name = "conductor-tui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "clap",
@@ -972,7 +973,6 @@ dependencies = [
  "conductor-proto",
  "conductor-tools",
  "fuzzy-matcher",
- "http 1.3.1",
  "lazy_static",
  "notify-rust",
  "once_cell",
@@ -983,7 +983,6 @@ dependencies = [
  "similar",
  "tempfile",
  "textwrap",
- "thiserror 2.0.12",
  "time",
  "tokio",
  "tokio-stream",

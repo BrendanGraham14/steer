@@ -1,4 +1,3 @@
-pub mod error;
 pub mod notifications;
 pub mod tui;
 
