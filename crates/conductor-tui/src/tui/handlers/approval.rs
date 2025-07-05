@@ -1,7 +1,7 @@
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
 use conductor_core::app::AppCommand;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent};
 
 impl Tui {
     pub async fn handle_approval_mode(&mut self, key: KeyEvent) -> Result<bool> {
