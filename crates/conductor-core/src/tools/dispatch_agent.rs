@@ -1,4 +1,5 @@
 use conductor_tools::{ToolCall, ToolSchema};
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -18,7 +19,8 @@ use conductor_macros::tool_external as tool;
 use conductor_tools::ToolError;
 use tokio_util::sync::CancellationToken;
 
-#[derive(Deserialize, Debug, Serialize, JsonSchema)]
+#[derive(Deserialize, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct DispatchAgentParams {
     /// The task for the agent to perform
     pub prompt: String,
