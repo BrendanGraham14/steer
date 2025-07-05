@@ -121,7 +121,7 @@ async fn test_tui_agent_service_file_listing() {
     info!("Started gRPC server at: {}", bind_addr);
 
     // Create gRPC client
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))
         .unwrap()
         .connect()
         .await
@@ -263,7 +263,9 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     service_host.start().await.unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))
+        .unwrap()
+        .connect()
         .await
         .unwrap();
     // Create session
@@ -292,7 +294,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     };
 
     let mut file_stream = grpc_client.list_files(list_req).await.unwrap().into_inner();
-    let mut files = Vec::new();
+    let mut files: Vec<String> = Vec::new();
 
     while let Some(response) = file_stream.message().await.unwrap() {
         files.extend(response.paths);
@@ -365,7 +367,7 @@ async fn test_workspace_changed_event_flow() {
     service_host.start().await.unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let channel = Channel::from_shared(format!("http://{}", bind_addr))
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))
         .unwrap()
         .connect()
         .await
