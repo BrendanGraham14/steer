@@ -1,6 +1,6 @@
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent};
 
 impl Tui {
     pub async fn handle_model_selection_mode(&mut self, key: KeyEvent) -> Result<bool> {

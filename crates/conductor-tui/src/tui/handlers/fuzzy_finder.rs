@@ -1,6 +1,6 @@
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
-use ratatui::crossterm::event::KeyEvent;
+use crossterm::event::KeyEvent;
 
 impl Tui {
     pub async fn handle_fuzzy_finder_mode(&mut self, key: KeyEvent) -> Result<bool> {

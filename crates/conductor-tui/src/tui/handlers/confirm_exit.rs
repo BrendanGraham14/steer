@@ -1,6 +1,6 @@
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl Tui {
     pub async fn handle_confirm_exit_mode(&mut self, key: KeyEvent) -> Result<bool> {

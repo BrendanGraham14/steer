@@ -1,7 +1,7 @@
 use crate::tui::{InputMode, Tui};
 use anyhow::Result;
 use conductor_core::app::AppCommand;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::info;
 use tui_textarea::Input;
 

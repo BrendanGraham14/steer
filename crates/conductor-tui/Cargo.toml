@@ -17,6 +17,7 @@ clap = { version = "4.4", features = ["derive", "env"] }
 # TUI dependencies
 ratatui = { version = "*", features = ["crossterm"] }
 tui-textarea = "*"
+crossterm = "*"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
