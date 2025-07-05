@@ -4,7 +4,6 @@
 
 use anyhow::Result;
 use notify_rust::Notification;
-use std::time::Duration;
 use tracing::debug;
 
 /// Type of notification sound to play
@@ -18,74 +17,61 @@ pub enum NotificationSound {
     Error,
 }
 
-/// Play a notification sound based on type
-pub fn play_notification_sound(sound_type: NotificationSound) {
-    // Spawn a thread to play sound without blocking
-    std::thread::spawn(move || {
-        match sound_type {
-            NotificationSound::ProcessingComplete => {
-                // Ascending pleasant tones
-                for freq in [300, 450, 600] {
-                    actually_beep::beep_with_hz_and_millis(freq, 40).unwrap_or_else(|e| {
-                        debug!("Failed to beep at {}Hz: {}", freq, e);
-                    });
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-            NotificationSound::ToolApproval => {
-                // Urgent double beep
-                for _ in 0..2 {
-                    actually_beep::beep_with_hz_and_millis(800, 50).unwrap_or_else(|e| {
-                        debug!("Failed to beep: {}", e);
-                    });
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-            NotificationSound::Error => {
-                // Descending tones
-                for freq in [600, 450, 300] {
-                    actually_beep::beep_with_hz_and_millis(freq, 40).unwrap_or_else(|e| {
-                        debug!("Failed to beep at {}Hz: {}", freq, e);
-                    });
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
-    });
-}
-
-/// Show a desktop notification
-pub fn show_notification(title: &str, message: &str) -> Result<()> {
+/// Get the appropriate system sound name for the notification type
+fn get_sound_name(sound_type: NotificationSound) -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        Notification::new()
-            .summary(title)
-            .body(message)
-            .appname("conductor")
-            .sound_name("default")
-            .show()?;
+        match sound_type {
+            NotificationSound::ProcessingComplete => "Glass", // Pleasant completion sound
+            NotificationSound::ToolApproval => "Ping",        // Attention-getting sound
+            NotificationSound::Error => "Basso",              // Error/failure sound
+        }
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        match sound_type {
+            NotificationSound::ProcessingComplete => "message-new-instant", // Completion sound
+            NotificationSound::ToolApproval => "dialog-warning",           // Warning/attention sound
+            NotificationSound::Error => "dialog-error",                    // Error sound
+        }
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        // Windows has limited notification sound options
+        match sound_type {
+            NotificationSound::ProcessingComplete => "default",
+            NotificationSound::ToolApproval => "default",
+            NotificationSound::Error => "default",
+        }
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        "default"
+    }
+}
+
+/// Show a desktop notification with optional sound
+pub fn show_notification_with_sound(title: &str, message: &str, sound_type: Option<NotificationSound>) -> Result<()> {
+    let mut notification = Notification::new();
+    notification
+        .summary(title)
+        .body(message)
+        .appname("conductor");
+
+    // Add sound if specified
+    if let Some(sound) = sound_type {
+        notification.sound_name(get_sound_name(sound));
     }
 
     #[cfg(target_os = "linux")]
     {
-        Notification::new()
-            .summary(title)
-            .body(message)
-            .appname("conductor")
-            .icon("terminal")
-            .timeout(5000)
-            .show()?;
+        notification.icon("terminal").timeout(5000);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        Notification::new()
-            .summary(title)
-            .body(message)
-            .appname("conductor")
-            .show()?;
-    }
-
+    notification.show()?;
     Ok(())
 }
 
@@ -121,12 +107,9 @@ impl NotificationConfig {
 
 /// Trigger notifications with specific sound
 pub fn notify_with_sound(config: &NotificationConfig, sound: NotificationSound, message: &str) {
-    if config.enable_sound {
-        play_notification_sound(sound);
-    }
-
     if config.enable_desktop_notification {
-        if let Err(e) = show_notification("Conductor", message) {
+        let sound_option = if config.enable_sound { Some(sound) } else { None };
+        if let Err(e) = show_notification_with_sound("Conductor", message, sound_option) {
             debug!("Failed to show desktop notification: {}", e);
         }
     }
@@ -139,12 +122,9 @@ pub fn notify_with_title_and_sound(
     title: &str,
     message: &str,
 ) {
-    if config.enable_sound {
-        play_notification_sound(sound);
-    }
-
     if config.enable_desktop_notification {
-        if let Err(e) = show_notification(title, message) {
+        let sound_option = if config.enable_sound { Some(sound) } else { None };
+        if let Err(e) = show_notification_with_sound(title, message, sound_option) {
             debug!("Failed to show desktop notification: {}", e);
         }
     }
