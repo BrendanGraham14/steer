@@ -912,7 +912,6 @@ dependencies = [
 name = "conductor-remote-workspace"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clap",
  "conductor-grpc",
  "conductor-tools",
