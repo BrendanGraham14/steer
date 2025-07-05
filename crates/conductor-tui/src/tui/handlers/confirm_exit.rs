@@ -1,5 +1,5 @@
-use crate::error::Result;
 use crate::tui::{InputMode, Tui};
+use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl Tui {

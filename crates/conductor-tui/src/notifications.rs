@@ -2,7 +2,7 @@
 //!
 //! Provides sound and desktop notifications when processing completes.
 
-use crate::error::Result;
+use anyhow::Result;
 use notify_rust::Notification;
 use tracing::debug;
 

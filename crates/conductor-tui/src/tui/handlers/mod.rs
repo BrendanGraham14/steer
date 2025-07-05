@@ -7,8 +7,8 @@ pub mod insert;
 pub mod model_selection;
 pub mod normal;
 
-use crate::error::Result;
 use crate::tui::{InputMode, Tui};
+use anyhow::Result;
 use ratatui::crossterm::event::KeyEvent;
 
 impl Tui {
