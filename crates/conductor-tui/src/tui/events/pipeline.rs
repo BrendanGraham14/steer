@@ -3,7 +3,7 @@
 //! The pipeline orchestrates multiple EventProcessors and runs them in priority order
 //! to handle AppEvents in a modular, composable way.
 
-use anyhow::Result;
+use crate::error::{Error, Result};
 use tracing::warn;
 
 use super::processor::{EventProcessor, ProcessingContext, ProcessingResult};
@@ -49,11 +49,11 @@ impl EventPipeline {
                 }
                 ProcessingResult::Failed(error) => {
                     warn!(target: "tui.pipeline", "Processor {} failed: {}", processor.name(), error);
-                    return Err(anyhow::anyhow!(
+                    return Err(Error::EventProcessing(format!(
                         "Event processing failed in {}: {}",
                         processor.name(),
                         error
-                    ));
+                    )));
                 }
             }
         }

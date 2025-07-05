@@ -6,7 +6,7 @@ use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use crate::error::{Error, Result};
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{AssistantContent, Message};
 use conductor_core::app::io::{AppCommandSink, AppEventSource};
@@ -306,12 +306,28 @@ impl Tui {
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let _input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
-                // Poll for a short duration to avoid blocking the task indefinitely
                 if event::poll(Duration::from_millis(50)).unwrap_or(false) {
-                    let read_result = event::read().map_err(anyhow::Error::from);
-                    if term_event_tx.send(read_result).await.is_err() {
-                        // Receiver dropped, exit task
-                        break;
+                    match event::read() {
+                        Ok(evt) => {
+                            if term_event_tx.send(Ok(evt)).await.is_err() {
+                                break; // Receiver dropped
+                            }
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                            // This is a non-fatal interrupted syscall, common on some
+                            // systems. We just ignore it and continue polling.
+                            debug!(target: "tui.input", "Ignoring interrupted syscall");
+                            continue;
+                        }
+                        Err(e) => {
+                            // A real I/O error occurred. Send it to the main loop
+                            // to handle, and then stop polling.
+                            warn!(target: "tui.input", "Input error: {}", e);
+                            if term_event_tx.send(Err(Error::from(e))).await.is_err() {
+                                break; // Receiver already dropped
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -352,34 +368,46 @@ impl Tui {
             };
 
             tokio::select! {
-                Some(event) = term_event_rx.recv() => {
-                    match event? {
-                        Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                            if self.handle_key_event(key_event).await? {
-                                should_exit = true;
+                Some(event_res) = term_event_rx.recv() => {
+                    match event_res {
+                        Ok(evt) => {
+                            match evt {
+                                Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                                    if self.handle_key_event(key_event).await? {
+                                        should_exit = true;
+                                    }
+                                    needs_redraw = true;
+                                }
+                                Event::Mouse(mouse_event) => {
+                                    if self.handle_mouse_event(mouse_event)? {
+                                        needs_redraw = true;
+                                    }
+                                }
+                                Event::Resize(width, height) => {
+                                    self.terminal_size = (width, height);
+                                    // Terminal was resized, force redraw
+                                    needs_redraw = true;
+                                }
+                                Event::Paste(data) => {
+                                    // Handle paste in modes that accept text input
+                                    if matches!(
+                                        self.input_mode,
+                                        InputMode::Insert | InputMode::BashCommand
+                                    ) {
+                                        let normalized_data =
+                                            data.replace("\r\n", "\n").replace('\r', "\n");
+                                        self.input_panel_state.insert_str(&normalized_data);
+                                        debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
+                                        needs_redraw = true;
+                                    }
+                                }
+                                _ => {}
                             }
-                            needs_redraw = true;
                         }
-                        Event::Mouse(mouse_event) => {
-                            if self.handle_mouse_event(mouse_event)? {
-                                needs_redraw = true;
-                            }
+                        Err(e) => {
+                            error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
+                            should_exit = true;
                         }
-                        Event::Resize(width, height) => {
-                            self.terminal_size = (width, height);
-                            // Terminal was resized, force redraw
-                            needs_redraw = true;
-                        }
-                        Event::Paste(data) => {
-                            // Handle paste in modes that accept text input
-                            if matches!(self.input_mode, InputMode::Insert | InputMode::BashCommand) {
-                                let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
-                                self.input_panel_state.insert_str(&normalized_data);
-                                debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
-                                needs_redraw = true;
-                            }
-                        }
-                        _ => {}
                     }
                 }
                 Some(app_event) = event_rx.recv() => {
@@ -930,7 +958,7 @@ pub async fn run_tui(
     model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     use conductor_core::app::io::{AppCommandSink, AppEventSource};
     use conductor_core::session::{SessionConfig, SessionToolConfig};
     use std::collections::HashMap;
