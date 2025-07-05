@@ -49,8 +49,8 @@ fmt:
 ci: fmt clippy test
 
 # Generate schema files
-schema:
-    cargo run -p conductor-cli --bin schema_generator --features schema
+schema-gen:
+    cargo run -p conductor-cli --bin schema-generator
 
 # Run specific test with all features
 test-specific test_name:

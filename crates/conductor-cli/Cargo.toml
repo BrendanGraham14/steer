@@ -41,7 +41,7 @@ similar = { version = "2.5.0", features = ["inline"] }
 thiserror = "1.0"
 dirs = "5.0"
 colored = "2.0"
-syntect = "5.1"                                    # Syntax highlighting
+syntect = "5.1"                                        # Syntax highlighting
 home = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 dotenv = "0.15.0"
@@ -102,7 +102,7 @@ tokio-stream = "0.1"
 gethostname = "0.5"
 tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 lazy_static = "1.5.0"
-conductor-core = { version = "0.1.0", path = "../conductor-core", features = ["schema"] }
+conductor-core = { version = "0.1.0", path = "../conductor-core" }
 conductor-grpc = { version = "0.1.0", path = "../conductor-grpc" }
 conductor-tui = { version = "0.1.0", path = "../conductor-tui", optional = true }
 toml = "0.8.23"
