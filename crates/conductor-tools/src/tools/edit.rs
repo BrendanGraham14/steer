@@ -63,8 +63,7 @@ async fn perform_edit_operations(
                 return Err(ToolError::execution(
                     tool_name_for_errors,
                     format!(
-                        "File {} does not exist and no operations provided to create it.",
-                        file_path_str
+                        "File {file_path_str} does not exist and no operations provided to create it."
                     ),
                 ));
             }
@@ -95,8 +94,7 @@ async fn perform_edit_operations(
                 return Err(ToolError::io(
                     tool_name_for_errors,
                     format!(
-                        "File {} not found, and the first/only operation's old_string is not empty (required for creation).",
-                        file_path_str
+                        "File {file_path_str} not found, and the first/only operation's old_string is not empty (required for creation)."
                     ),
                 ));
             }
@@ -105,7 +103,7 @@ async fn perform_edit_operations(
             // Other read error
             return Err(ToolError::io(
                 tool_name_for_errors,
-                format!("Failed to read file {}: {}", file_path_str, e),
+                format!("Failed to read file {file_path_str}: {e}"),
             ));
         }
     }

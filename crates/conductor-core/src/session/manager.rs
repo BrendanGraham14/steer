@@ -268,7 +268,7 @@ impl SessionManager {
         )
         .await
         .map_err(|e| SessionManagerError::CreationFailed {
-            message: format!("Failed to create managed session: {}", e),
+            message: format!("Failed to create managed session: {e}"),
         })?;
 
         // Get command sender before moving into sessions map
@@ -347,7 +347,7 @@ impl SessionManager {
                         .build_workspace()
                         .await
                         .map_err(|e| SessionManagerError::CreationFailed {
-                            message: format!("Failed to build workspace: {}", e),
+                            message: format!("Failed to build workspace: {e}"),
                         })?,
                 ));
             }
@@ -358,7 +358,7 @@ impl SessionManager {
             let session = session_info;
             Ok(Some(session.build_workspace().await.map_err(|e| {
                 SessionManagerError::CreationFailed {
-                    message: format!("Failed to build workspace: {}", e),
+                    message: format!("Failed to build workspace: {e}"),
                 }
             })?))
         } else {
@@ -428,7 +428,7 @@ impl SessionManager {
         )
         .await
         .map_err(|e| SessionManagerError::CreationFailed {
-            message: format!("Failed to create managed session: {}", e),
+            message: format!("Failed to create managed session: {e}"),
         })?;
 
         // Get command sender before restoration
@@ -853,7 +853,7 @@ async fn update_session_state_for_event(
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("Time went backwards")
                     .as_secs(),
-                id: format!("tool_result_{}", tool_call_id),
+                id: format!("tool_result_{tool_call_id}"),
                 thread_id,
                 parent_message_id: parent_id,
             };
@@ -888,7 +888,7 @@ async fn update_session_state_for_event(
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("Time went backwards")
                     .as_secs(),
-                id: format!("tool_result_{}", tool_call_id),
+                id: format!("tool_result_{tool_call_id}"),
                 thread_id,
                 parent_message_id: parent_id,
             };

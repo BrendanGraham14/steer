@@ -174,8 +174,7 @@ impl Client {
         let provider_kind = model.provider();
         let key = self.config.key_for(provider_kind).ok_or_else(|| {
             crate::error::Error::Api(ApiError::Configuration(format!(
-                "API key missing for {:?} needed by model {:?}",
-                provider_kind, model
+                "API key missing for {provider_kind:?} needed by model {model:?}"
             )))
         })?;
         let provider_instance: Arc<dyn Provider> = match provider_kind {

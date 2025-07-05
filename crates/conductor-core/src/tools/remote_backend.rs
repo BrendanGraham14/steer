@@ -56,7 +56,7 @@ impl Interceptor for AuthInterceptor {
             RemoteAuth::Bearer { token } => {
                 request.metadata_mut().insert(
                     "authorization",
-                    format!("Bearer {}", token)
+                    format!("Bearer {token}")
                         .parse()
                         .map_err(|_| Status::internal("Failed to parse authorization header"))?,
                 );
@@ -103,14 +103,14 @@ impl RemoteBackend {
     ) -> Result<Self, ToolError> {
         let endpoint = Endpoint::from_shared(agent_address.clone())
             .map_err(|e| {
-                ToolError::execution("RemoteBackend", format!("Invalid agent address: {}", e))
+                ToolError::execution("RemoteBackend", format!("Invalid agent address: {e}"))
             })?
             .timeout(timeout);
 
         let channel = endpoint.connect().await.map_err(|e| {
             ToolError::execution(
                 "RemoteBackend",
-                format!("Failed to connect to agent at {}: {}", agent_address, e),
+                format!("Failed to connect to agent at {agent_address}: {e}"),
             )
         })?;
 
@@ -141,7 +141,7 @@ impl RemoteBackend {
             Err(status) => {
                 return Err(ToolError::execution(
                     "RemoteBackend",
-                    format!("Failed to get tool schemas from agent: {}", status),
+                    format!("Failed to get tool schemas from agent: {status}"),
                 ));
             }
         };
@@ -198,7 +198,7 @@ impl ToolBackend for RemoteBackend {
         let context_json = serde_json::to_string(&serializable_context).map_err(|e| {
             ToolError::execution(
                 "RemoteBackend",
-                format!("Failed to serialize execution context: {}", e),
+                format!("Failed to serialize execution context: {e}"),
             )
         })?;
 
@@ -206,7 +206,7 @@ impl ToolBackend for RemoteBackend {
         let parameters_json = serde_json::to_string(&tool_call.parameters).map_err(|e| {
             ToolError::execution(
                 "RemoteBackend",
-                format!("Failed to serialize tool parameters: {}", e),
+                format!("Failed to serialize tool parameters: {e}"),
             )
         })?;
 
@@ -510,7 +510,7 @@ mod tests {
                 .iter()
                 .map(|name| GrpcToolSchema {
                     name: name.clone(),
-                    description: format!("Description for {}", name),
+                    description: format!("Description for {name}"),
                     input_schema_json: "{}".to_string(),
                 })
                 .collect();
@@ -574,7 +574,7 @@ mod tests {
         ])
         .await;
         let backend = RemoteBackend::new(
-            format!("http://{}", addr),
+            format!("http://{addr}"),
             Duration::from_secs(5),
             None,
             ToolFilter::All,
@@ -600,7 +600,7 @@ mod tests {
         ])
         .await;
         let backend = RemoteBackend::new(
-            format!("http://{}", addr),
+            format!("http://{addr}"),
             Duration::from_secs(5),
             None,
             ToolFilter::Include(vec!["tool1".to_string(), "bash".to_string()]),
@@ -622,7 +622,7 @@ mod tests {
             token: "test-token".to_string(),
         };
         let backend = RemoteBackend::new(
-            format!("http://{}", addr),
+            format!("http://{addr}"),
             Duration::from_secs(5),
             Some(auth),
             ToolFilter::All,
@@ -630,7 +630,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(backend.agent_address(), format!("http://{}", addr));
+        assert_eq!(backend.agent_address(), format!("http://{addr}"));
         assert_eq!(backend.supported_tools().await.len(), 1);
     }
 }

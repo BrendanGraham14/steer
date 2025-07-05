@@ -44,7 +44,7 @@ async fn test_api_basic() {
         let client = client.clone(); // Clone Arc
         let messages = messages.clone(); // Clone messages
         let task = tokio::spawn(async move {
-            println!("Testing basic API for model: {:?}", model);
+            println!("Testing basic API for model: {model:?}");
 
             // Call API with specified model
             let response = client
@@ -59,28 +59,26 @@ async fn test_api_basic() {
 
             // Check if the response is successful
             let response = response.map_err(|e| {
-                eprintln!("API call failed for model {:?}: {:?}", model, e);
+                eprintln!("API call failed for model {model:?}: {e:?}");
                 e // Return the original ApiError
             })?; // Propagate error if response.is_err()
 
             // Extract text from response
             let text = response.extract_text();
-            println!("{:?} response: {}", model, text);
+            println!("{model:?} response: {text}");
 
             // Verify we got a reasonable response
             assert!(
                 !text.is_empty(),
-                "Response text should not be empty for model {:?}",
-                model
+                "Response text should not be empty for model {model:?}"
             );
             // Allow variations like "4." or "four"
             assert!(
                 text.contains("4") || text.to_lowercase().contains("four"),
-                "Response for model {:?} should contain the answer '4'",
-                model
+                "Response for model {model:?} should contain the answer '4'"
             );
 
-            println!("Basic API test for {:?} passed successfully!", model);
+            println!("Basic API test for {model:?} passed successfully!");
             Ok::<_, ApiError>(model) // Return model on success
         });
         tasks.push(task);
@@ -93,17 +91,17 @@ async fn test_api_basic() {
     for result in results {
         match result {
             Ok(Ok(model)) => {
-                println!("Task for {:?} finished successfully.", model);
+                println!("Task for {model:?} finished successfully.");
             }
             Ok(Err(e)) => {
                 // Task completed, but API call failed (already logged in task)
-                let msg = format!("API call failed within task: {:?}", e);
+                let msg = format!("API call failed within task: {e:?}");
                 failures.push(msg);
             }
             Err(e) => {
                 // Task panicked (includes assertion failures)
-                let msg = format!("Task panicked: {:?}", e);
-                eprintln!("{}", msg); // Log the error immediately
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}"); // Log the error immediately
                 failures.push(msg);
             }
         }
@@ -150,15 +148,14 @@ async fn test_api_with_tools() {
         let pwd_display = pwd.display().to_string(); // Clone path string
 
         let task = tokio::spawn(async move {
-            println!("Testing API with tools for model: {:?}", model);
+            println!("Testing API with tools for model: {model:?}");
 
             // Create a message that will use a tool
             let timestamp = Message::current_timestamp();
             let messages = vec![Message::User {
                 content: vec![UserContent::Text {
                     text: format!(
-                        "Please list the files in {} using the LS tool",
-                        pwd_display // Use cloned path string
+                        "Please list the files in {pwd_display} using the LS tool" // Use cloned path string
                     ),
                 }],
                 timestamp,
@@ -179,7 +176,7 @@ async fn test_api_with_tools() {
 
             // Debug output and check if the response is successful
             let response = response.map_err(|e| {
-                eprintln!("API Error for model {:?}: {:?}", model, e);
+                eprintln!("API Error for model {model:?}: {e:?}");
                 e
             })?; // Propagate error
 
@@ -187,25 +184,23 @@ async fn test_api_with_tools() {
             println!("{:?} Has tool calls: {}", model, response.has_tool_calls());
             assert!(
                 response.has_tool_calls(),
-                "Response for model {:?} should contain tool calls",
-                model
+                "Response for model {model:?} should contain tool calls"
             );
 
             // Extract and process tool calls
             let tool_calls = response.extract_tool_calls();
             assert!(
                 !tool_calls.is_empty(),
-                "Should have at least one tool call for model {:?}",
-                model
+                "Should have at least one tool call for model {model:?}"
             );
-            println!("{:?} Tool calls: {:#?}", model, tool_calls);
+            println!("{model:?} Tool calls: {tool_calls:#?}");
 
             // Process the first tool call
             // Ensure the correct tool is being called (ls)
             let first_tool_call = tool_calls
                 .iter()
                 .find(|tc| tc.name == "ls")
-                .unwrap_or_else(|| panic!("Expected 'ls' tool call for model {:?}", model));
+                .unwrap_or_else(|| panic!("Expected 'ls' tool call for model {model:?}"));
 
             println!("{:?} Tool call: {}", model, first_tool_call.name);
             // Optional: Pretty print parameters only if needed for debugging
@@ -238,7 +233,7 @@ async fn test_api_with_tools() {
             );
 
             println!("{:?} Tool result: {}", model, result.unwrap().llm_format()); // Unwrap after assertion
-            println!("Tools API test for {:?} passed successfully!", model);
+            println!("Tools API test for {model:?} passed successfully!");
 
             Ok::<_, ApiError>(model) // Return model on success
         });
@@ -252,17 +247,17 @@ async fn test_api_with_tools() {
     for result in results {
         match result {
             Ok(Ok(model)) => {
-                println!("Task for {:?} finished successfully.", model);
+                println!("Task for {model:?} finished successfully.");
             }
             Ok(Err(e)) => {
                 // Task completed, but API call failed (already logged in task)
-                let msg = format!("API call failed within task: {:?}", e);
+                let msg = format!("API call failed within task: {e:?}");
                 failures.push(msg);
             }
             Err(e) => {
                 // Task panicked (includes assertion failures)
-                let msg = format!("Task panicked: {:?}", e);
-                eprintln!("{}", msg); // Log the error immediately
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}"); // Log the error immediately
                 failures.push(msg);
             }
         }
@@ -293,10 +288,10 @@ async fn test_api_with_tool_response() {
     for model in models_to_test {
         let client = client.clone(); // Clone Arc for concurrent use
         let task = tokio::spawn(async move {
-            println!("Testing API with tool response for model: {:?}", model);
+            println!("Testing API with tool response for model: {model:?}");
 
             // Construct messages specific to this model's task
-            let tool_use_id = format!("tool-use-id-{:?}", model); // Unique ID per model test
+            let tool_use_id = format!("tool-use-id-{model:?}"); // Unique ID per model test
             let ts1 = Message::current_timestamp();
             let ts2 = ts1 + 1;
             let ts3 = ts2 + 1;
@@ -358,7 +353,7 @@ async fn test_api_with_tool_response() {
 
             // Check response and propagate error
             let response = response.map_err(|e| {
-                eprintln!("API call failed for model {:?}: {:?}", model, e);
+                eprintln!("API call failed for model {model:?}: {e:?}");
                 e
             })?;
 
@@ -366,17 +361,14 @@ async fn test_api_with_tool_response() {
             let final_text = response.extract_text();
             assert!(
                 !final_text.is_empty(),
-                "Final response text should not be empty for model {:?}",
-                model
+                "Final response text should not be empty for model {model:?}"
             );
             assert!(
                 final_text.to_lowercase().contains("bar.rs"), // Example assertion: Check if the model focused on the requested file type
-                "Final response for model {:?} should mention 'bar.rs', got: '{}'",
-                model,
-                final_text
+                "Final response for model {model:?} should mention 'bar.rs', got: '{final_text}'"
             );
 
-            println!("Tool Response test for {:?} passed successfully!", model);
+            println!("Tool Response test for {model:?} passed successfully!");
             Ok::<_, ApiError>(model) // Return model on success
         });
         tasks.push(task);
@@ -389,17 +381,17 @@ async fn test_api_with_tool_response() {
     for result in results {
         match result {
             Ok(Ok(model)) => {
-                println!("Task for {:?} finished successfully.", model);
+                println!("Task for {model:?} finished successfully.");
             }
             Ok(Err(e)) => {
                 // Task completed, but API call failed (already logged in task)
-                let msg = format!("API call failed within task: {:?}", e);
+                let msg = format!("API call failed within task: {e:?}");
                 failures.push(msg);
             }
             Err(e) => {
                 // Task panicked (includes assertion failures)
-                let msg = format!("Task panicked: {:?}", e);
-                eprintln!("{}", msg); // Log the error immediately
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}"); // Log the error immediately
                 failures.push(msg);
             }
         }
@@ -449,7 +441,7 @@ async fn test_gemini_system_instructions() {
     let response = response.unwrap();
 
     let text = response.extract_text();
-    println!("Gemini response: {}", text);
+    println!("Gemini response: {text}");
 
     assert!(!text.is_empty(), "Response text should not be empty");
     assert!(
@@ -828,10 +820,10 @@ async fn test_api_with_cancelled_tool_execution() {
     for model in models_to_test {
         let client = client.clone();
         let task = tokio::spawn(async move {
-            println!("Testing cancelled tool execution for model: {:?}", model);
+            println!("Testing cancelled tool execution for model: {model:?}");
 
             // Create a unique tool call ID for this test
-            let tool_call_id = format!("cancelled_tool_{:?}", model);
+            let tool_call_id = format!("cancelled_tool_{model:?}");
 
             // Simulate a conversation where a tool was called but then cancelled
             let ts1 = Message::current_timestamp();
@@ -900,10 +892,7 @@ async fn test_api_with_cancelled_tool_execution() {
 
             // Check response
             let response = response.map_err(|e| {
-                eprintln!(
-                    "API call failed for model {:?} with cancelled tool: {:?}",
-                    model, e
-                );
+                eprintln!("API call failed for model {model:?} with cancelled tool: {e:?}");
                 e
             })?;
 
@@ -911,8 +900,7 @@ async fn test_api_with_cancelled_tool_execution() {
             let response_text = response.extract_text();
             assert!(
                 !response_text.is_empty(),
-                "Response should not be empty for model {:?} after cancelled tool",
-                model
+                "Response should not be empty for model {model:?} after cancelled tool"
             );
 
             // The model should acknowledge the cancellation and answer about Rust
@@ -920,15 +908,10 @@ async fn test_api_with_cancelled_tool_execution() {
                 response_text.to_lowercase().contains("rust")
                     || response_text.to_lowercase().contains("programming")
                     || response_text.to_lowercase().contains("language"),
-                "Response for model {:?} should address the Rust question, got: '{}'",
-                model,
-                response_text
+                "Response for model {model:?} should address the Rust question, got: '{response_text}'"
             );
 
-            println!(
-                "Cancelled tool execution test for {:?} passed successfully!",
-                model
-            );
+            println!("Cancelled tool execution test for {model:?} passed successfully!");
             Ok::<_, ApiError>(model)
         });
         tasks.push(task);
@@ -941,15 +924,15 @@ async fn test_api_with_cancelled_tool_execution() {
     for result in results {
         match result {
             Ok(Ok(model)) => {
-                println!("Task for {:?} finished successfully.", model);
+                println!("Task for {model:?} finished successfully.");
             }
             Ok(Err(e)) => {
-                let msg = format!("API call failed within task: {:?}", e);
+                let msg = format!("API call failed within task: {e:?}");
                 failures.push(msg);
             }
             Err(e) => {
-                let msg = format!("Task panicked: {:?}", e);
-                eprintln!("{}", msg);
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}");
                 failures.push(msg);
             }
         }

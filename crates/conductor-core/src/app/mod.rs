@@ -282,7 +282,7 @@ impl App {
                 );
                 self.emit_event(AppEvent::ThinkingCompleted); // Stop thinking on spawn error
                 self.emit_event(AppEvent::Error {
-                    message: format!("Failed to start agent operation: {}", e),
+                    message: format!("Failed to start agent operation: {e}"),
                 });
                 self.current_op_context = None; // Clean up context
                 Err(e)
@@ -355,8 +355,7 @@ impl App {
                         Ok(req) => req,
                         Err(e) => {
                             return Err(ToolError::InternalError(format!(
-                                "Failed to check tool approval status for {}: {}",
-                                tool_name, e
+                                "Failed to check tool approval status for {tool_name}: {e}"
                             )));
                         }
                     };
@@ -380,8 +379,7 @@ impl App {
                             // If we can't send the request, treat as an error
                             error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
                             return Err(ToolError::InternalError(format!(
-                                "Failed to request tool approval: {}",
-                                e
+                                "Failed to request tool approval: {e}"
                             )));
                         }
 
@@ -531,9 +529,9 @@ impl App {
                             };
 
                             if m == current_model {
-                                format!("* {}{}", model_str, alias_str) // Mark current model with asterisk
+                                format!("* {model_str}{alias_str}") // Mark current model with asterisk
                             } else {
-                                format!("  {}{}", model_str, alias_str)
+                                format!("  {model_str}{alias_str}")
                             }
                         })
                         .collect();
@@ -555,20 +553,17 @@ impl App {
                                 model.as_ref()
                             )))),
                             Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
-                                "Failed to set model: {}",
-                                e
+                                "Failed to set model: {e}"
                             )))),
                         },
                         Err(_) => Ok(Some(conversation::CommandResponse::Text(format!(
-                            "Unknown model: {}",
-                            args
+                            "Unknown model: {args}"
                         )))),
                     }
                 }
             }
             _ => Ok(Some(conversation::CommandResponse::Text(format!(
-                "Unknown command: {}",
-                command_name
+                "Unknown command: {command_name}"
             )))),
         }
     }
@@ -584,7 +579,7 @@ impl App {
         // Run directly but make it cancellable.
         let result = tokio::select! {
             biased;
-            res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res.map_err(|e| Error::InvalidOperation(format!("Compact failed: {}", e)))?,
+            res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res.map_err(|e| Error::InvalidOperation(format!("Compact failed: {e}")))?,
             _ = token.cancelled() => {
                  info!(target:"App.compact_conversation", "Compaction cancelled.");
                  return Ok(CompactResult::Cancelled);
@@ -804,7 +799,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                             agent_task_completed = false;
                             app.emit_event(AppEvent::ThinkingCompleted);
                             app.emit_event(AppEvent::Error {
-                                message: format!("A task failed unexpectedly: {}", join_err)
+                                message: format!("A task failed unexpectedly: {join_err}")
                             });
                         }
                     }
@@ -1126,7 +1121,7 @@ async fn handle_app_command(
                         content: vec![UserContent::CommandExecution {
                             command,
                             stdout: String::new(),
-                            stderr: format!("Error executing command: {}", e),
+                            stderr: format!("Error executing command: {e}"),
                             exit_code: -1,
                         }],
                         timestamp: Message::current_timestamp(),
@@ -1202,7 +1197,7 @@ async fn handle_slash_command(app: &mut App, command: &str) {
         Err(e) => {
             error!(target: "handle_slash_command", "Error running command '{}': {}", command, e);
             app.emit_event(AppEvent::Error {
-                message: format!("Command failed: {}", e),
+                message: format!("Command failed: {e}"),
             });
             app.emit_event(AppEvent::ThinkingCompleted);
         }
@@ -1329,7 +1324,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     // Emit error event only if it wasn't a cancellation
                     if !matches!(e, AgentExecutorError::Cancelled) {
                         app.emit_event(AppEvent::Error {
-                            message: format!("Operation failed: {}", e),
+                            message: format!("Operation failed: {e}"),
                         });
                     }
                 }
@@ -1355,7 +1350,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
 
                     app.add_message(Message::Assistant {
                         content: vec![AssistantContent::Text {
-                            text: format!("Dispatch Agent Result:\n{}", response_text),
+                            text: format!("Dispatch Agent Result:\n{response_text}"),
                         }],
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("assistant", Message::current_timestamp()),
@@ -1367,7 +1362,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                 Err(e) => {
                     error!(target: "handle_task_outcome", "Dispatch agent failed: {}", e);
                     app.emit_event(AppEvent::Error {
-                        message: format!("Dispatch agent failed: {}", e),
+                        message: format!("Dispatch agent failed: {e}"),
                     });
                 }
             }

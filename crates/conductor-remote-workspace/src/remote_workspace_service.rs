@@ -64,36 +64,34 @@ impl RemoteWorkspaceService {
         match error {
             ToolError::Cancelled(_) => Status::cancelled("Tool execution was cancelled"),
             ToolError::UnknownTool(tool_name) => {
-                Status::not_found(format!("Unknown tool: {}", tool_name))
+                Status::not_found(format!("Unknown tool: {tool_name}"))
             }
             ToolError::InvalidParams(tool_name, message) => Status::invalid_argument(format!(
-                "Invalid parameters for tool {}: {}",
-                tool_name, message
+                "Invalid parameters for tool {tool_name}: {message}"
             )),
             ToolError::Execution { tool_name, message } => {
-                Status::internal(format!("Tool {} execution failed: {}", tool_name, message))
+                Status::internal(format!("Tool {tool_name} execution failed: {message}"))
             }
             ToolError::Io { tool_name, message } => {
-                Status::internal(format!("IO error in tool {}: {}", tool_name, message))
+                Status::internal(format!("IO error in tool {tool_name}: {message}"))
             }
             ToolError::DeniedByUser(tool_name) => {
-                Status::permission_denied(format!("Tool execution denied: {}", tool_name))
+                Status::permission_denied(format!("Tool execution denied: {tool_name}"))
             }
             ToolError::Timeout(tool_name) => {
-                Status::deadline_exceeded(format!("Tool {} execution timed out", tool_name))
+                Status::deadline_exceeded(format!("Tool {tool_name} execution timed out"))
             }
             ToolError::InternalError(message) => {
-                Status::internal(format!("Internal error: {}", message))
+                Status::internal(format!("Internal error: {message}"))
             }
-            ToolError::Serialization(e) => Status::internal(format!("Serialization error: {}", e)),
-            ToolError::Http(e) => Status::internal(format!("HTTP error: {}", e)),
-            ToolError::Regex(e) => Status::internal(format!("Regex error: {}", e)),
+            ToolError::Serialization(e) => Status::internal(format!("Serialization error: {e}")),
+            ToolError::Http(e) => Status::internal(format!("HTTP error: {e}")),
+            ToolError::Regex(e) => Status::internal(format!("Regex error: {e}")),
             ToolError::McpConnectionFailed {
                 server_name,
                 message,
             } => Status::internal(format!(
-                "MCP server {} connection failed: {}",
-                server_name, message
+                "MCP server {server_name} connection failed: {message}"
             )),
         }
     }
@@ -274,7 +272,7 @@ impl RemoteWorkspaceService {
             if let Ok(rel_path) = path.strip_prefix(&std::env::current_dir()?) {
                 let path_str = rel_path.to_string_lossy().to_string();
                 if path.is_dir() {
-                    paths.push(format!("{}/", path_str));
+                    paths.push(format!("{path_str}/"));
                     self.collect_directory_paths(&path, paths, current_depth + 1, max_depth)?;
                 } else {
                     paths.push(path_str);
@@ -291,12 +289,8 @@ impl RemoteWorkspaceService {
 
         let mut result = String::new();
 
-        let repo = Repository::discover(".").map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to open git repository: {}", e),
-            )
-        })?;
+        let repo = Repository::discover(".")
+            .map_err(|e| std::io::Error::other(format!("Failed to open git repository: {e}")))?;
 
         // Get current branch
         match repo.head() {
@@ -306,28 +300,22 @@ impl RemoteWorkspaceService {
                 } else {
                     "HEAD (detached)"
                 };
-                result.push_str(&format!("Current branch: {}\n\n", branch));
+                result.push_str(&format!("Current branch: {branch}\n\n"));
             }
             Err(e) => {
                 // Handle case where HEAD doesn't exist (new repo)
                 if e.code() == git2::ErrorCode::UnbornBranch {
                     result.push_str("Current branch: <unborn>\n\n");
                 } else {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to get HEAD: {}", e),
-                    ));
+                    return Err(std::io::Error::other(format!("Failed to get HEAD: {e}")));
                 }
             }
         }
 
         // Get status
-        let statuses = repo.statuses(None).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to get git status: {}", e),
-            )
-        })?;
+        let statuses = repo
+            .statuses(None)
+            .map_err(|e| std::io::Error::other(format!("Failed to get git status: {e}")))?;
         result.push_str("Status:\n");
         if statuses.is_empty() {
             result.push_str("Working tree clean\n");
@@ -362,7 +350,7 @@ impl RemoteWorkspaceService {
                     " "
                 };
 
-                result.push_str(&format!("{}{} {}\n", status_char, wt_char, path));
+                result.push_str(&format!("{status_char}{wt_char} {path}\n"));
             }
         }
 
@@ -380,7 +368,7 @@ impl RemoteWorkspaceService {
                             if let Ok(commit) = repo.find_commit(oid) {
                                 let summary = commit.summary().unwrap_or("<no summary>");
                                 let id = commit.id();
-                                result.push_str(&format!("{:.7} {}\n", id, summary));
+                                result.push_str(&format!("{id:.7} {summary}\n"));
                                 count += 1;
                             }
                         }
@@ -414,7 +402,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         for (name, tool) in self.tools.iter() {
             let input_schema = tool.input_schema();
             let input_schema_json = serde_json::to_string(&input_schema)
-                .map_err(|e| Status::internal(format!("Failed to serialize schema: {}", e)))?;
+                .map_err(|e| Status::internal(format!("Failed to serialize schema: {e}")))?;
 
             schemas.push(GrpcToolSchema {
                 name: name.clone(),
@@ -437,7 +425,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         // Parse the tool parameters
         let parameters: serde_json::Value =
             serde_json::from_str(&req.parameters_json).map_err(|e| {
-                Status::invalid_argument(format!("Failed to parse tool parameters: {}", e))
+                Status::invalid_argument(format!("Failed to parse tool parameters: {e}"))
             })?;
 
         // Look up the tool
@@ -592,15 +580,14 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         } else {
             std::env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())
-                .map_err(|e| Status::internal(format!("Failed to get current directory: {}", e)))?
+                .map_err(|e| Status::internal(format!("Failed to get current directory: {e}")))?
         };
 
         // Change to the working directory if specified
         if working_directory != std::env::current_dir().unwrap().to_string_lossy() {
             if let Err(e) = std::env::set_current_dir(&working_directory) {
                 return Err(Status::invalid_argument(format!(
-                    "Failed to change to directory {}: {}",
-                    working_directory, e
+                    "Failed to change to directory {working_directory}: {e}"
                 )));
             }
         }
@@ -625,10 +612,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
 
         // Get directory structure (simplified for now)
         let directory_structure = self.get_directory_structure().unwrap_or_else(|_| {
-            format!(
-                "Failed to read directory structure from {}",
-                working_directory
-            )
+            format!("Failed to read directory structure from {working_directory}")
         });
 
         // Get git status if it's a git repo
@@ -693,7 +677,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                                 if !path_str.is_empty() {
                                     // Add trailing slash for directories
                                     if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                                        files.push(format!("{}/", path_str));
+                                        files.push(format!("{path_str}/"));
                                     } else {
                                         files.push(path_str.to_string());
                                     }

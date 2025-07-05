@@ -208,7 +208,7 @@ impl ToolResult {
                     let mut lines = Vec::new();
                     for entry in &r.entries {
                         let type_indicator = if entry.is_directory { "/" } else { "" };
-                        let size_str = entry.size.map(|s| format!(" ({})", s)).unwrap_or_default();
+                        let size_str = entry.size.map(|s| format!(" ({s})")).unwrap_or_default();
                         lines.push(format!("{}{}{}", entry.path, type_indicator, size_str));
                     }
                     lines.join("\n")
@@ -277,7 +277,7 @@ impl ToolResult {
             }
             ToolResult::Agent(r) => r.content.clone(),
             ToolResult::External(r) => r.payload.clone(),
-            ToolResult::Error(e) => format!("Error: {}", e),
+            ToolResult::Error(e) => format!("Error: {e}"),
         }
     }
 

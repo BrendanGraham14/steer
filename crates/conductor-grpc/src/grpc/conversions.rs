@@ -957,7 +957,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                 id: proto_msg.id,
                 thread_id: uuid::Uuid::from_slice(&user_msg.thread_id).map_err(|e| {
                     ConversionError::InvalidData {
-                        message: format!("Invalid thread_id UUID: {}", e),
+                        message: format!("Invalid thread_id UUID: {e}"),
                     }
                 })?,
                 parent_message_id: user_msg.parent_message_id,
@@ -1011,7 +1011,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                 id: proto_msg.id,
                 thread_id: uuid::Uuid::from_slice(&assistant_msg.thread_id).map_err(|e| {
                     ConversionError::InvalidData {
-                        message: format!("Invalid thread_id UUID: {}", e),
+                        message: format!("Invalid thread_id UUID: {e}"),
                     }
                 })?,
                 parent_message_id: assistant_msg.parent_message_id,
@@ -1027,7 +1027,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                     id: proto_msg.id,
                     thread_id: uuid::Uuid::from_slice(&tool_msg.thread_id).map_err(|e| {
                         ConversionError::InvalidData {
-                            message: format!("Invalid thread_id UUID: {}", e),
+                            message: format!("Invalid thread_id UUID: {e}"),
                         }
                     })?,
                     parent_message_id: tool_msg.parent_message_id,

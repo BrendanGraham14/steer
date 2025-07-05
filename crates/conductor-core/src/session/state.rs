@@ -104,7 +104,7 @@ impl SessionConfig {
                         }
                     };
                     registry
-                        .register(format!("user_local_{}", idx), Arc::new(backend))
+                        .register(format!("user_local_{idx}"), Arc::new(backend))
                         .await;
                 }
                 BackendConfig::Remote {
@@ -153,7 +153,7 @@ impl SessionConfig {
                                 server_name
                             );
                             registry
-                                .register(format!("mcp_{}", server_name), Arc::new(mcp_backend))
+                                .register(format!("mcp_{server_name}"), Arc::new(mcp_backend))
                                 .await;
                         }
                         Err(e) => {
@@ -444,7 +444,7 @@ impl SessionState {
         let tool_call = self
             .tool_calls
             .get_mut(tool_call_id)
-            .ok_or_else(|| format!("Tool call not found: {}", tool_call_id))?;
+            .ok_or_else(|| format!("Tool call not found: {tool_call_id}"))?;
 
         // Update timestamps based on status changes
         match (&tool_call.status, &status) {
@@ -480,8 +480,7 @@ impl SessionState {
                 for tool_call_id in tool_calls {
                     if !self.tool_calls.contains_key(&tool_call_id) {
                         return Err(format!(
-                            "Message references unknown tool call: {}",
-                            tool_call_id
+                            "Message references unknown tool call: {tool_call_id}"
                         ));
                     }
                 }
@@ -857,8 +856,7 @@ mod tests {
         for tool_name in workspace_tool_names {
             assert!(
                 !tool_names.contains(&tool_name.to_string()),
-                "Workspace tool {} should not be in registry",
-                tool_name
+                "Workspace tool {tool_name} should not be in registry"
             );
         }
     }

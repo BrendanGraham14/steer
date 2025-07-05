@@ -184,9 +184,9 @@ impl<'a> ChatList<'a> {
             _ => {
                 // For non-message items, create a hash of the item content
                 let mut hasher = DefaultHasher::new();
-                format!("{:?}", item).hash(&mut hasher);
+                format!("{item:?}").hash(&mut hasher);
                 let hash = hasher.finish();
-                (format!("item_{}", hash), width, view_mode)
+                (format!("item_{hash}"), width, view_mode)
             }
         }
     }
@@ -270,7 +270,7 @@ impl<'a> ChatList<'a> {
                 let command_str = match cmd {
                     conductor_core::app::conversation::AppCommandType::Model { target } => {
                         if let Some(model) = target {
-                            format!("/model {}", model)
+                            format!("/model {model}")
                         } else {
                             "/model".to_string()
                         }
@@ -298,7 +298,7 @@ impl<'a> ChatList<'a> {
                     conductor_core::app::conversation::CommandResponse::Compact(result) => {
                         match result {
                             conductor_core::app::conversation::CompactResult::Success(summary) => {
-                                format!("Compact completed.\n\n{}", summary)
+                                format!("Compact completed.\n\n{summary}")
                             }
                             conductor_core::app::conversation::CompactResult::Cancelled => {
                                 "Compact cancelled.".to_string()
@@ -393,7 +393,7 @@ impl<'a> ChatList<'a> {
                 first_line.push(Span::styled(prefix, Style::default().fg(color)));
                 first_line.push(Span::raw(text.clone()));
                 first_line.push(Span::styled(
-                    format!(" ({})", time_str),
+                    format!(" ({time_str})"),
                     Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
                 ));
                 lines.push(Line::from(first_line));
@@ -490,7 +490,7 @@ impl<'a> ChatList<'a> {
                                     all_lines.push(Line::from(vec![
                                         Span::raw("  "),
                                         Span::styled(
-                                            format!("Exit code: {}", exit_code),
+                                            format!("Exit code: {exit_code}"),
                                             Style::default().fg(Color::Red),
                                         ),
                                     ]));
@@ -540,7 +540,7 @@ impl<'a> ChatList<'a> {
                                 let command_str = match command {
                                     conductor_core::app::conversation::AppCommandType::Model { target } => {
                                         if let Some(model) = target {
-                                            format!("/model {}", model)
+                                            format!("/model {model}")
                                         } else {
                                             "/model".to_string()
                                         }

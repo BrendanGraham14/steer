@@ -303,7 +303,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                             ThoughtContent::Simple { text } => {
                                 // Claude doesn't have a simple thought type, convert to text
                                 Some(ClaudeContentBlock::Text {
-                                    text: format!("[Thought: {}]", text),
+                                    text: format!("[Thought: {text}]"),
                                     cache_control: None,
                                     extra: Default::default(),
                                 })
@@ -339,8 +339,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 Err(ApiError::InvalidRequest {
                     provider: "anthropic".to_string(),
                     details: format!(
-                        "Assistant message ID {} resulted in no valid content blocks",
-                        id
+                        "Assistant message ID {id} resulted in no valid content blocks"
                     ),
                 })
             }
@@ -591,7 +590,7 @@ impl Provider for AnthropicClient {
         let claude_completion: ClaudeCompletionResponse = serde_json::from_str(&response_text)
             .map_err(|e| ApiError::ResponseParsingError {
                 provider: self.name().to_string(),
-                details: format!("Error: {}, Body: {}", e, response_text),
+                details: format!("Error: {e}, Body: {response_text}"),
             })?;
         let completion = CompletionResponse {
             content: convert_claude_content(claude_completion.content),

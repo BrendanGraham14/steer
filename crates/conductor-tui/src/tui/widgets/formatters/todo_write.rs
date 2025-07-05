@@ -46,8 +46,7 @@ impl ToolFormatter for TodoWriteFormatter {
             Span::styled("TODO WRITE ", styles::DIM_TEXT),
             Span::styled(
                 format!(
-                    "({} items: {} completed, {} in progress, {} pending)",
-                    todo_count, completed_count, in_progress_count, pending_count
+                    "({todo_count} items: {completed_count} completed, {in_progress_count} in progress, {pending_count} pending)"
                 ),
                 styles::ITALIC_GRAY,
             ),
@@ -88,7 +87,7 @@ impl ToolFormatter for TodoWriteFormatter {
                 conductor_tools::tools::todo::TodoPriority::Low => Color::Green,
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("{} ", status_icon), Style::default()),
+                Span::styled(format!("{status_icon} "), Style::default()),
                 Span::styled(
                     format!("[{}] ", format!("{:?}", todo.priority).to_uppercase()),
                     Style::default().fg(priority_color),
@@ -100,7 +99,7 @@ impl ToolFormatter for TodoWriteFormatter {
         if let Some(ToolResult::Error(error)) = result {
             lines.push(separator_line(40, styles::DIM_TEXT));
             lines.push(Line::from(Span::styled(
-                format!("Error: {}", error),
+                format!("Error: {error}"),
                 styles::ERROR_TEXT,
             )));
         }

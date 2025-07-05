@@ -433,7 +433,7 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                 } => {
                     // Convert tool result to function response
                     let result_value = match result {
-                        ToolResult::Error(e) => Value::String(format!("Error: {}", e)),
+                        ToolResult::Error(e) => Value::String(format!("Error: {e}")),
                         _ => {
                             // For all other variants, try to serialize as JSON
                             serde_json::to_value(&result)
@@ -776,7 +776,7 @@ impl Provider for GeminiClient {
                 error!(target: "Gemini API JSON Parsing Error", "Failed to parse JSON: {}. Response body:\n{}", e, response_text);
                 Err(ApiError::ResponseParsingError {
                     provider: self.name().to_string(),
-                    details: format!("Status: {}, Error: {}, Body: {}", status, e, response_text),
+                    details: format!("Status: {status}, Error: {e}, Body: {response_text}"),
                 })
             }
         }

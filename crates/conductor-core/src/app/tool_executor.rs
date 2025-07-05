@@ -63,11 +63,10 @@ impl ToolExecutor {
         // First check if it's a workspace tool
         if let Some(workspace) = &self.workspace {
             let workspace_tools = workspace.available_tools().await;
-            if workspace_tools.iter().any(|t| &t.name == tool_name) {
+            if workspace_tools.iter().any(|t| t.name == tool_name) {
                 return workspace.requires_approval(tool_name).await.map_err(|e| {
                     Error::Tool(conductor_tools::ToolError::InternalError(format!(
-                        "Failed to check approval requirement: {}",
-                        e
+                        "Failed to check approval requirement: {e}"
                     )))
                 });
             }
@@ -77,8 +76,7 @@ impl ToolExecutor {
         match self.backend_registry.get_backend_for_tool(tool_name) {
             Some(backend) => backend.requires_approval(tool_name).await.map_err(|e| {
                 Error::Tool(conductor_tools::ToolError::InternalError(format!(
-                    "Failed to check approval requirement: {}",
-                    e
+                    "Failed to check approval requirement: {e}"
                 )))
             }),
             None => Err(Error::Tool(conductor_tools::ToolError::UnknownTool(
@@ -133,7 +131,7 @@ impl ToolExecutor {
             let validation_result = validator
                 .validate(tool_call, &validation_context)
                 .await
-                .map_err(|e| ToolError::InternalError(format!("Validation failed: {}", e)))?;
+                .map_err(|e| ToolError::InternalError(format!("Validation failed: {e}")))?;
 
             if !validation_result.allowed {
                 return Err(ToolError::InternalError(
@@ -166,7 +164,7 @@ impl ToolExecutor {
                     .execute_tool(tool_call, context)
                     .await
                     .map_err(|e| {
-                        ToolError::InternalError(format!("Workspace execution failed: {}", e))
+                        ToolError::InternalError(format!("Workspace execution failed: {e}"))
                     });
             }
         }
@@ -231,7 +229,7 @@ impl ToolExecutor {
                     .execute_tool(tool_call, context)
                     .await
                     .map_err(|e| {
-                        ToolError::InternalError(format!("Workspace execution failed: {}", e))
+                        ToolError::InternalError(format!("Workspace execution failed: {e}"))
                     });
             }
         }

@@ -35,7 +35,7 @@ impl ToolFormatter for DispatchAgentFormatter {
         let info = match result {
             Some(ToolResult::Agent(agent_result)) => {
                 let line_count = agent_result.content.lines().count();
-                format!("{} lines", line_count)
+                format!("{line_count} lines")
             }
             Some(ToolResult::Error(_)) => "failed".to_string(),
             Some(_) => "unexpected result type".to_string(),
@@ -43,8 +43,8 @@ impl ToolFormatter for DispatchAgentFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(format!("task='{}' ", preview), Style::default()),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("task='{preview}' "), Style::default()),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -106,7 +106,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                 ToolResult::Error(error) => {
                     lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!("Error: {}", error),
+                        format!("Error: {error}"),
                         styles::ERROR_TEXT,
                     )));
                 }

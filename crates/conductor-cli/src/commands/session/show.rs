@@ -67,7 +67,7 @@ impl Command for ShowSessionCommand {
                 if !info.metadata.is_empty() {
                     println!("Metadata:");
                     for (key, value) in &info.metadata {
-                        println!("  {}: {}", key, value);
+                        println!("  {key}: {value}");
                     }
                 }
             }
@@ -130,7 +130,7 @@ impl ShowSessionCommand {
                 if !state.metadata.is_empty() {
                     println!("Metadata:");
                     for (key, value) in &state.metadata {
-                        println!("  {}: {}", key, value);
+                        println!("  {key}: {value}");
                     }
                 }
             }

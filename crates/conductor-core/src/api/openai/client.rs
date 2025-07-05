@@ -303,7 +303,7 @@ impl OpenAIClient {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", api_key))
+            header::HeaderValue::from_str(&format!("Bearer {api_key}"))
                 .expect("Invalid API key format"),
         );
 
@@ -419,7 +419,7 @@ impl OpenAIClient {
                 } => {
                     // Convert ToolResult to OpenAI format
                     let content_text = match result {
-                        ToolResult::Error(e) => format!("Error: {}", e),
+                        ToolResult::Error(e) => format!("Error: {e}"),
                         _ => {
                             let text = result.llm_format();
                             if text.trim().is_empty() {
@@ -603,7 +603,7 @@ impl Provider for OpenAIClient {
                 );
                 ApiError::ResponseParsingError {
                     provider: self.name().to_string(),
-                    details: format!("Error: {}, Body: {}", e, response_text),
+                    details: format!("Error: {e}, Body: {response_text}"),
                 }
             })?;
 

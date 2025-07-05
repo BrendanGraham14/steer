@@ -44,7 +44,7 @@ impl ToolFormatter for TodoReadFormatter {
 
         lines.push(Line::from(vec![
             Span::styled("TODO READ ", styles::DIM_TEXT),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines

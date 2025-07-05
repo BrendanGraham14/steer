@@ -50,7 +50,7 @@ impl From<crate::error::Error> for ApiError {
             crate::error::Error::Configuration(msg) => ApiError::Configuration(msg),
             other => ApiError::Unknown {
                 provider: "internal".to_string(),
-                details: format!("Unexpected internal error: {}", other),
+                details: format!("Unexpected internal error: {other}"),
             },
         }
     }

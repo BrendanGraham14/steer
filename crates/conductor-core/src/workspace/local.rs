@@ -86,7 +86,7 @@ impl Workspace for LocalWorkspace {
             .execute(tool_call, &ctx)
             .await
             .map_err(|e| {
-                WorkspaceError::ToolExecution(format!("Tool execution failed: {}", e)).into()
+                WorkspaceError::ToolExecution(format!("Tool execution failed: {e}")).into()
             })
     }
 
@@ -99,8 +99,7 @@ impl Workspace for LocalWorkspace {
             .requires_approval(tool_name)
             .await
             .map_err(|e| {
-                WorkspaceError::ToolExecution(format!("Failed to check tool approval: {}", e))
-                    .into()
+                WorkspaceError::ToolExecution(format!("Failed to check tool approval: {e}")).into()
             })
     }
 
@@ -146,7 +145,7 @@ impl Workspace for LocalWorkspace {
                     if !path_str.is_empty() {
                         // Add trailing slash for directories
                         if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                            files.push(format!("{}/", path_str));
+                            files.push(format!("{path_str}/"));
                         } else {
                             files.push(path_str.to_string());
                         }
@@ -249,7 +248,7 @@ mod tests {
         let env = match workspace.environment().await {
             Ok(e) => e,
             Err(e) => {
-                panic!("Environment collection failed: {}", e);
+                panic!("Environment collection failed: {e}");
             }
         };
 

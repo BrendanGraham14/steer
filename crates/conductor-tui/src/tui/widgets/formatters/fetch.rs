@@ -40,8 +40,8 @@ impl ToolFormatter for FetchFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(format!("url={} ", url_display), Style::default()),
-            Span::styled(format!("({})", info), styles::ITALIC_GRAY),
+            Span::styled(format!("url={url_display} "), Style::default()),
+            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -76,7 +76,7 @@ impl ToolFormatter for FetchFormatter {
         for line in params.prompt.lines() {
             for wrapped in textwrap::wrap(line, wrap_width.saturating_sub(4)) {
                 lines.push(Line::from(Span::styled(
-                    format!("    {}", wrapped),
+                    format!("    {wrapped}"),
                     styles::DIM_TEXT,
                 )));
             }
@@ -113,7 +113,7 @@ impl ToolFormatter for FetchFormatter {
                 ToolResult::Error(error) => {
                     lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!("Error: {}", error),
+                        format!("Error: {error}"),
                         styles::ERROR_TEXT,
                     )));
                 }

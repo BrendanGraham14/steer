@@ -40,7 +40,7 @@ mod tests {
                 thread_id,
                 parent_message_id: None,
             },
-            _ => panic!("Invalid role: {}", role),
+            _ => panic!("Invalid role: {role}"),
         }
     }
 
@@ -156,7 +156,7 @@ mod tests {
                 } else {
                     Err(ToolError::Execution {
                         tool_name: call.name.clone(),
-                        message: format!("Unexpected country: {:?}", input_country),
+                        message: format!("Unexpected country: {input_country:?}"),
                     })
                 }
             } else {
@@ -234,8 +234,7 @@ mod tests {
                 } => {
                     // Log all tool results for debugging
                     println!(
-                        "Test: Received ToolResultReceived event with ID: {}, result: {:?}",
-                        tool_call_id, result
+                        "Test: Received ToolResultReceived event with ID: {tool_call_id}, result: {result:?}"
                     );
 
                     // Check if we got the expected result

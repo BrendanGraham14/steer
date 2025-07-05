@@ -69,7 +69,7 @@ Before using this tool:
                 fs::create_dir_all(parent).await.map_err(|e| {
                     ToolError::io(
                         REPLACE_TOOL_NAME,
-                        format!("Failed to create parent directory: {}", e),
+                        format!("Failed to create parent directory: {e}"),
                     )
                 })?;
             }
@@ -82,7 +82,7 @@ Before using this tool:
         fs::write(path, &params.content).await.map_err(|e| {
             ToolError::io(
                 REPLACE_TOOL_NAME,
-                format!("Failed to write file {}: {}", abs_path, e),
+                format!("Failed to write file {abs_path}: {e}"),
             )
         })?;
 

@@ -23,9 +23,8 @@ pub fn resolve_session_store_config(
 ) -> Result<SessionStoreConfig> {
     match session_db_path {
         Some(path) => Ok(SessionStoreConfig::sqlite(path)),
-        None => SessionStoreConfig::default_sqlite().map_err(|e| {
-            Error::Configuration(format!("Failed to get default sqlite config: {}", e))
-        }),
+        None => SessionStoreConfig::default_sqlite()
+            .map_err(|e| Error::Configuration(format!("Failed to get default sqlite config: {e}"))),
     }
 }
 
@@ -93,8 +92,7 @@ pub fn parse_tool_policy(
             })
         }
         _ => Err(Error::Configuration(format!(
-            "Invalid tool policy: {}. Valid options: always_ask, pre_approved, mixed",
-            policy_str
+            "Invalid tool policy: {policy_str}. Valid options: always_ask, pre_approved, mixed"
         ))),
     }
 }

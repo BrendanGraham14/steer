@@ -30,7 +30,7 @@ impl ToolFormatter for ReplaceFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", params.file_path), Style::default()),
-            Span::styled(format!("({} lines)", line_count), styles::ITALIC_GRAY),
+            Span::styled(format!("({line_count} lines)"), styles::ITALIC_GRAY),
         ]));
 
         lines
@@ -79,7 +79,7 @@ impl ToolFormatter for ReplaceFormatter {
                 }
                 for wrapped_line in textwrap::wrap(line, wrap_width) {
                     lines.push(Line::from(Span::styled(
-                        format!("+ {}", wrapped_line),
+                        format!("+ {wrapped_line}"),
                         styles::TOOL_SUCCESS,
                     )));
                 }
@@ -89,7 +89,7 @@ impl ToolFormatter for ReplaceFormatter {
         // Show error if result is an error
         if let Some(ToolResult::Error(error)) = result {
             lines.push(Line::from(Span::styled(
-                format!("Error: {}", error),
+                format!("Error: {error}"),
                 styles::ERROR_TEXT,
             )));
         }

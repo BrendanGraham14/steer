@@ -32,8 +32,7 @@ pub async fn execute_tool_task_logic(
     if token.is_cancelled() {
         // Return ToolError::Cancelled
         return Err(conductor_tools::ToolError::Cancelled(format!(
-            "{} ({})",
-            tool_name, tool_id
+            "{tool_name} ({tool_id})"
         )));
     }
 

@@ -64,30 +64,27 @@ impl From<GrpcError> for tonic::Status {
     fn from(err: GrpcError) -> Self {
         match err {
             GrpcError::ConnectionFailed(e) => {
-                tonic::Status::unavailable(format!("Connection failed: {}", e))
+                tonic::Status::unavailable(format!("Connection failed: {e}"))
             }
             GrpcError::CallFailed(status) => status,
             GrpcError::MessageConversionFailed { index, reason } => {
                 tonic::Status::invalid_argument(format!(
-                    "Failed to convert message at index {}: {}",
-                    index, reason
+                    "Failed to convert message at index {index}: {reason}"
                 ))
             }
             GrpcError::SessionNotFound { session_id } => {
-                tonic::Status::not_found(format!("Session not found: {}", session_id))
+                tonic::Status::not_found(format!("Session not found: {session_id}"))
             }
             GrpcError::InvalidSessionState { reason } => {
-                tonic::Status::failed_precondition(format!("Invalid session state: {}", reason))
+                tonic::Status::failed_precondition(format!("Invalid session state: {reason}"))
             }
-            GrpcError::StreamError(msg) => {
-                tonic::Status::internal(format!("Stream error: {}", msg))
-            }
+            GrpcError::StreamError(msg) => tonic::Status::internal(format!("Stream error: {msg}")),
             GrpcError::ConversionError(e) => {
-                tonic::Status::invalid_argument(format!("Conversion error: {}", e))
+                tonic::Status::invalid_argument(format!("Conversion error: {e}"))
             }
-            GrpcError::CoreError(e) => tonic::Status::internal(format!("Core error: {}", e)),
+            GrpcError::CoreError(e) => tonic::Status::internal(format!("Core error: {e}")),
             GrpcError::ChannelError(msg) => {
-                tonic::Status::internal(format!("Channel error: {}", msg))
+                tonic::Status::internal(format!("Channel error: {msg}"))
             }
         }
     }

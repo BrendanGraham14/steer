@@ -36,8 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_level = if args.debug { "debug" } else { "info" };
     tracing_subscriber::fmt()
         .with_env_filter(format!(
-            "remote_workspace={},remote_workspace={}",
-            log_level, log_level
+            "remote_workspace={log_level},remote_workspace={log_level}"
         ))
         .init();
 
@@ -49,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the remote backend service
     let remote_workspace_service = RemoteWorkspaceService::new()
-        .map_err(|e| format!("Failed to create remote backend service: {}", e))?;
+        .map_err(|e| format!("Failed to create remote backend service: {e}"))?;
 
     info!(
         "Remote backend service created with {} supported tools",
@@ -82,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Remote workspace server ready to accept connections");
 
     if let Err(e) = server.await {
-        eprintln!("Server error: {}", e);
+        eprintln!("Server error: {e}");
         std::process::exit(1);
     }
 

@@ -31,7 +31,7 @@ pub fn init_tracing() -> io::Result<()> {
         std::fs::create_dir_all(&log_dir)?;
 
         // Create the file appender directly (synchronous writing)
-        let file_appender = rolling::never(log_dir.clone(), format!("{}.log", timestamp));
+        let file_appender = rolling::never(log_dir.clone(), format!("{timestamp}.log"));
 
         let subscriber = tracing_subscriber::registry()
             .with(
@@ -49,7 +49,7 @@ pub fn init_tracing() -> io::Result<()> {
 
         tracing::debug!(
             target: "conductor_core::utils::tracing",
-            path = %log_dir.join(format!("{}.log", timestamp)).display(),
+            path = %log_dir.join(format!("{timestamp}.log")).display(),
             "Tracing initialized with file output. Filter configured via RUST_LOG env var."
         );
     } else {

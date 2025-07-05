@@ -27,16 +27,16 @@ fn get_sound_name(sound_type: NotificationSound) -> &'static str {
             NotificationSound::Error => "Basso",              // Error/failure sound
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         match sound_type {
             NotificationSound::ProcessingComplete => "message-new-instant", // Completion sound
-            NotificationSound::ToolApproval => "dialog-warning",           // Warning/attention sound
-            NotificationSound::Error => "dialog-error",                    // Error sound
+            NotificationSound::ToolApproval => "dialog-warning", // Warning/attention sound
+            NotificationSound::Error => "dialog-error",          // Error sound
         }
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         // Windows has limited notification sound options
@@ -46,7 +46,7 @@ fn get_sound_name(sound_type: NotificationSound) -> &'static str {
             NotificationSound::Error => "default",
         }
     }
-    
+
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         "default"
@@ -54,7 +54,11 @@ fn get_sound_name(sound_type: NotificationSound) -> &'static str {
 }
 
 /// Show a desktop notification with optional sound
-pub fn show_notification_with_sound(title: &str, message: &str, sound_type: Option<NotificationSound>) -> Result<()> {
+pub fn show_notification_with_sound(
+    title: &str,
+    message: &str,
+    sound_type: Option<NotificationSound>,
+) -> Result<()> {
     let mut notification = Notification::new();
     notification
         .summary(title)
@@ -108,7 +112,11 @@ impl NotificationConfig {
 /// Trigger notifications with specific sound
 pub fn notify_with_sound(config: &NotificationConfig, sound: NotificationSound, message: &str) {
     if config.enable_desktop_notification {
-        let sound_option = if config.enable_sound { Some(sound) } else { None };
+        let sound_option = if config.enable_sound {
+            Some(sound)
+        } else {
+            None
+        };
         if let Err(e) = show_notification_with_sound("Conductor", message, sound_option) {
             debug!("Failed to show desktop notification: {}", e);
         }
@@ -123,7 +131,11 @@ pub fn notify_with_title_and_sound(
     message: &str,
 ) {
     if config.enable_desktop_notification {
-        let sound_option = if config.enable_sound { Some(sound) } else { None };
+        let sound_option = if config.enable_sound {
+            Some(sound)
+        } else {
+            None
+        };
         if let Err(e) = show_notification_with_sound(title, message, sound_option) {
             debug!("Failed to show desktop notification: {}", e);
         }

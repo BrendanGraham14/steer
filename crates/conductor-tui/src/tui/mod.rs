@@ -740,9 +740,9 @@ impl Tui {
             .iter()
             .map(|m| {
                 if m == current_model {
-                    format!("● {}", m)
+                    format!("● {m}")
                 } else {
-                    format!("  {}", m)
+                    format!("  {m}")
                 }
             })
             .collect();
@@ -919,7 +919,7 @@ pub fn setup_panic_hook() {
         cleanup_terminal();
         // Print panic info to stderr after restoring terminal state
         eprintln!("Application panicked:");
-        eprintln!("{}", panic_info);
+        eprintln!("{panic_info}");
     }));
 }
 
@@ -944,7 +944,7 @@ pub async fn run_tui(
             session_id,
             messages.len()
         );
-        println!("Session ID: {}", session_id);
+        println!("Session ID: {session_id}");
 
         // Start streaming
         client.start_streaming().await?;
@@ -991,7 +991,7 @@ pub async fn run_tui(
         // Create session on server
         let session_id = client.create_session(session_config).await?;
         info!("Created session: {}", session_id);
-        println!("Session ID: {}", session_id);
+        println!("Session ID: {session_id}");
 
         // Start streaming
         client.start_streaming().await?;

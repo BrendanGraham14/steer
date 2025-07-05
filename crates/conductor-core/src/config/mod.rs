@@ -46,7 +46,7 @@ pub fn get_config_path() -> Result<PathBuf> {
         .join("conductor");
 
     fs::create_dir_all(&config_dir)
-        .map_err(|e| Error::Configuration(format!("Failed to create config directory: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to create config directory: {e}")))?;
 
     Ok(config_dir.join("config.json"))
 }
@@ -60,10 +60,10 @@ pub fn load_config() -> Result<Config> {
     }
 
     let config_str = fs::read_to_string(&config_path)
-        .map_err(|e| Error::Configuration(format!("Failed to read config file: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to read config file: {e}")))?;
 
     let config: Config = serde_json::from_str(&config_str)
-        .map_err(|e| Error::Configuration(format!("Failed to parse config file: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to parse config file: {e}")))?;
 
     Ok(config)
 }
@@ -80,10 +80,10 @@ pub fn init_config(force: bool) -> Result<()> {
 
     let config = Config::new();
     let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| Error::Configuration(format!("Failed to serialize config: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to serialize config: {e}")))?;
 
     fs::write(&config_path, config_json)
-        .map_err(|e| Error::Configuration(format!("Failed to write config file: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to write config file: {e}")))?;
 
     Ok(())
 }
@@ -92,10 +92,10 @@ pub fn init_config(force: bool) -> Result<()> {
 pub fn save_config(config: &Config) -> Result<()> {
     let config_path = get_config_path()?;
     let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| Error::Configuration(format!("Failed to serialize config: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to serialize config: {e}")))?;
 
     fs::write(&config_path, config_json)
-        .map_err(|e| Error::Configuration(format!("Failed to write config file: {}", e)))?;
+        .map_err(|e| Error::Configuration(format!("Failed to write config file: {e}")))?;
 
     Ok(())
 }

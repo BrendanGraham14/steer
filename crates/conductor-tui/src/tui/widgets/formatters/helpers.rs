@@ -55,13 +55,13 @@ pub fn truncate_middle(text: &str, max_len: usize) -> String {
     let keep = (max_len - 3) / 2;
     let start = &text[..keep];
     let end = &text[text.len() - keep..];
-    format!("{}...{}", start, end)
+    format!("{start}...{end}")
 }
 
 /// Format file size in human-readable format
 pub fn format_size(bytes: usize) -> String {
     if bytes < 1024 {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     } else if bytes < 1024 * 1024 {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {

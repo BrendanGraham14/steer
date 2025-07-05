@@ -58,7 +58,7 @@ impl AppCommandType {
         match self {
             AppCommandType::Model { target } => {
                 if let Some(model) = target {
-                    format!("model {}", model)
+                    format!("model {model}")
                 } else {
                     "model".to_string()
                 }
@@ -126,12 +126,11 @@ impl UserContent {
     ) -> String {
         format!(
             r#"<executed_command>
-    <command>{}</command>
-    <stdout>{}</stdout>
-    <stderr>{}</stderr>
-    <exit_code>{}</exit_code>
-</executed_command>"#,
-            command, stdout, stderr, exit_code
+    <command>{command}</command>
+    <stdout>{stdout}</stdout>
+    <stderr>{stderr}</stderr>
+    <exit_code>{exit_code}</exit_code>
+</executed_command>"#
         )
     }
 }
@@ -305,11 +304,11 @@ impl Message {
                         stderr,
                         exit_code,
                     } => {
-                        let mut output = format!("$ {}\n{}", command, stdout);
+                        let mut output = format!("$ {command}\n{stdout}");
                         if *exit_code != 0 {
-                            output.push_str(&format!("\nExit code: {}", exit_code));
+                            output.push_str(&format!("\nExit code: {exit_code}"));
                             if !stderr.is_empty() {
-                                output.push_str(&format!("\nError: {}", stderr));
+                                output.push_str(&format!("\nError: {stderr}"));
                             }
                         }
                         output
@@ -366,7 +365,7 @@ impl Message {
                     ToolResult::External(_) => "External Tool Result",
                     ToolResult::Error(_) => "Error",
                 };
-                format!("[Tool Result: {}]", result_type)
+                format!("[Tool Result: {result_type}]")
             }
         }
     }
@@ -577,8 +576,7 @@ impl Conversation {
         self.add_message(Message::User {
             content: vec![UserContent::Text {
                 text: format!(
-                    "[CONVERSATION COMPACTED]\n\nPrevious conversation summary:\n{}",
-                    summary_text
+                    "[CONVERSATION COMPACTED]\n\nPrevious conversation summary:\n{summary_text}"
                 ),
             }],
             timestamp,

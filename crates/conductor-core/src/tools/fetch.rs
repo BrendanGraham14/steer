@@ -71,7 +71,7 @@ Usage notes:
                 if !status.is_success() {
                     return Err(ToolError::execution(
                         "Fetch",
-                        format!("HTTP error: {} when fetching URL: {}", status, url)
+                        format!("HTTP error: {status} when fetching URL: {url}")
                     ));
                 }
 
@@ -95,7 +95,7 @@ Usage notes:
                     }
                     Err(e) => Err(ToolError::execution(
                         "Fetch",
-                        format!("Failed to read response body from {}: {}", url, e)
+                        format!("Failed to read response body from {url}: {e}")
                     )),
                 }
             }
@@ -124,14 +124,13 @@ async fn process_web_page_content(
     let user_message = format!(
         r#"Web page content:
 ---
-{}
+{content}
 ---
 
-{}
+{prompt}
 
 Provide a concise response based only on the content above.
-"#,
-        content, prompt
+"#
     );
 
     let messages = vec![crate::app::conversation::Message::User {
@@ -161,7 +160,7 @@ Provide a concise response based only on the content above.
         }
         Err(e) => Err(ToolError::execution(
             "Fetch",
-            format!("Failed to process web page content: {}", e),
+            format!("Failed to process web page content: {e}"),
         )),
     }
 }
