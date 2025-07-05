@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 use rmcp::transport::ConfigureCommandExt;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -30,12 +31,8 @@ use rmcp::{
     transport::{SseClientTransport, StreamableHttpClientTransport, TokioChildProcess},
 };
 
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
-
 /// MCP transport configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpTransport {
     /// Standard I/O transport (child process)
