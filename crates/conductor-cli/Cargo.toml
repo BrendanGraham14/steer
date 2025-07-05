@@ -21,6 +21,10 @@ path = "src/bin/schema_generator.rs"
 # CLI framework
 clap = { version = "4.4", features = ["derive", "env"] }
 
+# Terminal UI
+ratatui = { version = "*", features = ["crossterm"] }
+crossterm = { version = "*", features = ["bracketed-paste"] }
+
 # API client
 reqwest = { version = "0.11", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
