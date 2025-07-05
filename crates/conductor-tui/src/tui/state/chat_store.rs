@@ -123,7 +123,7 @@ impl ChatStore {
     /// robust than relying on only the latest message because some assistant
     /// messages can reference a parent ID that is missing from the store.
     pub fn prune_to_thread(&mut self, keep_thread_id: Uuid) {
-        // 1. Collect every message that belongs to the target thread.
+        let mut live_ids = HashSet::new();
         let mut queue: Vec<String> = self
             .items
             .iter()
@@ -135,29 +135,34 @@ impl ChatStore {
             })
             .collect();
 
-        // 2. Walk the ancestor chain for each message, accumulating ids that
-        // should stay alive.
-        let mut live_ids: HashSet<String> = HashSet::new();
+        let message_map: HashMap<String, &MessageRow> = self
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ChatItem::Message(row) = item {
+                    Some((row.inner.id().to_string(), row))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         while let Some(id) = queue.pop() {
-            if !live_ids.insert(id.clone()) {
-                // already processed
+            if live_ids.contains(&id) {
                 continue;
             }
-            // Find the message row for this id so we can follow its parent.
-            if let Some(parent_id) = self.items.iter().find_map(|item| match item {
-                ChatItem::Message(row) if row.inner.id() == id => row.inner.parent_message_id(),
-                _ => None,
-            }) {
-                queue.push(parent_id.to_string());
+
+            if let Some(row) = message_map.get(&id) {
+                live_ids.insert(id.clone());
+                if let Some(parent_id) = row.inner.parent_message_id() {
+                    queue.push(parent_id.to_string());
+                }
             }
         }
 
-        // 3. Retain messages that are in live_ids OR have the keep_thread_id.
         self.items.retain(|item| match item {
-            ChatItem::Message(row) => {
-                live_ids.contains(row.inner.id()) || *row.inner.thread_id() == keep_thread_id
-            }
-            _ => true, // keep meta rows
+            ChatItem::Message(row) => live_ids.contains(row.inner.id()),
+            _ => true,
         });
 
         self.rebuild_index();

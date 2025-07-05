@@ -319,7 +319,11 @@ impl App {
         // Get messages (snapshot)
         let api_messages = {
             let conversation_guard = self.conversation.lock().await;
-            conversation_guard.messages.clone()
+            conversation_guard
+                .get_thread_messages()
+                .into_iter()
+                .cloned()
+                .collect()
         };
 
         let current_model = self.current_model;
@@ -688,6 +692,79 @@ impl App {
         }
 
         tool_calls
+    }
+
+    // Helper methods for testing
+    #[cfg(test)]
+    pub async fn add_user_message(&mut self, content: &str) -> Result<()> {
+        use crate::app::conversation::UserContent;
+        let conversation = self.conversation.clone();
+        let mut conversation_guard = conversation.lock().await;
+        let parent_id = conversation_guard
+            .messages
+            .last()
+            .map(|m| m.id().to_string());
+        let message = Message::User {
+            content: vec![UserContent::Text {
+                text: content.to_string(),
+            }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("user", Message::current_timestamp()),
+            thread_id: conversation_guard.current_thread_id,
+            parent_message_id: parent_id,
+        };
+        conversation_guard.add_message(message);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub async fn add_assistant_message(&mut self, content: &str) -> Result<()> {
+        use crate::app::conversation::AssistantContent;
+        let conversation = self.conversation.clone();
+        let mut conversation_guard = conversation.lock().await;
+        let parent_id = conversation_guard
+            .messages
+            .last()
+            .map(|m| m.id().to_string());
+        let message = Message::Assistant {
+            content: vec![AssistantContent::Text {
+                text: content.to_string(),
+            }],
+            timestamp: Message::current_timestamp(),
+            id: Message::generate_id("assistant", Message::current_timestamp()),
+            thread_id: conversation_guard.current_thread_id,
+            parent_message_id: parent_id,
+        };
+        conversation_guard.add_message(message);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub async fn get_messages(&self) -> Vec<Message> {
+        let conversation_guard = self.conversation.lock().await;
+        conversation_guard
+            .get_thread_messages()
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub async fn edit_message(
+        &mut self,
+        message_id: &str,
+        new_content: &str,
+    ) -> Result<Option<uuid::Uuid>> {
+        use crate::app::conversation::UserContent;
+        let conversation = self.conversation.clone();
+        let mut conversation_guard = conversation.lock().await;
+        let new_thread_id = conversation_guard.edit_message(
+            message_id,
+            vec![UserContent::Text {
+                text: new_content.to_string(),
+            }],
+        );
+        Ok(new_thread_id)
     }
 }
 
