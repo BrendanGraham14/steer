@@ -10,9 +10,29 @@ Conductor is an AI-powered CLI assistant for software engineering tasks. It prov
 
 ## Installation
 
+### Using Cargo
+
 ```bash
 cargo install --git ssh://git@github.com/brendangraham14/conductor conductor-cli --locked
 ```
+
+### Using Nix
+
+If you have Nix installed, you can run Conductor directly:
+
+```bash
+# Run conductor without installing
+nix run github:brendangraham14/conductor
+
+# Or install it into your profile
+nix profile install github:brendangraham14/conductor
+```
+
+### Prerequisites
+
+- **Nix (Optional)**: For Nix-based development, [Nix](https://nixos.org/download.html) (version 2.18 or newer) is required.
+- **Direnv (Optional)**: For automatic shell environment loading with Nix, [direnv](https://direnv.net/docs/installation.html) is recommended.
+- **macOS**: Xcode Command Line Tools are required for some build dependencies.
 
 ---
 
@@ -229,16 +249,31 @@ Headless mode pre-approves every built-in tool for convenience.
 
 ## Development
 
-```bash
-git clone https://github.com/yourusername/conductor.git
-cd conductor
+The recommended way to build and test is with Nix, which provides a reproducible environment with all dependencies.
 
-# Build & test
+```bash
+# Enter the development shell
+nix develop
+
+# Or with direnv for automatic environment loading
+direnv allow
+
+# Run checks and tests
+nix flake check
+
+# Build the project
+nix build
+```
+
+If you don't have Nix, you can use `cargo` directly, but you'll need to install dependencies like `protobuf` and `pkg-config` manually.
+
+```bash
+# Build & test with Cargo
 cargo build
 cargo test
 ```
 
-Run `cargo run -p conductor-cli` to launch the CLI in the current directory.
+The `justfile` provides helpful commands for common tasks. Run `just` to see the available commands.
 
 ---
 

@@ -1,6 +1,9 @@
 # Rust build artifacts
 **/target/
+
+# Ignore nested Cargo.lock files but keep the root one
 **/Cargo.lock
+!/Cargo.lock
 
 # Editor files
 .vscode/
@@ -21,3 +24,8 @@ Thumbs.db
 **/.claude/settings.local.json
 
 **/sessions.db*
+
+# Nix / Direnv
+/result*
+.direnv/
+.conductor-shell.nix

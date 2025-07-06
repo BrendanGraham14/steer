@@ -46,7 +46,8 @@ fmt:
     cargo fmt --all
 
 # Run all checks (fmt, clippy, test)
-ci: fmt clippy test
+ci:
+    nix flake check
 
 # Generate schema files
 schema-gen:

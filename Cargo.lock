@@ -3318,7 +3318,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3615,7 +3615,7 @@ dependencies = [
 [[package]]
 name = "rmcp"
 version = "0.2.1"
-source = "git+https://github.com/BrendanGraham14/rust-sdk?rev=97c45fd4cf1c715be16f5acc0f726cdd758f8e6b#97c45fd4cf1c715be16f5acc0f726cdd758f8e6b"
+source = "git+https://github.com/BrendanGraham14/rust-sdk?rev=3f86b21fa41cdd9242df586d173d2e9b308f2dca#3f86b21fa41cdd9242df586d173d2e9b308f2dca"
 dependencies = [
  "axum 0.8.4",
  "base64 0.22.1",
@@ -3647,7 +3647,7 @@ dependencies = [
 [[package]]
 name = "rmcp-macros"
 version = "0.2.1"
-source = "git+https://github.com/BrendanGraham14/rust-sdk?rev=97c45fd4cf1c715be16f5acc0f726cdd758f8e6b#97c45fd4cf1c715be16f5acc0f726cdd758f8e6b"
+source = "git+https://github.com/BrendanGraham14/rust-sdk?rev=3f86b21fa41cdd9242df586d173d2e9b308f2dca#3f86b21fa41cdd9242df586d173d2e9b308f2dca"
 dependencies = [
  "darling",
  "proc-macro2",

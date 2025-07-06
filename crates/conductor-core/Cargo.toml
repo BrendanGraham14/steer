@@ -61,7 +61,7 @@ sqlx = { version = "0.7", features = [
     "json",
     "migrate",
 ] }
-rmcp = { git = "https://github.com/BrendanGraham14/rust-sdk", rev = "97c45fd4cf1c715be16f5acc0f726cdd758f8e6b", features = [
+rmcp = { git = "https://github.com/BrendanGraham14/rust-sdk", rev = "3f86b21fa41cdd9242df586d173d2e9b308f2dca", features = [
     "client",
     "server",
     "transport-child-process",

@@ -16,6 +16,15 @@ just fix          # Auto-fix issues and format code
 # just clippy       # Run clippy linting
 # just clean        # Clean build artifacts
 
+# Nix commands:
+# nix develop       # Enter development shell
+# nix build         # Build the project with Nix (uses crane for better caching)
+# nix flake check   # Run all checks
+# nix run           # Run conductor directly
+# nix build .#conductor-cli              # Build just the CLI
+# nix build .#conductor-remote-workspace # Build just the remote workspace
+# nix build .#conductor-workspace        # Build all crates at once
+
 
 # Commits
 Follow the conventional commits format.
@@ -60,6 +69,16 @@ All crates are organized under the `crates/` directory:
 - `crates/conductor-tools/` - Tool trait definitions and implementations
 - `crates/conductor-macros/` - Procedural macros for tool definitions
 - `crates/conductor-remote-workspace/` - gRPC service for remote tool execution
+
+## Nix Development Environment
+
+The project includes a Nix flake for reproducible development environments. To preserve shell aliases and configurations:
+
+1. **Using nix-direnv** (recommended): Install with `nix profile install nixpkgs#nix-direnv`, then `direnv allow`. This preserves your parent shell environment.
+
+2. **Custom shell config**: Copy `.conductor-shell.nix.example` to `.conductor-shell.nix` and customize it with your preferred aliases and configurations.
+
+3. **Direct sourcing**: The flake's shellHook automatically sources your `.zshrc`/`.bashrc` to preserve aliases.
 
 ## Dependency Graph
 The crates must maintain a strict acyclic dependency graph:
