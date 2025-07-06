@@ -9,6 +9,7 @@ use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -133,14 +134,15 @@ async fn test_api_with_tools() {
     let mut tasks = Vec::new();
 
     // Get tools operation_cancelled
+    let temp_dir = TempDir::new().unwrap();
     let workspace = Arc::new(
-        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
             .await
             .unwrap(),
     );
 
     let tools = workspace.available_tools().await; // Get the Vec<Tool>
-    let pwd = std::env::current_dir().unwrap(); // Get current directory for test
+    let pwd = temp_dir.path().to_path_buf(); // Use temp directory path
 
     for model in models_to_test {
         let client = client.clone(); // Clone Arc
@@ -212,7 +214,7 @@ async fn test_api_with_tools() {
 
             // Execute the tool using workspace with cancellation
             let workspace = Arc::new(
-                LocalWorkspace::with_path(std::env::current_dir().unwrap())
+                LocalWorkspace::with_path(pwd_display.parse().unwrap())
                     .await
                     .unwrap(),
             );
@@ -777,8 +779,9 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         },
     };
     // Get available tools from workspace
+    let temp_dir = TempDir::new().unwrap();
     let workspace = Arc::new(
-        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
             .await
             .unwrap(),
     );

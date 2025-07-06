@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api::Model;
@@ -15,7 +16,9 @@ use conductor_tools::{ToolCall, result::ToolResult};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceConfig {
-    Local,
+    Local {
+        path: PathBuf,
+    },
     Remote {
         agent_address: String,
         auth: Option<RemoteAuth>,
@@ -28,7 +31,9 @@ pub enum WorkspaceConfig {
 
 impl Default for WorkspaceConfig {
     fn default() -> Self {
-        Self::Local
+        Self::Local {
+            path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        }
     }
 }
 
@@ -211,7 +216,9 @@ impl SessionConfig {
     /// Minimal read-only configuration
     pub fn read_only() -> Self {
         Self {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            },
             tool_config: SessionToolConfig::read_only(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -692,7 +699,9 @@ mod tests {
     #[test]
     fn test_session_creation() {
         let config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: PathBuf::from("/test/path"),
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -826,7 +835,9 @@ mod tests {
     async fn test_session_config_build_registry_server_tools() {
         // Test that server tools are properly registered
         let config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: PathBuf::from("/test/path"),
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),

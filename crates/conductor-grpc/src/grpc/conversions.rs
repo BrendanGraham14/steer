@@ -509,7 +509,9 @@ pub fn workspace_config_to_proto(config: &WorkspaceConfig) -> proto::WorkspaceCo
     use proto::workspace_config::Config;
 
     let config_variant = match config {
-        WorkspaceConfig::Local => Config::Local(proto::LocalWorkspaceConfig {}),
+        WorkspaceConfig::Local { path } => Config::Local(proto::LocalWorkspaceConfig {
+            path: path.display().to_string(),
+        }),
         WorkspaceConfig::Remote {
             agent_address,
             auth,
@@ -675,7 +677,13 @@ pub fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
 /// Convert from protobuf WorkspaceConfig to internal WorkspaceConfig
 pub fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> WorkspaceConfig {
     match proto_config.config {
-        Some(proto::workspace_config::Config::Local(_)) => WorkspaceConfig::Local,
+        Some(proto::workspace_config::Config::Local(local)) => WorkspaceConfig::Local {
+            path: if local.path.is_empty() {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            } else {
+                std::path::PathBuf::from(local.path)
+            },
+        },
         Some(proto::workspace_config::Config::Remote(remote)) => {
             let auth = remote.auth.map(|proto_auth| match proto_auth.auth {
                 Some(proto::remote_auth::Auth::BearerToken(token)) => RemoteAuth::Bearer { token },
@@ -698,7 +706,9 @@ pub fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> Worksp
                 runtime,
             }
         }
-        None => WorkspaceConfig::Local,
+        None => WorkspaceConfig::Local {
+            path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        },
     }
 }
 

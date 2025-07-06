@@ -819,7 +819,9 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -882,7 +884,9 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -950,7 +954,9 @@ mod tests {
 
         // Create a session first
         let session_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -1041,7 +1047,9 @@ mod tests {
 
         // Create a session
         let session_config = SessionConfig {
-            workspace: WorkspaceConfig::Local,
+            workspace: WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
