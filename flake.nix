@@ -159,18 +159,6 @@
             shellHook = ''
               # This shellHook is executed only in interactive shells
               if [ -n "$PS1" ]; then
-                # Source existing shell configuration to preserve aliases
-                if [ -n "$SHELL" ]; then
-                  case "$SHELL" in
-                    */zsh)
-                      [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
-                      ;;
-                    */bash)
-                      [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc"
-                      ;;
-                  esac
-                fi
-                
                 # Source project-specific shell configuration if it exists
                 [ -f ".conductor-shell.nix" ] && source .conductor-shell.nix
                 
