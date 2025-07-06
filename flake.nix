@@ -30,7 +30,11 @@
           inherit system overlays;
         };
 
-        rustToolchain = pkgs.rust-bin.stable."1.88.0".default.override {
+        # Read rust version from rust-toolchain.toml
+        rustToolchainToml = builtins.fromTOML (builtins.readFile ./rust-toolchain.toml);
+        rustVersion = rustToolchainToml.toolchain.channel;
+        
+        rustToolchain = pkgs.rust-bin.stable.${rustVersion}.default.override {
           extensions = [
             "rust-src"
             "rustfmt"
