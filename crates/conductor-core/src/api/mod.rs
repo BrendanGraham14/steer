@@ -19,6 +19,7 @@ use strum::EnumIter;
 use strum::IntoStaticStr;
 use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use tracing::warn;
 
 use crate::app::conversation::Message;
@@ -217,7 +218,7 @@ impl Client {
         max_attempts: usize,
     ) -> std::result::Result<CompletionResponse, ApiError> {
         let mut attempts = 0;
-
+        debug!(target: "api::complete", "model: {:?} messages: {:?}", model, messages);
         loop {
             match self
                 .complete(
