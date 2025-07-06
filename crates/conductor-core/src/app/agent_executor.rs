@@ -198,7 +198,7 @@ impl AgentExecutor {
     )]
     async fn handle_tool_calls<F, Fut>(
         &self,
-        tool_calls: &Vec<ToolCall>,
+        tool_calls: &[ToolCall],
         tool_executor_callback: &F,
         event_sender: &mpsc::Sender<AgentEvent>,
         token: &CancellationToken,

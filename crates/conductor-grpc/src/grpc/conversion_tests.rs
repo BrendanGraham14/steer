@@ -212,7 +212,8 @@ prop_compose! {
             #[cfg(not(unix))]
             2 => conductor_core::tools::McpTransport::Stdio { command, args },
             3 => conductor_core::tools::McpTransport::Sse { url: url.clone(), headers: headers.clone() },
-            4 | _ => conductor_core::tools::McpTransport::Http { url, headers },
+            4 => conductor_core::tools::McpTransport::Http { url, headers },
+            _ => conductor_core::tools::McpTransport::Http { url, headers },
         }
     }
 }

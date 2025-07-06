@@ -10,7 +10,9 @@ use tonic::transport::{Channel, Server};
 
 /// Creates a localhost gRPC server and client channel
 /// This runs both server and client in the same process using localhost TCP
-pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Result<Channel> {
+pub async fn create_local_channel(
+    session_manager: Arc<SessionManager>,
+) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     // Create a channel for the server's bound address
     let (tx, rx) = oneshot::channel();
 
@@ -41,25 +43,21 @@ pub async fn create_local_channel(session_manager: Arc<SessionManager>) -> Resul
         .await
         .map_err(|e| GrpcError::ChannelError(format!("Failed to receive server address: {e}")))?;
 
-    // Note: The server task handle is not awaited here as it runs for the lifetime
-    // of the application. Proper shutdown should be handled by the caller if needed.
-    let _ = server_handle;
-
     // Use tonic::transport::Endpoint for proper URI parsing
     let endpoint =
         tonic::transport::Endpoint::try_from(format!("http://{addr}"))?.tcp_nodelay(true);
     let channel = endpoint.connect().await?;
 
-    Ok(channel)
+    Ok((channel, server_handle))
 }
 
 /// Creates a complete localhost gRPC setup for local mode
-/// Returns the channel for use by the TUI
+/// Returns the channel and a handle to the server task
 pub async fn setup_local_grpc(
     _llm_config: conductor_core::config::LlmConfig,
     default_model: conductor_core::api::Model,
     session_db_path: Option<std::path::PathBuf>,
-) -> Result<Channel> {
+) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     // Create session store with the provided configuration
     let store_config =
         conductor_core::utils::session::resolve_session_store_config(session_db_path)?;
@@ -82,7 +80,7 @@ pub async fn setup_local_grpc(
     ));
 
     // Create localhost channel
-    let channel = create_local_channel(session_manager).await?;
+    let (channel, handle) = create_local_channel(session_manager).await?;
 
-    Ok(channel)
+    Ok((channel, handle))
 }

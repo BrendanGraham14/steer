@@ -361,12 +361,13 @@ mod tests {
         let serialized = serde_json::to_string(&event).unwrap();
         let deserialized: StreamEvent = serde_json::from_str(&serialized).unwrap();
 
+        assert!(matches!(deserialized, StreamEvent::ToolCallStarted { .. }));
         match deserialized {
             StreamEvent::ToolCallStarted { tool_call, .. } => {
                 assert_eq!(tool_call.name, "edit_file");
                 assert_eq!(tool_call.id, "tool_123");
             }
-            _ => panic!("Unexpected event type"),
+            _ => unreachable!(),
         }
     }
 

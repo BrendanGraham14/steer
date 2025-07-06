@@ -993,7 +993,7 @@ mod tests {
         }]);
 
         let response = client.stream_session(request_stream).await.unwrap();
-        let stream = response.into_inner();
+        let _stream = response.into_inner();
 
         // Send a test message to verify session is working
         let (msg_tx, msg_rx) = mpsc::channel(10);

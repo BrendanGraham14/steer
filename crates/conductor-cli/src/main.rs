@@ -156,7 +156,7 @@ async fn run_tui_local(
         .expect("Failed to load LLM configuration from environment variables.");
 
     // Create in-memory channel
-    let channel = local_server::setup_local_grpc(llm_config, model, session_db)
+    let (channel, _server_handle) = local_server::setup_local_grpc(llm_config, model, session_db)
         .await
         .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
 

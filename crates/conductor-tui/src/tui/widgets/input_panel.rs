@@ -572,13 +572,6 @@ impl StatefulWidget for InputPanel<'_> {
 mod tests {
     use super::*;
     use crate::tui::model::{ChatItem, MessageRow};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
-    fn create_test_terminal(width: u16, height: u16) -> Terminal<TestBackend> {
-        let backend = TestBackend::new(width, height);
-        Terminal::new(backend).unwrap()
-    }
 
     #[test]
     fn test_input_panel_state_default() {
@@ -608,14 +601,14 @@ mod tests {
 
     #[test]
     fn test_edit_selection_navigation() {
-        let mut state = InputPanelState::default();
-
-        // Add some test messages
-        state.edit_selection_messages = vec![
-            ("msg1".to_string(), "First message".to_string()),
-            ("msg2".to_string(), "Second message".to_string()),
-            ("msg3".to_string(), "Third message".to_string()),
-        ];
+        let mut state = InputPanelState {
+            edit_selection_messages: vec![
+                ("msg1".to_string(), "First message".to_string()),
+                ("msg2".to_string(), "Second message".to_string()),
+                ("msg3".to_string(), "Third message".to_string()),
+            ],
+            ..Default::default()
+        };
         state.edit_selection_index = 1;
         state.update_hovered_id();
 
@@ -649,12 +642,12 @@ mod tests {
 
     #[test]
     fn test_clear_edit_selection() {
-        let mut state = InputPanelState::default();
-
-        // Set up some edit selection state
-        state.edit_selection_messages = vec![("msg1".to_string(), "First message".to_string())];
-        state.edit_selection_index = 0;
-        state.edit_selection_hovered_id = Some("msg1".to_string());
+        let mut state = InputPanelState {
+            edit_selection_messages: vec![("msg1".to_string(), "First message".to_string())],
+            edit_selection_index: 0,
+            edit_selection_hovered_id: Some("msg1".to_string()),
+            ..Default::default()
+        };
 
         // Clear it
         state.clear_edit_selection();

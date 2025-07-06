@@ -245,12 +245,10 @@ mod tests {
             .await
             .unwrap();
 
-        let env = match workspace.environment().await {
-            Ok(e) => e,
-            Err(e) => {
-                panic!("Environment collection failed: {e}");
-            }
-        };
+        let env = workspace
+            .environment()
+            .await
+            .expect("Environment collection should succeed");
 
         // Should detect as git repo if git is available
         let expected_path = temp_dir

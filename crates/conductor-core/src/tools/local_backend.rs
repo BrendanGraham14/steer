@@ -317,10 +317,9 @@ mod tests {
 
         let result = backend.execute(&tool_call, &context).await;
         assert!(result.is_err());
-
-        match result.unwrap_err() {
-            ToolError::UnknownTool(name) => assert_eq!(name, "unknown_tool"),
-            _ => panic!("Expected UnknownTool error"),
+        assert!(matches!(result, Err(ToolError::UnknownTool(_))));
+        if let Err(ToolError::UnknownTool(name)) = result {
+            assert_eq!(name, "unknown_tool");
         }
     }
 
@@ -341,9 +340,9 @@ mod tests {
         // Test an unknown tool
         let result = backend.requires_approval("unknown_tool").await;
         assert!(result.is_err());
-        match result.unwrap_err() {
-            ToolError::UnknownTool(name) => assert_eq!(name, "unknown_tool"),
-            _ => panic!("Expected UnknownTool error"),
+        assert!(matches!(result, Err(ToolError::UnknownTool(_))));
+        if let Err(ToolError::UnknownTool(name)) = result {
+            assert_eq!(name, "unknown_tool");
         }
     }
 }

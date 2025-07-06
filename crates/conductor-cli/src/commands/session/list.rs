@@ -19,7 +19,7 @@ pub struct ListSessionCommand {
 impl Command for ListSessionCommand {
     async fn execute(&self) -> Result<()> {
         // If remote is specified, handle via gRPC
-        if let Some(remote_addr) = &self.remote {
+        if let Some(_remote_addr) = &self.remote {
             return self.handle_remote().await;
         }
 

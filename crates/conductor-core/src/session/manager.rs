@@ -1021,8 +1021,10 @@ mod tests {
         let app_config = create_test_app_config();
 
         // Create first session - should succeed
-        let mut tool_config = crate::session::SessionToolConfig::default();
-        tool_config.approval_policy = crate::session::ToolApprovalPolicy::AlwaysAsk;
+        let tool_config = crate::session::SessionToolConfig {
+            approval_policy: crate::session::ToolApprovalPolicy::AlwaysAsk,
+            ..Default::default()
+        };
 
         let session_config = SessionConfig {
             workspace: crate::session::state::WorkspaceConfig::Local {
@@ -1042,6 +1044,12 @@ mod tests {
         let result = manager.create_session(session_config, app_config).await;
 
         assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::error::Error::SessionManager(
+                SessionManagerError::CapacityExceeded { .. }
+            ))
+        ));
         match result.unwrap_err() {
             crate::error::Error::SessionManager(SessionManagerError::CapacityExceeded {
                 current,
@@ -1050,7 +1058,7 @@ mod tests {
                 assert_eq!(current, 1);
                 assert_eq!(max, 1);
             }
-            _ => panic!("Expected CapacityExceeded error"),
+            _ => unreachable!(),
         }
     }
 
@@ -1184,6 +1192,7 @@ mod tests {
         assert_eq!(tool_result_msg.role(), Role::Tool);
 
         // Verify the content structure
+        assert!(matches!(tool_result_msg, ConversationMessage::Tool { .. }));
         match tool_result_msg {
             ConversationMessage::Tool {
                 tool_use_id,
@@ -1191,14 +1200,18 @@ mod tests {
                 ..
             } => {
                 assert_eq!(tool_use_id, "tool_call_1");
+                assert!(matches!(
+                    result,
+                    crate::app::conversation::ToolResult::FileContent(_)
+                ));
                 match result {
                     crate::app::conversation::ToolResult::FileContent(content) => {
                         assert!(content.content.contains("Hello, world!"));
                     }
-                    _ => panic!("Expected FileContent result"),
+                    _ => unreachable!(),
                 }
             }
-            _ => panic!("Expected Tool message"),
+            _ => unreachable!(),
         }
 
         // Now test resuming the session - it should work without API errors

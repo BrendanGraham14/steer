@@ -56,12 +56,10 @@ mod tests {
         let path = PathBuf::from("/tmp/test.db");
         let config = SessionStoreConfig::sqlite(path.clone());
 
-        match config {
-            SessionStoreConfig::Sqlite { path: config_path } => {
-                assert_eq!(config_path, path);
-            }
-            _ => panic!("Expected SQLite config"),
-        }
+        let SessionStoreConfig::Sqlite { path: config_path } = config else {
+            unreachable!("expected SQLite config")
+        };
+        assert_eq!(config_path, path);
     }
 
     #[test]
@@ -69,26 +67,22 @@ mod tests {
         let config = SessionStoreConfig::default_sqlite();
         assert!(config.is_ok());
 
-        match config.unwrap() {
-            SessionStoreConfig::Sqlite { path } => {
-                assert!(path.to_string_lossy().contains(".conductor"));
-                assert!(path.to_string_lossy().contains("sessions.db"));
-            }
-            _ => panic!("Expected SQLite config"),
-        }
+        let SessionStoreConfig::Sqlite { path } = config.unwrap() else {
+            unreachable!("expected SQLite config")
+        };
+        assert!(path.to_string_lossy().contains(".conductor"));
+        assert!(path.to_string_lossy().contains("sessions.db"));
     }
 
     #[test]
     fn test_default_config() {
         let config = SessionStoreConfig::default();
 
-        match config {
-            SessionStoreConfig::Sqlite { path } => {
-                // Should either be in .conductor or current directory
-                let path_str = path.to_string_lossy();
-                assert!(path_str.contains("sessions.db"));
-            }
-            _ => panic!("Expected SQLite config"),
-        }
+        let SessionStoreConfig::Sqlite { path } = config else {
+            unreachable!("expected SQLite config")
+        };
+        // Should either be in .conductor or current directory
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("sessions.db"));
     }
 }

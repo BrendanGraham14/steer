@@ -14,7 +14,7 @@ use tracing::{debug, info};
 
 /// Create a test workspace with some files
 async fn setup_test_workspace() -> Result<(TempDir, PathBuf)> {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("Failed to create temporary directory");
     let workspace_path = temp_dir.path().to_path_buf();
 
     // Create some test files
@@ -32,14 +32,14 @@ edition = "2024"
 "#,
     )
     .await
-    .unwrap();
+    .expect("Failed to write Cargo.toml");
 
     tokio::fs::write(
         workspace_path.join("README.md"),
         "# Test Project\n\nThis is a test project for fuzzy finder testing.\n",
     )
     .await
-    .unwrap();
+    .expect("Failed to write README.md");
 
     tokio::fs::write(
         workspace_path.join("src/main.rs"),
@@ -49,7 +49,7 @@ edition = "2024"
 "#,
     )
     .await
-    .unwrap();
+    .expect("Failed to write src/main.rs");
 
     tokio::fs::write(
         workspace_path.join("src/lib.rs"),
@@ -92,7 +92,9 @@ async fn test_tui_agent_service_file_listing() {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Setup test workspace
-    let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
+    let (_temp_dir, workspace_path) = setup_test_workspace()
+        .await
+        .expect("Failed to setup test workspace");
     info!("Created test workspace at: {:?}", workspace_path);
 
     // Create ServiceHost configuration with explicit port
@@ -203,11 +205,15 @@ async fn test_tui_agent_service_file_listing() {
     let mut file_stream = grpc_client
         .list_files(list_files_req)
         .await
-        .unwrap()
+        .expect("Failed to list files with query")
         .into_inner();
     let mut filtered_files = Vec::new();
 
-    while let Some(response) = file_stream.message().await.unwrap() {
+    while let Some(response) = file_stream
+        .message()
+        .await
+        .expect("Failed to receive filtered file list message")
+    {
         filtered_files.extend(response.paths);
     }
 
@@ -234,7 +240,10 @@ async fn test_tui_agent_service_file_listing() {
     }
 
     // Cleanup
-    service_host.shutdown().await.unwrap();
+    service_host
+        .shutdown()
+        .await
+        .expect("Failed to shutdown service host");
 }
 
 #[tokio::test]
@@ -393,7 +402,7 @@ async fn test_workspace_changed_event_flow() {
         .id;
 
     // Start streaming events
-    let (tx, rx) = tokio::sync::mpsc::channel(100);
+    let (tx, _rx) = tokio::sync::mpsc::channel(100);
 
     // Subscribe to events
     let subscribe_msg = client_message::Message::Subscribe(SubscribeRequest {
@@ -437,14 +446,13 @@ async fn test_workspace_changed_event_flow() {
     // For this test, we'll just verify the event stream works
 
     // Send a message that would trigger tool execution
-    let send_msg = client_message::Message::SendMessage(SendMessageRequest {
+    let _send_msg = client_message::Message::SendMessage(SendMessageRequest {
         session_id: session_id.clone(),
         message: "Create a new file called test.txt with 'hello world' in it".to_string(),
         attachments: vec![],
     });
 
-    // In a real test, we'd send this through the stream and wait for WorkspaceChanged
-    // For now, we'll just verify the streaming infrastructure works
+    // TODO: implement
 
     // Give it some time
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;

@@ -396,25 +396,21 @@ mod tests {
         println!("Ephemeral run succeeded: {:?}", result.final_msg);
 
         // Verify the response contains something reasonable
-        if let Message::Assistant { content, .. } = &result.final_msg {
-            let text_content = content.iter().find_map(|c| match c {
-                AssistantContent::Text { text } => Some(text),
-                _ => None,
-            });
-
-            if let Some(content) = text_content {
-                assert!(!content.is_empty(), "Response should not be empty");
-                // For "What is 2 + 2?", we expect the answer to contain "4"
-                assert!(
-                    content.contains("4"),
-                    "Expected response to contain '4', got: {content}"
-                );
-            } else {
-                panic!("No text content found in assistant message");
-            }
-        } else {
-            panic!("Expected assistant message");
-        }
+        let content = match &result.final_msg {
+            Message::Assistant { content, .. } => content,
+            _ => unreachable!("expected assistant message, got {:?}", result.final_msg),
+        };
+        let text_content = content.iter().find_map(|c| match c {
+            AssistantContent::Text { text } => Some(text),
+            _ => None,
+        });
+        let content = text_content.expect("No text content found in assistant message");
+        assert!(!content.is_empty(), "Response should not be empty");
+        // For "What is 2 + 2?", we expect the answer to contain "4"
+        assert!(
+            content.contains("4"),
+            "Expected response to contain '4', got: {content}"
+        );
     }
 
     #[tokio::test]
@@ -495,26 +491,21 @@ mod tests {
             Ok(run_result) => {
                 println!("Session run succeeded: {:?}", run_result.final_msg);
 
-                // Verify we got a reasonable response
-                if let Message::Assistant { content, .. } = &run_result.final_msg {
-                    let text_content = content.iter().find_map(|c| match c {
-                        AssistantContent::Text { text } => Some(text),
-                        _ => None,
-                    });
-
-                    if let Some(content) = text_content {
-                        assert!(!content.is_empty(), "Response should not be empty");
-                        // The answer should mention Paris
-                        assert!(
-                            content.to_lowercase().contains("paris"),
-                            "Expected response to contain 'Paris', got: {content}"
-                        );
-                    } else {
-                        panic!("Expected text response");
-                    }
-                } else {
-                    panic!("Expected assistant message");
-                }
+                let content = match &run_result.final_msg {
+                    Message::Assistant { content, .. } => content,
+                    _ => unreachable!("expected assistant message, got {:?}", run_result.final_msg),
+                };
+                let text_content = content.iter().find_map(|c| match c {
+                    AssistantContent::Text { text } => Some(text),
+                    _ => None,
+                });
+                let content = text_content.expect("expected text response in assistant message");
+                assert!(!content.is_empty(), "Response should not be empty");
+                // The answer should mention Paris
+                assert!(
+                    content.to_lowercase().contains("paris"),
+                    "Expected response to contain 'Paris', got: {content}"
+                );
 
                 // Verify the session was updated
                 let session_state = session_manager
@@ -774,25 +765,23 @@ mod tests {
                 // Found the message, verify it's correct
                 let first_msg = &updated_state.messages[0];
                 assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
-                if let Message::User { content, .. } = first_msg {
-                    if let Some(UserContent::Text { text }) = content.first() {
-                        assert_eq!(text, "Test");
-                    } else {
-                        panic!("Expected text content");
-                    }
-                } else {
-                    panic!("Expected user message");
-                }
+                assert!(matches!(first_msg, Message::User { .. }));
+                let Message::User { content, .. } = first_msg else {
+                    unreachable!();
+                };
+                assert!(matches!(content.first(), Some(UserContent::Text { .. })));
+                let Some(UserContent::Text { text }) = content.first() else {
+                    unreachable!();
+                };
+                assert_eq!(text, "Test");
                 return; // Test passed
             }
-
-            if attempts >= max_attempts {
-                panic!(
-                    "Message was not added to session state after {} attempts. Current message count: {}",
-                    max_attempts,
-                    updated_state.messages.len()
-                );
-            }
+            assert!(
+                attempts < max_attempts,
+                "Message was not added to session state after {} attempts. Current message count: {}",
+                max_attempts,
+                updated_state.messages.len()
+            );
         }
     }
 
@@ -853,15 +842,15 @@ mod tests {
         // The first message should be the user input we sent
         let first_msg = &state_after.messages[0];
         assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
-        if let Message::User { content, .. } = first_msg {
-            if let Some(UserContent::Text { text }) = content.first() {
-                assert_eq!(text, "What is my name?");
-            } else {
-                panic!("Expected text content for user message");
-            }
-        } else {
-            panic!("Expected user message");
-        }
+        assert!(matches!(first_msg, Message::User { .. }));
+        let Message::User { content, .. } = first_msg else {
+            unreachable!();
+        };
+        assert!(matches!(content.first(), Some(UserContent::Text { .. })));
+        let Some(UserContent::Text { text }) = content.first() else {
+            unreachable!();
+        };
+        assert_eq!(text, "What is my name?");
     }
 
     #[tokio::test]
@@ -957,27 +946,33 @@ mod tests {
         println!("Second interaction: {:?}", result2.final_msg);
 
         // Verify the second response uses the context from the first
-        if let Message::Assistant { content, .. } = &result2.final_msg {
-            let text_content = content.iter().find_map(|c| match c {
-                AssistantContent::Text { text } => Some(text),
-                _ => None,
-            });
+        match &result2.final_msg {
+            Message::Assistant { content, .. } => {
+                let text_content = content.iter().find_map(|c| match c {
+                    AssistantContent::Text { text } => Some(text),
+                    _ => None,
+                });
 
-            if let Some(content) = text_content {
-                assert!(!content.is_empty(), "Response should not be empty");
-                let content_lower = content.to_lowercase();
+                match text_content {
+                    Some(content) => {
+                        assert!(!content.is_empty(), "Response should not be empty");
+                        let content_lower = content.to_lowercase();
 
-                // The AI should acknowledge the name Alice from the context
-                // If it doesn't remember perfectly, it should at least acknowledge the user
-                assert!(
-                    content_lower.contains("alice") || content_lower.contains("name"),
-                    "Expected response to reference the name or context, got: {content}"
-                );
-            } else {
-                panic!("Expected text response in assistant message");
+                        // The AI should acknowledge the name Alice from the context
+                        // If it doesn't remember perfectly, it should at least acknowledge the user
+                        assert!(
+                            content_lower.contains("alice") || content_lower.contains("name"),
+                            "Expected response to reference the name or context, got: {content}"
+                        );
+                    }
+                    None => {
+                        unreachable!("expected text response in assistant message");
+                    }
+                }
             }
-        } else {
-            panic!("Expected assistant message");
+            _ => {
+                unreachable!("expected assistant message, got {:?}", result2.final_msg);
+            }
         }
 
         // Verify the session has all the messages

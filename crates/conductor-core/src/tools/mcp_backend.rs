@@ -463,8 +463,8 @@ mod tests {
     fn test_tool_name_extraction() {
         let prefix = "mcp__test__";
         let full_name = "mcp__test__some_tool";
-        let actual_name = if full_name.starts_with(prefix) {
-            &full_name[prefix.len()..]
+        let actual_name = if let Some(stripped) = full_name.strip_prefix(prefix) {
+            stripped
         } else {
             full_name
         };
@@ -515,7 +515,7 @@ mod tests {
                 assert_eq!(command, "node");
                 assert_eq!(args, vec!["server.js"]);
             }
-            _ => panic!("Expected Stdio transport"),
+            _ => unreachable!("Stdio transport"),
         }
 
         // Test TCP transport
@@ -526,7 +526,7 @@ mod tests {
                 assert_eq!(host, "127.0.0.1");
                 assert_eq!(port, 8080);
             }
-            _ => panic!("Expected TCP transport"),
+            _ => unreachable!("TCP transport"),
         }
     }
 }

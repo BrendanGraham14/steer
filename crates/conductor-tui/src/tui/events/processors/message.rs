@@ -206,18 +206,20 @@ mod tests {
         }
     }
 
-    fn create_test_context() -> (
-        ChatStore,
-        ChatListState,
-        ToolCallRegistry,
-        Arc<dyn AppCommandSink>,
-        bool,
-        Option<String>,
-        usize,
-        Option<ToolCall>,
-        conductor_core::api::Model,
-        bool,
-    ) {
+    struct TestContext {
+        chat_store: ChatStore,
+        chat_list_state: ChatListState,
+        tool_registry: ToolCallRegistry,
+        command_sink: Arc<dyn AppCommandSink>,
+        is_processing: bool,
+        progress_message: Option<String>,
+        spinner_state: usize,
+        current_tool_approval: Option<ToolCall>,
+        current_model: conductor_core::api::Model,
+        messages_updated: bool,
+    }
+
+    fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
         let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
@@ -229,7 +231,7 @@ mod tests {
         let current_model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let messages_updated = false;
 
-        (
+        TestContext {
             chat_store,
             chat_list_state,
             tool_registry,
@@ -240,24 +242,13 @@ mod tests {
             current_tool_approval,
             current_model,
             messages_updated,
-        )
+        }
     }
 
     #[test]
     fn test_assistant_message_updates_placeholder_tool_params() {
         let mut processor = MessageEventProcessor::new();
-        let (
-            mut chat_store,
-            mut chat_list_state,
-            mut tool_registry,
-            command_sink,
-            mut is_processing,
-            mut progress_message,
-            mut spinner_state,
-            mut current_tool_approval,
-            mut current_model,
-            mut messages_updated,
-        ) = create_test_context();
+        let mut ctx = create_test_context();
 
         // First, create a placeholder Tool message (simulating what happens during ToolCallStarted)
         let tool_id = "test_tool_123".to_string();
@@ -281,12 +272,12 @@ mod tests {
             thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
-        let tool_idx = chat_store.add_message(placeholder_msg);
-        tool_registry.set_message_index(&tool_id, tool_idx);
-        tool_registry.register_call(placeholder_call);
+        let tool_idx = ctx.chat_store.add_message(placeholder_msg);
+        ctx.tool_registry.set_message_index(&tool_id, tool_idx);
+        ctx.tool_registry.register_call(placeholder_call);
 
         // Verify the placeholder was created
-        assert_eq!(chat_store.len(), 1);
+        assert_eq!(ctx.chat_store.len(), 1);
 
         // Now process an Assistant message with the real ToolCall
         let real_params = json!({
@@ -311,16 +302,16 @@ mod tests {
 
         let current_thread = uuid::Uuid::new_v4();
         let mut ctx = ProcessingContext {
-            chat_store: &mut chat_store,
-            chat_list_state: &mut chat_list_state,
-            tool_registry: &mut tool_registry,
-            command_sink: &command_sink,
-            is_processing: &mut is_processing,
-            progress_message: &mut progress_message,
-            spinner_state: &mut spinner_state,
-            current_tool_approval: &mut current_tool_approval,
-            current_model: &mut current_model,
-            messages_updated: &mut messages_updated,
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            command_sink: &ctx.command_sink,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            messages_updated: &mut ctx.messages_updated,
             current_thread: Some(current_thread),
         };
 
@@ -336,7 +327,8 @@ mod tests {
         assert!(matches!(result, ProcessingResult::Handled));
 
         // Verify the registry was updated with real params
-        let stored_call = tool_registry
+        let stored_call = ctx
+            .tool_registry
             .get_tool_call(&tool_id)
             .expect("Tool call should be in registry");
         assert_eq!(stored_call.parameters, real_params);

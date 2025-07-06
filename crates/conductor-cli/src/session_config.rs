@@ -335,10 +335,10 @@ mod tests {
                         assert_eq!(command, "python");
                         assert_eq!(args, vec!["-m", "test"]);
                     }
-                    _ => panic!("Expected Stdio transport"),
+                    _ => unreachable!("Expected Stdio transport"),
                 }
             }
-            _ => panic!("Wrong variant"),
+            _ => unreachable!("Expected correct variant"),
         }
     }
 
@@ -623,7 +623,7 @@ visibility = {{ whitelist = ["grep", "ls", "view"] }}
                 assert!(tools.contains("ls"));
                 assert!(tools.contains("view"));
             }
-            _ => panic!("Expected Whitelist visibility"),
+            _ => unreachable!("Expected Whitelist visibility"),
         }
     }
 
@@ -651,7 +651,7 @@ visibility = {{ blacklist = ["bash", "edit_file"] }}
                 assert!(tools.contains("bash"));
                 assert!(tools.contains("edit_file"));
             }
-            _ => panic!("Expected Blacklist visibility"),
+            _ => unreachable!("Expected Blacklist visibility"),
         }
     }
 
@@ -686,10 +686,10 @@ auth = {{ Bearer = {{ token = "secret-token" }} }}
                     RemoteAuth::Bearer { token } => {
                         assert_eq!(token, "secret-token");
                     }
-                    _ => panic!("Expected Bearer auth"),
+                    _ => unreachable!("Expected Bearer auth"),
                 }
             }
-            _ => panic!("Expected Remote workspace"),
+            _ => unreachable!("Expected Remote workspace"),
         }
     }
 }
