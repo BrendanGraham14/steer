@@ -57,7 +57,10 @@ pub struct PartialSessionConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PartialWorkspaceConfig {
-    Local,
+    Local {
+        #[serde(default)]
+        path: Option<PathBuf>,
+    },
     Remote {
         agent_address: String,
         auth: Option<RemoteAuth>,
@@ -152,7 +155,11 @@ impl SessionConfigLoader {
 
     fn partial_to_full(&self, partial: PartialSessionConfig) -> Result<SessionConfig> {
         let workspace = match partial.workspace {
-            Some(PartialWorkspaceConfig::Local) => WorkspaceConfig::Local,
+            Some(PartialWorkspaceConfig::Local { path }) => WorkspaceConfig::Local {
+                path: path.unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                }),
+            },
             Some(PartialWorkspaceConfig::Remote {
                 agent_address,
                 auth,
@@ -396,7 +403,7 @@ project = "my-project"
         let config = loader.load().await.unwrap();
 
         // Should get defaults
-        assert!(matches!(config.workspace, WorkspaceConfig::Local));
+        assert!(matches!(config.workspace, WorkspaceConfig::Local { .. }));
         assert!(matches!(
             config.tool_config.approval_policy,
             ToolApprovalPolicy::AlwaysAsk

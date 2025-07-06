@@ -1081,7 +1081,7 @@ mod tests {
         ));
         assert!(matches!(
             fetched_session.config.workspace,
-            WorkspaceConfig::Local
+            WorkspaceConfig::Local { .. }
         ));
     }
 

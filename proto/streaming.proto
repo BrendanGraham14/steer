@@ -733,7 +733,9 @@ message WorkspaceConfig {
   }
 }
 
-message LocalWorkspaceConfig {}
+message LocalWorkspaceConfig {
+  string path = 1;
+}
 
 message RemoteWorkspaceConfig {
   string agent_address = 1;

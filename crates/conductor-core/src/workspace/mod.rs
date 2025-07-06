@@ -92,8 +92,8 @@ impl CachedEnvironment {
 /// Create a workspace from configuration
 pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Workspace>> {
     match config {
-        WorkspaceConfig::Local => {
-            let workspace = local::LocalWorkspace::new().await?;
+        WorkspaceConfig::Local { path } => {
+            let workspace = local::LocalWorkspace::with_path(path.clone()).await?;
             Ok(Arc::new(workspace))
         }
         WorkspaceConfig::Remote { .. } => {
@@ -120,7 +120,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_local_workspace() {
-        let config = WorkspaceConfig::Local;
+        let config = WorkspaceConfig::Local {
+            path: std::path::PathBuf::from("/test/path"),
+        };
         let workspace = create_workspace(&config).await.unwrap();
 
         let metadata = workspace.metadata();

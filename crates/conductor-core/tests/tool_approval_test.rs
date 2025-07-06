@@ -10,16 +10,19 @@ use conductor_tools::traits::Tool;
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
 use tracing::warn; // Added warn import
 
-async fn create_test_workspace() -> Arc<LocalWorkspace> {
-    Arc::new(
-        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+async fn create_test_workspace() -> (Arc<LocalWorkspace>, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let workspace = Arc::new(
+        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
             .await
             .unwrap(),
-    )
+    );
+    (workspace, temp_dir)
 }
 
 fn create_test_tool_executor(workspace: Arc<LocalWorkspace>) -> Arc<ToolExecutor> {
@@ -47,7 +50,7 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     let llm_config = LlmConfig::from_env()?;
     let app_config = AppConfig { llm_config };
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
-    let workspace = create_test_workspace().await;
+    let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
 
     // Changed Model::Default to a specific model
@@ -102,7 +105,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<AppEvent>(100);
     let (command_tx_to_actor, command_rx_for_actor) = mpsc::channel::<AppCommand>(100);
 
-    let workspace = create_test_workspace().await;
+    let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
     // Changed Model::Default to a specific model
     let app_for_actor = App::new(

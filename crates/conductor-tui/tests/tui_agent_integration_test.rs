@@ -95,9 +95,6 @@ async fn test_tui_agent_service_file_listing() {
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
     info!("Created test workspace at: {:?}", workspace_path);
 
-    // Change to the test directory so LocalWorkspace uses it
-    std::env::set_current_dir(&workspace_path).unwrap();
-
     // Create ServiceHost configuration with explicit port
     let db_path = workspace_path.join("test_sessions.db");
     let bind_addr = "127.0.0.1:50051".parse().unwrap(); // Use fixed port for testing
@@ -132,7 +129,9 @@ async fn test_tui_agent_service_file_listing() {
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
             config: Some(conductor_proto::agent::workspace_config::Config::Local(
-                conductor_proto::agent::LocalWorkspaceConfig {},
+                conductor_proto::agent::LocalWorkspaceConfig {
+                    path: workspace_path.to_string_lossy().to_string(),
+                },
             )),
         }),
         metadata: [("test".to_string(), "true".to_string())]
@@ -244,7 +243,6 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
 
     // Setup
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
-    std::env::set_current_dir(&workspace_path).unwrap();
 
     // Start service
     let db_path = workspace_path.join("test_sessions.db");
@@ -273,7 +271,9 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
             config: Some(conductor_proto::agent::workspace_config::Config::Local(
-                conductor_proto::agent::LocalWorkspaceConfig {},
+                conductor_proto::agent::LocalWorkspaceConfig {
+                    path: workspace_path.to_string_lossy().to_string(),
+                },
             )),
         }),
         ..Default::default()
@@ -348,7 +348,6 @@ async fn test_workspace_changed_event_flow() {
 
     // Setup
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
-    std::env::set_current_dir(&workspace_path).unwrap();
 
     // Start service
     let db_path = workspace_path.join("test_sessions.db");
@@ -378,7 +377,9 @@ async fn test_workspace_changed_event_flow() {
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
             config: Some(conductor_proto::agent::workspace_config::Config::Local(
-                conductor_proto::agent::LocalWorkspaceConfig {},
+                conductor_proto::agent::LocalWorkspaceConfig {
+                    path: workspace_path.to_string_lossy().to_string(),
+                },
             )),
         }),
         ..Default::default()

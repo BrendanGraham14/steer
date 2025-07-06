@@ -6,14 +6,17 @@ use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::ToolCall;
 use dotenv::dotenv;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::mpsc;
 
-async fn create_test_workspace() -> Arc<LocalWorkspace> {
-    Arc::new(
-        LocalWorkspace::with_path(std::env::current_dir().unwrap())
+async fn create_test_workspace() -> (Arc<LocalWorkspace>, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let workspace = Arc::new(
+        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
             .await
             .unwrap(),
-    )
+    );
+    (workspace, temp_dir)
 }
 
 fn create_test_tool_executor(workspace: Arc<LocalWorkspace>) -> Arc<ToolExecutor> {
@@ -33,7 +36,7 @@ async fn test_tool_executor() -> Result<()> {
     // Initialize the app
     // Create a channel for app events
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
-    let workspace = create_test_workspace().await;
+    let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
     let app = App::new(
         app_config,

@@ -1085,7 +1085,11 @@ pub async fn run_tui(
     } else {
         // Create a new session
         let mut session_config = SessionConfig {
-            workspace: conductor_core::session::state::WorkspaceConfig::default(),
+            workspace: if let Some(ref dir) = directory {
+                conductor_core::session::state::WorkspaceConfig::Local { path: dir.clone() }
+            } else {
+                conductor_core::session::state::WorkspaceConfig::default()
+            },
             tool_config: SessionToolConfig::default(),
             system_prompt,
             metadata: HashMap::new(),

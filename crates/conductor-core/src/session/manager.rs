@@ -937,12 +937,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_resume_session() {
-        let (manager, _temp) = create_test_manager().await;
+        let (manager, temp) = create_test_manager().await;
         let app_config = create_test_app_config();
 
         // Create session
         let session_config = SessionConfig {
-            workspace: crate::session::state::WorkspaceConfig::Local,
+            workspace: crate::session::state::WorkspaceConfig::Local {
+                path: temp.path().to_path_buf(),
+            },
             tool_config: crate::session::SessionToolConfig::default(),
             system_prompt: None,
             metadata: std::collections::HashMap::new(),
@@ -968,12 +970,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_cleanup() {
-        let (manager, _temp) = create_test_manager().await;
+        let (manager, temp) = create_test_manager().await;
         let app_config = create_test_app_config();
 
         // Create session
         let session_config = SessionConfig {
-            workspace: crate::session::state::WorkspaceConfig::Local,
+            workspace: crate::session::state::WorkspaceConfig::Local {
+                path: temp.path().to_path_buf(),
+            },
             tool_config: crate::session::SessionToolConfig::default(),
             system_prompt: None,
             metadata: std::collections::HashMap::new(),
@@ -1003,6 +1007,7 @@ mod tests {
     #[tokio::test]
     async fn test_capacity_rejection() {
         let temp_dir = TempDir::new().unwrap();
+        let temp = tempfile::TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let store = Arc::new(SqliteSessionStore::new(&db_path).await.unwrap());
 
@@ -1020,7 +1025,9 @@ mod tests {
         tool_config.approval_policy = crate::session::ToolApprovalPolicy::AlwaysAsk;
 
         let session_config = SessionConfig {
-            workspace: crate::session::state::WorkspaceConfig::Local,
+            workspace: crate::session::state::WorkspaceConfig::Local {
+                path: temp.path().to_path_buf(),
+            },
             tool_config,
             system_prompt: None,
             metadata: std::collections::HashMap::new(),
@@ -1049,12 +1056,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_result_persistence_on_resume() {
-        let (manager, _temp) = create_test_manager().await;
+        let (manager, temp) = create_test_manager().await;
         let app_config = create_test_app_config();
 
         // Create session
         let session_config = SessionConfig {
-            workspace: crate::session::state::WorkspaceConfig::Local,
+            workspace: crate::session::state::WorkspaceConfig::Local {
+                path: temp.path().to_path_buf(),
+            },
             tool_config: crate::session::SessionToolConfig::default(),
             system_prompt: None,
             metadata: std::collections::HashMap::new(),

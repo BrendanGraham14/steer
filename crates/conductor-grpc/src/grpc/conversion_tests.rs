@@ -61,7 +61,7 @@ prop_compose! {
         runtime in prop::sample::select(vec![ContainerRuntime::Docker, ContainerRuntime::Podman])
     ) -> WorkspaceConfig {
         match variant {
-            0 => WorkspaceConfig::Local,
+            0 => WorkspaceConfig::Local { path: std::path::PathBuf::from("/tmp") },
             1 => WorkspaceConfig::Remote { agent_address: address, auth },
             _ => WorkspaceConfig::Container { image, runtime },
         }
@@ -318,7 +318,9 @@ proptest! {
         let roundtrip = proto_to_workspace_config(proto);
 
         match (&config, &roundtrip) {
-            (WorkspaceConfig::Local, WorkspaceConfig::Local) => {},
+            (WorkspaceConfig::Local { path: p1 }, WorkspaceConfig::Local { path: p2 }) => {
+                prop_assert_eq!(p1, p2);
+            },
             (WorkspaceConfig::Remote { agent_address: a1, auth: auth1 },
              WorkspaceConfig::Remote { agent_address: a2, auth: auth2 }) => {
                 prop_assert_eq!(a1, a2);
