@@ -1549,6 +1549,9 @@ async fn create_system_prompt_with_workspace(
 fn get_model_system_prompt(model: Model) -> &'static str {
     match model {
         Model::O3_20250416 => include_str!("../../../../prompts/models/o3.md"),
+        Model::Gemini2_5FlashPreview0417
+        | Model::Gemini2_5ProPreview0506
+        | Model::Gemini2_5ProPreview0605 => include_str!("../../../../prompts/models/gemini.md"),
         _ => include_str!("../../../../prompts/system_prompt.md"),
     }
 }
