@@ -1,5 +1,6 @@
 use crate::app::Message;
 use crate::app::agent_executor::ApprovalDecision;
+use crate::app::conversation::AppCommandType;
 use conductor_tools::ToolCall;
 use std::collections::HashSet;
 use tokio::sync::oneshot;
@@ -23,7 +24,7 @@ pub enum AppCommand {
         always: bool,
     },
     /// Execute a slash command.
-    ExecuteCommand(String),
+    ExecuteCommand(AppCommandType),
     /// Execute a bash command directly (bypassing AI)
     ExecuteBashCommand { command: String },
     /// Cancel processing.

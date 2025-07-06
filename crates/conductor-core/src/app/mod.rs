@@ -1,5 +1,7 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
-use crate::app::conversation::{AssistantContent, CompactResult, ToolResult, UserContent};
+use crate::app::conversation::{
+    AppCommandType, AssistantContent, CompactResult, ToolResult, UserContent,
+};
 use crate::error::{Error, Result};
 use conductor_tools::ToolError;
 use std::collections::HashSet;
@@ -463,25 +465,21 @@ impl App {
     // It now starts tasks directly but doesn't return the receiver.
     pub async fn handle_command(
         &mut self,
-        command: &str,
+        command: AppCommandType,
     ) -> Result<Option<conversation::CommandResponse>> {
-        let parts: Vec<&str> = command.trim_start_matches('/').splitn(2, ' ').collect();
-        let command_name = parts[0];
-        let args = parts.get(1).unwrap_or(&"").trim();
-
         // Cancel any previous operation before starting a command
         // Note: This is also called by start_standard_operation if user input isn't a command
         self.cancel_current_processing().await;
 
-        match command_name {
-            "clear" => {
+        match command {
+            AppCommandType::Clear => {
                 self.conversation.lock().await.clear();
                 self.approved_tools.clear(); // Also clear tool approvals
                 Ok(Some(conversation::CommandResponse::Text(
                     "Conversation and tool approvals cleared.".to_string(),
                 )))
             }
-            "compact" => {
+            AppCommandType::Compact => {
                 // Create OpContext for cancellable command
                 let op_context = OpContext::new();
                 self.current_op_context = Some(op_context);
@@ -512,9 +510,11 @@ impl App {
                 self.current_op_context = None; // Clear context after command
                 Ok(result)
             }
-            "help" => Ok(Some(conversation::CommandResponse::Text(build_help_text()))),
-            "model" => {
-                if args.is_empty() {
+            AppCommandType::Help => {
+                Ok(Some(conversation::CommandResponse::Text(build_help_text())))
+            }
+            AppCommandType::Model { target } => {
+                if target.is_none() {
                     // If no model specified, list available models
                     use crate::api::Model;
                     use strum::IntoEnumIterator;
@@ -545,12 +545,12 @@ impl App {
                         current_model.as_ref(),
                         available_models.join("\n")
                     ))))
-                } else {
+                } else if let Some(ref model_name) = target {
                     // Try to set the model
                     use crate::api::Model;
                     use std::str::FromStr;
 
-                    match Model::from_str(args) {
+                    match Model::from_str(model_name) {
                         Ok(model) => match self.set_model(model) {
                             Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!(
                                 "Model changed to {}",
@@ -561,14 +561,21 @@ impl App {
                             )))),
                         },
                         Err(_) => Ok(Some(conversation::CommandResponse::Text(format!(
-                            "Unknown model: {args}"
+                            "Unknown model: {model_name}"
                         )))),
                     }
+                } else {
+                    // This should not happen with the current enum structure
+                    Ok(None)
                 }
             }
-            _ => Ok(Some(conversation::CommandResponse::Text(format!(
-                "Unknown command: {command_name}"
-            )))),
+            AppCommandType::Cancel => {
+                // The cancel command is handled differently - it needs to be processed
+                // by the TUI or other client to actually cancel operations
+                Ok(Some(conversation::CommandResponse::Text(
+                    "Use the cancel shortcut or UI element to cancel operations.".to_string(),
+                )))
+            }
         }
     }
 
@@ -824,7 +831,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
         tokio::select! {
             // Handle incoming commands from the UI/Main thread
             Some(command) = command_rx.recv() => {
-                if handle_app_command(
+                match handle_app_command(
                     &mut app,
                     command,
                     &mut approval_queue,
@@ -832,7 +839,17 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                 )
                 .await
                 {
-                    break; // Exit loop if Shutdown command was received
+                    Ok(should_exit) => {
+                        if should_exit {
+                            break; // Exit loop if Shutdown command was received
+                        }
+                    }
+                    Err(e) => {
+                        error!(target: "app_actor_loop", "Error handling app command: {}", e);
+                        app.emit_event(AppEvent::Error {
+                            message: format!("Command failed: {e}"),
+                        });
+                    }
                 }
                 // Reset task completion flag only if a new operation started
                 if active_agent_event_rx.is_some() {
@@ -962,7 +979,7 @@ async fn handle_app_command(
     command: AppCommand,
     approval_queue: &mut ApprovalQueue,
     active_agent_event_rx: &mut Option<mpsc::Receiver<AgentEvent>>,
-) -> bool {
+) -> Result<bool> {
     debug!(target: "handle_app_command", "Received command: {:?}", command);
 
     match command {
@@ -973,7 +990,16 @@ async fn handle_app_command(
                     warn!(target: "handle_app_command", "Clearing previous active agent event receiver due to new command input.");
                     *active_agent_event_rx = None;
                 }
-                handle_slash_command(app, &message).await;
+                match AppCommandType::parse(&message) {
+                    Ok(cmd) => {
+                        handle_slash_command(app, cmd).await;
+                    }
+                    Err(e) => {
+                        app.emit_event(AppEvent::Error {
+                            message: format!("Error parsing command: {e:?}"),
+                        });
+                    }
+                }
             } else {
                 // Regular user message, start a standard operation
                 if active_agent_event_rx.is_some() {
@@ -989,7 +1015,7 @@ async fn handle_app_command(
                     }
                 }
             }
-            false
+            Ok(false)
         }
         AppCommand::EditMessage {
             message_id,
@@ -1058,7 +1084,7 @@ async fn handle_app_command(
             } else {
                 error!(target: "handle_app_command", "Failed to edit message {}", message_id);
             }
-            false
+            Ok(false)
         }
         AppCommand::RestoreConversation {
             messages,
@@ -1077,7 +1103,7 @@ async fn handle_app_command(
             app.approved_tools = approved_tools;
 
             debug!(target:"handle_app_command", "Conversation restoration complete");
-            false
+            Ok(false)
         }
 
         AppCommand::HandleToolResponse {
@@ -1114,7 +1140,7 @@ async fn handle_app_command(
             }
 
             process_next_approval_request(app, approval_queue).await;
-            false
+            Ok(false)
         }
 
         AppCommand::CancelProcessing => {
@@ -1127,7 +1153,7 @@ async fn handle_app_command(
                 *active_agent_event_rx = None;
             }
             app.emit_event(AppEvent::ThinkingCompleted);
-            false
+            Ok(false)
         }
 
         AppCommand::ExecuteBashCommand { command } => {
@@ -1209,20 +1235,20 @@ async fn handle_app_command(
                     app.add_message(message).await;
                 }
             }
-            false
+            Ok(false)
         }
         AppCommand::Shutdown => {
             info!(target: "handle_app_command", "Received Shutdown command.");
             app.cancel_current_processing().await;
             approval_queue.cancel_all();
             *active_agent_event_rx = None;
-            true
+            Ok(true)
         }
         AppCommand::GetCurrentConversation => {
             // This command is now handled synchronously via RPC
             // Should not be called directly anymore
             warn!(target:"handle_app_command", "GetCurrentConversation command received - this should use the sync RPC instead");
-            false
+            Ok(false)
         }
         AppCommand::RequestToolApprovalInternal {
             tool_call,
@@ -1235,44 +1261,42 @@ async fn handle_app_command(
 
             approval_queue.add_request(tool_id, tool_call, responder);
             process_next_approval_request(app, approval_queue).await;
-            false
+            Ok(false)
         }
 
         AppCommand::ExecuteCommand(cmd) => {
-            warn!(target: "handle_app_command", "Received ExecuteCommand: {}", cmd);
+            warn!(target: "handle_app_command", "Received ExecuteCommand: {}", cmd.as_command_str());
             if active_agent_event_rx.is_some() {
                 warn!(target: "handle_app_command", "Clearing previous active agent event receiver due to ExecuteCommand.");
                 *active_agent_event_rx = None;
             }
-            handle_slash_command(app, &cmd).await;
-            false
+            handle_slash_command(app, cmd).await;
+            Ok(false)
         }
 
         AppCommand::RequestWorkspaceFiles => {
             info!(target: "app.handle_app_command", "Received RequestWorkspaceFiles command");
             app.emit_workspace_files().await;
-            false
+            Ok(false)
         }
     }
 }
 
 // Handle slash commands
-async fn handle_slash_command(app: &mut App, command: &str) {
-    // Parse the command type
-    let command_type = conversation::AppCommandType::from_command_str(command);
-
-    match app.handle_command(command).await {
+async fn handle_slash_command(app: &mut App, command: AppCommandType) {
+    let command_str = command.as_command_str();
+    match app.handle_command(command.clone()).await {
         Ok(response_option) => {
             if let Some(response) = response_option {
                 app.emit_event(AppEvent::CommandResponse {
-                    command: command_type,
+                    command,
                     response,
                     id: format!("cmd_resp_{}", uuid::Uuid::new_v4()),
                 });
             }
         }
         Err(e) => {
-            error!(target: "handle_slash_command", "Error running command '{}': {}", command, e);
+            error!(target: "handle_slash_command", "Error running command '{}': {}", command_str, e);
             app.emit_event(AppEvent::Error {
                 message: format!("Command failed: {e}"),
             });

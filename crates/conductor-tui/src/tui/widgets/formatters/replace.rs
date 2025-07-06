@@ -89,7 +89,7 @@ impl ToolFormatter for ReplaceFormatter {
         // Show error if result is an error
         if let Some(ToolResult::Error(error)) = result {
             lines.push(Line::from(Span::styled(
-                format!("Error: {error}"),
+                error.to_string(),
                 styles::ERROR_TEXT,
             )));
         }

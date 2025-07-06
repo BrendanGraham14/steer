@@ -92,16 +92,11 @@ message AppCommandType {
     bool compact = 3;
     bool cancel = 4;
     bool help = 5;
-    UnknownCommand unknown = 6;
   }
 }
 
 message ModelCommand {
   optional string target = 1;
-}
-
-message UnknownCommand {
-  string command = 1;
 }
 
 message CommandResponse {
