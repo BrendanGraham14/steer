@@ -43,6 +43,7 @@ use crate::tui::widgets::PopupList;
 use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
 use crate::tui::widgets::{InputPanel, InputPanelState, StatusBar};
 
+pub mod commands;
 pub mod model;
 pub mod state;
 pub mod widgets;
@@ -373,8 +374,23 @@ impl Tui {
                         Ok(evt) => {
                             match evt {
                                 Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                                    if self.handle_key_event(key_event).await? {
-                                        should_exit = true;
+                                    match self.handle_key_event(key_event).await {
+                                        Ok(exit) => {
+                                            if exit {
+                                                should_exit = true;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            // Display error as a system notice
+                                            use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
+                                            let notice = ChatItem::SystemNotice {
+                                                id: generate_row_id(),
+                                                level: NoticeLevel::Error,
+                                                text: e.to_string(),
+                                                ts: time::OffsetDateTime::now_utc(),
+                                            };
+                                            self.view_model.chat_store.push(notice);
+                                        }
                                     }
                                     needs_redraw = true;
                                 }
@@ -789,38 +805,107 @@ impl Tui {
         // Check if we're editing a message
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
             // Send edit command which creates a new branch
-            self.command_sink
+            if let Err(e) = self
+                .command_sink
                 .send_command(AppCommand::EditMessage {
                     message_id: message_id_to_edit,
                     new_content: content,
                 })
-                .await?;
+                .await
+            {
+                use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
+                let notice = ChatItem::SystemNotice {
+                    id: generate_row_id(),
+                    level: NoticeLevel::Error,
+                    text: format!("Cannot edit message: {e}"),
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+                self.view_model.chat_store.push(notice);
+            }
         } else {
             // Send regular message
-            self.command_sink
+            if let Err(e) = self
+                .command_sink
                 .send_command(AppCommand::ProcessUserInput(content))
-                .await?;
+                .await
+            {
+                use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
+                let notice = ChatItem::SystemNotice {
+                    id: generate_row_id(),
+                    level: NoticeLevel::Error,
+                    text: format!("Cannot send message: {e}"),
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+                self.view_model.chat_store.push(notice);
+            }
         }
         Ok(())
     }
 
     async fn handle_slash_command(&mut self, command: String) -> Result<()> {
-        // Handle special TUI-specific commands
-        if command.trim() == "/reload-files" {
-            // Clear the file cache to force a refresh
-            self.input_panel_state.file_cache.clear().await;
-            info!(target: "tui.slash_command", "Cleared file cache, will reload on next access");
-            // Request workspace files again
-            self.command_sink
-                .send_command(AppCommand::RequestWorkspaceFiles)
-                .await?;
-            return Ok(());
+        use crate::tui::commands::{AppCommand as TuiAppCommand, TuiCommand};
+        use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
+
+        let app_cmd = match TuiAppCommand::parse(&command) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                // Add error notice to chat
+                let error_msg = e.to_string();
+                let notice = ChatItem::SystemNotice {
+                    id: generate_row_id(),
+                    level: NoticeLevel::Error,
+                    text: error_msg,
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+                self.view_model.chat_store.push(notice);
+                return Ok(());
+            }
+        };
+
+        // Handle the command based on its type
+        match app_cmd {
+            TuiAppCommand::Tui(tui_cmd) => {
+                // Handle TUI-specific commands
+                match tui_cmd {
+                    TuiCommand::ReloadFiles => {
+                        // Clear the file cache to force a refresh
+                        self.input_panel_state.file_cache.clear().await;
+                        info!(target: "tui.slash_command", "Cleared file cache, will reload on next access");
+                        // Request workspace files again
+                        if let Err(e) = self
+                            .command_sink
+                            .send_command(AppCommand::RequestWorkspaceFiles)
+                            .await
+                        {
+                            let notice = ChatItem::SystemNotice {
+                                id: generate_row_id(),
+                                level: NoticeLevel::Error,
+                                text: format!("Cannot reload files: {e}"),
+                                ts: time::OffsetDateTime::now_utc(),
+                            };
+                            self.view_model.chat_store.push(notice);
+                        }
+                    }
+                }
+            }
+            TuiAppCommand::Core(core_cmd) => {
+                // Pass core commands through to the backend
+                if let Err(e) = self
+                    .command_sink
+                    .send_command(AppCommand::ExecuteCommand(core_cmd))
+                    .await
+                {
+                    let notice = ChatItem::SystemNotice {
+                        id: generate_row_id(),
+                        level: NoticeLevel::Error,
+                        text: e.to_string(),
+                        ts: time::OffsetDateTime::now_utc(),
+                    };
+                    self.view_model.chat_store.push(notice);
+                }
+            }
         }
 
-        // For other slash commands, pass them through to the backend
-        self.command_sink
-            .send_command(AppCommand::ExecuteCommand(command.trim().to_string()))
-            .await?;
         Ok(())
     }
 

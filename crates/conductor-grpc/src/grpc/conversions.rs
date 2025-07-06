@@ -339,11 +339,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                             AppCommandType::Compact => Some(proto::app_command_type::CommandType::Compact(true)),
                             AppCommandType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
                             AppCommandType::Help => Some(proto::app_command_type::CommandType::Help(true)),
-                            AppCommandType::Unknown { command } => {
-                                Some(proto::app_command_type::CommandType::Unknown(proto::UnknownCommand {
-                                    command: command.clone(),
-                                }))
-                            }
                         };
 
                         let proto_response = response.as_ref().map(|resp| {
@@ -888,7 +883,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                         user_content::Content::Text(text) => Some(UserContent::Text { text }),
                         user_content::Content::AppCommand(app_cmd) => {
                             use conductor_core::app::conversation::{
-                                AppCommandType as AppCmdType, CommandResponse as AppCmdResponse,
+                                CommandResponse as AppCmdResponse,
                                 CompactResult,
                             };
                             use conductor_proto::agent::{app_command_type, command_response};
@@ -896,19 +891,14 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                             let command = app_cmd.command.as_ref().and_then(|cmd| {
                                 cmd.command_type.as_ref().map(|ct| match ct {
                                     app_command_type::CommandType::Model(model) => {
-                                        AppCmdType::Model {
+                                        AppCommandType::Model {
                                             target: model.target.clone(),
                                         }
                                     }
-                                    app_command_type::CommandType::Clear(_) => AppCmdType::Clear,
-                                    app_command_type::CommandType::Compact(_) => AppCmdType::Compact,
-                                    app_command_type::CommandType::Cancel(_) => AppCmdType::Cancel,
-                                    app_command_type::CommandType::Help(_) => AppCmdType::Help,
-                                    app_command_type::CommandType::Unknown(unknown) => {
-                                        AppCmdType::Unknown {
-                                            command: unknown.command.clone(),
-                                        }
-                                    }
+                                    app_command_type::CommandType::Clear(_) => AppCommandType::Clear,
+                                    app_command_type::CommandType::Compact(_) => AppCommandType::Compact,
+                                    app_command_type::CommandType::Cancel(_) => AppCommandType::Cancel,
+                                    app_command_type::CommandType::Help(_) => AppCommandType::Help,
                                 })
                             });
 
@@ -1136,11 +1126,6 @@ pub fn app_event_to_server_event(
                 }
                 AppCommandType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
                 AppCommandType::Help => Some(proto::app_command_type::CommandType::Help(true)),
-                AppCommandType::Unknown { command } => Some(
-                    proto::app_command_type::CommandType::Unknown(proto::UnknownCommand {
-                        command: command.clone(),
-                    }),
-                ),
             };
 
             // Convert app response to proto response
@@ -1237,8 +1222,6 @@ pub fn app_event_to_server_event(
 fn proto_app_command_type_to_app_command_type(
     proto_command_type: &proto::app_command_type::CommandType,
 ) -> AppCommandType {
-    use conductor_core::app::conversation::AppCommandType;
-
     match proto_command_type {
         proto::app_command_type::CommandType::Model(model) => AppCommandType::Model {
             target: model.target.clone(),
@@ -1247,9 +1230,6 @@ fn proto_app_command_type_to_app_command_type(
         proto::app_command_type::CommandType::Compact(_) => AppCommandType::Compact,
         proto::app_command_type::CommandType::Cancel(_) => AppCommandType::Cancel,
         proto::app_command_type::CommandType::Help(_) => AppCommandType::Help,
-        proto::app_command_type::CommandType::Unknown(unknown) => AppCommandType::Unknown {
-            command: unknown.command.clone(),
-        },
     }
 }
 
@@ -1520,7 +1500,7 @@ pub fn convert_app_command_to_client_message(
         AppCommand::ExecuteCommand(command) => Some(ClientMessageType::ExecuteCommand(
             proto::ExecuteCommandRequest {
                 session_id: session_id.to_string(),
-                command,
+                command: command.as_command_str(),
             },
         )),
         AppCommand::ExecuteBashCommand { command } => Some(ClientMessageType::ExecuteBashCommand(

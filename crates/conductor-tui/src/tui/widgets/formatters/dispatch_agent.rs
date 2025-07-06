@@ -106,7 +106,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                 ToolResult::Error(error) => {
                     lines.push(separator_line(wrap_width, styles::DIM_TEXT));
                     lines.push(Line::from(Span::styled(
-                        format!("Error: {error}"),
+                        error.to_string(),
                         styles::ERROR_TEXT,
                     )));
                 }

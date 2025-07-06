@@ -2,7 +2,9 @@ use conductor_tools::ToolCall;
 pub use conductor_tools::result::ToolResult;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -48,11 +50,40 @@ pub enum AppCommandType {
     Cancel,
     /// Show help information
     Help,
-    /// Unknown/unrecognized command
-    Unknown { command: String },
 }
 
 impl AppCommandType {
+    /// Parse a command string into an AppCommandType
+    pub fn parse(input: &str) -> Result<Self, SlashCommandError> {
+        // Trim whitespace and remove leading slash if present
+        let command = input.trim();
+        let command = command.strip_prefix('/').unwrap_or(command);
+
+        // Split to get command name and args
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() {
+            return Err(SlashCommandError::InvalidFormat(
+                "Empty command".to_string(),
+            ));
+        }
+
+        match parts[0] {
+            "model" => {
+                let target = if parts.len() > 1 {
+                    Some(parts[1..].join(" "))
+                } else {
+                    None
+                };
+                Ok(AppCommandType::Model { target })
+            }
+            "clear" => Ok(AppCommandType::Clear),
+            "compact" => Ok(AppCommandType::Compact),
+            "cancel" => Ok(AppCommandType::Cancel),
+            "help" => Ok(AppCommandType::Help),
+            cmd => Err(SlashCommandError::UnknownCommand(cmd.to_string())),
+        }
+    }
+
     /// Get the command string representation
     pub fn as_command_str(&self) -> String {
         match self {
@@ -67,26 +98,31 @@ impl AppCommandType {
             AppCommandType::Compact => "compact".to_string(),
             AppCommandType::Cancel => "cancel".to_string(),
             AppCommandType::Help => "help".to_string(),
-            AppCommandType::Unknown { command } => command.clone(),
         }
     }
+}
 
-    /// Parse a command string into an AppCommandType
-    pub fn from_command_str(command: &str) -> Self {
-        let parts: Vec<&str> = command.trim_start_matches('/').split_whitespace().collect();
-        match parts.first().copied() {
-            Some("model") => AppCommandType::Model {
-                target: parts.get(1).map(|s| s.to_string()),
-            },
-            Some("clear") => AppCommandType::Clear,
-            Some("compact") => AppCommandType::Compact,
-            Some("cancel") => AppCommandType::Cancel,
-            Some("help") => AppCommandType::Help,
-            _ => AppCommandType::Unknown {
-                command: command.to_string(),
-            },
-        }
+impl fmt::Display for AppCommandType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "/{}", self.as_command_str())
     }
+}
+
+impl FromStr for AppCommandType {
+    type Err = SlashCommandError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+/// Errors that can occur when parsing slash commands
+#[derive(Debug, thiserror::Error)]
+pub enum SlashCommandError {
+    #[error("Unknown command: {0}")]
+    UnknownCommand(String),
+    #[error("Invalid command format: {0}")]
+    InvalidFormat(String),
 }
 
 /// Role in the conversation

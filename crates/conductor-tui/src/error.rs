@@ -52,6 +52,10 @@ pub enum Error {
     /// gRPC errors from conductor-grpc
     #[error("gRPC error: {0}")]
     Grpc(#[from] conductor_grpc::GrpcError),
+
+    /// TUI command parsing errors
+    #[error("TUI command parsing error: {0}")]
+    TuiCommandParsing(#[from] crate::tui::commands::TuiCommandError),
 }
 
 // Convert notify-rust errors to our error type

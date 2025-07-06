@@ -285,9 +285,6 @@ impl<'a> ChatList<'a> {
                         "/cancel".to_string()
                     }
                     conductor_core::app::conversation::AppCommandType::Help => "/help".to_string(),
-                    conductor_core::app::conversation::AppCommandType::Unknown { command } => {
-                        command.clone()
-                    }
                 };
 
                 // Get the full response text
@@ -538,18 +535,27 @@ impl<'a> ChatList<'a> {
                             UserContent::AppCommand { command, response } => {
                                 // Format command nicely
                                 let command_str = match command {
-                                    conductor_core::app::conversation::AppCommandType::Model { target } => {
+                                    conductor_core::app::conversation::AppCommandType::Model {
+                                        target,
+                                    } => {
                                         if let Some(model) = target {
                                             format!("/model {model}")
                                         } else {
                                             "/model".to_string()
                                         }
                                     }
-                                    conductor_core::app::conversation::AppCommandType::Compact => "/compact".to_string(),
-                                    conductor_core::app::conversation::AppCommandType::Clear => "/clear".to_string(),
-                                    conductor_core::app::conversation::AppCommandType::Cancel => "/cancel".to_string(),
-                                    conductor_core::app::conversation::AppCommandType::Help => "/help".to_string(),
-                                    conductor_core::app::conversation::AppCommandType::Unknown { command } => command.clone(),
+                                    conductor_core::app::conversation::AppCommandType::Compact => {
+                                        "/compact".to_string()
+                                    }
+                                    conductor_core::app::conversation::AppCommandType::Clear => {
+                                        "/clear".to_string()
+                                    }
+                                    conductor_core::app::conversation::AppCommandType::Cancel => {
+                                        "/cancel".to_string()
+                                    }
+                                    conductor_core::app::conversation::AppCommandType::Help => {
+                                        "/help".to_string()
+                                    }
                                 };
 
                                 // Add gutter if this is the first block

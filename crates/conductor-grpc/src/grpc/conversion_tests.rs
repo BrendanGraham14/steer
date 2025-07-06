@@ -288,7 +288,7 @@ prop_compose! {
     fn arb_app_command()(
         variant in 0..4usize,
         user_input in ".*",
-        command in "[a-z ]+",
+        command in prop::sample::select(vec!["model", "clear", "compact", "cancel", "help"]),
         bash_command in "[a-z ]+",
         tool_id in "[a-zA-Z0-9-]+",
         approved in prop::bool::ANY,
@@ -296,7 +296,7 @@ prop_compose! {
     ) -> AppCommand {
         match variant {
             0 => AppCommand::ProcessUserInput(user_input),
-            1 => AppCommand::ExecuteCommand(command),
+            1 => AppCommand::ExecuteCommand(AppCommandType::parse(command).unwrap()),
             2 => AppCommand::ExecuteBashCommand { command: bash_command },
             _ => AppCommand::HandleToolResponse { id: tool_id, approved, always },
         }
@@ -588,7 +588,7 @@ proptest! {
 
         let expected = match &command {
             AppCommand::ProcessUserInput(text) => ExpectedResult::ProcessUserInput(text.clone()),
-            AppCommand::ExecuteCommand(cmd) => ExpectedResult::ExecuteCommand(cmd.clone()),
+            AppCommand::ExecuteCommand(cmd) => ExpectedResult::ExecuteCommand(cmd.as_command_str()),
             AppCommand::ExecuteBashCommand { command } => ExpectedResult::ExecuteBashCommand(command.clone()),
             AppCommand::HandleToolResponse { id, approved, always } => ExpectedResult::HandleToolResponse {
                 id: id.clone(),

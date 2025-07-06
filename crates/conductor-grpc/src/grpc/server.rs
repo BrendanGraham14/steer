@@ -717,8 +717,14 @@ async fn handle_client_message(
             }
 
             client_message::Message::ExecuteCommand(execute_command) => {
-                let app_command =
-                    conductor_core::app::AppCommand::ExecuteCommand(execute_command.command);
+                use conductor_core::app::conversation::AppCommandType;
+                let app_cmd_type = match AppCommandType::parse(&execute_command.command) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        return Err(format!("Failed to parse command: {e}").into());
+                    }
+                };
+                let app_command = conductor_core::app::AppCommand::ExecuteCommand(app_cmd_type);
                 session_manager
                     .send_command(&client_message.session_id, app_command)
                     .await
