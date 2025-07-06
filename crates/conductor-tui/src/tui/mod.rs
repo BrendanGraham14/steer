@@ -912,33 +912,31 @@ impl Tui {
     /// Enter edit mode for a specific message
     fn enter_edit_mode(&mut self, message_id: &str) {
         // Find the message in the store
-        if let Some(item) = self
+        if let Some(crate::tui::model::ChatItem::Message(row)) = self
             .view_model
             .chat_store
             .get_by_id(&message_id.to_string())
         {
-            if let crate::tui::model::ChatItem::Message(row) = item {
-                if let Message::User { content, .. } = &row.inner {
-                    // Extract text content from user blocks
-                    let text = content
-                        .iter()
-                        .filter_map(|block| match block {
-                            conductor_core::app::conversation::UserContent::Text { text } => {
-                                Some(text.as_str())
-                            }
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+            if let Message::User { content, .. } = &row.inner {
+                // Extract text content from user blocks
+                let text = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        conductor_core::app::conversation::UserContent::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-                    // Set up textarea with the message content
-                    self.input_panel_state
-                        .set_content_from_lines(text.lines().collect::<Vec<_>>());
-                    self.input_mode = InputMode::Insert;
+                // Set up textarea with the message content
+                self.input_panel_state
+                    .set_content_from_lines(text.lines().collect::<Vec<_>>());
+                self.input_mode = InputMode::Insert;
 
-                    // Store the message ID we're editing
-                    self.editing_message_id = Some(message_id.to_string());
-                }
+                // Store the message ID we're editing
+                self.editing_message_id = Some(message_id.to_string());
             }
         }
     }
@@ -1051,7 +1049,10 @@ pub async fn run_tui(
     // If session_id is provided, resume that session
     if let Some(session_id) = session_id {
         // Activate the existing session
-        let (messages, _approved_tools) = client.activate_session(session_id.clone()).await?;
+        let (messages, _approved_tools) = client
+            .activate_session(session_id.clone())
+            .await
+            .map_err(Box::new)?;
         info!(
             "Activated session: {} with {} messages",
             session_id,
@@ -1060,7 +1061,7 @@ pub async fn run_tui(
         println!("Session ID: {session_id}");
 
         // Start streaming
-        client.start_streaming().await?;
+        client.start_streaming().await.map_err(Box::new)?;
 
         // Get the event receiver
         let event_rx = client.subscribe().await;
@@ -1106,12 +1107,15 @@ pub async fn run_tui(
         }
 
         // Create session on server
-        let session_id = client.create_session(session_config).await?;
+        let session_id = client
+            .create_session(session_config)
+            .await
+            .map_err(Box::new)?;
         info!("Created session: {}", session_id);
         println!("Session ID: {session_id}");
 
         // Start streaming
-        client.start_streaming().await?;
+        client.start_streaming().await.map_err(Box::new)?;
 
         // Get the event receiver
         let event_rx = client.subscribe().await;
@@ -1176,6 +1180,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires TTY - run with `cargo test -- --ignored` in a terminal"]
     async fn test_restore_messages_preserves_tool_call_params() {
         let _guard = TerminalCleanupGuard;
         // Create a TUI instance for testing
@@ -1242,6 +1247,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires TTY - run with `cargo test -- --ignored` in a terminal"]
     async fn test_restore_messages_handles_tool_result_before_assistant() {
         let _guard = TerminalCleanupGuard;
         // Test edge case where Tool result arrives before Assistant message

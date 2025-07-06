@@ -51,7 +51,7 @@ pub enum Error {
 
     /// gRPC errors from conductor-grpc
     #[error("gRPC error: {0}")]
-    Grpc(#[from] conductor_grpc::GrpcError),
+    Grpc(#[from] Box<conductor_grpc::GrpcError>),
 
     /// TUI command parsing errors
     #[error("TUI command parsing error: {0}")]

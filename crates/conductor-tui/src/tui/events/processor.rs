@@ -15,10 +15,12 @@ use conductor_tools::schema::ToolCall;
 
 /// Result of processing an event
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ProcessingResult {
     /// Event was handled successfully, continue to next processor
     Handled,
     /// Event was handled and no further processing needed
+    ///
     HandledAndComplete,
     /// Event was not handled by this processor, try next one
     NotHandled,
@@ -27,6 +29,7 @@ pub enum ProcessingResult {
 }
 
 /// Context passed to event processors containing mutable access to TUI state
+#[allow(dead_code)]
 pub struct ProcessingContext<'a> {
     /// Chat store for adding/updating messages
     pub chat_store: &'a mut ChatStore,

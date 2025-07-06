@@ -106,7 +106,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert_eq!(payload.trim(), "Hello from session config test!");
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
 
         // Clean up
@@ -365,7 +365,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert!(payload.contains("Hello SSE!"));
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
 
         // Cancel the server
@@ -436,7 +436,7 @@ mod tests {
                 assert_eq!(h.get("Authorization").unwrap(), "Bearer token123");
                 assert_eq!(h.get("X-Custom-Header").unwrap(), "custom-value");
             }
-            _ => panic!("Expected MCP SSE backend with headers"),
+            _ => unreachable!("MCP SSE backend with headers"),
         }
 
         // Cancel the server
@@ -529,7 +529,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert!(payload.contains("8"));
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
     }
 
@@ -595,7 +595,7 @@ mod tests {
             } => {
                 assert_eq!(h.get("X-API-Key").unwrap(), "secret-key");
             }
-            _ => panic!("Expected MCP HTTP backend with headers"),
+            _ => unreachable!("MCP HTTP backend with headers"),
         }
 
         // Execute a tool to verify the backend works
@@ -621,7 +621,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert!(payload.contains("Hello HTTP with headers!"));
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
     }
 
@@ -794,7 +794,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert_eq!(payload.trim(), "Hello from test!");
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
 
         // Test tool execution - add
@@ -813,7 +813,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert_eq!(payload.trim(), "8");
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
 
         // Clean up - the server task will end when the client disconnects
@@ -900,7 +900,7 @@ mod tests {
             ToolResult::External(ExternalResult { payload, .. }) => {
                 assert_eq!(payload.trim(), "Hello from Unix socket!");
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
 
         // Clean up

@@ -109,6 +109,7 @@ mod tests {
 
             // Check the tool result message
             let tool_result_msg = &messages[1];
+            assert!(matches!(tool_result_msg, Message::Tool { .. }));
             if let Message::Tool {
                 tool_use_id,
                 result,
@@ -116,14 +117,10 @@ mod tests {
             } = tool_result_msg
             {
                 assert_eq!(tool_use_id, "test_tool_123");
-                match result {
-                    ToolResult::Error(ToolError::Cancelled(tool_name)) => {
-                        assert_eq!(tool_name, "test_tool");
-                    }
-                    _ => panic!("Expected cancelled tool error, got: {result:?}"),
+                assert!(matches!(result, ToolResult::Error(ToolError::Cancelled(_))));
+                if let ToolResult::Error(ToolError::Cancelled(tool_name)) = result {
+                    assert_eq!(tool_name, "test_tool");
                 }
-            } else {
-                panic!("Expected Tool message");
             }
 
             // Verify no more incomplete tool calls
@@ -285,27 +282,25 @@ mod tests {
                 {
                     if tool_use_id == "tool_1" {
                         found_tool_1 = true;
+                        assert!(matches!(result, ToolResult::Error(ToolError::Cancelled(_))));
                         match result {
                             ToolResult::Error(ToolError::Cancelled(tool_name)) => {
                                 assert_eq!(tool_name, "bash");
                             }
-                            _ => {
-                                panic!("Expected cancelled tool error for tool_1, got: {result:?}")
-                            }
+                            _ => unreachable!(),
                         }
                     } else if tool_use_id == "tool_2" {
                         found_tool_2 = true;
+                        assert!(matches!(result, ToolResult::Error(ToolError::Cancelled(_))));
                         match result {
                             ToolResult::Error(ToolError::Cancelled(tool_name)) => {
                                 assert_eq!(tool_name, "read_file");
                             }
-                            _ => {
-                                panic!("Expected cancelled tool error for tool_2, got: {result:?}")
-                            }
+                            _ => unreachable!(),
                         }
                     }
                 } else {
-                    panic!("Expected Tool message");
+                    unreachable!("expected Tool message");
                 }
             }
 

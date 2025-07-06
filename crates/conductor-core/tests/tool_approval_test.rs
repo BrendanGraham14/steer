@@ -156,7 +156,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
             assert_eq!(name, tool_name_to_approve);
             assert_eq!(id, tool_call_id_1);
         }
-        _ => panic!(
+        _ => unreachable!(
             "Unexpected event received instead of RequestToolApproval for call 1: {event1:?}"
         ),
     }
@@ -187,7 +187,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
                     id: unexpected_id, ..
                 } => {
                     if unexpected_id == &tool_call_id_2 {
-                        panic!(
+                        unreachable!(
                             "Received RequestToolApproval for tool_call_id_2 prematurely: {unexpected_event:?}"
                         );
                     }
@@ -219,16 +219,16 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
 
     match timeout(Duration::from_secs(2), responder_rx_1).await? {
         Ok(ApprovalDecision::Approved) => { /* Good */ }
-        Ok(ApprovalDecision::Denied) => panic!("Tool call 1 was unexpectedly denied."),
-        Err(_) => panic!("Timeout waiting for decision on tool call 1 responder."),
+        Ok(ApprovalDecision::Denied) => unreachable!("Tool call 1 was unexpectedly denied."),
+        Err(_) => unreachable!("Timeout waiting for decision on tool call 1 responder."),
     }
 
     match timeout(Duration::from_secs(2), responder_rx_2).await? {
         Ok(ApprovalDecision::Approved) => { /* Good */ }
         Ok(ApprovalDecision::Denied) => {
-            panic!("Tool call 2 was unexpectedly auto-denied instead of auto-approved.")
+            unreachable!("Tool call 2 was unexpectedly auto-denied instead of auto-approved.")
         }
-        Err(_) => panic!(
+        Err(_) => unreachable!(
             "Timeout waiting for decision on tool call 2 responder (should have been auto-approved)."
         ),
     }
@@ -240,7 +240,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
             AppEvent::WorkspaceFiles { .. } | AppEvent::WorkspaceChanged => {
                 // Ignore workspace-related events
             }
-            AppEvent::RequestToolApproval { .. } => panic!(
+            AppEvent::RequestToolApproval { .. } => unreachable!(
                 "Unexpected third AppEvent::RequestToolApproval received after 'always' approval and cascade: {event:?}"
             ),
             _ => { /* Other events are fine */ }

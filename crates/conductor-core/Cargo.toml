@@ -24,7 +24,6 @@ similar = { version = "2.5.0", features = ["inline"] }
 thiserror = "1.0"
 dirs = "5.0"
 colored = "2.0"
-# syntect and ratatui omitted for now (UI)
 home = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 dotenv = "0.15.0"
@@ -47,31 +46,22 @@ strum_macros = "0.27.1"
 strum = { version = "0.27.1", features = ["derive"] }
 shell-words = "1.1.0"
 tracing-subscriber = { version = "0.3.19", features = [
-    "std",
-    "fmt",
-    "env-filter",
+  "std",
+  "fmt",
+  "env-filter",
 ] }
 tracing-appender = "0.2.3"
-# Database
-sqlx = { version = "0.7", features = [
-    "runtime-tokio-rustls",
-    "sqlite",
-    "chrono",
-    "uuid",
-    "json",
-    "migrate",
-] }
 rmcp = { git = "https://github.com/BrendanGraham14/rust-sdk", rev = "3f86b21fa41cdd9242df586d173d2e9b308f2dca", features = [
-    "client",
-    "server",
-    "transport-child-process",
-    "transport-io",
-    "transport-sse-client",
-    "transport-sse-server",
-    "transport-streamable-http-client",
-    "transport-streamable-http-server",
-    "transport-streamable-http-server-session",
-    "reqwest",
+  "client",
+  "server",
+  "transport-child-process",
+  "transport-io",
+  "transport-sse-client",
+  "transport-sse-server",
+  "transport-streamable-http-client",
+  "transport-streamable-http-server",
+  "transport-streamable-http-server-session",
+  "reqwest",
 ] }
 axum = "0.8"
 tonic = "0.12"
@@ -84,6 +74,14 @@ schemars = { version = "0.8" }
 fuzzy-matcher = "0.3.7"
 git2 = "0.20.2"
 nix = { version = "0.30.1", features = ["signal"] }
+sqlx = { version = "0.8.6", features = [
+  "runtime-tokio-rustls",
+  "sqlite",
+  "chrono",
+  "uuid",
+  "json",
+  "migrate",
+] }
 
 [build-dependencies]
 

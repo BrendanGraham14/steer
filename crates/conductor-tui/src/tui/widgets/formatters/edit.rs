@@ -64,11 +64,12 @@ impl EditFormatter {
                 if content.is_empty() || content == "\n" {
                     lines.push(Line::from(Span::styled(sign.to_string(), style)));
                 } else {
-                    let lines_to_process: Vec<&str> = if content.ends_with('\n') {
-                        content[..content.len() - 1].lines().collect()
-                    } else {
-                        content.lines().collect()
-                    };
+                    let lines_to_process: Vec<&str> =
+                        if let Some(stripped) = content.strip_suffix('\n') {
+                            stripped.lines().collect()
+                        } else {
+                            content.lines().collect()
+                        };
 
                     for line in lines_to_process {
                         if line.is_empty() {

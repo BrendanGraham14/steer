@@ -54,7 +54,24 @@
         "crane": "crane",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
+        "rust-advisory-db": "rust-advisory-db",
         "rust-overlay": "rust-overlay"
+      }
+    },
+    "rust-advisory-db": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1750151065,
+        "narHash": "sha256-il+CAqChFIB82xP6bO43dWlUVs+NlG7a4g8liIP5HcI=",
+        "owner": "rustsec",
+        "repo": "advisory-db",
+        "rev": "7573f55ba337263f61167dbb0ea926cdc7c8eb5d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "rustsec",
+        "repo": "advisory-db",
+        "type": "github"
       }
     },
     "rust-overlay": {

@@ -1207,6 +1207,10 @@ async fn handle_app_command(
                         parent_message_id: parent_id,
                     };
                     app.add_message(message).await;
+
+                    // A bash command can mutate the workspace; notify listeners.
+                    app.emit_event(AppEvent::WorkspaceChanged);
+                    app.emit_workspace_files().await;
                 }
                 Err(e) => {
                     error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
@@ -1233,6 +1237,10 @@ async fn handle_app_command(
                         parent_message_id: parent_id,
                     };
                     app.add_message(message).await;
+
+                    // A bash command can mutate the workspace; notify listeners.
+                    app.emit_event(AppEvent::WorkspaceChanged);
+                    app.emit_workspace_files().await;
                 }
             }
             Ok(false)
@@ -1528,7 +1536,6 @@ fn get_model_system_prompt(model: Model) -> &'static str {
 
 /// Parse the output from the bash tool
 /// The bash tool returns stdout on success, or a formatted error message on failure
-
 fn build_help_text() -> String {
     "Available slash commands:\n\
 /help                        - Show this help message\n\

@@ -6,7 +6,7 @@ pub enum GrpcError {
     ConnectionFailed(#[from] tonic::transport::Error),
 
     #[error("gRPC call failed: {0}")]
-    CallFailed(#[from] tonic::Status),
+    CallFailed(#[from] Box<tonic::Status>),
 
     #[error("Failed to convert message at index {index}: {reason}")]
     MessageConversionFailed { index: usize, reason: String },
@@ -66,7 +66,7 @@ impl From<GrpcError> for tonic::Status {
             GrpcError::ConnectionFailed(e) => {
                 tonic::Status::unavailable(format!("Connection failed: {e}"))
             }
-            GrpcError::CallFailed(status) => status,
+            GrpcError::CallFailed(status) => *status,
             GrpcError::MessageConversionFailed { index, reason } => {
                 tonic::Status::invalid_argument(format!(
                     "Failed to convert message at index {index}: {reason}"

@@ -63,8 +63,8 @@ impl ValidatorRegistry {
         Self { validators }
     }
 
-    pub fn get_validator(&self, tool_name: &str) -> Option<&Box<dyn ToolValidator>> {
-        self.validators.get(tool_name)
+    pub fn get_validator(&self, tool_name: &str) -> Option<&dyn ToolValidator> {
+        self.validators.get(tool_name).map(|v| v.as_ref())
     }
 }
 

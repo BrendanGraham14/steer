@@ -19,8 +19,6 @@ use conductor_proto::remote_workspace::{
 /// Remote workspace that executes tools and collects environment info via gRPC
 pub struct RemoteWorkspace {
     client: RemoteWorkspaceServiceClient<Channel>,
-    address: String,
-    auth: Option<RemoteAuth>,
     environment_cache: Arc<RwLock<Option<CachedEnvironment>>>,
     tool_backend: Arc<RemoteBackend>,
     metadata: WorkspaceMetadata,
@@ -53,8 +51,6 @@ impl RemoteWorkspace {
 
         Ok(Self {
             client,
-            address,
-            auth,
             environment_cache: Arc::new(RwLock::new(None)),
             tool_backend,
             metadata,

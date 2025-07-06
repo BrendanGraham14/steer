@@ -108,12 +108,11 @@ async fn test_api_basic() {
         }
     }
 
-    if !failures.is_empty() {
-        panic!(
-            "One or more basic API test tasks failed:\n{}",
-            failures.join("\n")
-        );
-    }
+    assert!(
+        failures.is_empty(),
+        "One or more basic API test tasks failed:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[tokio::test]
@@ -199,10 +198,10 @@ async fn test_api_with_tools() {
 
             // Process the first tool call
             // Ensure the correct tool is being called (ls)
-            let first_tool_call = tool_calls
-                .iter()
-                .find(|tc| tc.name == "ls")
-                .unwrap_or_else(|| panic!("Expected 'ls' tool call for model {model:?}"));
+            let first_tool_call = match tool_calls.iter().find(|tc| tc.name == "ls") {
+                Some(tc) => tc,
+                None => unreachable!("Should have an ls tool call for model {model:?}"),
+            };
 
             println!("{:?} Tool call: {}", model, first_tool_call.name);
             // Optional: Pretty print parameters only if needed for debugging
@@ -265,12 +264,11 @@ async fn test_api_with_tools() {
         }
     }
 
-    if !failures.is_empty() {
-        panic!(
-            "One or more API with tools test tasks failed:\n{}",
-            failures.join("\n")
-        );
-    }
+    assert!(
+        failures.is_empty(),
+        "One or more API with tools test tasks failed:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[tokio::test]
@@ -399,12 +397,11 @@ async fn test_api_with_tool_response() {
         }
     }
 
-    if !failures.is_empty() {
-        panic!(
-            "One or more API tool response test tasks failed:\n{}",
-            failures.join("\n")
-        );
-    }
+    assert!(
+        failures.is_empty(),
+        "One or more API tool response test tasks failed:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[tokio::test]
@@ -941,10 +938,9 @@ async fn test_api_with_cancelled_tool_execution() {
         }
     }
 
-    if !failures.is_empty() {
-        panic!(
-            "One or more cancelled tool execution test tasks failed:\n{}",
-            failures.join("\n")
-        );
-    }
+    assert!(
+        failures.is_empty(),
+        "One or more cancelled tool execution test tasks failed:\n{}",
+        failures.join("\n")
+    );
 }

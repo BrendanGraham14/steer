@@ -1044,9 +1044,11 @@ mod tests {
     }
 
     fn create_test_session_config() -> SessionConfig {
-        let mut tool_config = crate::session::SessionToolConfig::default();
-        tool_config.approval_policy = ToolApprovalPolicy::AlwaysAsk;
-        tool_config.visibility = ToolVisibility::All;
+        let tool_config = crate::session::SessionToolConfig {
+            approval_policy: ToolApprovalPolicy::AlwaysAsk,
+            visibility: ToolVisibility::All,
+            ..Default::default()
+        };
 
         SessionConfig {
             workspace: WorkspaceConfig::default(),
@@ -1060,8 +1062,10 @@ mod tests {
     async fn test_create_and_get_session() {
         let (store, _temp) = create_test_store().await;
 
-        let mut tool_config = crate::session::SessionToolConfig::default();
-        tool_config.approval_policy = ToolApprovalPolicy::AlwaysAsk;
+        let tool_config = crate::session::SessionToolConfig {
+            approval_policy: ToolApprovalPolicy::AlwaysAsk,
+            ..Default::default()
+        };
 
         let config = SessionConfig {
             workspace: WorkspaceConfig::default(),

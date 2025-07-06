@@ -268,6 +268,7 @@ enum GeminiBlockReason {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GeminiSafetyRating {
     category: GeminiHarmCategory,
     probability: GeminiHarmProbability,
@@ -277,6 +278,7 @@ struct GeminiSafetyRating {
 
 #[derive(Debug, Deserialize, Serialize)] // Add Serialize for potential use in SafetySetting
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[allow(clippy::enum_variant_names)]
 enum GeminiHarmCategory {
     HarmCategoryUnspecified,
     HarmCategoryDerogatory,
@@ -356,6 +358,7 @@ struct GeminiExecutableCode {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GeminiContentResponse {
     role: String,
     parts: Vec<GeminiResponsePart>,

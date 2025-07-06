@@ -806,17 +806,14 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        match &config.backends[0] {
-            BackendConfig::Local { tool_filter } => {
-                if let ToolFilter::Exclude(excluded_tools) = tool_filter {
-                    assert_eq!(excluded_tools.len(), 2);
-                    assert!(excluded_tools.contains(&BASH_TOOL_NAME.to_string()));
-                    assert!(excluded_tools.contains(&EDIT_TOOL_NAME.to_string()));
-                } else {
-                    panic!("Expected ToolFilter::Exclude");
-                }
+        assert!(matches!(config.backends[0], BackendConfig::Local { .. }));
+        if let BackendConfig::Local { tool_filter } = &config.backends[0] {
+            assert!(matches!(tool_filter, ToolFilter::Exclude(_)));
+            if let ToolFilter::Exclude(excluded_tools) = tool_filter {
+                assert_eq!(excluded_tools.len(), 2);
+                assert!(excluded_tools.contains(&BASH_TOOL_NAME.to_string()));
+                assert!(excluded_tools.contains(&EDIT_TOOL_NAME.to_string()));
             }
-            _ => panic!("Expected Local backend config"),
         }
     }
 
@@ -877,15 +874,12 @@ mod tests {
             ]),
         };
 
-        match local_config {
-            BackendConfig::Local { tool_filter } => {
-                if let ToolFilter::Include(tools) = tool_filter {
-                    assert_eq!(tools.len(), 2);
-                } else {
-                    panic!("Expected ToolFilter::Include");
-                }
+        assert!(matches!(local_config, BackendConfig::Local { .. }));
+        if let BackendConfig::Local { tool_filter } = local_config {
+            assert!(matches!(tool_filter, ToolFilter::Include(_)));
+            if let ToolFilter::Include(tools) = tool_filter {
+                assert_eq!(tools.len(), 2);
             }
-            _ => panic!("Expected Local variant"),
         }
 
         // Test Remote variant
@@ -896,12 +890,10 @@ mod tests {
             tool_filter: ToolFilter::All,
         };
 
-        match remote_config {
-            BackendConfig::Remote { name, endpoint, .. } => {
-                assert_eq!(name, "test-remote");
-                assert_eq!(endpoint, "http://localhost:8080");
-            }
-            _ => panic!("Expected Remote variant"),
+        assert!(matches!(remote_config, BackendConfig::Remote { .. }));
+        if let BackendConfig::Remote { name, endpoint, .. } = remote_config {
+            assert_eq!(name, "test-remote");
+            assert_eq!(endpoint, "http://localhost:8080");
         }
 
         // Test Container variant
@@ -911,12 +903,10 @@ mod tests {
             tool_filter: ToolFilter::All,
         };
 
-        match container_config {
-            BackendConfig::Container { image, runtime, .. } => {
-                assert_eq!(image, "ubuntu:latest");
-                assert!(matches!(runtime, ContainerRuntime::Docker));
-            }
-            _ => panic!("Expected Container variant"),
+        assert!(matches!(container_config, BackendConfig::Container { .. }));
+        if let BackendConfig::Container { image, runtime, .. } = container_config {
+            assert_eq!(image, "ubuntu:latest");
+            assert!(matches!(runtime, ContainerRuntime::Docker));
         }
 
         // Test Mcp variant
@@ -929,22 +919,22 @@ mod tests {
             tool_filter: ToolFilter::All,
         };
 
-        match mcp_config {
-            BackendConfig::Mcp {
-                server_name,
+        assert!(matches!(mcp_config, BackendConfig::Mcp { .. }));
+        if let BackendConfig::Mcp {
+            server_name,
+            transport,
+            ..
+        } = mcp_config
+        {
+            assert_eq!(server_name, "test-mcp");
+            assert!(matches!(
                 transport,
-                ..
-            } => {
-                assert_eq!(server_name, "test-mcp");
-                match transport {
-                    crate::tools::McpTransport::Stdio { command, args } => {
-                        assert_eq!(command, "python");
-                        assert_eq!(args.len(), 2);
-                    }
-                    _ => panic!("Expected Stdio transport"),
-                }
+                crate::tools::McpTransport::Stdio { .. }
+            ));
+            if let crate::tools::McpTransport::Stdio { command, args } = transport {
+                assert_eq!(command, "python");
+                assert_eq!(args.len(), 2);
             }
-            _ => panic!("Expected Mcp variant"),
         }
     }
 }

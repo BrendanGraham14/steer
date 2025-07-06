@@ -45,6 +45,7 @@ pub enum ProviderKind {
     IntoStaticStr,
     serde::Serialize,
     serde::Deserialize,
+    Default,
 )]
 pub enum Model {
     #[strum(serialize = "claude-3-5-sonnet-20240620")]
@@ -58,6 +59,7 @@ pub enum Model {
     #[strum(serialize = "claude-sonnet-4-20250514", serialize = "sonnet")]
     ClaudeSonnet4_20250514,
     #[strum(serialize = "claude-opus-4-20250514", serialize = "opus")]
+    #[default]
     ClaudeOpus4_20250514,
     #[strum(serialize = "gpt-4.1-2025-04-14")]
     Gpt4_1_20250414,
@@ -80,11 +82,6 @@ pub enum Model {
 }
 
 impl Model {
-    /// Returns the default model to use throughout the application
-    pub fn default() -> Self {
-        Model::ClaudeOpus4_20250514
-    }
-
     pub fn provider(&self) -> ProviderKind {
         match self {
             Model::Claude3_7Sonnet20250219
@@ -120,18 +117,18 @@ impl Model {
     }
 
     pub fn supports_thinking(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Model::Claude3_7Sonnet20250219
-            | Model::ClaudeSonnet4_20250514
-            | Model::ClaudeOpus4_20250514
-            | Model::O3_20250416
-            | Model::O3Pro20250610
-            | Model::O4Mini20250416
-            | Model::Gemini2_5FlashPreview0417
-            | Model::Gemini2_5ProPreview0506
-            | Model::Gemini2_5ProPreview0605 => true,
-            _ => false,
-        }
+                | Model::ClaudeSonnet4_20250514
+                | Model::ClaudeOpus4_20250514
+                | Model::O3_20250416
+                | Model::O3Pro20250610
+                | Model::O4Mini20250416
+                | Model::Gemini2_5FlashPreview0417
+                | Model::Gemini2_5ProPreview0506
+                | Model::Gemini2_5ProPreview0605
+        )
     }
 
     pub fn default_system_prompt_file(&self) -> Option<&'static str> {
@@ -211,7 +208,7 @@ impl Client {
     pub async fn complete_with_retry(
         &self,
         model: Model,
-        messages: &Vec<Message>,
+        messages: &[Message],
         system_prompt: &Option<String>,
         tools: &Option<Vec<ToolSchema>>,
         token: CancellationToken,
@@ -223,7 +220,7 @@ impl Client {
             match self
                 .complete(
                     model,
-                    messages.clone(),
+                    messages.to_vec(),
                     system_prompt.clone(),
                     tools.clone(),
                     token.clone(),

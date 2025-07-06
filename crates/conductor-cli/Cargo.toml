@@ -37,7 +37,6 @@ similar = { version = "2.5.0", features = ["inline"] }
 thiserror = "1.0"
 dirs = "5.0"
 colored = "2.0"
-syntect = "5.1"                                        # Syntax highlighting
 home = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 dotenv = "0.15.0"
@@ -63,6 +62,9 @@ schemars = { version = "0.8", features = ["derive"] }
 conductor-macros = { path = "../conductor-macros" }
 conductor-proto = { path = "../conductor-proto" }
 conductor-tools = { path = "../conductor-tools" }
+conductor-core = { version = "0.1.0", path = "../conductor-core" }
+conductor-grpc = { version = "0.1.0", path = "../conductor-grpc" }
+conductor-tui = { version = "0.1.0", path = "../conductor-tui", optional = true }
 
 ignore = "0.4"
 globset = "0.4.16"
@@ -79,28 +81,12 @@ tracing-subscriber = { version = "0.3.19", features = [
 ] }
 tracing-appender = "0.2.3"
 
-# Database
-sqlx = { version = "0.7", features = [
-    "runtime-tokio-rustls",
-    "sqlite",
-    "chrono",
-    "uuid",
-    "json",
-    "migrate",
-] }
-
-# gRPC
-tonic = "0.12"
-prost = "0.13"
-prost-types = "0.13"
+prost-types = "0.13.5"
 
 tokio-stream = "0.1"
 gethostname = "0.5"
 tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 lazy_static = "1.5.0"
-conductor-core = { version = "0.1.0", path = "../conductor-core" }
-conductor-grpc = { version = "0.1.0", path = "../conductor-grpc" }
-conductor-tui = { version = "0.1.0", path = "../conductor-tui", optional = true }
 toml = "0.8.23"
 which = "8.0.0"
 eyre = "0.6.12"

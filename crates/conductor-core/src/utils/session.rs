@@ -117,8 +117,10 @@ pub fn parse_metadata(metadata_str: Option<&str>) -> Result<HashMap<String, Stri
 }
 
 pub fn create_mock_session(id: &str, tool_policy: ToolApprovalPolicy) -> Session {
-    let mut tool_config = SessionToolConfig::default();
-    tool_config.approval_policy = tool_policy;
+    let tool_config = SessionToolConfig {
+        approval_policy: tool_policy,
+        ..Default::default()
+    };
 
     let config = SessionConfig {
         workspace: WorkspaceConfig::default(),
@@ -142,7 +144,7 @@ mod tests {
             SessionStoreConfig::Sqlite { path } => {
                 assert_eq!(path, custom_path);
             }
-            _ => panic!("Expected SQLite config"),
+            _ => unreachable!("SQLite config"),
         }
     }
 
@@ -154,7 +156,7 @@ mod tests {
             SessionStoreConfig::Sqlite { path } => {
                 assert!(path.to_string_lossy().contains("sessions.db"));
             }
-            _ => panic!("Expected SQLite config"),
+            _ => unreachable!("SQLite config"),
         }
     }
 
@@ -172,7 +174,7 @@ mod tests {
                 assert!(tools.contains("tool1"));
                 assert!(tools.contains("tool2"));
             }
-            _ => panic!("Expected PreApproved policy"),
+            _ => unreachable!("PreApproved policy"),
         }
 
         // Test mixed
@@ -183,7 +185,7 @@ mod tests {
                 assert!(pre_approved.contains("tool3"));
                 assert!(pre_approved.contains("tool4"));
             }
-            _ => panic!("Expected Mixed policy"),
+            _ => unreachable!("Mixed policy"),
         }
 
         // Test invalid policy

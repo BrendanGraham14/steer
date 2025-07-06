@@ -21,6 +21,7 @@ mod tests {
     fn text_message(role: &str, content: &str) -> Message {
         let timestamp = Message::current_timestamp();
         let thread_id = Uuid::new_v4();
+
         match role {
             "user" => Message::User {
                 content: vec![UserContent::Text {
@@ -40,7 +41,7 @@ mod tests {
                 thread_id,
                 parent_message_id: None,
             },
-            _ => panic!("Invalid role: {role}"),
+            _ => unreachable!("Invalid role: {role}"),
         }
     }
 
@@ -65,12 +66,7 @@ mod tests {
         let token = CancellationToken::new();
         // Dummy tool executor callback (shouldn't be called)
         let tool_executor_callback = |_call: ToolCall, _token: CancellationToken| async {
-            panic!("Tool executor should not be called");
-            #[allow(unreachable_code)]
-            Ok::<ToolResult, ToolError>(ToolResult::External(ExternalResult {
-                tool_name: "dummy".to_string(),
-                payload: "".to_string(),
-            }))
+            unreachable!("Tool executor should not be called");
         };
 
         let final_message_result = executor
@@ -91,11 +87,12 @@ mod tests {
         assert!(final_message_result.is_ok());
         let final_message = final_message_result.unwrap();
         assert_eq!(final_message.role(), Role::Assistant);
+        assert!(matches!(&final_message, Message::Assistant { .. }));
         match &final_message {
             Message::Assistant { content, .. } => {
                 assert!(!content.is_empty());
             }
-            _ => panic!("Expected Assistant message"),
+            _ => unreachable!(),
         }; // Should have *some* content
 
         // Check events (expect at least one part and one final)
@@ -183,6 +180,7 @@ mod tests {
         let final_message = final_message_result.unwrap();
         assert_eq!(final_message.role(), Role::Assistant);
         // Check if the response contains "Paris" (case-insensitive)
+        assert!(matches!(&final_message, Message::Assistant { .. }));
         let response_text = match &final_message {
             Message::Assistant { content, .. } => content
                 .iter()
@@ -192,7 +190,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
                 .join(" "),
-            _ => panic!("Expected Assistant message"),
+            _ => unreachable!(),
         };
         assert!(
             response_text.to_lowercase().contains("paris"),
@@ -206,18 +204,16 @@ mod tests {
         let mut saw_final_text = false;
         while let Ok(Some(event)) = timeout(Duration::from_secs(5), event_rx.recv()).await {
             match event {
-                AgentEvent::AssistantMessageFinal(msg) => {
+                AgentEvent::AssistantMessageFinal(Message::Assistant { content, .. }) => {
                     // Check if we have tool calls in the assistant content
-                    if let Message::Assistant { content, .. } = &msg {
-                        if content
-                            .iter()
-                            .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
-                        {
-                            saw_final_with_tool_call = true;
-                        } else {
-                            // If we have text without tool calls, consider it final text
-                            saw_final_text = true;
-                        }
+                    if content
+                        .iter()
+                        .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
+                    {
+                        saw_final_with_tool_call = true;
+                    } else {
+                        // If we have text without tool calls, consider it final text
+                        saw_final_text = true;
                     }
                 }
                 AgentEvent::ExecutingTool {

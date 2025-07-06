@@ -73,7 +73,7 @@ impl GrpcClientAdapter {
         default_model: conductor_core::api::Model,
     ) -> GrpcResult<Self> {
         use crate::local_server::setup_local_grpc;
-        let channel = setup_local_grpc(llm_config, default_model, None).await?;
+        let (channel, _server_handle) = setup_local_grpc(llm_config, default_model, None).await?;
         Self::from_channel(channel).await
     }
 
@@ -93,7 +93,13 @@ impl GrpcClientAdapter {
             system_prompt: config.system_prompt,
         });
 
-        let response = self.client.lock().await.create_session(request).await?;
+        let response = self
+            .client
+            .lock()
+            .await
+            .create_session(request)
+            .await
+            .map_err(Box::new)?;
         let session_info = response.into_inner();
 
         *self.session_id.lock().await = Some(session_info.id.clone());
@@ -116,7 +122,8 @@ impl GrpcClientAdapter {
             .activate_session(conductor_proto::agent::ActivateSessionRequest {
                 session_id: session_id.clone(),
             })
-            .await?
+            .await
+            .map_err(Box::new)?
             .into_inner();
 
         // Convert proto messages -> app messages with explicit error handling
@@ -156,7 +163,13 @@ impl GrpcClientAdapter {
         let outbound_stream = ReceiverStream::new(cmd_rx);
         let request = Request::new(outbound_stream);
 
-        let response = self.client.lock().await.stream_session(request).await?;
+        let response = self
+            .client
+            .lock()
+            .await
+            .stream_session(request)
+            .await
+            .map_err(Box::new)?;
         let mut inbound_stream = response.into_inner();
 
         // Send initial subscribe message
@@ -276,7 +289,13 @@ impl GrpcClientAdapter {
             page_token: None,
         });
 
-        let response = self.client.lock().await.list_sessions(request).await?;
+        let response = self
+            .client
+            .lock()
+            .await
+            .list_sessions(request)
+            .await
+            .map_err(Box::new)?;
         let sessions_response = response.into_inner();
 
         Ok(sessions_response.sessions)
@@ -296,7 +315,7 @@ impl GrpcClientAdapter {
                 Ok(Some(session_state))
             }
             Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
-            Err(e) => Err(GrpcError::CallFailed(e)),
+            Err(e) => Err(GrpcError::CallFailed(Box::new(e))),
         }
     }
 
@@ -314,7 +333,7 @@ impl GrpcClientAdapter {
                 Ok(true)
             }
             Err(status) if status.code() == tonic::Code::NotFound => Ok(false),
-            Err(e) => Err(GrpcError::CallFailed(e)),
+            Err(e) => Err(GrpcError::CallFailed(Box::new(e))),
         }
     }
 
@@ -335,7 +354,8 @@ impl GrpcClientAdapter {
             .get_conversation(GetConversationRequest {
                 session_id: session_id.to_string(),
             })
-            .await?
+            .await
+            .map_err(Box::new)?
             .into_inner();
 
         info!(

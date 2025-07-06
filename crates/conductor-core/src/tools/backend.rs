@@ -328,7 +328,7 @@ mod tests {
                 assert!(external.payload.contains("test_tool"));
                 assert!(external.payload.contains("test"));
             }
-            _ => panic!("Expected External result"),
+            _ => unreachable!("External result"),
         }
     }
 }

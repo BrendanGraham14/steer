@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
@@ -240,7 +239,7 @@ impl RemoteWorkspaceService {
         let mut structure = vec![current_dir.display().to_string()];
 
         // Simple directory traversal (limited depth to avoid huge responses)
-        self.collect_directory_paths(&current_dir, &mut structure, 0, 3)?;
+        Self::collect_directory_paths(&current_dir, &mut structure, 0, 3)?;
 
         structure.sort();
         Ok(structure.join("\n"))
@@ -248,7 +247,6 @@ impl RemoteWorkspaceService {
 
     /// Recursively collect directory paths
     fn collect_directory_paths(
-        &self,
         dir: &Path,
         paths: &mut Vec<String>,
         current_depth: usize,
@@ -273,7 +271,7 @@ impl RemoteWorkspaceService {
                 let path_str = rel_path.to_string_lossy().to_string();
                 if path.is_dir() {
                     paths.push(format!("{path_str}/"));
-                    self.collect_directory_paths(&path, paths, current_depth + 1, max_depth)?;
+                    Self::collect_directory_paths(&path, paths, current_depth + 1, max_depth)?;
                 } else {
                     paths.push(path_str);
                 }
@@ -657,7 +655,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         let (tx, rx) = mpsc::channel(100);
 
         // Spawn task to stream the files
-        let list_task: JoinHandle<()> = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut files = Vec::new();
 
             // Walk the current directory, respecting .gitignore

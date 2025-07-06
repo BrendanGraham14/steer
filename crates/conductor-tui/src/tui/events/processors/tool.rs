@@ -207,18 +207,19 @@ mod tests {
         }
     }
 
-    fn create_test_context() -> (
-        ChatStore,
-        ChatListState,
-        ToolCallRegistry,
-        Arc<dyn AppCommandSink>,
-        bool,
-        Option<String>,
-        usize,
-        Option<ToolCall>,
-        conductor_core::api::Model,
-        bool,
-    ) {
+    struct TestContext {
+        chat_store: ChatStore,
+        chat_list_state: ChatListState,
+        tool_registry: ToolCallRegistry,
+        command_sink: Arc<dyn AppCommandSink>,
+        is_processing: bool,
+        progress_message: Option<String>,
+        spinner_state: usize,
+        current_tool_approval: Option<ToolCall>,
+        current_model: conductor_core::api::Model,
+        messages_updated: bool,
+    }
+    fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
         let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
@@ -230,7 +231,7 @@ mod tests {
         let current_model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let messages_updated = false;
 
-        (
+        TestContext {
             chat_store,
             chat_list_state,
             tool_registry,
@@ -241,25 +242,14 @@ mod tests {
             current_tool_approval,
             current_model,
             messages_updated,
-        )
+        }
     }
 
     #[test]
     fn test_toolcallstarted_after_assistant_keeps_params() {
         let mut tool_proc = ToolEventProcessor::new();
         let mut msg_proc = MessageEventProcessor::new();
-        let (
-            mut chat_store,
-            mut chat_list_state,
-            mut tool_registry,
-            command_sink,
-            mut is_processing,
-            mut progress_message,
-            mut spinner_state,
-            mut current_tool_approval,
-            mut current_model,
-            mut messages_updated,
-        ) = create_test_context();
+        let mut ctx = create_test_context();
 
         // Full tool call we expect to keep
         let full_call = ToolCall {
@@ -279,20 +269,20 @@ mod tests {
             parent_message_id: None,
         };
 
-        let model = current_model;
+        let model = ctx.current_model;
 
         {
             let mut ctx = ProcessingContext {
-                chat_store: &mut chat_store,
-                chat_list_state: &mut chat_list_state,
-                tool_registry: &mut tool_registry,
-                command_sink: &command_sink,
-                is_processing: &mut is_processing,
-                progress_message: &mut progress_message,
-                spinner_state: &mut spinner_state,
-                current_tool_approval: &mut current_tool_approval,
-                current_model: &mut current_model,
-                messages_updated: &mut messages_updated,
+                chat_store: &mut ctx.chat_store,
+                chat_list_state: &mut ctx.chat_list_state,
+                tool_registry: &mut ctx.tool_registry,
+                command_sink: &ctx.command_sink,
+                is_processing: &mut ctx.is_processing,
+                progress_message: &mut ctx.progress_message,
+                spinner_state: &mut ctx.spinner_state,
+                current_tool_approval: &mut ctx.current_tool_approval,
+                current_model: &mut ctx.current_model,
+                messages_updated: &mut ctx.messages_updated,
                 current_thread: None,
             };
             msg_proc.process(
@@ -307,16 +297,16 @@ mod tests {
         // 2. ToolCallStarted arrives afterwards
         {
             let mut ctx = ProcessingContext {
-                chat_store: &mut chat_store,
-                chat_list_state: &mut chat_list_state,
-                tool_registry: &mut tool_registry,
-                command_sink: &command_sink,
-                is_processing: &mut is_processing,
-                progress_message: &mut progress_message,
-                spinner_state: &mut spinner_state,
-                current_tool_approval: &mut current_tool_approval,
-                current_model: &mut current_model,
-                messages_updated: &mut messages_updated,
+                chat_store: &mut ctx.chat_store,
+                chat_list_state: &mut ctx.chat_list_state,
+                tool_registry: &mut ctx.tool_registry,
+                command_sink: &ctx.command_sink,
+                is_processing: &mut ctx.is_processing,
+                progress_message: &mut ctx.progress_message,
+                spinner_state: &mut ctx.spinner_state,
+                current_tool_approval: &mut ctx.current_tool_approval,
+                current_model: &mut ctx.current_model,
+                messages_updated: &mut ctx.messages_updated,
                 current_thread: None,
             };
             tool_proc.process(
@@ -330,7 +320,8 @@ mod tests {
         }
 
         // Assert the tool was registered and stored properly
-        let stored_call = tool_registry
+        let stored_call = ctx
+            .tool_registry
             .get_tool_call("id123")
             .expect("tool call should exist");
         assert_eq!(stored_call.parameters, full_call.parameters);
