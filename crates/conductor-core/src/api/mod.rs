@@ -69,7 +69,7 @@ pub enum Model {
     O3_20250416,
     #[strum(serialize = "o3-pro-2025-06-10", serialize = "o3-pro")]
     O3Pro20250610,
-    #[strum(serialize = "o4-mini-2025-04-16")]
+    #[strum(serialize = "o4-mini-2025-04-16", serialize = "o4-mini")]
     O4Mini20250416,
     #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
     Gemini2_5FlashPreview0417,
@@ -320,6 +320,11 @@ mod tests {
         assert_eq!(
             Model::from_str("o3-2025-04-16").unwrap(),
             Model::O3_20250416
+        );
+
+        assert_eq!(
+            Model::from_str("o4-mini-2025-04-16").unwrap(),
+            Model::O4Mini20250416
         );
     }
 }
