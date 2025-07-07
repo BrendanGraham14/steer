@@ -74,7 +74,7 @@ conductor headless --session-config session.toml < prompt.txt
 ### Authentication
 
 ```bash
-# Login to Anthropic (Claude) using OAuth - no API key needed!
+# Login to Anthropic (Claude) using OAuth - available for Claude Pro users!
 conductor auth login anthropic
 
 # Check authentication status for all providers
@@ -244,7 +244,7 @@ export CONDUCTOR_NOTIFICATION_DESKTOP=false
 
 ### OAuth Authentication (Anthropic/Claude)
 
-Conductor supports OAuth authentication for Anthropic's Claude models, allowing you to authenticate without managing API keys:
+Conductor supports OAuth authentication for Anthropic's Claude models, allowing Claude Pro subscribers to authenticate without managing API keys:
 
 ```bash
 # Login to Anthropic using OAuth
