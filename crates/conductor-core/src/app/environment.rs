@@ -127,16 +127,22 @@ impl EnvironmentInfo {
         gitignore_globset: &Option<GlobSet>,
         paths: &mut Vec<String>, // Renamed to relative_paths in caller, but param name is fine
     ) -> Result<()> {
-        let entries = fs::read_dir(current_dir).map_err(|e| {
-            WorkspaceError::EnvironmentCollection(format!("Failed to read directory: {e}"))
-        })?;
+        let entries = match fs::read_dir(current_dir) {
+            Ok(entries) => entries,
+            Err(_) => {
+                // Skip directories we cannot access
+                return Ok(());
+            }
+        };
 
         for entry in entries {
-            let entry = entry.map_err(|e| {
-                WorkspaceError::EnvironmentCollection(format!(
-                    "Failed to read directory entry: {e}"
-                ))
-            })?;
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => {
+                    // Skip entries we cannot read
+                    continue;
+                }
+            };
             let path = entry.path();
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
