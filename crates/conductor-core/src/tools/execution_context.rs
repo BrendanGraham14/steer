@@ -1,3 +1,4 @@
+use crate::config::LlmConfigProvider;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -12,6 +13,19 @@ pub struct ExecutionContext {
     pub cancellation_token: CancellationToken,
     pub timeout: Duration,
     pub environment: ExecutionEnvironment,
+    pub llm_config_provider: Option<LlmConfigProvider>,
+}
+
+/// Builder for ExecutionContext
+#[derive(Debug)]
+pub struct ExecutionContextBuilder {
+    session_id: String,
+    operation_id: String,
+    tool_call_id: String,
+    cancellation_token: CancellationToken,
+    timeout: Duration,
+    environment: ExecutionEnvironment,
+    llm_config_provider: Option<LlmConfigProvider>,
 }
 
 /// Defines the execution environment for tool execution
@@ -46,20 +60,32 @@ pub struct VolumeMount {
 }
 
 impl ExecutionContext {
-    pub fn new(
+    /// Create a new builder for ExecutionContext
+    pub fn builder(
         session_id: String,
         operation_id: String,
         tool_call_id: String,
         cancellation_token: CancellationToken,
-    ) -> Self {
-        Self {
+    ) -> ExecutionContextBuilder {
+        ExecutionContextBuilder {
             session_id,
             operation_id,
             tool_call_id,
             cancellation_token,
             timeout: Duration::from_secs(300),
             environment: ExecutionEnvironment::default(),
+            llm_config_provider: None,
         }
+    }
+
+    /// Legacy constructor - prefer using builder() instead
+    pub fn new(
+        session_id: String,
+        operation_id: String,
+        tool_call_id: String,
+        cancellation_token: CancellationToken,
+    ) -> Self {
+        Self::builder(session_id, operation_id, tool_call_id, cancellation_token).build()
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -70,6 +96,40 @@ impl ExecutionContext {
     pub fn with_environment(mut self, environment: ExecutionEnvironment) -> Self {
         self.environment = environment;
         self
+    }
+
+    pub fn with_llm_config_provider(mut self, provider: LlmConfigProvider) -> Self {
+        self.llm_config_provider = Some(provider);
+        self
+    }
+}
+
+impl ExecutionContextBuilder {
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn environment(mut self, environment: ExecutionEnvironment) -> Self {
+        self.environment = environment;
+        self
+    }
+
+    pub fn llm_config_provider(mut self, provider: LlmConfigProvider) -> Self {
+        self.llm_config_provider = Some(provider);
+        self
+    }
+
+    pub fn build(self) -> ExecutionContext {
+        ExecutionContext {
+            session_id: self.session_id,
+            operation_id: self.operation_id,
+            tool_call_id: self.tool_call_id,
+            cancellation_token: self.cancellation_token,
+            timeout: self.timeout,
+            environment: self.environment,
+            llm_config_provider: self.llm_config_provider,
+        }
     }
 }
 

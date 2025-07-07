@@ -4,10 +4,12 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::ToolCall;
+use crate::config::LlmConfigProvider;
 
 #[derive(Debug)]
 pub struct ValidationContext {
     pub cancellation_token: CancellationToken,
+    pub llm_config_provider: LlmConfigProvider,
 }
 
 #[derive(Debug)]
@@ -166,6 +168,7 @@ impl BashValidator {
     ) -> Result<bool, ValidationError> {
         crate::tools::command_filter::is_command_allowed(
             command,
+            &context.llm_config_provider,
             context.cancellation_token.clone(),
         )
         .await

@@ -23,6 +23,12 @@ pub struct KeyringStorage {
     service_prefix: String,
 }
 
+impl Default for KeyringStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyringStorage {
     pub fn new() -> Self {
         Self {
@@ -63,7 +69,7 @@ impl AuthStorage for KeyringStorage {
             },
         )
         .await
-        .map_err(|e| AuthError::Storage(format!("Task join error: {}", e)))?;
+        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?;
 
         result.map_err(AuthError::from)
     }
@@ -72,7 +78,7 @@ impl AuthStorage for KeyringStorage {
         let service = self.service_name(provider);
         let username = Self::get_username();
         let password = serde_json::to_string(&tokens)
-            .map_err(|e| AuthError::Storage(format!("Failed to serialize tokens: {}", e)))?;
+            .map_err(|e| AuthError::Storage(format!("Failed to serialize tokens: {e}")))?;
 
         // Run blocking keyring operation in a spawn_blocking task
         tokio::task::spawn_blocking(move || -> std::result::Result<(), keyring::Error> {
@@ -81,7 +87,7 @@ impl AuthStorage for KeyringStorage {
             Ok(())
         })
         .await
-        .map_err(|e| AuthError::Storage(format!("Task join error: {}", e)))?
+        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?
         .map_err(AuthError::from)
     }
 
@@ -99,7 +105,7 @@ impl AuthStorage for KeyringStorage {
             }
         })
         .await
-        .map_err(|e| AuthError::Storage(format!("Task join error: {}", e)))?
+        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?
         .map_err(AuthError::from)
     }
 }
@@ -127,12 +133,12 @@ impl EncryptedFileStorage {
 
         let username = whoami::username();
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let salt = format!("{}-{}", username, hostname);
+        let salt = format!("{username}-{hostname}");
 
         let mut key = [0u8; 32];
         let hkdf = Hkdf::<Sha256>::new(Some(salt.as_bytes()), b"conductor-oauth");
         hkdf.expand(b"encryption-key", &mut key)
-            .map_err(|e| AuthError::Encryption(format!("Key derivation failed: {}", e)))?;
+            .map_err(|e| AuthError::Encryption(format!("Key derivation failed: {e}")))?;
 
         Ok(key)
     }
@@ -159,7 +165,7 @@ impl EncryptedFileStorage {
 
         let key = Self::get_encryption_key()?;
         let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| AuthError::Encryption(format!("Failed to create cipher: {}", e)))?;
+            .map_err(|e| AuthError::Encryption(format!("Failed to create cipher: {e}")))?;
 
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill(&mut nonce_bytes);
@@ -167,7 +173,7 @@ impl EncryptedFileStorage {
 
         let ciphertext = cipher
             .encrypt(nonce, plaintext)
-            .map_err(|e| AuthError::Encryption(format!("Encryption failed: {}", e)))?;
+            .map_err(|e| AuthError::Encryption(format!("Encryption failed: {e}")))?;
 
         // Prepend nonce to ciphertext
         let mut result = nonce_bytes.to_vec();
@@ -191,11 +197,11 @@ impl EncryptedFileStorage {
 
         let key = Self::get_encryption_key()?;
         let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| AuthError::Encryption(format!("Failed to create cipher: {}", e)))?;
+            .map_err(|e| AuthError::Encryption(format!("Failed to create cipher: {e}")))?;
 
         cipher
             .decrypt(nonce, ciphertext)
-            .map_err(|e| AuthError::Encryption(format!("Decryption failed: {}", e)))
+            .map_err(|e| AuthError::Encryption(format!("Decryption failed: {e}")))
     }
 }
 
@@ -210,7 +216,7 @@ impl AuthStorage for EncryptedFileStorage {
         let decrypted = self.decrypt(&encrypted_data)?;
         let all_tokens: std::collections::HashMap<String, AuthTokens> =
             serde_json::from_slice(&decrypted)
-                .map_err(|e| AuthError::Storage(format!("Failed to parse tokens: {}", e)))?;
+                .map_err(|e| AuthError::Storage(format!("Failed to parse tokens: {e}")))?;
 
         Ok(all_tokens.get(provider).cloned())
     }
@@ -228,7 +234,7 @@ impl AuthStorage for EncryptedFileStorage {
                     } else {
                         let decrypted = self.decrypt(&encrypted_data)?;
                         serde_json::from_slice(&decrypted).map_err(|e| {
-                            AuthError::Storage(format!("Failed to parse tokens: {}", e))
+                            AuthError::Storage(format!("Failed to parse tokens: {e}"))
                         })?
                     }
                 }
@@ -240,7 +246,7 @@ impl AuthStorage for EncryptedFileStorage {
 
         // Serialize and encrypt
         let serialized = serde_json::to_vec(&all_tokens)
-            .map_err(|e| AuthError::Storage(format!("Failed to serialize tokens: {}", e)))?;
+            .map_err(|e| AuthError::Storage(format!("Failed to serialize tokens: {e}")))?;
         let encrypted = self.encrypt(&serialized)?;
 
         // Write to file
@@ -258,7 +264,7 @@ impl AuthStorage for EncryptedFileStorage {
         let decrypted = self.decrypt(&encrypted_data)?;
         let mut all_tokens: std::collections::HashMap<String, AuthTokens> =
             serde_json::from_slice(&decrypted)
-                .map_err(|e| AuthError::Storage(format!("Failed to parse tokens: {}", e)))?;
+                .map_err(|e| AuthError::Storage(format!("Failed to parse tokens: {e}")))?;
 
         // Remove tokens for this provider
         all_tokens.remove(provider);
@@ -273,7 +279,7 @@ impl AuthStorage for EncryptedFileStorage {
         } else {
             // Re-encrypt and write remaining tokens
             let serialized = serde_json::to_vec(&all_tokens)
-                .map_err(|e| AuthError::Storage(format!("Failed to serialize tokens: {}", e)))?;
+                .map_err(|e| AuthError::Storage(format!("Failed to serialize tokens: {e}")))?;
             let encrypted = self.encrypt(&serialized)?;
             self.write_encrypted_data(&encrypted).await?;
         }
@@ -363,6 +369,3 @@ impl AuthStorage for DefaultAuthStorage {
         }
     }
 }
-
-// Add whoami dependency
-use whoami;

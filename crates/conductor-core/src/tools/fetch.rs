@@ -1,9 +1,9 @@
-use crate::api::Model;
-use crate::config::LlmConfig;
-use crate::tools::ToolError;
+use crate::{api::Model, config::LlmConfigProvider};
 use conductor_macros::tool_external as tool;
+use conductor_tools::ToolError;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::Arc;
 
 #[derive(Deserialize, Debug, JsonSchema)]
 pub struct FetchParams {
@@ -14,7 +14,9 @@ pub struct FetchParams {
 }
 
 tool! {
-    FetchTool {
+    pub struct FetchTool {
+        pub llm_config_provider: Arc<LlmConfigProvider>,
+    } {
         params: FetchParams,
         output: conductor_tools::result::FetchResult,
         variant: Fetch,
@@ -39,7 +41,7 @@ Usage notes:
     }
 
     async fn run(
-        _tool: &FetchTool,
+        tool: &FetchTool,
         params: FetchParams,
         context: &conductor_tools::ExecutionContext,
     ) -> Result<conductor_tools::result::FetchResult, ToolError> {
@@ -85,7 +87,7 @@ Usage notes:
 
                 match text {
                     Ok(content) => {
-                        process_web_page_content(content, params.prompt.clone(), token).await
+                        process_web_page_content(tool, content, params.prompt.clone(), token).await
                             .map(|payload| conductor_tools::result::FetchResult {
                                 url: params.url,
                                 content: payload,
@@ -113,11 +115,14 @@ impl FetchTool {
 }
 
 async fn process_web_page_content(
+    tool: &FetchTool,
     content: String,
     prompt: String,
     token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ToolError> {
-    let config = LlmConfig::from_env()
+    let config = tool
+        .llm_config_provider
+        .get()
         .await
         .map_err(|e| ToolError::execution("Fetch", e.to_string()))?;
     let client = crate::api::Client::new(&config);

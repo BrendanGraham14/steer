@@ -3,7 +3,7 @@ mod tests {
     use conductor_core::api::{Client, Model};
     use conductor_core::app::conversation::{AssistantContent, Message, Role, UserContent};
     use conductor_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
-    use conductor_core::config::LlmConfig;
+    use conductor_core::test_utils;
     use conductor_core::tools::ToolError;
     use conductor_tools::{
         InputSchema, ToolCall, ToolSchema as Tool,
@@ -48,7 +48,9 @@ mod tests {
     // Helper to get a real client (requires env vars)
     async fn get_real_client() -> Arc<Client> {
         dotenv().ok(); // Load .env file if present
-        let config = LlmConfig::from_env().await.expect("LLM config failed to load");
+        let config = test_utils::llm_config_from_env()
+            .await
+            .expect("LLM config failed to load");
         Arc::new(Client::new(&config))
     }
 

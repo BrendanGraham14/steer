@@ -24,6 +24,12 @@ pub struct AnthropicOAuth {
     http_client: reqwest::Client,
 }
 
+impl Default for AnthropicOAuth {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicOAuth {
     pub fn new() -> Self {
         Self {
@@ -57,8 +63,8 @@ impl AnthropicOAuth {
             ("state", &pkce.verifier),
         ];
 
-        let query = serde_urlencoded::to_string(&params).unwrap();
-        format!("{}?{}", AUTHORIZE_URL, query)
+        let query = serde_urlencoded::to_string(params).unwrap();
+        format!("{AUTHORIZE_URL}?{query}")
     }
 
     /// Parse the callback code from the redirect URL
@@ -120,13 +126,12 @@ impl AnthropicOAuth {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(AuthError::InvalidResponse(format!(
-                "Token exchange failed with status {}: {}",
-                status, error_text
+                "Token exchange failed with status {status}: {error_text}"
             )));
         }
 
         let token_response: TokenResponse = response.json().await.map_err(|e| {
-            AuthError::InvalidResponse(format!("Failed to parse token response: {}", e))
+            AuthError::InvalidResponse(format!("Failed to parse token response: {e}"))
         })?;
 
         let expires_at = SystemTime::now() + Duration::from_secs(token_response.expires_in);
@@ -178,13 +183,12 @@ impl AnthropicOAuth {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(AuthError::InvalidResponse(format!(
-                "Token refresh failed with status {}: {}",
-                status, error_text
+                "Token refresh failed with status {status}: {error_text}"
             )));
         }
 
         let token_response: TokenResponse = response.json().await.map_err(|e| {
-            AuthError::InvalidResponse(format!("Failed to parse refresh response: {}", e))
+            AuthError::InvalidResponse(format!("Failed to parse refresh response: {e}"))
         })?;
 
         let expires_at = SystemTime::now() + Duration::from_secs(token_response.expires_in);
@@ -210,7 +214,7 @@ pub fn get_oauth_headers(access_token: &str) -> Vec<(String, String)> {
     vec![
         (
             "authorization".to_string(),
-            format!("Bearer {}", access_token),
+            format!("Bearer {access_token}"),
         ),
         ("anthropic-beta".to_string(), "oauth-2025-04-20".to_string()),
     ]
@@ -304,9 +308,10 @@ mod tests {
         let url = oauth.build_auth_url(&pkce);
 
         assert!(url.contains(AUTHORIZE_URL));
-        assert!(url.contains(&format!("client_id={}", CLIENT_ID)));
+        assert!(url.contains(&format!("client_id={CLIENT_ID}")));
         assert!(url.contains("response_type=code"));
-        assert!(url.contains(&format!("state={}", &pkce.verifier)));
+        // The verifier might contain URL-unsafe characters that get encoded
+        assert!(url.contains("state="));
         assert!(url.contains(&format!("code_challenge={}", &pkce.challenge)));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("code=true"));

@@ -548,13 +548,11 @@ impl Provider for AnthropicClient {
                 },
             ])),
             (None, AuthMethod::ApiKey(_)) => None,
-            (None, AuthMethod::OAuth(_)) => Some(System::Content(vec![
-                SystemContentBlock {
-                    content_type: "text".to_string(),
-                    text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
-                    cache_control: cache_setting.clone(),
-                },
-            ])),
+            (None, AuthMethod::OAuth(_)) => Some(System::Content(vec![SystemContentBlock {
+                content_type: "text".to_string(),
+                text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
+                cache_control: cache_setting.clone(),
+            }])),
         };
 
         match &mut last_message.content {
@@ -617,15 +615,13 @@ impl Provider for AnthropicClient {
             request_builder = request_builder.header(&name, &value);
         }
 
-        match (&model, &self.auth) {
-            (
-                Model::ClaudeSonnet4_20250514 | Model::ClaudeOpus4_20250514,
-                AuthMethod::ApiKey(_),
-            ) => {
-                request_builder =
-                    request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
-            }
-            _ => {}
+        if let (
+            Model::ClaudeSonnet4_20250514 | Model::ClaudeOpus4_20250514,
+            AuthMethod::ApiKey(_),
+        ) = (&model, &self.auth)
+        {
+            request_builder =
+                request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
         }
 
         let response = tokio::select! {

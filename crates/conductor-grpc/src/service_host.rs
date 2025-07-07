@@ -8,12 +8,13 @@ use tonic::transport::Server;
 use tracing::{error, info};
 
 use crate::grpc::server::AgentServiceImpl;
+use conductor_core::auth::storage::AuthStorage;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig, SessionStore};
 use conductor_proto::agent::agent_service_server::AgentServiceServer;
 
 /// Configuration for the ServiceHost
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServiceHostConfig {
     /// Path to the session database
     pub db_path: std::path::PathBuf,
@@ -21,6 +22,40 @@ pub struct ServiceHostConfig {
     pub session_manager_config: SessionManagerConfig,
     /// gRPC server bind address
     pub bind_addr: SocketAddr,
+    /// Auth storage
+    pub auth_storage: Arc<dyn AuthStorage>,
+}
+
+impl std::fmt::Debug for ServiceHostConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServiceHostConfig")
+            .field("db_path", &self.db_path)
+            .field("session_manager_config", &self.session_manager_config)
+            .field("bind_addr", &self.bind_addr)
+            .field("auth_storage", &"Arc<dyn AuthStorage>")
+            .finish()
+    }
+}
+
+impl ServiceHostConfig {
+    /// Create a new ServiceHostConfig with default auth storage
+    pub fn new(
+        db_path: std::path::PathBuf,
+        session_manager_config: SessionManagerConfig,
+        bind_addr: SocketAddr,
+    ) -> Result<Self> {
+        let auth_storage = Arc::new(
+            conductor_core::auth::DefaultAuthStorage::new()
+                .map_err(|e| GrpcError::CoreError(e.into()))?,
+        );
+
+        Ok(Self {
+            db_path,
+            session_manager_config,
+            bind_addr,
+            auth_storage,
+        })
+    }
 }
 
 /// Main orchestrator for the service host system
@@ -71,7 +106,11 @@ impl ServiceHost {
             });
         }
 
-        let service = AgentServiceImpl::new(self.session_manager.clone());
+        // Use auth storage from config
+        let llm_config_provider =
+            conductor_core::config::LlmConfigProvider::new(self.config.auth_storage.clone());
+
+        let service = AgentServiceImpl::new(self.session_manager.clone(), llm_config_provider);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let addr = self.config.bind_addr;
@@ -205,6 +244,7 @@ mod tests {
                 auto_persist: true,
             },
             bind_addr: "127.0.0.1:0".parse().unwrap(), // Use port 0 for testing
+            auth_storage: Arc::new(conductor_core::test_utils::InMemoryAuthStorage::new()),
         };
 
         (config, temp_dir)

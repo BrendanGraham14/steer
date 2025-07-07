@@ -1,7 +1,7 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use conductor_core::api::Model;
 use conductor_core::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
-use conductor_core::config::LlmConfig;
+use conductor_core::test_utils;
 use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::ToolCall;
 use conductor_tools::tools::edit::EditTool;
@@ -47,8 +47,9 @@ async fn test_requires_approval_tool_detection() -> Result<()> {
 #[tokio::test]
 async fn test_tool_executor_requires_approval_check() -> Result<()> {
     dotenv().ok();
-    let llm_config = LlmConfig::from_env().await?;
-    let app_config = AppConfig { llm_config };
+    let app_config = AppConfig {
+        llm_config_provider: test_utils::test_llm_config_provider(),
+    };
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
     let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
@@ -61,7 +62,8 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
         workspace,
         tool_executor,
         None,
-    )?;
+    )
+    .await?;
 
     assert!(
         !app.tool_executor
@@ -97,10 +99,7 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
 #[tokio::test]
 async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     dotenv().ok();
-    let llm_config = LlmConfig::from_env().await?;
-    let app_config_for_actor = AppConfig {
-        llm_config: llm_config.clone(),
-    };
+    let app_config_for_actor = test_utils::test_app_config();
 
     let (event_tx, mut event_rx) = mpsc::channel::<AppEvent>(100);
     let (command_tx_to_actor, command_rx_for_actor) = mpsc::channel::<AppCommand>(100);
@@ -115,7 +114,8 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
         workspace,
         tool_executor,
         None,
-    )?;
+    )
+    .await?;
     let actor_handle = tokio::spawn(conductor_core::app::app_actor_loop(
         app_for_actor,
         command_rx_for_actor,

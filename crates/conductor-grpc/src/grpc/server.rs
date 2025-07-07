@@ -10,11 +10,18 @@ use tracing::{debug, error, info, warn};
 
 pub struct AgentServiceImpl {
     session_manager: Arc<SessionManager>,
+    llm_config_provider: conductor_core::config::LlmConfigProvider,
 }
 
 impl AgentServiceImpl {
-    pub fn new(session_manager: Arc<SessionManager>) -> Self {
-        Self { session_manager }
+    pub fn new(
+        session_manager: Arc<SessionManager>,
+        llm_config_provider: conductor_core::config::LlmConfigProvider,
+    ) -> Self {
+        Self {
+            session_manager,
+            llm_config_provider,
+        }
     }
 }
 
@@ -30,8 +37,9 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let mut client_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
 
-        // Clone session manager for the stream handler task
+        // Clone session manager and llm_config_provider for the stream handler task
         let session_manager = self.session_manager.clone();
+        let llm_config_provider = self.llm_config_provider.clone();
 
         let _stream_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             // Handle the first message to establish the session connection
@@ -56,7 +64,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                 info!("Session {} not active, attempting to resume", session_id);
 
                                 // Try to resume the session
-                                match try_resume_session(&session_manager, &session_id).await {
+                                match try_resume_session(&session_manager, &session_id, &llm_config_provider).await {
                                     Ok(()) => {
                                         // Session resumed, try to take receiver again
                                         match session_manager.take_event_receiver(&session_id).await {
@@ -102,8 +110,12 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                         };
 
                         // Process the first message
-                        if let Err(e) =
-                            handle_client_message(&session_manager, client_message).await
+                        if let Err(e) = handle_client_message(
+                            &session_manager,
+                            client_message,
+                            llm_config_provider.clone(),
+                        )
+                        .await
                         {
                             error!("Error handling first client message: {}", e);
                             let _ = tx
@@ -178,8 +190,12 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                             warn!("Failed to touch session {}: {}", session_id, e);
                         }
 
-                        if let Err(e) =
-                            handle_client_message(&session_manager, client_message).await
+                        if let Err(e) = handle_client_message(
+                            &session_manager,
+                            client_message,
+                            llm_config_provider.clone(),
+                        )
+                        .await
                         {
                             error!("Error handling client message: {}", e);
                             let _ = tx
@@ -232,12 +248,9 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     ) -> Result<Response<SessionInfo>, Status> {
         let req = request.into_inner();
 
-        // Load LLM config from environment properly
-        let llm_config = conductor_core::config::LlmConfig::from_env()
-            .await
-            .map_err(|e| Status::internal(format!("Failed to load LLM config: {e}")))?;
-
-        let app_config = conductor_core::app::AppConfig { llm_config };
+        let app_config = conductor_core::app::AppConfig {
+            llm_config_provider: self.llm_config_provider.clone(),
+        };
 
         match self
             .session_manager
@@ -481,11 +494,9 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }));
         }
 
-        // Load LLM config
-        let llm_config = conductor_core::config::LlmConfig::from_env()
-            .await
-            .map_err(|e| Status::internal(format!("Failed to load LLM config: {e}")))?;
-        let app_config = conductor_core::app::AppConfig { llm_config };
+        let app_config = conductor_core::app::AppConfig {
+            llm_config_provider: self.llm_config_provider.clone(),
+        };
 
         match self
             .session_manager
@@ -617,15 +628,11 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 async fn try_resume_session(
     session_manager: &SessionManager,
     session_id: &str,
+    llm_config_provider: &conductor_core::config::LlmConfigProvider,
 ) -> Result<(), Status> {
-    // Load LLM config from environment
-    let llm_config = conductor_core::config::LlmConfig::from_env()
-        .await
-        .map_err(|e| {
-            Status::internal(format!("Failed to load LLM config for session resume: {e}"))
-        })?;
-
-    let app_config = conductor_core::app::AppConfig { llm_config };
+    let app_config = conductor_core::app::AppConfig {
+        llm_config_provider: llm_config_provider.clone(),
+    };
 
     // Attempt to resume the session
     match session_manager.resume_session(session_id, app_config).await {
@@ -658,6 +665,7 @@ async fn try_resume_session(
 async fn handle_client_message(
     session_manager: &SessionManager,
     client_message: ClientMessage,
+    _llm_config_provider: conductor_core::config::LlmConfigProvider,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     debug!(
         "Handling client message for session: {}",
@@ -715,9 +723,10 @@ async fn handle_client_message(
                 // No action needed - stream is already active
             }
 
-            client_message::Message::UpdateConfig(update_config) => {
-                // TODO: Implement config updates
-                debug!("Config update not yet implemented: {:?}", update_config);
+            client_message::Message::UpdateConfig(_update_config) => {
+                // UpdateConfig no longer supports changing the LLM provider
+                // Tool config updates are handled separately
+                debug!("UpdateConfig received but provider changes are no longer supported");
             }
 
             client_message::Message::ExecuteCommand(execute_command) => {
@@ -765,7 +774,6 @@ async fn handle_client_message(
 mod tests {
     use super::*;
     use conductor_core::api::Model;
-    use conductor_core::config::LlmConfig;
     use conductor_core::events::StreamEventWithMetadata;
     use conductor_core::session::state::WorkspaceConfig;
     use conductor_core::session::stores::sqlite::SqliteSessionStore;
@@ -776,6 +784,10 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio_stream::StreamExt;
+
+    fn create_test_app_config() -> conductor_core::app::AppConfig {
+        conductor_core::test_utils::test_app_config()
+    }
 
     async fn create_test_session_manager() -> (Arc<SessionManager>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
@@ -796,7 +808,9 @@ mod tests {
     async fn create_test_server() -> (String, Arc<SessionManager>, TempDir) {
         let (session_manager, temp_dir) = create_test_session_manager().await;
 
-        let service = AgentServiceImpl::new(session_manager.clone());
+        let auth_storage = Arc::new(conductor_core::test_utils::InMemoryAuthStorage::new());
+        let llm_config_provider = conductor_core::config::LlmConfigProvider::new(auth_storage);
+        let service = AgentServiceImpl::new(session_manager.clone(), llm_config_provider);
 
         // Start server on random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -831,9 +845,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig::test_config(),
-        };
+        let app_config = create_test_app_config();
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)
@@ -892,9 +904,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig::test_config(),
-        };
+        let app_config = create_test_app_config();
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)
@@ -958,9 +968,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig::test_config(),
-        };
+        let app_config = create_test_app_config();
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)
@@ -1047,9 +1055,7 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig::test_config(),
-        };
+        let app_config = create_test_app_config();
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)

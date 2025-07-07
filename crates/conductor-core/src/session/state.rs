@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::api::Model;
 use crate::app::Message;
+use crate::config::LlmConfigProvider;
 use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
 use conductor_tools::tools::read_only_workspace_tools;
 use conductor_tools::{ToolCall, result::ToolResult};
@@ -99,7 +100,10 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// Build a BackendRegistry from this configuration for external tools only.
     /// Workspace tools are now handled directly by the Workspace.
-    pub async fn build_registry(&self) -> Result<BackendRegistry> {
+    pub async fn build_registry(
+        &self,
+        llm_config_provider: Arc<LlmConfigProvider>,
+    ) -> Result<BackendRegistry> {
         let mut registry = BackendRegistry::new();
 
         // 1. Register all USER-DEFINED backends first.
@@ -108,11 +112,14 @@ impl SessionConfig {
             match backend_config {
                 BackendConfig::Local { tool_filter } => {
                     let backend = match tool_filter {
-                        ToolFilter::All => LocalBackend::full(),
-                        ToolFilter::Include(tools) => LocalBackend::with_tools(tools.clone()),
-                        ToolFilter::Exclude(excluded) => {
-                            LocalBackend::without_tools(excluded.clone())
+                        ToolFilter::All => LocalBackend::full(llm_config_provider.clone()),
+                        ToolFilter::Include(tools) => {
+                            LocalBackend::with_tools(tools.clone(), llm_config_provider.clone())
                         }
+                        ToolFilter::Exclude(excluded) => LocalBackend::without_tools(
+                            excluded.clone(),
+                            llm_config_provider.clone(),
+                        ),
                     };
                     registry
                         .register(format!("user_local_{idx}"), Arc::new(backend))
@@ -181,7 +188,7 @@ impl SessionConfig {
 
         // 2. Register SERVER tools (like dispatch_agent and web_fetch).
         // These are external tools, not workspace tools.
-        let server_backend = LocalBackend::server_only();
+        let server_backend = LocalBackend::server_only(llm_config_provider.clone());
         if !server_backend.supported_tools().await.is_empty() {
             registry
                 .register("server".to_string(), Arc::new(server_backend))
@@ -840,6 +847,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_config_build_registry_server_tools() {
+        use crate::auth::DefaultAuthStorage;
+        use crate::config::LlmConfigProvider;
+
         // Test that server tools are properly registered
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local {
@@ -850,7 +860,11 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let registry = config.build_registry().await.unwrap();
+        // For tests, we'll just unwrap since it's a test environment
+        let auth_storage =
+            DefaultAuthStorage::new().expect("Failed to create auth storage for test");
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)));
+        let registry = config.build_registry(llm_config_provider).await.unwrap();
         let schemas = registry.get_tool_schemas().await;
         let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
 

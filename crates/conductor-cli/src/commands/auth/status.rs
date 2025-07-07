@@ -2,7 +2,7 @@ use comfy_table::{Cell, Color, Table};
 use conductor_core::{
     api::ProviderKind,
     auth::{AuthStorage, DefaultAuthStorage},
-    config::LlmConfig,
+    config::{LlmConfig, LlmConfigLoader},
 };
 use eyre::{Result, eyre};
 use std::sync::Arc;
@@ -16,7 +16,12 @@ pub async fn execute() -> Result<()> {
     ]);
 
     // Load config to check for API keys
-    let config = LlmConfig::from_env()
+    let storage = Arc::new(
+        DefaultAuthStorage::new().map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
+    );
+    let loader = LlmConfigLoader::new(storage.clone());
+    let config = loader
+        .from_env()
         .await
         .map_err(|e| eyre!("Failed to load config: {}", e))?;
 
@@ -59,7 +64,7 @@ async fn add_anthropic_status(table: &mut Table, _config: &LlmConfig) -> Result<
         } else {
             let duration = tokens.expires_at.duration_since(now).unwrap_or_default();
             let minutes = duration.as_secs() / 60;
-            oauth_status_str = format!("✅ Logged In ({}m)", minutes);
+            oauth_status_str = format!("✅ Logged In ({minutes}m)");
         }
     }
 

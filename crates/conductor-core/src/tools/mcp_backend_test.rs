@@ -4,6 +4,7 @@
 mod tests {
 
     use crate::api::ToolCall;
+    use crate::config::LlmConfigProvider;
     use crate::session::state::{BackendConfig, SessionConfig, ToolFilter};
     use crate::tools::execution_context::ExecutionContext;
     use crate::tools::mcp_test_servers::test_servers::TestMcpService;
@@ -11,12 +12,20 @@ mod tests {
     use conductor_tools::result::{ExternalResult, ToolResult};
     use rmcp::service::ServiceExt;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::net::TcpListener;
     #[cfg(unix)]
     use tokio::net::UnixListener;
     use tokio_util::sync::CancellationToken;
     use tracing::{debug, info};
+
+    fn default_llm_config_provider() -> Arc<LlmConfigProvider> {
+        // For tests, we use the InMemoryAuthStorage from test_utils
+        use crate::test_utils::InMemoryAuthStorage;
+        let auth_storage = InMemoryAuthStorage::new();
+        Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)))
+    }
 
     #[tokio::test]
     async fn test_mcp_backend_in_session_config() {
@@ -73,7 +82,10 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let registry = config.build_registry().await.unwrap();
+        let registry = config
+            .build_registry(default_llm_config_provider())
+            .await
+            .unwrap();
 
         // Verify the MCP tools are available
         let tool_schemas = registry.get_tool_schemas().await;
@@ -167,7 +179,10 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let registry = config.build_registry().await.unwrap();
+        let registry = config
+            .build_registry(default_llm_config_provider())
+            .await
+            .unwrap();
 
         // Verify the MCP tools are available
         let tool_schemas = registry.get_tool_schemas().await;
@@ -250,7 +265,10 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let registry = config.build_registry().await.unwrap();
+        let registry = config
+            .build_registry(default_llm_config_provider())
+            .await
+            .unwrap();
 
         // Verify the MCP tools are available
         let tool_schemas = registry.get_tool_schemas().await;
@@ -315,7 +333,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry()
+            .build_registry(default_llm_config_provider())
             .await
             .expect("Failed to build tool registry");
 
@@ -412,7 +430,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry()
+            .build_registry(default_llm_config_provider())
             .await
             .expect("Failed to build tool registry");
 
@@ -479,7 +497,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry()
+            .build_registry(default_llm_config_provider())
             .await
             .expect("Failed to build tool registry");
 
@@ -572,7 +590,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry()
+            .build_registry(default_llm_config_provider())
             .await
             .expect("Failed to build tool registry");
 
@@ -664,7 +682,10 @@ mod tests {
         });
 
         // Registry creation should still succeed
-        let registry = config.build_registry().await.unwrap();
+        let registry = config
+            .build_registry(default_llm_config_provider())
+            .await
+            .unwrap();
 
         // Get all tool schemas from the registry
         let tool_schemas = registry.get_tool_schemas().await;

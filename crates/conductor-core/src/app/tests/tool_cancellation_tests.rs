@@ -3,19 +3,15 @@ mod tests {
     use crate::api::Model;
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
-        App, AppConfig, ToolExecutor,
+        App, ToolExecutor,
         conversation::{AssistantContent, Message},
     };
-    use crate::config::LlmConfig;
+    use crate::test_utils;
     use crate::tools::{BackendRegistry, LocalBackend};
     use crate::workspace::local::LocalWorkspace;
     use conductor_tools::{ToolCall, ToolError, result::ToolResult};
     use std::sync::Arc;
     use tokio::sync::mpsc;
-
-    fn create_test_llm_config() -> LlmConfig {
-        LlmConfig::test_config()
-    }
 
     async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {
         let workspace = LocalWorkspace::new().await.unwrap();
@@ -25,9 +21,14 @@ mod tests {
     async fn create_test_tool_executor(
         workspace: Arc<dyn crate::workspace::Workspace>,
     ) -> Arc<ToolExecutor> {
+        let auth_storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
+        let llm_config_provider = Arc::new(crate::config::LlmConfigProvider::new(auth_storage));
         let mut backend_registry = BackendRegistry::new();
         backend_registry
-            .register("local".to_string(), Arc::new(LocalBackend::full()))
+            .register(
+                "local".to_string(),
+                Arc::new(LocalBackend::full(llm_config_provider)),
+            )
             .await;
 
         Arc::new(ToolExecutor::with_components(
@@ -41,8 +42,7 @@ mod tests {
     #[tokio::test]
     async fn test_inject_cancelled_tool_results() {
         // Create a minimal app configuration
-        let llm_config = create_test_llm_config();
-        let app_config = AppConfig { llm_config };
+        let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
 
@@ -57,6 +57,7 @@ mod tests {
             tool_executor,
             None,
         )
+        .await
         .unwrap();
 
         // Manually add an assistant message with tool calls
@@ -129,8 +130,7 @@ mod tests {
     #[tokio::test]
     async fn test_complete_tool_calls_not_affected() {
         // Create a minimal app configuration
-        let llm_config = create_test_llm_config();
-        let app_config = AppConfig { llm_config };
+        let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
 
@@ -145,6 +145,7 @@ mod tests {
             tool_executor,
             None,
         )
+        .await
         .unwrap();
 
         // Add an assistant message with tool calls
@@ -203,8 +204,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_incomplete_tool_calls() {
         // Create a minimal app configuration
-        let llm_config = create_test_llm_config();
-        let app_config = AppConfig { llm_config };
+        let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
         let initial_model = Model::Claude3_7Sonnet20250219;
 
@@ -219,6 +219,7 @@ mod tests {
             tool_executor,
             None,
         )
+        .await
         .unwrap();
 
         // Add an assistant message with multiple tool calls

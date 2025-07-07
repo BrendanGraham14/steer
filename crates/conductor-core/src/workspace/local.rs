@@ -27,6 +27,7 @@ impl LocalWorkspace {
     }
 
     pub async fn with_path(root_path: PathBuf) -> Result<Self> {
+        // Create a default LlmConfigProvider for workspace tools (they don't need LLM access)
         let tool_backend = Arc::new(LocalBackend::workspace_only());
         let metadata = WorkspaceMetadata {
             id: format!("local:{}", root_path.display()),

@@ -88,15 +88,19 @@ impl ManagedSession {
         crate::app::OpContext::init_command_tx(app_command_tx.clone());
 
         // Build backend registry from session tool config
-        let backend_registry = session.config.build_registry().await?;
+        let backend_registry = session
+            .config
+            .build_registry(Arc::new(app_config.llm_config_provider.clone()))
+            .await?;
 
         // Build workspace from session config
         let workspace = session.build_workspace().await?;
 
-        let tool_executor = Arc::new(crate::app::ToolExecutor::with_components(
+        let tool_executor = Arc::new(crate::app::ToolExecutor::with_all_components(
             Some(workspace.clone()),
             Arc::new(backend_registry),
             Arc::new(crate::app::validation::ValidatorRegistry::new()),
+            app_config.llm_config_provider.clone(),
         ));
 
         // Create the App instance with the configured tool executor and session config
@@ -109,7 +113,7 @@ impl ManagedSession {
                 tool_executor,
                 Some(session.config.clone()),
                 conv,
-            )?
+            ).await?
         } else {
             App::new(
                 app_config,
@@ -118,13 +122,13 @@ impl ManagedSession {
                 workspace.clone(),
                 tool_executor,
                 Some(session.config.clone()),
-            )?
+            ).await?
         };
 
         // Set the initial model if specified in session metadata
         if let Some(model_str) = session.config.metadata.get("initial_model") {
             if let Ok(model) = model_str.parse::<crate::api::Model>() {
-                let _ = app.set_model(model);
+                let _ = app.set_model(model).await;
             }
         }
 
@@ -938,7 +942,6 @@ async fn update_session_state_for_event(
 mod tests {
     use super::*;
     use crate::app::conversation::{AssistantContent, Role, UserContent};
-    use crate::config::LlmConfig;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
@@ -960,9 +963,7 @@ mod tests {
     }
 
     fn create_test_app_config() -> AppConfig {
-        AppConfig {
-            llm_config: LlmConfig::test_config(),
-        }
+        crate::test_utils::test_app_config()
     }
 
     #[tokio::test]

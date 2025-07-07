@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::api::ToolCall;
+use crate::auth::DefaultAuthStorage;
+use crate::config::LlmConfigProvider;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};
 use conductor_tools::tools::{read_only_workspace_tools, workspace_tools};
@@ -96,10 +99,17 @@ impl LocalBackend {
     ///
     /// This method takes a list of tool names and creates a backend
     /// containing only those tools from the full set of available tools.
-    pub fn with_tools(tool_names: Vec<String>) -> Self {
+    pub fn with_tools(
+        tool_names: Vec<String>,
+        llm_config_provider: Arc<LlmConfigProvider>,
+    ) -> Self {
         let mut all_tools = workspace_tools();
-        all_tools.push(Box::new(FetchToolWrapper(FetchTool)));
-        all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool)));
+        all_tools.push(Box::new(FetchToolWrapper(FetchTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
+        all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
 
         let filtered_tools: Vec<Box<dyn ExecutableTool>> = all_tools
             .into_iter()
@@ -113,10 +123,17 @@ impl LocalBackend {
     ///
     /// This method takes a list of tool names to exclude and creates a backend
     /// containing all other tools from the full set of available tools.
-    pub fn without_tools(excluded_tools: Vec<String>) -> Self {
+    pub fn without_tools(
+        excluded_tools: Vec<String>,
+        llm_config_provider: Arc<LlmConfigProvider>,
+    ) -> Self {
         let mut all_tools = workspace_tools();
-        all_tools.push(Box::new(FetchToolWrapper(FetchTool)));
-        all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool)));
+        all_tools.push(Box::new(FetchToolWrapper(FetchTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
+        all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
 
         let filtered_tools: Vec<Box<dyn ExecutableTool>> = all_tools
             .into_iter()
@@ -127,11 +144,15 @@ impl LocalBackend {
     }
 
     /// Create a new LocalBackend with all tools (workspace + server tools)
-    pub fn full() -> Self {
+    pub fn full(llm_config_provider: Arc<LlmConfigProvider>) -> Self {
         let mut tools = workspace_tools();
         // Add server-side tools
-        tools.push(Box::new(FetchToolWrapper(FetchTool)));
-        tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool)));
+        tools.push(Box::new(FetchToolWrapper(FetchTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
+        tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
         Self::from_tools(tools)
     }
 
@@ -141,10 +162,14 @@ impl LocalBackend {
     }
 
     /// Create a LocalBackend with only server-side tools
-    pub fn server_only() -> Self {
+    pub fn server_only(llm_config_provider: Arc<LlmConfigProvider>) -> Self {
         Self::from_tools(vec![
-            Box::new(FetchToolWrapper(FetchTool)),
-            Box::new(DispatchAgentToolWrapper(DispatchAgentTool)),
+            Box::new(FetchToolWrapper(FetchTool {
+                llm_config_provider: llm_config_provider.clone(),
+            })),
+            Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
+                llm_config_provider: llm_config_provider.clone(),
+            })),
         ])
     }
 
@@ -152,10 +177,12 @@ impl LocalBackend {
     ///
     /// This creates a backend with only read-only tools, useful for
     /// sandboxed or restricted execution environments.
-    pub fn read_only() -> Self {
+    pub fn read_only(llm_config_provider: Arc<LlmConfigProvider>) -> Self {
         let mut tools = read_only_workspace_tools();
         // Add server-side tools (they're read-only too)
-        tools.push(Box::new(FetchToolWrapper(FetchTool)));
+        tools.push(Box::new(FetchToolWrapper(FetchTool {
+            llm_config_provider: llm_config_provider.clone(),
+        })));
         Self::from_tools(tools)
     }
 
@@ -240,7 +267,9 @@ impl ToolBackend for LocalBackend {
 
 impl Default for LocalBackend {
     fn default() -> Self {
-        Self::full()
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        Self::full(llm_config_provider)
     }
 }
 
@@ -254,7 +283,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_creation() {
-        let backend = LocalBackend::full();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::full(llm_config_provider);
         assert!(!backend.registry.is_empty());
         assert!(backend.has_tool("bash"));
         assert!(backend.has_tool("read_file"));
@@ -263,7 +294,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_read_only() {
-        let backend = LocalBackend::read_only();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::read_only(llm_config_provider);
         assert!(!backend.registry.is_empty());
         assert!(backend.has_tool("read_file"));
         assert!(!backend.has_tool("bash")); // bash is not in read-only set
@@ -271,7 +304,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_metadata() {
-        let backend = LocalBackend::full();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::full(llm_config_provider);
         let metadata = backend.metadata();
 
         assert_eq!(metadata.name, "Local");
@@ -283,7 +318,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_supported_tools() {
-        let backend = LocalBackend::full();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::full(llm_config_provider);
         let supported = backend.supported_tools().await;
 
         assert!(!supported.is_empty());
@@ -294,13 +331,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_health_check() {
-        let backend = LocalBackend::full();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::full(llm_config_provider);
         assert!(backend.health_check().await);
     }
 
     #[tokio::test]
     async fn test_local_backend_execution_unknown_tool() {
-        let backend = LocalBackend::full();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::full(llm_config_provider);
 
         let tool_call = ToolCall {
             name: "unknown_tool".to_string(),
@@ -325,7 +366,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_backend_requires_approval() {
-        let backend = LocalBackend::full();
+        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+        let backend = LocalBackend::full(llm_config_provider);
 
         // Test a tool that typically requires approval (like bash)
         let result = backend.requires_approval("bash").await;
