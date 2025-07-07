@@ -226,21 +226,66 @@ impl LlmConfigLoader {
     }
 
     pub async fn from_env(&self) -> Result<LlmConfig> {
-        // Check for OAuth tokens first (takes precedence)
-        let anthropic_auth = if self.storage.get_tokens("anthropic").await?.is_some() {
+        // For Anthropic: Check OAuth tokens first, then env vars, then stored API key
+        let anthropic_auth = if self
+            .storage
+            .get_credential("anthropic", crate::auth::CredentialType::AuthTokens)
+            .await?
+            .is_some()
+        {
             Some(ApiAuth::OAuth)
         } else {
-            // If no OAuth, check for API key
+            // Check environment variables first (takes precedence over stored keys)
             let anthropic_key = std::env::var("CLAUDE_API_KEY")
                 .ok()
                 .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-            anthropic_key.map(ApiAuth::Key)
+
+            if let Some(key) = anthropic_key {
+                Some(ApiAuth::Key(key))
+            } else {
+                // Fall back to stored API key in keyring
+                if let Some(crate::auth::Credential::ApiKey { value }) = self
+                    .storage
+                    .get_credential("anthropic", crate::auth::CredentialType::ApiKey)
+                    .await?
+                {
+                    Some(ApiAuth::Key(value))
+                } else {
+                    None
+                }
+            }
+        };
+
+        // For OpenAI: Check env var first, then stored API key
+        let openai_api_key = if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            Some(key)
+        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+            .storage
+            .get_credential("openai", crate::auth::CredentialType::ApiKey)
+            .await?
+        {
+            Some(value)
+        } else {
+            None
+        };
+
+        // For Google/Gemini: Check env var first, then stored API key
+        let gemini_api_key = if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+            Some(key)
+        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+            .storage
+            .get_credential("google", crate::auth::CredentialType::ApiKey)
+            .await?
+        {
+            Some(value)
+        } else {
+            None
         };
 
         Ok(LlmConfig {
             anthropic_auth,
-            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
-            gemini_api_key: std::env::var("GEMINI_API_KEY").ok(),
+            openai_api_key,
+            gemini_api_key,
             auth_storage: Some(self.storage.clone()),
         })
     }

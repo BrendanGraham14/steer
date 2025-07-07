@@ -25,12 +25,14 @@ use tracing::warn;
 
 use crate::app::conversation::Message;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum ProviderKind {
     Anthropic,
     OpenAI,
     Google,
 }
+
 #[derive(
     Debug,
     Clone,

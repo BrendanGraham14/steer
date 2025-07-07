@@ -1,4 +1,4 @@
-use crate::auth::{AuthError, AuthStorage, AuthTokens, Result};
+use crate::auth::{AuthError, AuthStorage, AuthTokens, Credential, CredentialType, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -225,21 +225,30 @@ pub async fn refresh_if_needed(
     storage: &Arc<dyn AuthStorage>,
     oauth_client: &AnthropicOAuth,
 ) -> Result<AuthTokens> {
-    let mut tokens = storage
-        .get_tokens("anthropic")
+    let credential = storage
+        .get_credential("anthropic", CredentialType::AuthTokens)
         .await?
         .ok_or(AuthError::ReauthRequired)?;
+
+    let mut tokens = match credential {
+        Credential::AuthTokens(tokens) => tokens,
+        _ => return Err(AuthError::ReauthRequired),
+    };
 
     if tokens_need_refresh(&tokens) {
         // Try to refresh
         match oauth_client.refresh_tokens(&tokens.refresh_token).await {
             Ok(new_tokens) => {
-                storage.set_tokens("anthropic", new_tokens.clone()).await?;
+                storage
+                    .set_credential("anthropic", Credential::AuthTokens(new_tokens.clone()))
+                    .await?;
                 tokens = new_tokens;
             }
             Err(AuthError::ReauthRequired) => {
                 // Refresh token is invalid, clear tokens
-                storage.remove_tokens("anthropic").await?;
+                storage
+                    .remove_credential("anthropic", CredentialType::AuthTokens)
+                    .await?;
                 return Err(AuthError::ReauthRequired);
             }
             Err(e) => return Err(e),

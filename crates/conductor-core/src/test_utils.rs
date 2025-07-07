@@ -4,14 +4,15 @@
 //! across crate boundaries.
 
 use crate::app::AppConfig;
-use crate::auth::AuthStorage;
+use crate::auth::{AuthStorage, CredentialType};
 use crate::config::{LlmConfig, LlmConfigLoader, LlmConfigProvider};
 use crate::error::Result;
 use std::sync::Arc;
 
 /// In-memory storage for testing - doesn't use keyring or filesystem
 pub struct InMemoryAuthStorage {
-    tokens: Arc<tokio::sync::Mutex<std::collections::HashMap<String, crate::auth::AuthTokens>>>,
+    credentials:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<String, crate::auth::Credential>>>,
 }
 
 impl Default for InMemoryAuthStorage {
@@ -23,34 +24,39 @@ impl Default for InMemoryAuthStorage {
 impl InMemoryAuthStorage {
     pub fn new() -> Self {
         Self {
-            tokens: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            credentials: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 }
 
 #[async_trait::async_trait]
 impl AuthStorage for InMemoryAuthStorage {
-    async fn get_tokens(
+    async fn get_credential(
         &self,
         provider: &str,
-    ) -> crate::auth::Result<Option<crate::auth::AuthTokens>> {
-        Ok(self.tokens.lock().await.get(provider).cloned())
+        credential_type: CredentialType,
+    ) -> crate::auth::Result<Option<crate::auth::Credential>> {
+        let key = format!("{provider}-{credential_type}");
+        Ok(self.credentials.lock().await.get(&key).cloned())
     }
 
-    async fn set_tokens(
+    async fn set_credential(
         &self,
         provider: &str,
-        tokens: crate::auth::AuthTokens,
+        credential: crate::auth::Credential,
     ) -> crate::auth::Result<()> {
-        self.tokens
-            .lock()
-            .await
-            .insert(provider.to_string(), tokens);
+        let key = format!("{}-{}", provider, credential.credential_type());
+        self.credentials.lock().await.insert(key, credential);
         Ok(())
     }
 
-    async fn remove_tokens(&self, provider: &str) -> crate::auth::Result<()> {
-        self.tokens.lock().await.remove(provider);
+    async fn remove_credential(
+        &self,
+        provider: &str,
+        credential_type: CredentialType,
+    ) -> crate::auth::Result<()> {
+        let key = format!("{provider}-{credential_type}");
+        self.credentials.lock().await.remove(&key);
         Ok(())
     }
 }

@@ -1,14 +1,23 @@
-use conductor_core::auth::{DefaultAuthStorage, anthropic::AnthropicOAuth};
+use clap::Args;
+use conductor_core::auth::{Credential, DefaultAuthStorage, anthropic::AnthropicOAuth};
 use eyre::{Result, bail, eyre};
 use std::sync::Arc;
 
-pub async fn execute(provider: &str) -> Result<()> {
-    match provider {
-        "anthropic" | "claude" => login_anthropic().await,
-        _ => bail!(
-            "Unsupported provider: {}. Currently only 'anthropic' is supported.",
-            provider
-        ),
+#[derive(Args, Clone, Debug)]
+pub struct Login {
+    /// Provider to login to
+    pub provider: String,
+}
+
+impl Login {
+    pub async fn handle(&self) -> Result<()> {
+        match self.provider.as_str() {
+            "anthropic" | "claude" => login_anthropic().await,
+            _ => bail!(
+                "Unsupported provider: {}. Currently only 'anthropic' is supported.",
+                self.provider
+            ),
+        }
     }
 }
 
@@ -68,7 +77,7 @@ async fn login_anthropic() -> Result<()> {
     ) as Arc<dyn conductor_core::auth::AuthStorage>;
 
     storage
-        .set_tokens("anthropic", tokens.clone())
+        .set_credential("anthropic", Credential::AuthTokens(tokens.clone()))
         .await
         .map_err(|e| eyre!("Failed to store tokens: {}", e))?;
 

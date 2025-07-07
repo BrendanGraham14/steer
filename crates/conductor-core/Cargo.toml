@@ -43,7 +43,7 @@ ignore = "0.4"
 globset = "0.4.16"
 rand = "0.8"
 strum_macros = "0.27.1"
-strum = { version = "0.27.1", features = ["derive"] }
+strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
 shell-words = "1.1.0"
 tracing-subscriber = { version = "0.3.19", features = [
   "std",
@@ -92,6 +92,7 @@ hyper = { version = "1.6.0", features = ["full"] }
 whoami = "1.6.0"
 hyper-util = { version = "0.1.14", features = ["server", "server-auto", "tokio"] }
 serde_urlencoded = "0.7.1"
+zeroize = "1.8.1"
 
 [build-dependencies]
 

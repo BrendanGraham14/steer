@@ -179,7 +179,8 @@ impl App {
             tool_executor,
             session_config,
             conversation,
-        ).await
+        )
+        .await
     }
 
     pub(crate) fn emit_event(&self, event: AppEvent) {
