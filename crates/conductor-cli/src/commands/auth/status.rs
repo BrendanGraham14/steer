@@ -1,7 +1,7 @@
 use comfy_table::{Cell, Color, Table};
 use conductor_core::{
     api::ProviderKind,
-    auth::{AuthStorage, DefaultAuthStorage},
+    auth::{AuthStorage, CredentialType, DefaultAuthStorage},
     config::{LlmConfig, LlmConfigLoader},
 };
 use eyre::{Result, eyre};
@@ -46,7 +46,9 @@ async fn add_anthropic_status(table: &mut Table, _config: &LlmConfig) -> Result<
 
     // Check for OAuth tokens
     let storage = Arc::new(DefaultAuthStorage::new()?);
-    let oauth_status = storage.get_tokens("anthropic").await;
+    let oauth_status = storage
+        .get_credential("anthropic", CredentialType::AuthTokens)
+        .await;
 
     let mut api_key_status = "❌ Not Configured";
     if has_api_key {
@@ -54,17 +56,19 @@ async fn add_anthropic_status(table: &mut Table, _config: &LlmConfig) -> Result<
     }
 
     let mut oauth_status_str = "❌ Not Logged In".to_string();
-    if let Ok(Some(tokens)) = oauth_status {
-        use std::time::SystemTime;
-        let now = SystemTime::now();
-        let expired = tokens.expires_at <= now;
+    if let Ok(Some(credential)) = oauth_status {
+        if let conductor_core::auth::Credential::AuthTokens(tokens) = credential {
+            use std::time::SystemTime;
+            let now = SystemTime::now();
+            let expired = tokens.expires_at <= now;
 
-        if expired {
-            oauth_status_str = "⚠️ Tokens Expired".to_string();
-        } else {
-            let duration = tokens.expires_at.duration_since(now).unwrap_or_default();
-            let minutes = duration.as_secs() / 60;
-            oauth_status_str = format!("✅ Logged In ({minutes}m)");
+            if expired {
+                oauth_status_str = "⚠️ Tokens Expired".to_string();
+            } else {
+                let duration = tokens.expires_at.duration_since(now).unwrap_or_default();
+                let minutes = duration.as_secs() / 60;
+                oauth_status_str = format!("✅ Logged In ({minutes}m)");
+            }
         }
     }
 

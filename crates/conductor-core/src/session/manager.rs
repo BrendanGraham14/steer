@@ -113,7 +113,8 @@ impl ManagedSession {
                 tool_executor,
                 Some(session.config.clone()),
                 conv,
-            ).await?
+            )
+            .await?
         } else {
             App::new(
                 app_config,
@@ -122,7 +123,8 @@ impl ManagedSession {
                 workspace.clone(),
                 tool_executor,
                 Some(session.config.clone()),
-            ).await?
+            )
+            .await?
         };
 
         // Set the initial model if specified in session metadata

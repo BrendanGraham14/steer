@@ -1,14 +1,23 @@
-use conductor_core::auth::DefaultAuthStorage;
+use clap::Args;
+use conductor_core::auth::{CredentialType, DefaultAuthStorage};
 use eyre::{Result, bail, eyre};
 use std::sync::Arc;
 
-pub async fn execute(provider: &str) -> Result<()> {
-    match provider {
-        "anthropic" | "claude" => logout_anthropic().await,
-        _ => bail!(
-            "Unsupported provider: {}. Currently only 'anthropic' is supported.",
-            provider
-        ),
+#[derive(Args, Clone, Debug)]
+pub struct Logout {
+    /// Provider to logout from
+    pub provider: String,
+}
+
+impl Logout {
+    pub async fn handle(&self) -> Result<()> {
+        match self.provider.as_str() {
+            "anthropic" | "claude" => logout_anthropic().await,
+            _ => bail!(
+                "Unsupported provider: {}. Currently only 'anthropic' is supported.",
+                self.provider
+            ),
+        }
     }
 }
 
@@ -20,23 +29,39 @@ async fn logout_anthropic() -> Result<()> {
         DefaultAuthStorage::new().map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
     ) as Arc<dyn conductor_core::auth::AuthStorage>;
 
-    // Check if tokens exist
-    let has_tokens = storage
-        .get_tokens("anthropic")
+    // Check if any credentials exist
+    let has_auth_tokens = storage
+        .get_credential("anthropic", CredentialType::AuthTokens)
         .await
-        .map_err(|e| eyre!("Failed to check tokens: {}", e))?
+        .map_err(|e| eyre!("Failed to check auth tokens: {}", e))?
         .is_some();
 
-    if !has_tokens {
+    let has_api_key = storage
+        .get_credential("anthropic", CredentialType::ApiKey)
+        .await
+        .map_err(|e| eyre!("Failed to check API key: {}", e))?
+        .is_some();
+
+    if !has_auth_tokens && !has_api_key {
         println!("No stored authentication found for Anthropic.");
         return Ok(());
     }
 
-    // Remove tokens
-    storage
-        .remove_tokens("anthropic")
-        .await
-        .map_err(|e| eyre!("Failed to remove tokens: {}", e))?;
+    // Remove auth tokens if they exist
+    if has_auth_tokens {
+        storage
+            .remove_credential("anthropic", CredentialType::AuthTokens)
+            .await
+            .map_err(|e| eyre!("Failed to remove auth tokens: {}", e))?;
+    }
+
+    // Remove API key if it exists
+    if has_api_key {
+        storage
+            .remove_credential("anthropic", CredentialType::ApiKey)
+            .await
+            .map_err(|e| eyre!("Failed to remove API key: {}", e))?;
+    }
 
     println!("✅ Successfully logged out from Anthropic.");
     println!("You will need to use an API key or login again to use Claude models.");
