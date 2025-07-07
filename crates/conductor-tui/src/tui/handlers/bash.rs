@@ -15,6 +15,9 @@ impl Tui {
             } else {
                 // Cancel bash mode and return to normal without clearing text
                 self.input_mode = InputMode::Normal;
+                self.input_panel_state
+                    .textarea
+                    .set_placeholder_text("Type your message here...");
             }
             return Ok(false);
         }
@@ -23,6 +26,9 @@ impl Tui {
         if key.code == KeyCode::Esc {
             // Return to normal mode without clearing text
             self.input_mode = InputMode::Normal;
+            self.input_panel_state
+                .textarea
+                .set_placeholder_text("Type your message here...");
         } else if key.code == KeyCode::Enter {
             // Execute the bash command
             let command = self.input_panel_state.content();
@@ -32,6 +38,9 @@ impl Tui {
                     .await?;
                 self.input_panel_state.clear(); // Clear after executing
                 self.input_mode = InputMode::Normal;
+                self.input_panel_state
+                    .textarea
+                    .set_placeholder_text("Type your message here...");
             }
         } else {
             // Convert KeyEvent to Input and let the panel state handle it

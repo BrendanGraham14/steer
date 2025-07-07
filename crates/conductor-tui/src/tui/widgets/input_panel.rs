@@ -17,6 +17,33 @@ use crate::tui::model::ChatItem;
 use crate::tui::state::file_cache::FileCache;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinder;
 
+/// Helper function to format keybind hints with consistent styling
+fn format_keybind(key: &str, description: &str) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            format!("[{key}]"),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {description}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]
+}
+
+fn format_keybinds(keybinds: &[(&str, &str)]) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, (key, description)) in keybinds.iter().enumerate() {
+        spans.extend(format_keybind(key, description));
+        if i < keybinds.len() - 1 {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        }
+    }
+    spans
+}
+
 /// Stateful data for the [`InputPanel`] widget.
 #[derive(Debug)]
 pub struct InputPanelState {
@@ -361,6 +388,29 @@ impl InputPanelState {
     }
 }
 
+fn get_formatted_mode(mode: InputMode) -> Span<'static> {
+    // Add mode name with special styling
+    let mode_name = match mode {
+        InputMode::Insert => "Insert",
+        InputMode::Normal => "Normal",
+        InputMode::BashCommand => "Bash",
+        InputMode::AwaitingApproval => "Awaiting Approval",
+        InputMode::SelectingModel => "Model Selection",
+        InputMode::ConfirmExit => "Confirm Exit",
+        InputMode::EditMessageSelection => "Edit Selection",
+        InputMode::FuzzyFinder => "Fuzzy Finder",
+    };
+    let color = match mode {
+        InputMode::ConfirmExit => Color::Red,
+        _ => Color::Yellow,
+    };
+
+    Span::styled(
+        mode_name,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
 /// Properties for the [`InputPanel`] widget.
 #[derive(Clone, Copy, Debug)]
 pub struct InputPanel<'a> {
@@ -383,6 +433,60 @@ impl<'a> InputPanel<'a> {
             is_processing,
             spinner_state,
         }
+    }
+
+    /// Get the title for the current mode with properly formatted keybinds
+    fn get_mode_title(&self) -> Line<'static> {
+        let mut spans = vec![Span::raw(" ")];
+
+        spans.push(get_formatted_mode(self.input_mode));
+        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+
+        match self.input_mode {
+            InputMode::Insert => {
+                spans.extend(format_keybinds(&[("Alt+Enter", "send"), ("Esc", "cancel")]));
+            }
+            InputMode::Normal => {
+                spans.extend(format_keybinds(&[
+                    ("i", "insert"),
+                    ("!", "bash"),
+                    ("u/d/j/k", "scroll"),
+                    ("e", "edit previous"),
+                ]));
+            }
+            InputMode::BashCommand => {
+                spans.extend(format_keybinds(&[("Enter", "execute"), ("Esc", "cancel")]));
+            }
+            InputMode::AwaitingApproval => {
+                // No keybinds for this mode
+            }
+            InputMode::SelectingModel => {
+                // No keybinds shown for this mode (handled by popup)
+            }
+            InputMode::ConfirmExit => {
+                spans.extend(format_keybinds(&[
+                    ("y/Y", "confirm"),
+                    ("any other key", "cancel"),
+                ]));
+            }
+            InputMode::EditMessageSelection => {
+                spans.extend(format_keybinds(&[
+                    ("↑↓", "navigate"),
+                    ("Enter", "select"),
+                    ("Esc", "cancel"),
+                ]));
+            }
+            InputMode::FuzzyFinder => {
+                spans.extend(format_keybinds(&[
+                    ("↑↓", "navigate"),
+                    ("Enter", "select"),
+                    ("Esc", "cancel"),
+                ]));
+            }
+        }
+
+        spans.push(Span::raw(" "));
+        Line::from(spans)
     }
 }
 
@@ -423,19 +527,22 @@ impl StatefulWidget for InputPanel<'_> {
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" once "),
+                Span::styled(" once", Style::default().fg(Color::White)),
+                Span::raw(" "),
                 Span::styled(
                     "[A]",
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("lways "),
+                Span::styled("lways", Style::default().fg(Color::White)),
+                Span::raw(" "),
                 Span::styled(
                     "[N]",
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("o "),
+                Span::styled("o", Style::default().fg(Color::White)),
+                Span::raw(" "),
             ]);
 
             let approval_block = Paragraph::new(approval_text).block(
@@ -450,29 +557,22 @@ impl StatefulWidget for InputPanel<'_> {
         }
 
         // Normal input / edit selection rendering
+        let mut title_spans = vec![];
+
+        // Add spinner if processing
+        if self.is_processing {
+            title_spans.push(Span::styled(
+                format!(" {}", get_spinner_char(self.spinner_state)),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+
+        // Add mode-specific title
+        title_spans.extend(self.get_mode_title().spans);
+
         let input_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(
-                "{}{}",
-                if self.is_processing {
-                    format!(" {}", get_spinner_char(self.spinner_state))
-                } else {
-                    String::new()
-                },
-                match self.input_mode {
-                    InputMode::Insert => " Insert (Alt-Enter to send, Esc to cancel) ",
-                    InputMode::Normal =>
-                        " i to insert, ! for bash, u/d/j/k to scroll, e to edit previous messages ",
-                    InputMode::BashCommand => " Bash (Enter to execute, Esc to cancel) ",
-                    InputMode::AwaitingApproval => " Awaiting Approval ",
-                    InputMode::SelectingModel => " Model Selection ",
-                    InputMode::ConfirmExit =>
-                        " Really quit? (y/Y to confirm, any other key to cancel) ",
-                    InputMode::EditMessageSelection =>
-                        " Select message to edit (↑↓ to navigate, Enter to select, Esc to cancel) ",
-                    InputMode::FuzzyFinder => " ↑↓ to navigate, Enter to select, Esc to cancel ",
-                }
-            ))
+            .title(Line::from(title_spans))
             .style(match self.input_mode {
                 InputMode::Insert => Style::default().fg(Color::Gray),
                 InputMode::Normal => Style::default().fg(Color::DarkGray),
