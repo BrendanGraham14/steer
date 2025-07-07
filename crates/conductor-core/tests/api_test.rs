@@ -17,7 +17,7 @@ use uuid::Uuid;
 #[ignore]
 async fn test_api_basic() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     let models_to_test = vec![
@@ -121,7 +121,7 @@ async fn test_api_with_tools() {
     // Load environment variables from .env file
     dotenv().ok();
 
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config); // Arc<Client>
 
     let models_to_test = vec![
@@ -275,7 +275,7 @@ async fn test_api_with_tools() {
 #[ignore]
 async fn test_api_with_tool_response() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     let models_to_test = vec![
@@ -408,7 +408,7 @@ async fn test_api_with_tool_response() {
 #[ignore]
 async fn test_gemini_system_instructions() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     let timestamp = Message::current_timestamp();
@@ -455,7 +455,7 @@ async fn test_gemini_system_instructions() {
 #[ignore]
 async fn test_gemini_api_tool_result_error() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     let ts1 = Message::current_timestamp();
@@ -529,7 +529,7 @@ async fn test_gemini_api_tool_result_error() {
 #[ignore]
 async fn test_gemini_api_complex_tool_schema() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     // Define a tool with a complex schema
@@ -611,7 +611,7 @@ async fn test_gemini_api_complex_tool_schema() {
 #[ignore]
 async fn test_gemini_api_tool_result_json() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     // Define the JSON string to be used as the tool result content
@@ -688,7 +688,7 @@ async fn test_gemini_api_tool_result_json() {
 #[ignore]
 async fn test_gemini_api_with_multiple_tool_responses() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     let ts1 = Message::current_timestamp();
@@ -807,7 +807,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 #[ignore]
 async fn test_api_with_cancelled_tool_execution() {
     dotenv().ok();
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let client = Client::new(&config);
 
     let models_to_test = vec![

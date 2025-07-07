@@ -4,6 +4,7 @@ pub mod gemini;
 pub mod openai;
 pub mod provider;
 
+use crate::config::{ApiAuth, LlmConfig};
 use crate::error::Result;
 pub use claude::AnthropicClient;
 pub use conductor_tools::{InputSchema, ToolCall, ToolSchema};
@@ -23,7 +24,6 @@ use tracing::debug;
 use tracing::warn;
 
 use crate::app::conversation::Message;
-use crate::config::LlmConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderKind {
@@ -170,15 +170,32 @@ impl Client {
 
         // If still not found, create and insert
         let provider_kind = model.provider();
-        let key = self.config.key_for(provider_kind).ok_or_else(|| {
-            crate::error::Error::Api(ApiError::Configuration(format!(
-                "API key missing for {provider_kind:?} needed by model {model:?}"
-            )))
-        })?;
-        let provider_instance: Arc<dyn Provider> = match provider_kind {
-            ProviderKind::Anthropic => Arc::new(AnthropicClient::new(key)),
-            ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key.to_string())),
-            ProviderKind::Google => Arc::new(GeminiClient::new(key)),
+        let provider_instance: Arc<dyn Provider> = match self.config.auth_for(provider_kind) {
+            Some(ApiAuth::OAuth) => {
+                if provider_kind == ProviderKind::Anthropic {
+                    let storage = self.config.auth_storage().ok_or_else(|| {
+                        crate::error::Error::Api(ApiError::Configuration(
+                            "OAuth configured but no auth storage available".to_string(),
+                        ))
+                    })?;
+                    Arc::new(AnthropicClient::with_oauth(storage.clone()))
+                } else {
+                    return Err(crate::error::Error::Api(ApiError::Configuration(format!(
+                        "OAuth is not supported for {provider_kind:?} provider"
+                    ))));
+                }
+            }
+            Some(ApiAuth::Key(key)) => match provider_kind {
+                ProviderKind::Anthropic => Arc::new(AnthropicClient::with_api_key(&key)),
+                ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key)),
+                ProviderKind::Google => Arc::new(GeminiClient::new(&key)),
+            },
+
+            None => {
+                return Err(crate::error::Error::Api(ApiError::Configuration(format!(
+                    "No authentication configured for {provider_kind:?} needed by model {model:?}"
+                ))));
+            }
         };
         map.insert(model, provider_instance.clone());
         Ok(provider_instance)

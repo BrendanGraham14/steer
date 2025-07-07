@@ -219,11 +219,11 @@ impl App {
     }
 
     pub fn set_model(&mut self, model: Model) -> Result<()> {
-        // Check if the provider is available (has API key)
+        // Check if the provider is available (has API key or OAuth)
         let provider = model.provider();
-        if self.config.llm_config.key_for(provider).is_none() {
+        if self.config.llm_config.auth_for(provider).is_none() {
             return Err(crate::error::Error::Configuration(format!(
-                "Cannot set model to {}: missing API key for {} provider",
+                "Cannot set model to {}: missing authentication for {} provider",
                 model.as_ref(),
                 match provider {
                     ProviderKind::Anthropic => "Anthropic",
@@ -1552,6 +1552,9 @@ fn get_model_system_prompt(model: Model) -> String {
         Model::Gemini2_5FlashPreview0417
         | Model::Gemini2_5ProPreview0506
         | Model::Gemini2_5ProPreview0605 => crate::prompts::gemini_system_prompt(),
+        Model::ClaudeSonnet4_20250514 | Model::ClaudeOpus4_20250514 => {
+            crate::prompts::claude_system_prompt()
+        }
         _ => crate::prompts::default_system_prompt(),
     }
 }

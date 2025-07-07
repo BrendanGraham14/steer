@@ -1,8 +1,10 @@
 use crate::api::ProviderKind;
+use crate::auth::{AuthStorage, DefaultAuthStorage};
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -101,36 +103,84 @@ pub fn save_config(config: &Config) -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
+pub enum ApiAuth {
+    Key(String),
+    OAuth,
+}
+
+#[derive(Clone)]
 pub struct LlmConfig {
-    pub anthropic_api_key: Option<String>,
+    pub anthropic_auth: Option<ApiAuth>,
     pub openai_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
+    auth_storage: Option<Arc<dyn AuthStorage>>,
+}
+
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfig")
+            .field("anthropic_auth", &self.anthropic_auth)
+            .field(
+                "openai_api_key",
+                &self.openai_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "gemini_api_key",
+                &self.gemini_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("auth_storage", &self.auth_storage.is_some())
+            .finish()
+    }
 }
 
 impl LlmConfig {
-    pub fn from_env() -> Result<Self> {
-        let cfg = Self {
-            anthropic_api_key: std::env::var("CLAUDE_API_KEY")
+    pub async fn from_env() -> Result<Self> {
+        let mut auth_storage = None;
+
+        // Check for OAuth tokens first (takes precedence)
+        let storage = Arc::new(DefaultAuthStorage::new()?);
+        let anthropic_auth = if storage.get_tokens("anthropic").await?.is_some() {
+            auth_storage = Some(storage.clone() as Arc<dyn AuthStorage>);
+            Some(ApiAuth::OAuth)
+        } else {
+            // If no OAuth, check for API key
+            let anthropic_key = std::env::var("CLAUDE_API_KEY")
                 .ok()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()),
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+            anthropic_key.map(ApiAuth::Key)
+        };
+
+        let cfg = Self {
+            anthropic_auth,
             openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
             gemini_api_key: std::env::var("GEMINI_API_KEY").ok(),
+            auth_storage,
         };
         Ok(cfg)
     }
 
-    pub fn key_for(&self, provider: ProviderKind) -> Option<&str> {
+    pub fn auth_for(&self, provider: ProviderKind) -> Option<ApiAuth> {
         match provider {
-            ProviderKind::Anthropic => self.anthropic_api_key.as_deref(),
-            ProviderKind::OpenAI => self.openai_api_key.as_deref(),
-            ProviderKind::Google => self.gemini_api_key.as_deref(),
+            ProviderKind::Anthropic => self.anthropic_auth.clone(),
+            ProviderKind::OpenAI => self
+                .openai_api_key
+                .as_ref()
+                .map(|k| ApiAuth::Key(k.clone())),
+            ProviderKind::Google => self
+                .gemini_api_key
+                .as_ref()
+                .map(|k| ApiAuth::Key(k.clone())),
         }
     }
 
-    /// Return list of providers that have an API key configured
+    pub fn auth_storage(&self) -> Option<&Arc<dyn AuthStorage>> {
+        self.auth_storage.as_ref()
+    }
+
+    /// Return list of providers that have authentication configured
     pub fn available_providers(&self) -> Vec<ProviderKind> {
         let mut providers = Vec::new();
-        if self.anthropic_api_key.is_some() {
+        if self.anthropic_auth.is_some() {
             providers.push(ProviderKind::Anthropic);
         }
         if self.openai_api_key.is_some() {
@@ -140,5 +190,16 @@ impl LlmConfig {
             providers.push(ProviderKind::Google);
         }
         providers
+    }
+
+    /// Create a minimal test configuration
+    #[cfg(test)]
+    pub fn test_config() -> Self {
+        Self {
+            anthropic_auth: None,
+            openai_api_key: None,
+            gemini_api_key: None,
+            auth_storage: None,
+        }
     }
 }

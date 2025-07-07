@@ -46,9 +46,9 @@ mod tests {
     }
 
     // Helper to get a real client (requires env vars)
-    fn get_real_client() -> Arc<Client> {
+    async fn get_real_client() -> Arc<Client> {
         dotenv().ok(); // Load .env file if present
-        let config = LlmConfig::from_env().expect("LLM config failed to load");
+        let config = LlmConfig::from_env().await.expect("LLM config failed to load");
         Arc::new(Client::new(&config))
     }
 
@@ -56,7 +56,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Ignored because it makes real API calls
     async fn test_run_operation_basic_text_response_real() {
-        let client = get_real_client();
+        let client = get_real_client().await;
         let executor = AgentExecutor::new(client.clone());
         let model = Model::Gpt4_1Nano20250414; // Use a fast model
         let initial_messages = vec![text_message("user", "Hello, world!")];
@@ -119,7 +119,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Ignored because it makes real API calls
     async fn test_run_operation_auto_tool_success_real() {
-        let client = get_real_client();
+        let client = get_real_client().await;
         let executor = AgentExecutor::new(client.clone());
         let model = Model::Gpt4_1Nano20250414; // Use a fast model supporting tools
         let initial_messages = vec![text_message("user", "What is the capital of France?")];

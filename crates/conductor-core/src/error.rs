@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::{
     api::ApiError,
     app::AgentExecutorError,
+    auth::AuthError,
     session::{manager::SessionManagerError, store::SessionStoreError},
 };
 
@@ -12,6 +13,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("API error: {0}")]
     Api(#[from] ApiError),
+    #[error("Auth error: {0}")]
+    Auth(#[from] AuthError),
     #[error("Agent executor error: {0}")]
     AgentExecutor(#[from] AgentExecutorError),
     #[error("Session manager error: {0}")]

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use eyre::Result;
 
+pub mod auth;
 pub mod headless;
 pub mod init;
 pub mod serve;

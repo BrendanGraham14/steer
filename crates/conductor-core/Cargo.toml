@@ -82,6 +82,16 @@ sqlx = { version = "0.8.6", features = [
   "json",
   "migrate",
 ] }
+keyring = { version = "3.6.2", features = ["apple-native", "linux-native", "windows-native"] }
+base64 = "0.22.1"
+sha2 = "0.10.9"
+open = "5.3.2"
+aes-gcm = "0.10.3"
+hkdf = "0.12.4"
+hyper = { version = "1.6.0", features = ["full"] }
+whoami = "1.6.0"
+hyper-util = { version = "0.1.14", features = ["server", "server-auto", "tokio"] }
+serde_urlencoded = "0.7.1"
 
 [build-dependencies]
 

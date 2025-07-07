@@ -961,11 +961,7 @@ mod tests {
 
     fn create_test_app_config() -> AppConfig {
         AppConfig {
-            llm_config: LlmConfig {
-                anthropic_api_key: None,
-                openai_api_key: None,
-                gemini_api_key: None,
-            },
+            llm_config: LlmConfig::test_config(),
         }
     }
 

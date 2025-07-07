@@ -91,6 +91,8 @@ toml = "0.8.23"
 which = "8.0.0"
 eyre = "0.6.12"
 color-eyre = "0.6.5"
+open = "5.3.2"
+comfy-table = "7.1.4"
 
 [build-dependencies]
 
