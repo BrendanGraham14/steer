@@ -80,6 +80,9 @@ impl Tui {
             KeyCode::Char('!') => {
                 // Enter bash command mode
                 self.input_mode = InputMode::BashCommand;
+                self.input_panel_state
+                    .textarea
+                    .set_placeholder_text("Type your bash command here...");
             }
             KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Ctrl-M: Show model selection popup
