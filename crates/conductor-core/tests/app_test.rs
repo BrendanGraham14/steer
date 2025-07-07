@@ -30,7 +30,7 @@ async fn test_tool_executor() -> Result<()> {
     dotenv().ok();
 
     // Create app config
-    let config = LlmConfig::from_env().unwrap();
+    let config = LlmConfig::from_env().await.unwrap();
     let app_config = AppConfig { llm_config: config };
 
     // Initialize the app

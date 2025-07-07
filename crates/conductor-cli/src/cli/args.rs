@@ -127,6 +127,11 @@ pub enum Commands {
         #[command(subcommand)]
         session_command: SessionCommands,
     },
+    /// Authentication management commands
+    Auth {
+        #[command(subcommand)]
+        auth_command: crate::commands::auth::AuthCommands,
+    },
 }
 
 #[derive(Subcommand, Clone)]

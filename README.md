@@ -71,6 +71,19 @@ conductor headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
 conductor headless --session-config session.toml < prompt.txt
 ```
 
+### Authentication
+
+```bash
+# Login to Anthropic (Claude) using OAuth - no API key needed!
+conductor auth login anthropic
+
+# Check authentication status for all providers
+conductor auth status
+
+# Logout when done
+conductor auth logout anthropic
+```
+
 ### gRPC server / remote mode
 
 ```bash
@@ -227,13 +240,43 @@ export CONDUCTOR_NOTIFICATION_DESKTOP=false
 
 ---
 
-## API keys
+## Authentication
 
-Conductor only looks at environment variables (optionally loaded from a `.env` file).  Set the variables that correspond to the providers you intend to use:
+### OAuth Authentication (Anthropic/Claude)
+
+Conductor supports OAuth authentication for Anthropic's Claude models, allowing you to authenticate without managing API keys:
+
+```bash
+# Login to Anthropic using OAuth
+conductor auth login anthropic
+
+# Check authentication status
+conductor auth status
+
+# Logout from Anthropic
+conductor auth logout anthropic
+```
+
+When you run `conductor auth login anthropic`:
+1. Your browser will open to authorize Conductor
+2. After authorizing, you'll see a code on the redirect page
+3. Copy the ENTIRE code (including the part after #) and paste it into the terminal
+4. Conductor will exchange this for access tokens and store them securely
+
+Tokens are stored securely using:
+- **macOS**: Keychain
+- **Windows**: Windows Credential Store
+- **Linux**: Secret Service API (or encrypted file fallback)
+
+### API Keys (Traditional)
+
+You can still use traditional API keys by setting environment variables (optionally loaded from a `.env` file):
 
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`
 * `GEMINI_API_KEY`
+
+**Note**: If both OAuth tokens and API keys are available for Anthropic, the API key takes precedence.
 
 The `conductor init` command creates `~/.config/conductor/config.json` for preferences such as default model or history size, **not** for secrets.
 

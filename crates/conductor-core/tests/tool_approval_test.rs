@@ -47,7 +47,7 @@ async fn test_requires_approval_tool_detection() -> Result<()> {
 #[tokio::test]
 async fn test_tool_executor_requires_approval_check() -> Result<()> {
     dotenv().ok();
-    let llm_config = LlmConfig::from_env()?;
+    let llm_config = LlmConfig::from_env().await?;
     let app_config = AppConfig { llm_config };
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
     let (workspace, _temp_dir) = create_test_workspace().await;
@@ -97,7 +97,7 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
 #[tokio::test]
 async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     dotenv().ok();
-    let llm_config = LlmConfig::from_env()?;
+    let llm_config = LlmConfig::from_env().await?;
     let app_config_for_actor = AppConfig {
         llm_config: llm_config.clone(),
     };

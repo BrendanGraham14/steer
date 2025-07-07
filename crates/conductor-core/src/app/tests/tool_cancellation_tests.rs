@@ -14,11 +14,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn create_test_llm_config() -> LlmConfig {
-        LlmConfig {
-            anthropic_api_key: Some("test_key".to_string()),
-            openai_api_key: None,
-            gemini_api_key: None,
-        }
+        LlmConfig::test_config()
     }
 
     async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {

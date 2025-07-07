@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -8,6 +9,10 @@ use tracing::{debug, warn};
 use crate::api::{CompletionResponse, Model, Provider, error::ApiError};
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
+};
+use crate::auth::{
+    AuthStorage,
+    anthropic::{AnthropicOAuth, refresh_if_needed},
 };
 use conductor_tools::ToolSchema;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -51,8 +56,15 @@ pub enum ClaudeMessageContent {
 pub struct ClaudeStructuredContent(pub Vec<ClaudeContentBlock>);
 
 #[derive(Clone)]
+pub enum AuthMethod {
+    ApiKey(String),
+    OAuth(Arc<dyn AuthStorage>),
+}
+
+#[derive(Clone)]
 pub struct AnthropicClient {
     http_client: reqwest::Client,
+    auth: AuthMethod,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -74,13 +86,29 @@ struct Thinking {
     budget_tokens: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Clone)]
+struct SystemContentBlock {
+    #[serde(rename = "type")]
+    content_type: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(untagged)]
+enum System {
+    // Structured system prompt represented as a list of content blocks
+    Content(Vec<SystemContentBlock>),
+}
+
+#[derive(Debug, Serialize)]
 struct CompletionRequest {
     model: String,
     messages: Vec<ClaudeMessage>,
     max_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<System>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<ToolSchema>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -187,6 +215,10 @@ struct ClaudeUsage {
 
 impl AnthropicClient {
     pub fn new(api_key: &str) -> Self {
+        Self::with_api_key(api_key)
+    }
+
+    pub fn with_api_key(api_key: &str) -> Self {
         let mut headers = header::HeaderMap::new();
         headers.insert("x-api-key", header::HeaderValue::from_str(api_key).unwrap());
         headers.insert(
@@ -205,6 +237,45 @@ impl AnthropicClient {
 
         Self {
             http_client: client,
+            auth: AuthMethod::ApiKey(api_key.to_string()),
+        }
+    }
+
+    pub fn with_oauth(storage: Arc<dyn AuthStorage>) -> Self {
+        // For OAuth, we don't set default headers since they're dynamic
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            "anthropic-version",
+            header::HeaderValue::from_static("2023-06-01"),
+        );
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("Failed to build HTTP client");
+
+        Self {
+            http_client: client,
+            auth: AuthMethod::OAuth(storage),
+        }
+    }
+
+    async fn get_auth_headers(&self) -> Result<Vec<(String, String)>, ApiError> {
+        match &self.auth {
+            AuthMethod::ApiKey(key) => Ok(vec![("x-api-key".to_string(), key.clone())]),
+            AuthMethod::OAuth(storage) => {
+                let oauth_client = AnthropicOAuth::new();
+                let tokens = refresh_if_needed(storage, &oauth_client)
+                    .await
+                    .map_err(|e| ApiError::AuthError(e.to_string()))?;
+                Ok(crate::auth::anthropic::get_oauth_headers(
+                    &tokens.access_token,
+                ))
+            }
         }
     }
 }
@@ -458,6 +529,34 @@ impl Provider for AnthropicClient {
             cache_type: "ephemeral".to_string(),
         });
 
+        let system_content = match (system, &self.auth) {
+            (Some(sys), AuthMethod::ApiKey(_)) => Some(System::Content(vec![SystemContentBlock {
+                content_type: "text".to_string(),
+                text: sys,
+                cache_control: cache_setting.clone(),
+            }])),
+            (Some(sys), AuthMethod::OAuth(_)) => Some(System::Content(vec![
+                SystemContentBlock {
+                    content_type: "text".to_string(),
+                    text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
+                    cache_control: cache_setting.clone(),
+                },
+                SystemContentBlock {
+                    content_type: "text".to_string(),
+                    text: sys,
+                    cache_control: cache_setting.clone(),
+                },
+            ])),
+            (None, AuthMethod::ApiKey(_)) => None,
+            (None, AuthMethod::OAuth(_)) => Some(System::Content(vec![
+                SystemContentBlock {
+                    content_type: "text".to_string(),
+                    text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
+                    cache_control: cache_setting.clone(),
+                },
+            ])),
+        };
+
         match &mut last_message.content {
             ClaudeMessageContent::StructuredContent { content } => {
                 for block in content.0.iter_mut() {
@@ -487,7 +586,7 @@ impl Provider for AnthropicClient {
                 model: model.as_ref().to_string(),
                 messages: claude_messages,
                 max_tokens: 32_000,
-                system,
+                system: system_content.clone(),
                 tools,
                 temperature: Some(1.0),
                 top_p: None,
@@ -500,7 +599,7 @@ impl Provider for AnthropicClient {
                 model: model.as_ref().to_string(),
                 messages: claude_messages,
                 max_tokens: 8000,
-                system,
+                system: system_content,
                 tools,
                 temperature: Some(0.7),
                 top_p: None,
@@ -510,11 +609,23 @@ impl Provider for AnthropicClient {
             }
         };
 
+        let auth_headers = self.get_auth_headers().await?;
         let mut request_builder = self.http_client.post(API_URL).json(&request);
 
-        if model == Model::ClaudeSonnet4_20250514 || model == Model::ClaudeOpus4_20250514 {
-            request_builder =
-                request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
+        // Add dynamic auth headers
+        for (name, value) in auth_headers {
+            request_builder = request_builder.header(&name, &value);
+        }
+
+        match (&model, &self.auth) {
+            (
+                Model::ClaudeSonnet4_20250514 | Model::ClaudeOpus4_20250514,
+                AuthMethod::ApiKey(_),
+            ) => {
+                request_builder =
+                    request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
+            }
+            _ => {}
         }
 
         let response = tokio::select! {

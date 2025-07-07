@@ -8,6 +8,9 @@ pub enum ApiError {
     #[error("Authentication failed: {details}")]
     AuthenticationFailed { provider: String, details: String },
 
+    #[error("Auth error: {0}")]
+    AuthError(String),
+
     #[error("Rate limited by {provider}: {details}")]
     RateLimited { provider: String, details: String },
 

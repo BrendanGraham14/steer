@@ -117,7 +117,9 @@ async fn process_web_page_content(
     prompt: String,
     token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ToolError> {
-    let config = LlmConfig::from_env().map_err(|e| ToolError::execution("Fetch", e.to_string()))?;
+    let config = LlmConfig::from_env()
+        .await
+        .map_err(|e| ToolError::execution("Fetch", e.to_string()))?;
     let client = crate::api::Client::new(&config);
     let user_message = format!(
         r#"Web page content:

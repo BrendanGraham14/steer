@@ -57,6 +57,7 @@ impl OneShotRunner {
         // 1. Resume or activate the session if not already active
         let app_config = AppConfig {
             llm_config: LlmConfig::from_env()
+                .await
                 .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {e}")))?,
         };
 
@@ -153,6 +154,7 @@ impl OneShotRunner {
 
         let app_config = AppConfig {
             llm_config: LlmConfig::from_env()
+                .await
                 .map_err(|e| Error::Configuration(format!("Failed to load LLM config: {e}")))?,
         };
 
@@ -341,20 +343,18 @@ mod tests {
         (manager, temp_dir)
     }
 
-    fn create_test_app_config() -> crate::app::AppConfig {
+    async fn create_test_app_config() -> crate::app::AppConfig {
         dotenv().ok();
         crate::app::AppConfig {
-            llm_config: LlmConfig::from_env().expect("API keys must be configured for tests"),
+            llm_config: LlmConfig::from_env()
+                .await
+                .expect("API keys must be configured for tests"),
         }
     }
 
     fn create_test_app_config_no_api() -> crate::app::AppConfig {
         crate::app::AppConfig {
-            llm_config: LlmConfig {
-                anthropic_api_key: None,
-                openai_api_key: None,
-                gemini_api_key: None,
-            },
+            llm_config: LlmConfig::new(None, None, None, None),
         }
     }
     fn create_test_tool_approval_policy() -> ToolApprovalPolicy {
@@ -428,7 +428,7 @@ mod tests {
             metadata: [("test".to_string(), "value".to_string())].into(),
         };
 
-        let app_config = create_test_app_config();
+        let app_config = create_test_app_config().await;
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)
@@ -472,7 +472,7 @@ mod tests {
             metadata: [("test".to_string(), "api_test".to_string())].into(),
         };
 
-        let app_config = create_test_app_config();
+        let app_config = create_test_app_config().await;
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)
@@ -916,7 +916,7 @@ mod tests {
             metadata: [("test".to_string(), "context_test".to_string())].into(),
         };
 
-        let app_config = create_test_app_config();
+        let app_config = create_test_app_config().await;
 
         let (session_id, _command_tx) = session_manager
             .create_session(session_config, app_config)

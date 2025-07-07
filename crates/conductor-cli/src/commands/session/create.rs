@@ -62,6 +62,7 @@ impl Command for CreateSessionCommand {
 
         let app_config = AppConfig {
             llm_config: LlmConfig::from_env()
+                .await
                 .map_err(|e| eyre!("Failed to load LLM config: {}", e))?,
         };
 

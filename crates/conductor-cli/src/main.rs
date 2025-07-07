@@ -3,7 +3,7 @@ use eyre::Result;
 
 use conductor_cli::cli::{Cli, Commands};
 use conductor_cli::commands::{
-    Command, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
+    Command, auth::AuthCommand, headless::HeadlessCommand, init::InitCommand, serve::ServeCommand,
     session::SessionCommand,
 };
 use conductor_cli::session_config::{SessionConfigLoader, SessionConfigOverrides};
@@ -131,6 +131,12 @@ async fn main() -> Result<()> {
             };
             command.execute().await
         }
+        Commands::Auth { auth_command } => {
+            let command = AuthCommand {
+                command: auth_command,
+            };
+            command.execute().await
+        }
     }
 }
 
@@ -153,6 +159,7 @@ async fn run_tui_local(
 
     // Create LLM config
     let llm_config = conductor_core::config::LlmConfig::from_env()
+        .await
         .expect("Failed to load LLM configuration from environment variables.");
 
     // Create in-memory channel

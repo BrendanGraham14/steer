@@ -234,6 +234,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 
         // Load LLM config from environment properly
         let llm_config = conductor_core::config::LlmConfig::from_env()
+            .await
             .map_err(|e| Status::internal(format!("Failed to load LLM config: {e}")))?;
 
         let app_config = conductor_core::app::AppConfig { llm_config };
@@ -482,6 +483,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 
         // Load LLM config
         let llm_config = conductor_core::config::LlmConfig::from_env()
+            .await
             .map_err(|e| Status::internal(format!("Failed to load LLM config: {e}")))?;
         let app_config = conductor_core::app::AppConfig { llm_config };
 
@@ -617,9 +619,11 @@ async fn try_resume_session(
     session_id: &str,
 ) -> Result<(), Status> {
     // Load LLM config from environment
-    let llm_config = conductor_core::config::LlmConfig::from_env().map_err(|e| {
-        Status::internal(format!("Failed to load LLM config for session resume: {e}"))
-    })?;
+    let llm_config = conductor_core::config::LlmConfig::from_env()
+        .await
+        .map_err(|e| {
+            Status::internal(format!("Failed to load LLM config for session resume: {e}"))
+        })?;
 
     let app_config = conductor_core::app::AppConfig { llm_config };
 
@@ -828,11 +832,7 @@ mod tests {
         };
 
         let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig {
-                anthropic_api_key: None,
-                openai_api_key: None,
-                gemini_api_key: None,
-            },
+            llm_config: LlmConfig::test_config(),
         };
 
         let (session_id, _command_tx) = session_manager
@@ -893,11 +893,7 @@ mod tests {
         };
 
         let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig {
-                anthropic_api_key: None,
-                openai_api_key: None,
-                gemini_api_key: None,
-            },
+            llm_config: LlmConfig::test_config(),
         };
 
         let (session_id, _command_tx) = session_manager
@@ -963,11 +959,7 @@ mod tests {
         };
 
         let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig {
-                anthropic_api_key: None,
-                openai_api_key: None,
-                gemini_api_key: None,
-            },
+            llm_config: LlmConfig::test_config(),
         };
 
         let (session_id, _command_tx) = session_manager
@@ -1056,11 +1048,7 @@ mod tests {
         };
 
         let app_config = conductor_core::app::AppConfig {
-            llm_config: LlmConfig {
-                anthropic_api_key: None,
-                openai_api_key: None,
-                gemini_api_key: None,
-            },
+            llm_config: LlmConfig::test_config(),
         };
 
         let (session_id, _command_tx) = session_manager
