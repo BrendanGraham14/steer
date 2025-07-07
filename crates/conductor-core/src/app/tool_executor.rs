@@ -1,3 +1,4 @@
+use crate::config::LlmConfigProvider;
 use crate::error::{Error, Result};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -19,6 +20,8 @@ pub struct ToolExecutor {
     pub(crate) backend_registry: Arc<BackendRegistry>,
     /// Validators for tool execution
     pub(crate) validators: Arc<ValidatorRegistry>,
+    /// Provider for LLM configuration
+    pub(crate) llm_config_provider: Option<LlmConfigProvider>,
 }
 
 impl Default for ToolExecutor {
@@ -34,6 +37,7 @@ impl ToolExecutor {
             workspace: Some(workspace),
             backend_registry: Arc::new(BackendRegistry::new()),
             validators: Arc::new(ValidatorRegistry::new()),
+            llm_config_provider: None,
         }
     }
 
@@ -43,6 +47,7 @@ impl ToolExecutor {
             workspace: None,
             backend_registry: Arc::new(BackendRegistry::new()),
             validators: Arc::new(ValidatorRegistry::new()),
+            llm_config_provider: None,
         }
     }
 
@@ -56,6 +61,22 @@ impl ToolExecutor {
             workspace,
             backend_registry,
             validators,
+            llm_config_provider: None,
+        }
+    }
+
+    /// Create a ToolExecutor with all components including LLM config provider
+    pub fn with_all_components(
+        workspace: Option<Arc<dyn Workspace>>,
+        backend_registry: Arc<BackendRegistry>,
+        validators: Arc<ValidatorRegistry>,
+        llm_config_provider: LlmConfigProvider,
+    ) -> Self {
+        Self {
+            workspace,
+            backend_registry,
+            validators,
+            llm_config_provider: Some(llm_config_provider),
         }
     }
 
@@ -124,31 +145,43 @@ impl ToolExecutor {
 
         // Pre-execution validation
         if let Some(validator) = self.validators.get_validator(tool_name) {
-            let validation_context = ValidationContext {
-                cancellation_token: token.clone(),
-            };
+            // Only validate if we have an LLM config provider
+            if let Some(ref llm_config_provider) = self.llm_config_provider {
+                let validation_context = ValidationContext {
+                    cancellation_token: token.clone(),
+                    llm_config_provider: llm_config_provider.clone(),
+                };
 
-            let validation_result = validator
-                .validate(tool_call, &validation_context)
-                .await
-                .map_err(|e| ToolError::InternalError(format!("Validation failed: {e}")))?;
+                let validation_result = validator
+                    .validate(tool_call, &validation_context)
+                    .await
+                    .map_err(|e| ToolError::InternalError(format!("Validation failed: {e}")))?;
 
-            if !validation_result.allowed {
-                return Err(ToolError::InternalError(
-                    validation_result
-                        .reason
-                        .unwrap_or_else(|| "Tool execution was denied".to_string()),
-                ));
+                if !validation_result.allowed {
+                    return Err(ToolError::InternalError(
+                        validation_result
+                            .reason
+                            .unwrap_or_else(|| "Tool execution was denied".to_string()),
+                    ));
+                }
             }
+            // If no LLM config provider, skip validation (allow execution)
         }
 
         // Create execution context
-        let context = ExecutionContext::new(
+        let mut builder = ExecutionContext::builder(
             "default".to_string(), // TODO: Get real session ID
             "default".to_string(), // TODO: Get real operation ID
             tool_call.id.clone(),
             token,
         );
+
+        // Add LLM config provider if available
+        if let Some(provider) = &self.llm_config_provider {
+            builder = builder.llm_config_provider(provider.clone());
+        }
+
+        let context = builder.build();
 
         // First check if it's a workspace tool
         if let Some(workspace) = &self.workspace {
@@ -208,12 +241,19 @@ impl ToolExecutor {
         Span::current().record("tool.id", tool_id);
 
         // Create execution context
-        let context = ExecutionContext::new(
+        let mut builder = ExecutionContext::builder(
             "direct".to_string(), // Mark as direct execution
             "direct".to_string(),
             tool_call.id.clone(),
             token,
         );
+
+        // Add LLM config provider if available
+        if let Some(provider) = &self.llm_config_provider {
+            builder = builder.llm_config_provider(provider.clone());
+        }
+
+        let context = builder.build();
 
         // First check if it's a workspace tool (no validation for direct execution)
         if let Some(workspace) = &self.workspace {

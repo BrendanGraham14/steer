@@ -1,10 +1,12 @@
 use crate::api::ProviderKind;
-use crate::auth::{AuthStorage, DefaultAuthStorage};
+use crate::auth::AuthStorage;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+const CACHE_DURATION: u64 = 600;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -108,12 +110,12 @@ pub enum ApiAuth {
     OAuth,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct LlmConfig {
     pub anthropic_auth: Option<ApiAuth>,
     pub openai_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
-    auth_storage: Option<Arc<dyn AuthStorage>>,
+    pub auth_storage: Option<Arc<dyn AuthStorage>>,
 }
 
 impl std::fmt::Debug for LlmConfig {
@@ -134,29 +136,9 @@ impl std::fmt::Debug for LlmConfig {
 }
 
 impl LlmConfig {
-    pub async fn from_env() -> Result<Self> {
-        let mut auth_storage = None;
-
-        // Check for OAuth tokens first (takes precedence)
-        let storage = Arc::new(DefaultAuthStorage::new()?);
-        let anthropic_auth = if storage.get_tokens("anthropic").await?.is_some() {
-            auth_storage = Some(storage.clone() as Arc<dyn AuthStorage>);
-            Some(ApiAuth::OAuth)
-        } else {
-            // If no OAuth, check for API key
-            let anthropic_key = std::env::var("CLAUDE_API_KEY")
-                .ok()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-            anthropic_key.map(ApiAuth::Key)
-        };
-
-        let cfg = Self {
-            anthropic_auth,
-            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
-            gemini_api_key: std::env::var("GEMINI_API_KEY").ok(),
-            auth_storage,
-        };
-        Ok(cfg)
+    /// Create a new builder for LlmConfig
+    pub fn builder() -> LlmConfigBuilder {
+        LlmConfigBuilder::default()
     }
 
     pub fn auth_for(&self, provider: ProviderKind) -> Option<ApiAuth> {
@@ -191,15 +173,156 @@ impl LlmConfig {
         }
         providers
     }
+}
 
-    /// Create a minimal test configuration
-    #[cfg(test)]
-    pub fn test_config() -> Self {
-        Self {
+/// Builder for LlmConfig
+#[derive(Default)]
+pub struct LlmConfigBuilder {
+    anthropic_auth: Option<ApiAuth>,
+    openai_api_key: Option<String>,
+    gemini_api_key: Option<String>,
+    auth_storage: Option<Arc<dyn AuthStorage>>,
+}
+
+impl LlmConfigBuilder {
+    pub fn with_anthropic_auth(mut self, auth: ApiAuth) -> Self {
+        self.anthropic_auth = Some(auth);
+        self
+    }
+
+    pub fn with_openai_api_key(mut self, key: String) -> Self {
+        self.openai_api_key = Some(key);
+        self
+    }
+
+    pub fn with_gemini_api_key(mut self, key: String) -> Self {
+        self.gemini_api_key = Some(key);
+        self
+    }
+
+    pub fn with_auth_storage(mut self, storage: Arc<dyn AuthStorage>) -> Self {
+        self.auth_storage = Some(storage);
+        self
+    }
+
+    pub fn build(self) -> LlmConfig {
+        LlmConfig {
+            anthropic_auth: self.anthropic_auth,
+            openai_api_key: self.openai_api_key,
+            gemini_api_key: self.gemini_api_key,
+            auth_storage: self.auth_storage,
+        }
+    }
+}
+
+/// Loader for LlmConfig that handles async operations
+pub struct LlmConfigLoader {
+    storage: Arc<dyn AuthStorage>,
+}
+
+impl LlmConfigLoader {
+    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
+        Self { storage }
+    }
+
+    pub async fn from_env(&self) -> Result<LlmConfig> {
+        // Check for OAuth tokens first (takes precedence)
+        let anthropic_auth = if self.storage.get_tokens("anthropic").await?.is_some() {
+            Some(ApiAuth::OAuth)
+        } else {
+            // If no OAuth, check for API key
+            let anthropic_key = std::env::var("CLAUDE_API_KEY")
+                .ok()
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+            anthropic_key.map(ApiAuth::Key)
+        };
+
+        Ok(LlmConfig {
+            anthropic_auth,
+            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
+            gemini_api_key: std::env::var("GEMINI_API_KEY").ok(),
+            auth_storage: Some(self.storage.clone()),
+        })
+    }
+
+    /// Load configuration from environment, returning empty config if no credentials are found
+    /// This is useful for tests that don't require actual API access
+    pub async fn from_env_allow_missing(&self) -> LlmConfig {
+        self.from_env().await.unwrap_or_else(|_| LlmConfig {
             anthropic_auth: None,
             openai_api_key: None,
             gemini_api_key: None,
-            auth_storage: None,
+            auth_storage: Some(self.storage.clone()),
+        })
+    }
+}
+
+/// Provider for LlmConfig with caching and thread-safe access
+#[derive(Clone)]
+pub struct LlmConfigProvider {
+    inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for LlmConfigProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfigProvider").finish_non_exhaustive()
+    }
+}
+
+struct Inner {
+    storage: Arc<dyn AuthStorage>,
+    cache: tokio::sync::RwLock<Option<(std::time::SystemTime, LlmConfig)>>,
+}
+
+impl LlmConfigProvider {
+    /// Create a new LlmConfigProvider with the given auth storage
+    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                storage,
+                cache: tokio::sync::RwLock::new(None),
+            }),
         }
+    }
+
+    /// Get the current LlmConfig, using cache if valid
+    pub async fn get(&self) -> Result<LlmConfig> {
+        // Check cache first
+        {
+            let cache = self.inner.cache.read().await;
+            if let Some((timestamp, config)) = cache.as_ref() {
+                let elapsed = std::time::SystemTime::now()
+                    .duration_since(*timestamp)
+                    .unwrap_or(std::time::Duration::MAX);
+
+                // Cache is valid for 10 minutes
+                if elapsed.as_secs() < CACHE_DURATION {
+                    return Ok(config.clone());
+                }
+            }
+        }
+
+        // Cache miss or expired, load fresh config
+        let loader = LlmConfigLoader::new(self.inner.storage.clone());
+        let config = loader.from_env().await?;
+
+        // Update cache
+        {
+            let mut cache = self.inner.cache.write().await;
+            *cache = Some((std::time::SystemTime::now(), config.clone()));
+        }
+
+        Ok(config)
+    }
+
+    /// Get the current LlmConfig, returning empty config if no credentials are found
+    /// This is useful for tests that don't require actual API access
+    pub async fn get_allow_missing(&self) -> LlmConfig {
+        self.get().await.unwrap_or_else(|_| LlmConfig {
+            anthropic_auth: None,
+            openai_api_key: None,
+            gemini_api_key: None,
+            auth_storage: Some(self.inner.storage.clone()),
+        })
     }
 }

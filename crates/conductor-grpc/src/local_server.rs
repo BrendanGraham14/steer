@@ -16,8 +16,20 @@ pub async fn create_local_channel(
     // Create a channel for the server's bound address
     let (tx, rx) = oneshot::channel();
 
+    // Create LlmConfigProvider
+    #[cfg(not(test))]
+    let auth_storage = std::sync::Arc::new(
+        conductor_core::auth::DefaultAuthStorage::new()
+            .map_err(|e| GrpcError::CoreError(e.into()))?,
+    );
+
+    #[cfg(test)]
+    let auth_storage = std::sync::Arc::new(conductor_core::test_utils::InMemoryAuthStorage::new());
+
+    let llm_config_provider = conductor_core::config::LlmConfigProvider::new(auth_storage);
+
     // Create the service
-    let service = AgentServiceImpl::new(session_manager);
+    let service = AgentServiceImpl::new(session_manager, llm_config_provider);
     let svc = AgentServiceServer::new(service);
 
     // Spawn the server with a listener on localhost
@@ -54,7 +66,6 @@ pub async fn create_local_channel(
 /// Creates a complete localhost gRPC setup for local mode
 /// Returns the channel and a handle to the server task
 pub async fn setup_local_grpc(
-    _llm_config: conductor_core::config::LlmConfig,
     default_model: conductor_core::api::Model,
     session_db_path: Option<std::path::PathBuf>,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {

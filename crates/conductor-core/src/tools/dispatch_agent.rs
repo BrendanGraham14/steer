@@ -1,21 +1,20 @@
-use conductor_tools::{ToolCall, ToolSchema};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{
-    api::{Client as ApiClient, Model},
+    api::Model,
     app::{
         ToolExecutor,
         conversation::{Message, UserContent},
         validation::ValidatorRegistry,
     },
+    config::LlmConfigProvider,
 };
 
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
-use crate::config::LlmConfig;
 use conductor_macros::tool_external as tool;
-use conductor_tools::ToolError;
+use conductor_tools::{ToolCall, ToolError, ToolSchema};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Deserialize, Debug, Serialize, JsonSchema)]
@@ -25,7 +24,9 @@ pub struct DispatchAgentParams {
 }
 
 tool! {
-    DispatchAgentTool {
+    pub struct DispatchAgentTool {
+        pub llm_config_provider: Arc<LlmConfigProvider>,
+    } {
         params: DispatchAgentParams,
         output: conductor_tools::result::AgentResult,
         variant: Agent,
@@ -50,20 +51,19 @@ Usage notes:
     }
 
     async fn run(
-        _tool: &DispatchAgentTool,
+        tool: &DispatchAgentTool,
         params: DispatchAgentParams,
         context: &conductor_tools::ExecutionContext,
     ) -> std::result::Result<conductor_tools::result::AgentResult, ToolError> {
         let token = context.cancellation_token.clone();
 
-        // --- Setup AgentExecutor dependencies ---
-        let llm_config = LlmConfig::from_env().await
+        let llm_config = tool.llm_config_provider.get().await
              .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to load LLM config: {e}")))?;
-        let api_client = Arc::new(ApiClient::new(&llm_config)); // Create ApiClient and wrap in Arc
+        let api_client = Arc::new(crate::api::Client::new(&llm_config)); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
         let mut backend_registry = crate::tools::BackendRegistry::new();
-        backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only())).await;
+        backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only(tool.llm_config_provider.clone()))).await;
         let tool_executor = Arc::new(ToolExecutor::with_components(
             None, // No workspace for agent dispatch
             Arc::new(backend_registry),
@@ -198,6 +198,9 @@ fn search_database() {}
         )
         .unwrap();
 
+        let auth_storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
+
         // Create execution context
         let context = conductor_tools::ExecutionContext::new("test_tool_call".to_string())
             .with_working_directory(temp_dir.path().to_path_buf())
@@ -211,7 +214,9 @@ fn search_database() {}
         };
 
         // Instantiate the tool struct (assuming default if no specific state needed)
-        let tool_instance = DispatchAgentTool; // Assuming it's a unit struct or has Default impl
+        let tool_instance = DispatchAgentTool {
+            llm_config_provider,
+        };
 
         // Execute the agent using the run method
         let result = run(&tool_instance, params, &context).await;

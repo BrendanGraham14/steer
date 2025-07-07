@@ -28,15 +28,16 @@ impl Command for ServeCommand {
             None => conductor_core::utils::session::create_session_store_path()?,
         };
 
-        let config = conductor_grpc::ServiceHostConfig {
+        let config = conductor_grpc::ServiceHostConfig::new(
             db_path,
-            session_manager_config: SessionManagerConfig {
+            SessionManagerConfig {
                 max_concurrent_sessions: 100,
                 default_model: self.model,
                 auto_persist: true,
             },
-            bind_addr: addr,
-        };
+            addr,
+        )
+        .map_err(|e| eyre!("Failed to create service config: {}", e))?;
 
         let mut host = conductor_grpc::ServiceHost::new(config)
             .await

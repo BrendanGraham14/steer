@@ -1,6 +1,5 @@
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
-use conductor_core::config::LlmConfig;
 
 // This test requires real API keys and makes actual API calls
 // Run with: cargo test --test headless_test -- --ignored
@@ -21,8 +20,7 @@ async fn test_headless_mode_integration() {
         parent_message_id: None,
     }];
 
-    // Load config from environment
-    let _config = LlmConfig::from_env().expect("Failed to load config from environment");
+    // Load config from environment is handled internally by run_once
 
     // Call run_once - note: new signature doesn't take config or timeout
     let result = conductor_cli::run_once(messages, Model::Claude3_7Sonnet20250219)

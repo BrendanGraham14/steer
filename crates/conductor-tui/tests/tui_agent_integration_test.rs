@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use conductor_core::session::SessionManagerConfig;
 use conductor_grpc::{ServiceHost, ServiceHostConfig};
@@ -97,7 +98,7 @@ async fn test_tui_agent_service_file_listing() {
         .expect("Failed to setup test workspace");
     info!("Created test workspace at: {:?}", workspace_path);
 
-    // Create ServiceHost configuration with explicit port
+    // Create ServiceHost configuration with explicit port and test auth storage
     let db_path = workspace_path.join("test_sessions.db");
     let bind_addr = "127.0.0.1:50051".parse().unwrap(); // Use fixed port for testing
     let config = ServiceHostConfig {
@@ -108,6 +109,7 @@ async fn test_tui_agent_service_file_listing() {
             auto_persist: true,
         },
         bind_addr,
+        auth_storage: Arc::new(conductor_core::test_utils::InMemoryAuthStorage::new()),
     };
 
     // Start the service host
@@ -264,6 +266,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
             auto_persist: true,
         },
         bind_addr,
+        auth_storage: Arc::new(conductor_core::test_utils::InMemoryAuthStorage::new()),
     };
 
     let mut service_host = ServiceHost::new(config).await.unwrap();
@@ -369,6 +372,7 @@ async fn test_workspace_changed_event_flow() {
             auto_persist: true,
         },
         bind_addr,
+        auth_storage: Arc::new(conductor_core::test_utils::InMemoryAuthStorage::new()),
     };
 
     let mut service_host = ServiceHost::new(config).await.unwrap();

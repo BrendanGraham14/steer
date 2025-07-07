@@ -68,12 +68,9 @@ impl GrpcClientAdapter {
     }
 
     /// Convenience constructor: spin up a localhost gRPC server and return a ready client.
-    pub async fn local(
-        llm_config: conductor_core::config::LlmConfig,
-        default_model: conductor_core::api::Model,
-    ) -> GrpcResult<Self> {
+    pub async fn local(default_model: conductor_core::api::Model) -> GrpcResult<Self> {
         use crate::local_server::setup_local_grpc;
-        let (channel, _server_handle) = setup_local_grpc(llm_config, default_model, None).await?;
+        let (channel, _server_handle) = setup_local_grpc(default_model, None).await?;
         Self::from_channel(channel).await
     }
 

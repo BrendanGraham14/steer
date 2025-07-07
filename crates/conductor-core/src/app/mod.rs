@@ -2,6 +2,7 @@ use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
 use crate::app::conversation::{
     AppCommandType, AssistantContent, CompactResult, ToolResult, UserContent,
 };
+use crate::config::LlmConfigProvider;
 use crate::error::{Error, Result};
 use conductor_tools::ToolError;
 use std::collections::HashSet;
@@ -38,7 +39,6 @@ pub use conversation::{Conversation, Message};
 pub use environment::EnvironmentInfo;
 pub use tool_executor::ToolExecutor;
 
-use crate::config::LlmConfig;
 pub use agent_executor::{
     AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
 };
@@ -104,7 +104,19 @@ pub enum AppEvent {
 
 #[derive(Clone)]
 pub struct AppConfig {
-    pub llm_config: LlmConfig,
+    pub llm_config_provider: LlmConfigProvider,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        // Create an in-memory auth storage for default
+        let storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
+        let provider = LlmConfigProvider::new(storage);
+
+        Self {
+            llm_config_provider: provider,
+        }
+    }
 }
 
 pub struct App {
@@ -122,7 +134,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new_with_conversation(
+    pub async fn new_with_conversation(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
@@ -131,7 +143,8 @@ impl App {
         session_config: Option<crate::session::state::SessionConfig>,
         conversation: Conversation,
     ) -> Result<Self> {
-        let api_client = ApiClient::new(&config.llm_config);
+        let llm_config = config.llm_config_provider.get().await?;
+        let api_client = ApiClient::new(&llm_config);
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
 
         Ok(Self {
@@ -149,7 +162,7 @@ impl App {
         })
     }
 
-    pub fn new(
+    pub async fn new(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
@@ -166,7 +179,7 @@ impl App {
             tool_executor,
             session_config,
             conversation,
-        )
+        ).await
     }
 
     pub(crate) fn emit_event(&self, event: AppEvent) {
@@ -218,10 +231,11 @@ impl App {
         self.approved_tools.insert(tool_name);
     }
 
-    pub fn set_model(&mut self, model: Model) -> Result<()> {
+    pub async fn set_model(&mut self, model: Model) -> Result<()> {
         // Check if the provider is available (has API key or OAuth)
         let provider = model.provider();
-        if self.config.llm_config.auth_for(provider).is_none() {
+        let llm_config = self.config.llm_config_provider.get().await?;
+        if llm_config.auth_for(provider).is_none() {
             return Err(crate::error::Error::Configuration(format!(
                 "Cannot set model to {}: missing authentication for {} provider",
                 model.as_ref(),
@@ -570,7 +584,7 @@ impl App {
                     use std::str::FromStr;
 
                     match Model::from_str(model_name) {
-                        Ok(model) => match self.set_model(model) {
+                        Ok(model) => match self.set_model(model).await {
                             Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!(
                                 "Model changed to {}",
                                 model.as_ref()

@@ -1,7 +1,7 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use conductor_core::api::Model;
 use conductor_core::app::{App, AppConfig, AppEvent, ToolExecutor};
-use conductor_core::config::LlmConfig;
+use conductor_core::test_utils;
 use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::ToolCall;
 use dotenv::dotenv;
@@ -30,8 +30,9 @@ async fn test_tool_executor() -> Result<()> {
     dotenv().ok();
 
     // Create app config
-    let config = LlmConfig::from_env().await.unwrap();
-    let app_config = AppConfig { llm_config: config };
+    let app_config = AppConfig {
+        llm_config_provider: test_utils::test_llm_config_provider(),
+    };
 
     // Initialize the app
     // Create a channel for app events
@@ -45,7 +46,8 @@ async fn test_tool_executor() -> Result<()> {
         workspace,
         tool_executor,
         None, // No session config for test
-    )?;
+    )
+    .await?;
 
     // Create a tool call for listing the current directory
     let parameters = serde_json::json!({

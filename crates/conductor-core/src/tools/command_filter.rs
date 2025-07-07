@@ -1,5 +1,4 @@
 use crate::api::Model;
-use crate::config::LlmConfig;
 use crate::error::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -65,9 +64,15 @@ ONLY return the prefix. Do not return any other text, markdown markers, or other
 
 Command: ${command}"#;
 
-pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Result<bool> {
+use crate::config::LlmConfigProvider;
+
+pub async fn is_command_allowed(
+    command: &str,
+    llm_config_provider: &LlmConfigProvider,
+    token: CancellationToken,
+) -> Result<bool> {
     // Get the command prefix
-    let prefix = get_command_prefix(command, token).await?;
+    let prefix = get_command_prefix(command, llm_config_provider, token).await?;
     info!(target:"CommandFilter", "Command prefix: {}", prefix);
 
     match prefix.as_str() {
@@ -77,8 +82,13 @@ pub async fn is_command_allowed(command: &str, token: CancellationToken) -> Resu
 }
 
 /// Get the prefix of a command
-pub async fn get_command_prefix(command: &str, token: CancellationToken) -> Result<String> {
-    let config = LlmConfig::from_env().await.map_err(|e| {
+pub async fn get_command_prefix(
+    command: &str,
+    llm_config_provider: &LlmConfigProvider,
+    token: CancellationToken,
+) -> Result<String> {
+    // Use the provided LLM config provider instead of constructing a new one
+    let config = llm_config_provider.get().await.map_err(|e| {
         crate::error::Error::Configuration(format!("Failed to get LLM config: {e}"))
     })?;
     let client = crate::api::Client::new(&config);

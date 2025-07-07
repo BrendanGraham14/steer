@@ -26,15 +26,12 @@ async fn login_anthropic() -> Result<()> {
 
     println!("\nOpening browser to authorize Conductor...");
     println!("If the browser doesn't open automatically, please visit:");
-    println!("{}", auth_url);
+    println!("{auth_url}");
     println!();
 
     // Open browser
     if let Err(e) = open::that(&auth_url) {
-        eprintln!(
-            "Failed to open browser: {}. Please open the URL manually.",
-            e
-        );
+        eprintln!("Failed to open browser: {e}. Please open the URL manually.");
     }
 
     println!("After authorizing, you'll be redirected to a page showing a code.");

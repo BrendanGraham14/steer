@@ -9,6 +9,7 @@ pub mod events;
 pub mod prompts;
 pub mod runners;
 pub mod session;
+pub mod test_utils;
 pub mod tools;
 pub mod utils;
 pub mod workspace;

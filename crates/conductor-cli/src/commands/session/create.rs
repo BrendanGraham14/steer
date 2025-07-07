@@ -6,7 +6,6 @@ use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use conductor_core::api::Model;
 use conductor_core::app::AppConfig;
-use conductor_core::config::LlmConfig;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
 use conductor_core::utils::session::{
@@ -60,10 +59,13 @@ impl Command for CreateSessionCommand {
         let session_manager =
             SessionManager::new(session_store, session_manager_config, global_event_tx);
 
+        let auth_storage = std::sync::Arc::new(
+            conductor_core::auth::DefaultAuthStorage::new()
+                .map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
+        );
+        let llm_config_provider = conductor_core::config::LlmConfigProvider::new(auth_storage);
         let app_config = AppConfig {
-            llm_config: LlmConfig::from_env()
-                .await
-                .map_err(|e| eyre!("Failed to load LLM config: {}", e))?,
+            llm_config_provider,
         };
 
         let (session_id, _) = session_manager

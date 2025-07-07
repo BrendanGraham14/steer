@@ -3,7 +3,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, ItemFn, LitBool, LitStr, Path, Token,
+    Ident, ItemFn, ItemStruct, LitBool, LitStr, Path, Token,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
 };
@@ -40,6 +40,7 @@ impl Parse for FieldValue {
 #[allow(dead_code)]
 struct ToolDefinition {
     tool_name: Ident,
+    struct_def: Option<ItemStruct>,
     params_struct: Path,
     output_type: Path,
     variant: Ident,
@@ -51,7 +52,35 @@ struct ToolDefinition {
 
 impl Parse for ToolDefinition {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let tool_name: Ident = input.parse()?;
+        let struct_def: Option<ItemStruct> =
+            if input.peek(Token![pub]) || input.peek(Token![struct]) {
+                let visibility: Option<Token![pub]> = if input.peek(Token![pub]) {
+                    Some(input.parse()?)
+                } else {
+                    None
+                };
+                if input.peek(Token![struct]) {
+                    let mut item_struct: ItemStruct = input.parse()?;
+                    if let Some(pub_token) = visibility {
+                        item_struct.vis = syn::Visibility::Public(pub_token);
+                    }
+                    Some(item_struct)
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        visibility,
+                        "Expected 'struct' after 'pub'",
+                    ));
+                }
+            } else {
+                None
+            };
+
+        let tool_name: Ident = if let Some(def) = &struct_def {
+            def.ident.clone()
+        } else {
+            input.parse()?
+        };
+
         let content;
         syn::braced!(content in input);
 
@@ -203,6 +232,7 @@ impl Parse for ToolDefinition {
 
         Ok(ToolDefinition {
             tool_name,
+            struct_def,
             params_struct,
             output_type,
             variant,
@@ -238,6 +268,7 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
     };
 
     let tool_struct_name = parsed_input.tool_name;
+    let struct_def = parsed_input.struct_def;
     let params_struct_name = parsed_input.params_struct;
     let output_type = parsed_input.output_type;
     let variant = parsed_input.variant;
@@ -247,6 +278,18 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
     let tool_name_literal = parsed_input.name;
     let tool_name_for_errors = tool_name_literal.value();
     let tool_name_str = quote! { #tool_name_literal };
+
+    let tool_struct_def = if let Some(def) = struct_def {
+        quote! {
+            #[derive(Debug, Clone)]
+            #def
+        }
+    } else {
+        quote! {
+            #[derive(Debug, Clone, Default)]
+            pub struct #tool_struct_name;
+        }
+    };
 
     // Generate a constant name from the tool struct name
     let tool_struct_name_string = tool_struct_name.to_string();
@@ -326,8 +369,7 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
         // Generate a constant for the tool name
         pub const #const_name: &str = #tool_name_literal;
 
-        #[derive(Debug, Clone, Default)]
-        pub struct #tool_struct_name;
+        #tool_struct_def
 
         impl #tool_struct_name {
             pub fn name() -> &'static str {
