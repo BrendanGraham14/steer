@@ -122,22 +122,21 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
+    pub fn new_with_conversation(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
         workspace: Arc<dyn crate::workspace::Workspace>,
         tool_executor: Arc<ToolExecutor>,
         session_config: Option<crate::session::state::SessionConfig>,
+        conversation: Conversation,
     ) -> Result<Self> {
-        let conversation = Arc::new(Mutex::new(Conversation::new()));
-
         let api_client = ApiClient::new(&config.llm_config);
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
 
         Ok(Self {
             config,
-            conversation,
+            conversation: Arc::new(Mutex::new(conversation)),
             tool_executor,
             api_client,
             agent_executor,
@@ -148,6 +147,26 @@ impl App {
             session_config,
             workspace: Some(workspace),
         })
+    }
+
+    pub fn new(
+        config: AppConfig,
+        event_tx: mpsc::Sender<AppEvent>,
+        initial_model: Model,
+        workspace: Arc<dyn crate::workspace::Workspace>,
+        tool_executor: Arc<ToolExecutor>,
+        session_config: Option<crate::session::state::SessionConfig>,
+    ) -> Result<Self> {
+        let conversation = Conversation::new();
+        Self::new_with_conversation(
+            config,
+            event_tx,
+            initial_model,
+            workspace,
+            tool_executor,
+            session_config,
+            conversation,
+        )
     }
 
     pub(crate) fn emit_event(&self, event: AppEvent) {

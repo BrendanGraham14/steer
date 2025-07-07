@@ -1,5 +1,7 @@
 use crate::api::Model;
-use crate::app::{App, AppCommand, AppConfig, AppEvent, Message as ConversationMessage};
+use crate::app::{
+    App, AppCommand, AppConfig, AppEvent, Conversation, Message as ConversationMessage,
+};
 use crate::error::{Error, Result};
 use crate::events::{StreamEvent, StreamEventWithMetadata};
 use crate::session::{
@@ -73,6 +75,7 @@ impl ManagedSession {
         store: Arc<dyn SessionStore>,
         global_event_tx: mpsc::Sender<StreamEventWithMetadata>,
         default_model: Model,
+        conversation: Option<Conversation>,
     ) -> Result<Self> {
         // Create channels for the App
         let (app_event_tx, mut app_event_rx) = mpsc::channel(100);
@@ -97,14 +100,26 @@ impl ManagedSession {
         ));
 
         // Create the App instance with the configured tool executor and session config
-        let mut app = App::new(
-            app_config,
-            app_event_tx,
-            default_model,
-            workspace.clone(),
-            tool_executor,
-            Some(session.config.clone()),
-        )?;
+        let mut app = if let Some(conv) = conversation {
+            App::new_with_conversation(
+                app_config,
+                app_event_tx,
+                default_model,
+                workspace.clone(),
+                tool_executor,
+                Some(session.config.clone()),
+                conv,
+            )?
+        } else {
+            App::new(
+                app_config,
+                app_event_tx,
+                default_model,
+                workspace.clone(),
+                tool_executor,
+                Some(session.config.clone()),
+            )?
+        };
 
         // Set the initial model if specified in session metadata
         if let Some(model_str) = session.config.metadata.get("initial_model") {
@@ -265,6 +280,7 @@ impl SessionManager {
             self.store.clone(),
             self.event_tx.clone(),
             self.config.default_model,
+            None,
         )
         .await
         .map_err(|e| SessionManagerError::CreationFailed {
@@ -417,6 +433,23 @@ impl SessionManager {
         // Create event channel for this session
         let (event_tx, _event_rx) = mpsc::channel(100);
 
+        // Create a conversation from the session state
+        let conversation = Conversation {
+            messages: session.state.messages.clone(),
+            working_directory: session
+                .config
+                .workspace
+                .get_path()
+                .unwrap_or_default()
+                .into(),
+            current_thread_id: session
+                .state
+                .messages
+                .last()
+                .map(|m| *m.thread_id())
+                .unwrap_or_else(Conversation::generate_thread_id),
+        };
+
         // Create managed session with event translation
         let managed_session = ManagedSession::new(
             session.clone(),
@@ -425,6 +458,7 @@ impl SessionManager {
             self.store.clone(),
             self.event_tx.clone(),
             self.config.default_model,
+            Some(conversation),
         )
         .await
         .map_err(|e| SessionManagerError::CreationFailed {

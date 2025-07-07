@@ -26,6 +26,16 @@ pub enum WorkspaceConfig {
     },
 }
 
+impl WorkspaceConfig {
+    pub fn get_path(&self) -> Option<String> {
+        match self {
+            WorkspaceConfig::Local => Some(".".to_string()),
+            WorkspaceConfig::Remote { agent_address, .. } => Some(agent_address.clone()),
+            WorkspaceConfig::Container { .. } => None,
+        }
+    }
+}
+
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self::Local
