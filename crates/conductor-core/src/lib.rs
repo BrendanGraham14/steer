@@ -5,6 +5,7 @@ pub mod app;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod prompts;
 pub mod runners;
 pub mod session;
 pub mod tools;
