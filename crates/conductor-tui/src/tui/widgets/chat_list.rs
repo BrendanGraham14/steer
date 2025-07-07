@@ -234,7 +234,12 @@ impl<'a> ChatList<'a> {
                     Span::raw("  "), // Indent
                     Span::styled("⚙", Style::default().fg(Color::Cyan)),
                     Span::raw(" "),
-                    Span::styled(tool_call.name.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        tool_call.name.clone(),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(" ⋯ ", styles::DIM_TEXT),
                     Span::styled("Pending...", styles::ITALIC_GRAY),
                 ];
@@ -772,7 +777,9 @@ impl<'a> ChatList<'a> {
                     first_line.push(Span::raw(" "));
                     first_line.push(Span::styled(
                         tool_call.name.clone(),
-                        Style::default().fg(Color::Cyan),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     ));
 
                     // For compact mode, try to fit first output on same line
@@ -834,7 +841,9 @@ impl<'a> ChatList<'a> {
                     fallback_line.push(Span::raw(" "));
                     fallback_line.push(Span::styled(
                         "Tool Result",
-                        Style::default().fg(Color::Cyan),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     ));
                     all_lines.push(Line::from(fallback_line));
 
