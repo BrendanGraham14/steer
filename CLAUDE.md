@@ -37,6 +37,7 @@ Follow the conventional commits format.
 - Algebraic data types are useful. Use them where appropriate to write more ergonomic, well-typed programs.
 - You generally should not implement the `Default` trait for structs unless explicitly instructed.
 - DO NOT unwrap errors. Use the try operator `?` and propagate errors appropriately.
+- NEVER use panic! in the codebase. In tests, use assert! or unreachable!. In production code, handle errors properly instead of panicking.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
 - The workspace Cargo.toml uses glob pattern `crates/*` to include all crates in the workspace.
 
