@@ -4,7 +4,7 @@
 
 use std::io::{self, Stdout};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::error::{Error, Result};
 use conductor_core::api::Model;
@@ -126,8 +126,6 @@ pub struct Tui {
     progress_message: Option<String>,
     /// Animation frame for spinner
     spinner_state: usize,
-    /// Last time spinner was updated
-    last_spinner_update: Instant,
     /// Current tool approval request
     current_tool_approval: Option<ToolCall>,
     /// Available models for selection
@@ -193,7 +191,6 @@ impl Tui {
             is_processing: false,
             progress_message: None,
             spinner_state: 0,
-            last_spinner_update: Instant::now(),
             current_tool_approval: None,
             models,
             current_model,
@@ -338,35 +335,16 @@ impl Tui {
         let mut needs_redraw = true; // Force initial draw
         let mut last_spinner_char = String::new();
 
+        // Create a tick interval for spinner updates
+        let mut tick = tokio::time::interval(SPINNER_UPDATE_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         while !should_exit {
-            // Check if spinner needs update
-            let spinner_updated = if self.is_processing
-                && self.last_spinner_update.elapsed() > SPINNER_UPDATE_INTERVAL
-            {
-                self.spinner_state = self.spinner_state.wrapping_add(1);
-                self.last_spinner_update = Instant::now();
-
-                // Check if spinner character changed
-                let current_spinner = get_spinner_char(self.spinner_state);
-                let changed = current_spinner != last_spinner_char;
-                last_spinner_char = current_spinner.to_string();
-                changed
-            } else {
-                false
-            };
-
             // Determine if we need to redraw
-            if needs_redraw || spinner_updated {
+            if needs_redraw {
                 self.draw()?;
                 needs_redraw = false;
             }
-
-            // Prioritize terminal events over app events for responsiveness
-            let timeout = if self.is_processing {
-                Duration::from_millis(50) // Faster polling when processing for spinner
-            } else {
-                Duration::from_millis(100)
-            };
 
             tokio::select! {
                 Some(event_res) = term_event_rx.recv() => {
@@ -430,8 +408,15 @@ impl Tui {
                     self.handle_app_event(app_event).await;
                     needs_redraw = true;
                 }
-                _ = tokio::time::sleep(timeout) => {
-                    // Timeout for spinner updates when processing
+                _ = tick.tick() => {
+                    if self.is_processing {
+                        self.spinner_state = self.spinner_state.wrapping_add(1);
+                        let ch = get_spinner_char(self.spinner_state);
+                        if ch != last_spinner_char {
+                            last_spinner_char = ch.to_string();
+                            needs_redraw = true;
+                        }
+                    }
                 }
             }
         }
