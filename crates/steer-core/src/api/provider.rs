@@ -12,7 +12,7 @@ use steer_tools::{ToolCall, ToolSchema};
 use super::Model;
 
 /// Response from the provider's completion API
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompletionResponse {
     pub content: Vec<AssistantContent>,
 }

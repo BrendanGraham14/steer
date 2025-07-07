@@ -1687,6 +1687,7 @@ fn get_model_system_prompt(model: Model) -> String {
         | Model::Gpt5_20250807
         | Model::Gpt4_1_20250414
         | Model::O4Mini20250416
+        | Model::CodexMiniLatest
         | Model::Grok4_0709 => crate::prompts::o3_system_prompt(),
         Model::Gemini2_5FlashPreview0417
         | Model::Gemini2_5ProPreview0506

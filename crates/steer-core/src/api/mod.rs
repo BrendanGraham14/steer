@@ -98,6 +98,8 @@ pub enum Model {
     O3Pro20250610,
     #[strum(serialize = "o4-mini-2025-04-16", serialize = "o4-mini")]
     O4Mini20250416,
+    #[strum(serialize = "codex-mini-latest", serialize = "codex-mini")]
+    CodexMiniLatest,
     #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
     Gemini2_5FlashPreview0417,
     #[strum(serialize = "gemini-2.5-pro-preview-05-06")]
@@ -128,6 +130,7 @@ impl Model {
                 | Model::Gpt4_1_20250414
                 | Model::Gpt5_20250807
                 | Model::O4Mini20250416
+                | Model::CodexMiniLatest
         )
     }
 
@@ -152,7 +155,8 @@ impl Model {
             | Model::Gpt5_20250807
             | Model::O3_20250416
             | Model::O3Pro20250610
-            | Model::O4Mini20250416 => ProviderKind::OpenAI,
+            | Model::O4Mini20250416
+            | Model::CodexMiniLatest => ProviderKind::OpenAI,
 
             Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
@@ -175,6 +179,7 @@ impl Model {
             Model::Grok3Mini => vec!["grok-mini"],
             Model::Grok4_0709 => vec!["grok"],
             Model::Gpt5_20250807 => vec!["gpt-5"],
+            Model::CodexMiniLatest => vec!["codex-mini"],
             _ => vec![],
         }
     }
@@ -195,16 +200,8 @@ impl Model {
                 | Model::Gemini2_5ProPreview0605
                 | Model::Grok3Mini
                 | Model::Grok4_0709
+                | Model::CodexMiniLatest
         )
-    }
-
-    pub fn default_system_prompt_file(&self) -> Option<&'static str> {
-        match self {
-            Model::O3_20250416 => Some("models/o3.md"),
-            Model::O3Pro20250610 => Some("models/o3.md"),
-            Model::O4Mini20250416 => Some("models/o3.md"),
-            _ => None,
-        }
     }
 
     /// Get all available models
