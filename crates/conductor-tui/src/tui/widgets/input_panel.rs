@@ -401,14 +401,14 @@ impl StatefulWidget for InputPanel<'_> {
 
             let mut approval_text = vec![
                 Line::from(vec![
-                    Span::styled("Tool '", Style::default().fg(Color::White)),
+                    Span::styled("Tool ", Style::default().fg(Color::White)),
                     Span::styled(
                         &tool_call.name,
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled("' requests approval:", Style::default().fg(Color::White)),
+                    Span::styled(" requests approval:", Style::default().fg(Color::White)),
                 ]),
                 Line::from(""),
             ];
