@@ -1510,7 +1510,7 @@ fn create_system_prompt(model: Option<Model>) -> Result<String> {
     let system_prompt_body = if let Some(model) = model {
         get_model_system_prompt(model)
     } else {
-        include_str!("../../../../prompts/system_prompt.md")
+        crate::prompts::default_system_prompt()
     };
 
     let prompt = format!(
@@ -1533,7 +1533,7 @@ async fn create_system_prompt_with_workspace(
     let system_prompt_body = if let Some(model) = model {
         get_model_system_prompt(model)
     } else {
-        include_str!("../../../../prompts/system_prompt.md")
+        crate::prompts::default_system_prompt()
     };
 
     let prompt = format!(
@@ -1546,13 +1546,13 @@ async fn create_system_prompt_with_workspace(
     Ok(prompt)
 }
 
-fn get_model_system_prompt(model: Model) -> &'static str {
+fn get_model_system_prompt(model: Model) -> String {
     match model {
-        Model::O3_20250416 => include_str!("../../../../prompts/models/o3.md"),
+        Model::O3_20250416 => crate::prompts::o3_system_prompt(),
         Model::Gemini2_5FlashPreview0417
         | Model::Gemini2_5ProPreview0506
-        | Model::Gemini2_5ProPreview0605 => include_str!("../../../../prompts/models/gemini.md"),
-        _ => include_str!("../../../../prompts/system_prompt.md"),
+        | Model::Gemini2_5ProPreview0605 => crate::prompts::gemini_system_prompt(),
+        _ => crate::prompts::default_system_prompt(),
     }
 }
 
