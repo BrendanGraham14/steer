@@ -32,7 +32,7 @@ pub enum WorkspaceConfig {
 impl WorkspaceConfig {
     pub fn get_path(&self) -> Option<String> {
         match self {
-            WorkspaceConfig::Local => Some(".".to_string()),
+            WorkspaceConfig::Local { path } => Some(path.to_string_lossy().to_string()),
             WorkspaceConfig::Remote { agent_address, .. } => Some(agent_address.clone()),
             WorkspaceConfig::Container { .. } => None,
         }
