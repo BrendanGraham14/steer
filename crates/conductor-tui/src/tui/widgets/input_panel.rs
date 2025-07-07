@@ -22,9 +22,7 @@ fn format_keybind(key: &str, description: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!("[{key}]"),
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" {description}"),
