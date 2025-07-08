@@ -2,6 +2,7 @@ use crate::error::{Result, WorkspaceError};
 use git2::Repository;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -107,7 +108,17 @@ impl EnvironmentInfo {
 
         // Walk the directory recursively and collect all relative file/dir paths
         let mut relative_paths = Vec::new();
-        Self::collect_paths(dir, dir, &gitignore_globset, &mut relative_paths)?;
+        // Set reasonable limits: max 15 levels deep, max 10000 files
+        const MAX_DEPTH: usize = 15;
+        const MAX_FILES: usize = 10000;
+        Self::collect_paths(
+            dir,
+            dir,
+            &gitignore_globset,
+            &mut relative_paths,
+            MAX_DEPTH,
+            MAX_FILES,
+        )?;
 
         // Sort relative paths for consistent output
         relative_paths.sort();
@@ -120,53 +131,64 @@ impl EnvironmentInfo {
         Ok(format!("{result}\n")) // Ensure trailing newline
     }
 
-    /// Recursively collect paths in the directory, filtering by gitignore
+    /// Collect paths in the directory breadth-first, applying gitignore rules
     fn collect_paths(
         base_dir: &Path,
-        current_dir: &Path,
+        start_dir: &Path,
         gitignore_globset: &Option<GlobSet>,
-        paths: &mut Vec<String>, // Renamed to relative_paths in caller, but param name is fine
+        paths: &mut Vec<String>,
+        max_depth: usize,
+        max_files: usize,
     ) -> Result<()> {
-        let entries = match fs::read_dir(current_dir) {
-            Ok(entries) => entries,
-            Err(_) => {
-                // Skip directories we cannot access
-                return Ok(());
-            }
-        };
+        let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
+        queue.push_back((start_dir.to_path_buf(), 0));
 
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => {
-                    // Skip entries we cannot read
+        while let Some((current_dir, depth)) = queue.pop_front() {
+            if depth >= max_depth || paths.len() >= max_files {
+                continue;
+            }
+
+            let entries = match fs::read_dir(&current_dir) {
+                Ok(entries) => entries,
+                Err(_) => continue, // Skip directories we cannot access
+            };
+
+            for entry in entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue, // Skip unreadable entries
+                };
+                let path = entry.path();
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+
+                // Skip hidden files and directories
+                if file_name.starts_with('.') {
                     continue;
                 }
-            };
-            let path = entry.path();
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            // Skip hidden files and directories
-            if file_name.starts_with('.') {
-                continue;
-            }
+                let is_ignored = Self::is_ignored(&path, base_dir, gitignore_globset);
 
-            // Skip files/dirs that match gitignore patterns
-            if Self::is_ignored(&path, base_dir, gitignore_globset) {
-                continue;
-            }
+                if let Ok(rel_path) = path.strip_prefix(base_dir) {
+                    let path_str = rel_path.to_string_lossy().to_string();
 
-            // Add path relative to base directory
-            if let Ok(rel_path) = path.strip_prefix(base_dir) {
-                let path_str = rel_path.to_string_lossy().to_string();
-                if path.is_dir() {
-                    paths.push(format!("{path_str}/"));
+                    if path.is_dir() {
+                        if is_ignored {
+                            if paths.len() < max_files {
+                                paths.push(format!("{path_str}/ (git-ignored)"));
+                            }
+                        } else {
+                            if paths.len() < max_files {
+                                paths.push(format!("{path_str}/"));
+                            }
+                            queue.push_back((path, depth + 1));
+                        }
+                    } else if !is_ignored && paths.len() < max_files {
+                        paths.push(path_str);
+                    }
+                }
 
-                    // Recursively process subdirectories
-                    // Pass the same 'paths' vec down
-                    Self::collect_paths(base_dir, &path, gitignore_globset, paths)?;
-                } else {
-                    paths.push(path_str);
+                if paths.len() >= max_files {
+                    break;
                 }
             }
         }
@@ -496,9 +518,9 @@ mod tests {
         let mut gitignore = File::create(temp_path.join(".gitignore"))?;
         gitignore.write_all(b"*.log\nignored_dir/\n**/*.tmp\n")?;
 
-        // Expected structure (sorted alphabetically, excluding ignored files/dirs)dispa
+        // Expected structure (sorted alphabetically, excluding ignored files/dirs)
         // Note: deeply_ignored.tmp should be excluded due to **/*.tmp
-        // Note: ignored_dir and its contents should be excluded
+        // Note: ignored_dir should appear with (git-ignored) marker but its contents excluded
         // Note: ignored_file.log should be excluded
         let mut expected_paths = vec![
             temp_path.display().to_string(),
@@ -509,6 +531,7 @@ mod tests {
             "dir2/".to_string(),
             "dir2/file4.md".to_string(),
             "file1.txt".to_string(),
+            "ignored_dir/ (git-ignored)".to_string(),
         ];
         expected_paths.sort();
 
@@ -525,6 +548,83 @@ mod tests {
         actual_lines.sort();
 
         assert_eq!(actual_lines, expected_paths);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_structure_limits() -> Result<()> {
+        // Create a temporary directory with very deep nesting
+        let temp_dir = tempdir()?;
+        let temp_path = temp_dir.path();
+
+        // Create a very deep directory structure (20 levels)
+        let mut current_path = temp_path.to_path_buf();
+        for i in 0..20 {
+            current_path = current_path.join(format!("level{i}"));
+            fs::create_dir(&current_path)?;
+            // Add a file at each level
+            let mut file = File::create(current_path.join(format!("file{i}.txt")))?;
+            file.write_all(format!("content at level {i}").as_bytes())?;
+        }
+
+        // Get the directory structure - should be limited to 15 levels deep
+        let structure = EnvironmentInfo::get_directory_structure(temp_path)?;
+        let lines: Vec<&str> = structure.lines().filter(|line| !line.is_empty()).collect();
+
+        // Count the number of levels represented
+        let max_level = lines
+            .iter()
+            .filter(|line| line.contains("level"))
+            .filter_map(|line| {
+                // Count the number of "level" occurrences in the path
+                line.matches("level").count().into()
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Should stop at level 15 (0-indexed, so level14 is the last)
+        assert!(
+            max_level <= 15,
+            "Directory traversal went deeper than 15 levels: {max_level}"
+        );
+
+        // Verify that level15 and beyond are not included
+        assert!(!lines.iter().any(|line| line.contains("level15")));
+        assert!(!lines.iter().any(|line| line.contains("level16")));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_structure_file_limit() -> Result<()> {
+        // Create a temporary directory with many files
+        let temp_dir = tempdir()?;
+        let temp_path = temp_dir.path();
+
+        // Create many directories with files to exceed the limit
+        for i in 0..100 {
+            let dir_path = temp_path.join(format!("dir{i:03}"));
+            fs::create_dir(&dir_path)?;
+
+            // Create 150 files in each directory (100 * 150 = 15,000 files total)
+            for j in 0..150 {
+                let mut file = File::create(dir_path.join(format!("file{j:03}.txt")))?;
+                file.write_all(format!("content {i}-{j}").as_bytes())?;
+            }
+        }
+
+        // Get the directory structure - should be limited to 10,000 entries
+        let structure = EnvironmentInfo::get_directory_structure(temp_path)?;
+        let lines: Vec<&str> = structure.lines().filter(|line| !line.is_empty()).collect();
+
+        // The number of lines should be limited (including the base path)
+        // With 10,000 max files + directories, we should have at most 10,001 lines (including base)
+        assert!(
+            lines.len() <= 10001,
+            "Directory listing exceeded max file limit: {} entries",
+            lines.len()
+        );
 
         Ok(())
     }
