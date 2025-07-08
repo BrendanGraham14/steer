@@ -86,7 +86,6 @@ impl Tui {
             }
             KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Ctrl-M: Show model selection popup
-                self.input_mode = InputMode::SelectingModel;
                 self.popup_state = PopupState::default();
                 // Find current model index
                 if let Some(index) = self.models.iter().position(|m| m == &self.current_model) {

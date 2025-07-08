@@ -25,7 +25,7 @@ use ratatui::crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::SetTitle,
 };
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders};
 use ratatui::{Frame, Terminal};
@@ -39,7 +39,7 @@ use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
 use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
 use crate::tui::state::view_model::MessageViewModel;
-use crate::tui::widgets::PopupList;
+
 use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
 use crate::tui::widgets::{InputPanel, InputPanelState, StatusBar};
 
@@ -97,8 +97,6 @@ pub enum InputMode {
     BashCommand,
     /// Awaiting tool approval
     AwaitingApproval,
-    /// Popup list is open for selection
-    SelectingModel,
     /// Confirm exit dialog
     ConfirmExit,
     /// Edit message selection mode with fuzzy filtering
@@ -470,10 +468,6 @@ impl Tui {
             let current_tool_approval = self.current_tool_approval.as_ref();
             let current_model_owned = self.current_model;
 
-            // Clone the required fields to avoid borrowing conflicts
-            let (models_clone, _popup_state_clone) =
-                (self.models.clone(), self.popup_state.clone());
-
             // Get chat items from the chat store
             let chat_items = self.view_model.chat_store.as_slice();
 
@@ -507,17 +501,6 @@ impl Tui {
                 &mut self.input_panel_state,
             ) {
                 error!(target:"tui.run.draw", "UI rendering failed: {}", e);
-            }
-
-            // Render popup after main UI
-            if input_mode == InputMode::SelectingModel {
-                Self::render_popup_static(
-                    f,
-                    f.area(),
-                    &models_clone,
-                    &current_model_owned,
-                    &mut self.popup_state.clone(),
-                );
             }
 
             // Render fuzzy finder overlay when active
@@ -757,30 +740,6 @@ impl Tui {
         Ok(())
     }
 
-    /// Render model selection popup
-    fn render_popup_static(
-        f: &mut Frame,
-        area: Rect,
-        models: &[Model],
-        current_model: &Model,
-        _popup_state: &mut PopupState,
-    ) {
-        let items: Vec<String> = models
-            .iter()
-            .map(|m| {
-                if m == current_model {
-                    format!("● {m}")
-                } else {
-                    format!("  {m}")
-                }
-            })
-            .collect();
-
-        let popup = PopupList::new("Select Model (Esc to cancel)", &items);
-
-        f.render_widget(popup, centered_rect(50, 70, area));
-    }
-
     async fn send_message(&mut self, content: String) -> Result<()> {
         // Handle slash commands
         if content.starts_with('/') {
@@ -968,25 +927,6 @@ fn get_spinner_char(state: usize) -> &'static str {
 }
 
 /// Helper function to create a centered rectangle
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
 
 // -------------------------------------------------------------------------------------------------
 // Public API for backward compatibility with conductor-cli
