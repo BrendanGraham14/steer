@@ -26,6 +26,7 @@ pub enum AgentEvent {
     },
     ToolResultReceived {
         tool_call_id: String,
+        message_id: String,
         result: ConductorToolResult,
     },
 }
@@ -112,10 +113,12 @@ impl AgentExecutor {
 
             // Get thread info from the last message
             let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                (*last_msg.thread_id(), Some(last_msg.id().to_string()))
+                (*last_msg.thread_id(), last_msg.id().to_string())
             } else {
-                // This shouldn't happen, but provide a fallback
-                (Uuid::now_v7(), None)
+                // This shouldn't happen
+                return Err(AgentExecutorError::Internal(
+                    "No messages in conversation when adding assistant message".to_string(),
+                ));
             };
 
             let full_assistant_message = Message::Assistant {
@@ -126,7 +129,7 @@ impl AgentExecutor {
                     .as_secs(),
                 id: Uuid::new_v4().to_string(),
                 thread_id,
-                parent_message_id: parent_id,
+                parent_message_id: Some(parent_id),
             };
 
             messages.push(full_assistant_message.clone());
@@ -150,7 +153,7 @@ impl AgentExecutor {
                     ))
                     .await?;
 
-                let tool_results = self
+                let tool_results_with_ids = self
                     .handle_tool_calls(
                         &tool_calls,
                         &request.tool_executor_callback,
@@ -165,13 +168,14 @@ impl AgentExecutor {
                 }
 
                 // Add tool results to messages - one message per tool result
-                for (i, tool_result) in tool_results.iter().enumerate() {
+                for (i, (tool_result, message_id)) in tool_results_with_ids.iter().enumerate() {
                     // Get thread info from the last message
                     let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                        (*last_msg.thread_id(), Some(last_msg.id().to_string()))
+                        (*last_msg.thread_id(), last_msg.id().to_string())
                     } else {
-                        // This shouldn't happen, but provide a fallback
-                        (Uuid::now_v7(), None)
+                        return Err(AgentExecutorError::Internal(
+                            "No messages in conversation when adding tool results".to_string(),
+                        ));
                     };
 
                     messages.push(Message::Tool {
@@ -181,9 +185,9 @@ impl AgentExecutor {
                             .duration_since(UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
-                        id: Uuid::new_v4().to_string(),
+                        id: message_id.clone(),
                         thread_id,
-                        parent_message_id: parent_id,
+                        parent_message_id: Some(parent_id),
                     });
                 }
 
@@ -202,7 +206,7 @@ impl AgentExecutor {
         tool_executor_callback: &F,
         event_sender: &mpsc::Sender<AgentEvent>,
         token: &CancellationToken,
-    ) -> Result<Vec<ConductorToolResult>, AgentExecutorError>
+    ) -> Result<Vec<(ConductorToolResult, String)>, AgentExecutorError>
     where
         F: Fn(ToolCall, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
@@ -234,6 +238,8 @@ impl AgentExecutor {
                                }
                                 res = tool_executor_callback(call.clone(), token_clone.clone()) => res,
                             };
+
+                            let message_id = uuid::Uuid::new_v4().to_string();
 
                             let tool_result = match result {
                                 Ok(output) => {
@@ -285,13 +291,14 @@ impl AgentExecutor {
                             if let Err(e) = event_sender_clone
                                 .send(AgentEvent::ToolResultReceived {
                                     tool_call_id: call_id.clone(),
+                                    message_id: message_id.clone(),
                                     result: tool_result.clone(),
                                 })
                                 .await
                             {
                                 error!("Failed to send ToolResultReceived event: {}", e);
                             }
-                            tool_result
+                            (tool_result, message_id)
                         }
                     })
                     .collect();

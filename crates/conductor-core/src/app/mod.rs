@@ -1426,6 +1426,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
         }
         AgentEvent::ToolResultReceived {
             tool_call_id,
+            message_id,
             result,
         } => {
             let tool_name = app
@@ -1438,10 +1439,11 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
             let is_error = matches!(result, conductor_tools::result::ToolResult::Error(_));
 
             // Add result to conversation store
-            app.conversation
-                .lock()
-                .await
-                .add_tool_result(tool_call_id.clone(), result.clone());
+            app.conversation.lock().await.add_tool_result(
+                tool_call_id.clone(),
+                message_id.clone(),
+                result.clone(),
+            );
 
             // Emit the corresponding AppEvent based on is_error flag
             if is_error {
