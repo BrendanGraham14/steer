@@ -131,6 +131,7 @@ pub struct App {
     current_model: Model,
     session_config: Option<crate::session::state::SessionConfig>, // For tool visibility filtering
     workspace: Option<Arc<dyn crate::workspace::Workspace>>, // Workspace for environment and tool execution
+    cached_system_prompt: Option<String>, // Cached system prompt to avoid recomputation
 }
 
 impl App {
@@ -159,6 +160,7 @@ impl App {
             current_model: initial_model,
             session_config,
             workspace: Some(workspace),
+            cached_system_prompt: None,
         })
     }
 
@@ -232,6 +234,25 @@ impl App {
         self.approved_tools.insert(tool_name);
     }
 
+    /// Gets or creates the system prompt, using cache if available
+    async fn get_or_create_system_prompt(&mut self) -> Result<String> {
+        if let Some(ref cached) = self.cached_system_prompt {
+            debug!(target: "app.get_or_create_system_prompt", "Using cached system prompt");
+            Ok(cached.clone())
+        } else {
+            debug!(target: "app.get_or_create_system_prompt", "Creating new system prompt");
+            let prompt = if let Some(workspace) = &self.workspace {
+                create_system_prompt_with_workspace(Some(self.current_model), workspace.as_ref())
+                    .await?
+            } else {
+                create_system_prompt(Some(self.current_model))?
+            };
+            // Cache the system prompt
+            self.cached_system_prompt = Some(prompt.clone());
+            Ok(prompt)
+        }
+    }
+
     pub async fn set_model(&mut self, model: Model) -> Result<()> {
         // Check if the provider is available (has API key or OAuth)
         let provider = model.provider();
@@ -250,6 +271,9 @@ impl App {
 
         // Set the model
         self.current_model = model;
+
+        // Clear cached system prompt when model changes
+        self.cached_system_prompt = None;
 
         // Emit an event to notify UI of the change
         self.emit_event(AppEvent::ModelChanged { model });
@@ -341,6 +365,9 @@ impl App {
             tool_schemas = session_config.filter_tools_by_visibility(tool_schemas);
         }
 
+        // Get or create system prompt from cache (before accessing op_context mutably)
+        let system_prompt = self.get_or_create_system_prompt().await?;
+
         // Get mutable access to OpContext and its token
         let op_context = match &mut self.current_op_context {
             Some(ctx) => ctx,
@@ -364,13 +391,6 @@ impl App {
 
         let current_model = self.current_model;
         let agent_executor = self.agent_executor.clone();
-
-        // Create system prompt using workspace if available, otherwise fall back to local collection
-        let system_prompt = if let Some(workspace) = &self.workspace {
-            create_system_prompt_with_workspace(Some(current_model), workspace.as_ref()).await?
-        } else {
-            create_system_prompt(Some(current_model))?
-        };
 
         // --- Updated Tool Executor Callback with Approval Logic ---
         let tool_executor_for_callback = self.tool_executor.clone();
@@ -509,6 +529,7 @@ impl App {
             AppCommandType::Clear => {
                 self.conversation.lock().await.clear();
                 self.approved_tools.clear(); // Also clear tool approvals
+                self.cached_system_prompt = None; // Clear cached system prompt
                 Ok(Some(conversation::CommandResponse::Text(
                     "Conversation and tool approvals cleared.".to_string(),
                 )))
