@@ -926,8 +926,6 @@ fn get_spinner_char(state: usize) -> &'static str {
     SPINNER_CHARS[state % SPINNER_CHARS.len()]
 }
 
-/// Helper function to create a centered rectangle
-
 // -------------------------------------------------------------------------------------------------
 // Public API for backward compatibility with conductor-cli
 // -------------------------------------------------------------------------------------------------
