@@ -28,6 +28,9 @@ release:
 run *args:
     cargo run --bin conductor -- {{args}}
 
+run-tokio-debug *args:
+    RUSTFLAGS="--cfg tokio_unstable" cargo run --features tokio-console --bin conductor -- {{args}}
+
 clean:
     cargo clean
 
