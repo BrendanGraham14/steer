@@ -3,7 +3,7 @@ use crate::tui::{InputMode, Tui};
 use conductor_core::app::AppCommand;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tracing::info;
-use tui_textarea::Input;
+use tui_textarea::{CursorMove, Input};
 
 impl Tui {
     pub async fn handle_insert_mode(&mut self, key: KeyEvent) -> Result<bool> {
@@ -33,6 +33,25 @@ impl Tui {
                 self.input_mode = InputMode::Normal;
             }
             return Ok(false);
+        }
+
+        // Check for Alt+Left/Right for word navigation
+        if key.modifiers == KeyModifiers::ALT {
+            match key.code {
+                KeyCode::Left => {
+                    self.input_panel_state
+                        .textarea
+                        .move_cursor(CursorMove::WordBack);
+                    return Ok(false);
+                }
+                KeyCode::Right => {
+                    self.input_panel_state
+                        .textarea
+                        .move_cursor(CursorMove::WordForward);
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
 
         // Check if we should trigger fuzzy finder

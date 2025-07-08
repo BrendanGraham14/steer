@@ -339,8 +339,8 @@ impl InputPanelState {
         &mut self,
         key: ratatui::crossterm::event::KeyEvent,
     ) -> Option<crate::tui::widgets::fuzzy_finder::FuzzyFinderResult> {
-        use ratatui::crossterm::event::KeyCode;
-        use tui_textarea::Input;
+        use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+        use tui_textarea::{CursorMove, Input};
 
         // First handle navigation/selection in the fuzzy finder itself
         let result = self.fuzzy_finder.handle_input(key);
@@ -357,6 +357,21 @@ impl InputPanelState {
                 return None;
             }
             _ => {}
+        }
+
+        // Handle Alt+Left/Right for word navigation
+        if key.modifiers == KeyModifiers::ALT {
+            match key.code {
+                KeyCode::Left => {
+                    self.textarea.move_cursor(CursorMove::WordBack);
+                    return None;
+                }
+                KeyCode::Right => {
+                    self.textarea.move_cursor(CursorMove::WordForward);
+                    return None;
+                }
+                _ => {}
+            }
         }
 
         // Key was not for navigation, so treat it as text input

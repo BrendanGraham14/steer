@@ -2,6 +2,7 @@ use crate::error::Result;
 use crate::tui::{InputMode, Tui};
 use conductor_core::app::AppCommand;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tui_textarea::CursorMove;
 
 impl Tui {
     pub async fn handle_bash_mode(&mut self, key: KeyEvent) -> Result<bool> {
@@ -29,6 +30,25 @@ impl Tui {
             self.input_panel_state
                 .textarea
                 .set_placeholder_text("Type your message here...");
+        // Check for Alt+Left/Right for word navigation
+        } else if key.modifiers == KeyModifiers::ALT {
+            match key.code {
+                KeyCode::Left => {
+                    self.input_panel_state
+                        .textarea
+                        .move_cursor(CursorMove::WordBack);
+                }
+                KeyCode::Right => {
+                    self.input_panel_state
+                        .textarea
+                        .move_cursor(CursorMove::WordForward);
+                }
+                _ => {
+                    // Convert KeyEvent to Input and let the panel state handle it
+                    let input = tui_textarea::Input::from(key);
+                    self.input_panel_state.handle_input(input);
+                }
+            }
         } else if key.code == KeyCode::Enter {
             // Execute the bash command
             let command = self.input_panel_state.content();
