@@ -11,10 +11,16 @@ use conductor_cli::session_config::{SessionConfigLoader, SessionConfigOverrides}
 #[cfg(feature = "ui")]
 use conductor_tui::tui::{self, cleanup_terminal, setup_panic_hook};
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     // Install color-eyre for better error reports
     color_eyre::install()?;
+
+    // Initialize console-subscriber for tokio debugging if enabled
+    #[cfg(feature = "tokio-console")]
+    {
+        console_subscriber::init();
+    }
 
     let cli = Cli::parse();
 
@@ -22,6 +28,8 @@ async fn main() -> Result<()> {
     conductor_cli::cli::config::load_env()?;
 
     // Initialize tracing (level configured via RUST_LOG env var)
+    // Skip if console-subscriber is enabled as it sets up its own tracing
+    #[cfg(not(feature = "tokio-console"))]
     conductor_core::utils::tracing::init_tracing()?;
 
     // Convert ModelArg to Model
