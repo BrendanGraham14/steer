@@ -54,8 +54,6 @@ pub struct ManagedSession {
     pub command_tx: mpsc::Sender<AppCommand>,
     /// Event receiver from the App (for external consumers like TUI)
     pub event_rx: Option<mpsc::Receiver<AppEvent>>,
-    /// Event sender for streaming events (deprecated, will be removed)
-    pub event_tx: mpsc::Sender<StreamEvent>,
     /// Event subscriber count
     pub subscriber_count: usize,
     /// Last activity timestamp for cleanup
@@ -71,7 +69,6 @@ impl ManagedSession {
     pub async fn new(
         session: Session,
         app_config: AppConfig,
-        event_tx: mpsc::Sender<StreamEvent>,
         store: Arc<dyn SessionStore>,
         global_event_tx: mpsc::Sender<StreamEventWithMetadata>,
         default_model: Model,
@@ -183,7 +180,6 @@ impl ManagedSession {
             session,
             command_tx: app_command_tx,
             event_rx: Some(external_event_rx),
-            event_tx,
             subscriber_count: 0,
             last_activity: chrono::Utc::now(),
             app_task_handle,
@@ -276,14 +272,10 @@ impl SessionManager {
             }
         }
 
-        // Create event channel for this session
-        let (event_tx, _event_rx) = mpsc::channel(100);
-
         // Create managed session with event translation
         let managed_session = ManagedSession::new(
             session.clone(),
             app_config,
-            event_tx,
             self.store.clone(),
             self.event_tx.clone(),
             self.config.default_model,
@@ -437,9 +429,6 @@ impl SessionManager {
             }
         }
 
-        // Create event channel for this session
-        let (event_tx, _event_rx) = mpsc::channel(100);
-
         // Create a conversation from the session state
         let conversation = Conversation {
             messages: session.state.messages.clone(),
@@ -461,7 +450,6 @@ impl SessionManager {
         let managed_session = ManagedSession::new(
             session.clone(),
             app_config,
-            event_tx,
             self.store.clone(),
             self.event_tx.clone(),
             self.config.default_model,
