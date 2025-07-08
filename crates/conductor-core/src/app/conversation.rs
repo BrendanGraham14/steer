@@ -1,15 +1,15 @@
+use crate::api::Client as ApiClient;
+use crate::api::Model;
 use conductor_tools::ToolCall;
 pub use conductor_tools::result::ToolResult;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 use uuid::Uuid;
-
-use crate::api::Client as ApiClient;
-use crate::api::Model;
 
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
@@ -519,32 +519,17 @@ impl Conversation {
     }
 
     pub fn clear(&mut self) {
+        debug!(target:"conversation::clear", "Clearing conversation");
         self.messages.clear();
     }
 
-    pub fn add_tool_result(&mut self, tool_use_id: String, result: ToolResult) {
+    pub fn add_tool_result(&mut self, tool_use_id: String, message_id: String, result: ToolResult) {
         let parent_id = self.messages.last().map(|m| m.id().to_string());
         self.add_message(Message::Tool {
             tool_use_id,
             result,
             timestamp: Message::current_timestamp(),
-            id: Message::generate_id("tool", Message::current_timestamp()),
-            thread_id: self.current_thread_id,
-            parent_message_id: parent_id,
-        });
-    }
-
-    pub fn add_tool_error(
-        &mut self,
-        tool_use_id: String,
-        error: conductor_tools::error::ToolError,
-    ) {
-        let parent_id = self.messages.last().map(|m| m.id().to_string());
-        self.add_message(Message::Tool {
-            tool_use_id,
-            result: ToolResult::Error(error),
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("tool", Message::current_timestamp()),
+            id: message_id,
             thread_id: self.current_thread_id,
             parent_message_id: parent_id,
         });
@@ -605,7 +590,7 @@ impl Conversation {
         let summary_text = summary.extract_text();
 
         // Clear messages and add compaction marker
-        self.messages.clear();
+        self.clear();
         let timestamp = Message::current_timestamp();
 
         // Add the summary as a user message with a clear marker
@@ -687,28 +672,304 @@ impl Conversation {
     /// Get messages in the current thread by following parent links
     pub fn get_thread_messages(&self) -> Vec<&Message> {
         let mut result = Vec::new();
-
-        // Find the latest message in the current thread
         let mut current_msg = self
             .messages
             .iter()
             .filter(|m| m.thread_id() == &self.current_thread_id)
             .max_by_key(|m| m.timestamp());
 
-        // Follow parent links to build the chain
+        let id_map: HashMap<&str, &Message> = self.messages.iter().map(|m| (m.id(), m)).collect();
+
         while let Some(msg) = current_msg {
             result.push(msg);
 
-            // Find parent message
+            // Find parent message using the id_map
             current_msg = if let Some(parent_id) = msg.parent_message_id() {
-                self.messages.iter().find(|m| m.id() == parent_id)
+                id_map.get(parent_id).copied()
             } else {
                 None
             };
         }
 
-        // Reverse to get chronological order
         result.reverse();
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::conversation::{AssistantContent, Conversation, Message, UserContent};
+    use uuid::Uuid;
+
+    /// Helper function to create a user message for testing
+    fn create_user_message(
+        id: &str,
+        parent_id: Option<&str>,
+        thread_id: Uuid,
+        content: &str,
+    ) -> Message {
+        Message::User {
+            id: id.to_string(),
+            parent_message_id: parent_id.map(String::from),
+            thread_id,
+            content: vec![UserContent::Text {
+                text: content.to_string(),
+            }],
+            timestamp: Message::current_timestamp(),
+        }
+    }
+
+    /// Helper function to create an assistant message for testing
+    fn create_assistant_message(
+        id: &str,
+        parent_id: Option<&str>,
+        thread_id: Uuid,
+        content: &str,
+    ) -> Message {
+        Message::Assistant {
+            id: id.to_string(),
+            parent_message_id: parent_id.map(String::from),
+            thread_id,
+            content: vec![AssistantContent::Text {
+                text: content.to_string(),
+            }],
+            timestamp: Message::current_timestamp(),
+        }
+    }
+
+    #[test]
+    fn test_editing_message_in_the_middle_of_conversation() {
+        let mut conversation = Conversation::new();
+        let initial_thread_id = conversation.current_thread_id;
+
+        // 1. Build an initial conversation
+        let msg1 = create_user_message("msg1", None, initial_thread_id, "What is Rust?");
+        conversation.add_message(msg1.clone());
+
+        let msg2 = create_assistant_message(
+            "msg2",
+            Some("msg1"),
+            initial_thread_id,
+            "A systems programming language.",
+        );
+        conversation.add_message(msg2.clone());
+
+        let msg3 = create_user_message("msg3", Some("msg2"), initial_thread_id, "Is it fast?");
+        conversation.add_message(msg3.clone());
+
+        let msg4 = create_assistant_message(
+            "msg4",
+            Some("msg3"),
+            initial_thread_id,
+            "Yes, it is very fast.",
+        );
+        conversation.add_message(msg4.clone());
+
+        // 2. Edit the *first* user message
+        let new_thread_id = conversation
+            .edit_message(
+                "msg1",
+                vec![UserContent::Text {
+                    text: "What is Golang?".to_string(),
+                }],
+            )
+            .unwrap();
+
+        // 3. Check the state after editing
+        let edited_msg_id = {
+            let messages_after_edit = conversation.get_thread_messages();
+            let message_ids_after_edit: Vec<&str> =
+                messages_after_edit.iter().map(|m| m.id()).collect();
+
+            assert_eq!(
+                message_ids_after_edit.len(),
+                1,
+                "History should be pruned to the single edited message."
+            );
+            let id = message_ids_after_edit[0];
+            assert_ne!(id, "msg1");
+            assert!(!message_ids_after_edit.contains(&"msg1"));
+            assert!(!message_ids_after_edit.contains(&"msg2"));
+            assert!(!message_ids_after_edit.contains(&"msg3"));
+            assert!(!message_ids_after_edit.contains(&"msg4"));
+            id.to_string()
+        };
+
+        // 4. Add a new message to the new branch of conversation
+        let msg5 = create_assistant_message(
+            "msg5",
+            Some(&edited_msg_id),
+            new_thread_id,
+            "A systems programming language from Google.",
+        );
+        conversation.add_message(msg5.clone());
+
+        // 5. Check the final state of the conversation
+        let final_messages = conversation.get_thread_messages();
+        let final_message_ids: Vec<&str> = final_messages.iter().map(|m| m.id()).collect();
+
+        assert_eq!(
+            final_messages.len(),
+            2,
+            "Should have the edited message and the new response."
+        );
+        assert_eq!(final_message_ids[0], edited_msg_id);
+        assert_eq!(final_message_ids[1], "msg5");
+    }
+
+    #[test]
+    fn test_get_thread_messages_after_edit() {
+        let mut conversation = Conversation::new();
+        let initial_thread_id = conversation.current_thread_id;
+
+        // 1. Initial conversation
+        let msg1 = create_user_message("msg1", None, initial_thread_id, "hello");
+        conversation.add_message(msg1.clone());
+
+        let msg2 = create_assistant_message("msg2", Some("msg1"), initial_thread_id, "world");
+        conversation.add_message(msg2.clone());
+
+        // This is the message that will be "edited out"
+        let msg3_original =
+            create_user_message("msg3_original", Some("msg2"), initial_thread_id, "thanks");
+        conversation.add_message(msg3_original.clone());
+
+        // 2. Edit the last user message ("thanks")
+        let new_thread_id = conversation
+            .edit_message(
+                "msg3_original",
+                vec![UserContent::Text {
+                    text: "how are you".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let edited_msg_id = conversation.messages.last().unwrap().id().to_string();
+
+        // 3. Add a new assistant message to the new branch
+        let msg4 =
+            create_assistant_message("msg4", Some(&edited_msg_id), new_thread_id, "I am fine");
+        conversation.add_message(msg4.clone());
+
+        // 4. Get messages for the current thread
+        let thread_messages = conversation.get_thread_messages();
+
+        // 5. Assertions
+        let thread_message_ids: Vec<&str> = thread_messages.iter().map(|m| m.id()).collect();
+
+        // Should contain the root, the first assistant message, the *new* user message, and the final assistant message
+        assert_eq!(
+            thread_message_ids.len(),
+            4,
+            "Should have 4 messages in the current thread"
+        );
+        assert!(thread_message_ids.contains(&"msg1"), "Should contain msg1");
+        assert!(thread_message_ids.contains(&"msg2"), "Should contain msg2");
+        assert!(
+            thread_message_ids.contains(&edited_msg_id.as_str()),
+            "Should contain the edited message"
+        );
+        assert!(thread_message_ids.contains(&"msg4"), "Should contain msg4");
+
+        // CRITICAL: Should NOT contain the original, edited-out message
+        assert!(
+            !thread_message_ids.contains(&"msg3_original"),
+            "Should NOT contain the original message that was edited"
+        );
+    }
+
+    #[test]
+    fn test_get_thread_messages_filters_other_branches() {
+        let mut conversation = Conversation::new();
+        let initial_thread_id = conversation.current_thread_id;
+
+        // 1. Initial conversation: "hi"
+        let msg1 = create_user_message("msg1", None, initial_thread_id, "hi");
+        conversation.add_message(msg1.clone());
+
+        let msg2 = create_assistant_message(
+            "msg2",
+            Some("msg1"),
+            initial_thread_id,
+            "Hello! How can I help?",
+        );
+        conversation.add_message(msg2.clone());
+
+        // 2. User says "thanks" (this will be edited out)
+        let msg3_original =
+            create_user_message("msg3_original", Some("msg2"), initial_thread_id, "thanks");
+        conversation.add_message(msg3_original.clone());
+
+        let msg4_original = create_assistant_message(
+            "msg4_original",
+            Some("msg3_original"),
+            initial_thread_id,
+            "You're welcome!",
+        );
+        conversation.add_message(msg4_original.clone());
+
+        // 3. Edit the "thanks" message to "how are you"
+        let new_thread_id = conversation
+            .edit_message(
+                "msg3_original",
+                vec![UserContent::Text {
+                    text: "how are you".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let edited_msg_id = conversation.messages.last().unwrap().id().to_string();
+
+        // 4. Add assistant response in the new thread
+        let msg4_new = create_assistant_message(
+            "msg4_new",
+            Some(&edited_msg_id),
+            new_thread_id,
+            "I'm doing well, thanks for asking! Ready to help with any software engineering tasks you have.",
+        );
+        conversation.add_message(msg4_new.clone());
+
+        // 5. User asks "what messages have I sent you?"
+        let msg5 = create_user_message(
+            "msg5",
+            Some("msg4_new"),
+            new_thread_id,
+            "what messages have I sent you?",
+        );
+        conversation.add_message(msg5.clone());
+
+        // 6. Get messages for the current thread - this should NOT include "thanks"
+        let thread_messages = conversation.get_thread_messages();
+
+        // Extract the user messages
+        let user_messages: Vec<String> = thread_messages
+            .iter()
+            .filter(|m| matches!(m, Message::User { .. }))
+            .map(|m| m.extract_text())
+            .collect();
+
+        println!("User messages seen: {user_messages:?}");
+
+        // Assertions
+        assert_eq!(
+            user_messages.len(),
+            3,
+            "Should have exactly 3 user messages"
+        );
+        assert_eq!(user_messages[0], "hi", "First message should be 'hi'");
+        assert_eq!(
+            user_messages[1], "how are you",
+            "Second message should be 'how are you' (edited)"
+        );
+        assert_eq!(
+            user_messages[2], "what messages have I sent you?",
+            "Third message should be the question"
+        );
+
+        // CRITICAL: Should NOT contain "thanks" from the edited-out branch
+        assert!(
+            !user_messages.contains(&"thanks".to_string()),
+            "Should NOT contain 'thanks' from the edited-out branch"
+        );
     }
 }

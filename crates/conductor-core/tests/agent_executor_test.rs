@@ -229,6 +229,7 @@ mod tests {
                 AgentEvent::ToolResultReceived {
                     tool_call_id,
                     result,
+                    message_id: _,
                 } => {
                     // Log all tool results for debugging
                     println!(
