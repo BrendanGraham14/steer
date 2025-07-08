@@ -393,10 +393,9 @@ fn get_formatted_mode(mode: InputMode) -> Span<'static> {
         InputMode::Normal => "Normal",
         InputMode::BashCommand => "Bash",
         InputMode::AwaitingApproval => "Awaiting Approval",
-        InputMode::SelectingModel => "Model Selection",
         InputMode::ConfirmExit => "Confirm Exit",
         InputMode::EditMessageSelection => "Edit Selection",
-        InputMode::FuzzyFinder => "Fuzzy Finder",
+        InputMode::FuzzyFinder => "Insert",
     };
     let color = match mode {
         InputMode::ConfirmExit => Color::Red,
@@ -457,9 +456,6 @@ impl<'a> InputPanel<'a> {
             }
             InputMode::AwaitingApproval => {
                 // No keybinds for this mode
-            }
-            InputMode::SelectingModel => {
-                // No keybinds shown for this mode (handled by popup)
             }
             InputMode::ConfirmExit => {
                 spans.extend(format_keybinds(&[
