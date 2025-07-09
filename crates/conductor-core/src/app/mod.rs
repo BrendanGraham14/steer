@@ -393,95 +393,78 @@ impl App {
         let current_model = self.current_model;
         let agent_executor = self.agent_executor.clone();
 
-        // --- Updated Tool Executor Callback with Approval Logic ---
-        let tool_executor_for_callback = self.tool_executor.clone();
-        let approved_tools_clone = self.approved_tools.clone(); // Clone for capture
+        // --- Tool Approval Callback ---
+        let approved_tools_for_approval = self.approved_tools.clone();
+        let tool_executor_for_approval = self.tool_executor.clone();
+        let command_tx_for_approval = OpContext::command_tx().clone();
 
-        // Clone command_tx for the tool executor callback
-        // This allows the callback to send tool approval requests to the actor loop
-        let command_tx = OpContext::command_tx().clone();
+        let tool_approval_callback = move |tool_call: ToolCall| {
+            let approved_tools = approved_tools_for_approval.clone();
+            let executor = tool_executor_for_approval.clone();
+            let command_tx = command_tx_for_approval.clone();
+            let tool_name = tool_call.name.clone();
+            let tool_id = tool_call.id.clone();
 
-        let tool_executor_callback =
+            async move {
+                let requires_approval = match executor.requires_approval(&tool_name).await {
+                    Ok(req) => req,
+                    Err(e) => {
+                        return Err(ToolError::InternalError(format!(
+                            "Failed to check tool approval status for {tool_name}: {e}"
+                        )));
+                    }
+                };
+
+                if !requires_approval || approved_tools.contains(&tool_name) {
+                    // Skip approval for tools that don't need it or are already approved
+                    debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn\'t require approval or already in approved_tools set");
+                    Ok(ApprovalDecision::Approved)
+                } else {
+                    // Needs interactive approval - create oneshot channel for receiving the decision
+                    let (tx, rx) = oneshot::channel();
+
+                    // Send approval request to the actor loop via command channel
+                    if let Err(e) = command_tx
+                        .send(AppCommand::RequestToolApprovalInternal {
+                            tool_call,
+                            responder: tx,
+                        })
+                        .await
+                    {
+                        // If we can't send the request, treat as an error
+                        error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
+                        return Err(ToolError::InternalError(format!(
+                            "Failed to request tool approval: {e}"
+                        )));
+                    }
+
+                    // Wait for the decision
+                    match rx.await {
+                        Ok(d) => Ok(d), // User made a choice
+                        Err(_) => {
+                            // Responder was dropped (likely due to cancellation elsewhere or shutdown)
+                            warn!(tool_id=%tool_id, tool_name=%tool_name, "Approval decision channel closed for tool.");
+                            Ok(ApprovalDecision::Denied) // Treat as denied
+                        }
+                    }
+                }
+            }
+        };
+
+        // --- Tool Execution Callback ---
+        let tool_executor_for_execution = self.tool_executor.clone();
+
+        let tool_execution_callback =
             move |tool_call: ToolCall, callback_token: CancellationToken| {
-                // Clone items needed inside the async block
-                let executor = tool_executor_for_callback.clone();
-                let approved_tools = approved_tools_clone.clone();
-                let command_tx = command_tx.clone();
-                let tool_call_clone = tool_call.clone(); // Clone for approval request
+                let executor = tool_executor_for_execution.clone();
                 let tool_name = tool_call.name.clone();
                 let tool_id = tool_call.id.clone();
 
                 async move {
-                    let requires_approval = match executor.requires_approval(&tool_name).await {
-                        Ok(req) => req,
-                        Err(e) => {
-                            return Err(ToolError::InternalError(format!(
-                                "Failed to check tool approval status for {tool_name}: {e}"
-                            )));
-                        }
-                    };
-
-                    let decision = if !requires_approval || approved_tools.contains(&tool_name) {
-                        // Skip approval for tools that don't need it or are already approved
-                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn\'t require approval or already in approved_tools set");
-                        ApprovalDecision::Approved
-                    } else {
-                        // Needs interactive approval - create oneshot channel for receiving the decision
-                        let (tx, rx) = oneshot::channel();
-
-                        // Send approval request to the actor loop via command channel
-                        if let Err(e) = command_tx
-                            .send(AppCommand::RequestToolApprovalInternal {
-                                tool_call: tool_call_clone,
-                                responder: tx,
-                            })
-                            .await
-                        {
-                            // If we can't send the request, treat as an error
-                            error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
-                            return Err(ToolError::InternalError(format!(
-                                "Failed to request tool approval: {e}"
-                            )));
-                        }
-
-                        // Wait for the decision or cancellation
-                        tokio::select! {
-                            biased;
-                            _ = callback_token.cancelled() => {
-                                 info!(tool_id=%tool_id, tool_name=%tool_name, "Tool approval cancelled while waiting for user response.");
-                                 return Err(ToolError::Cancelled(tool_name));
-                            }
-                            decision_result = rx => {
-                                match decision_result {
-                                    Ok(d) => d, // User made a choice
-                                    Err(_) => {
-                                         // Responder was dropped (likely due to cancellation elsewhere or shutdown)
-                                         warn!(tool_id=%tool_id, tool_name=%tool_name, "Approval decision channel closed for tool.");
-                                         ApprovalDecision::Denied // Treat as denied
-                                    }
-                                }
-                            }
-                        }
-                    };
-
-                    // --- Execute or Deny ---
-                    match decision {
-                        ApprovalDecision::Approved => {
-                            // Approval granted, execute the tool
-                            info!(tool_id=%tool_id, tool_name=%tool_name, "Executing approved tool via callback.");
-
-                            // NOTE: AgentExecutor now sends the ExecutingTool event after we return from this callback
-                            // to properly signal UI when a tool is being executed
-
-                            executor
-                                .execute_tool_with_cancellation(&tool_call, callback_token)
-                                .await
-                        }
-                        ApprovalDecision::Denied => {
-                            warn!(tool_id=%tool_id, tool_name=%tool_name, "Tool execution denied via callback.");
-                            Err(ToolError::DeniedByUser(tool_name))
-                        }
-                    }
+                    info!(tool_id=%tool_id, tool_name=%tool_name, "Executing tool via callback.");
+                    executor
+                        .execute_tool_with_cancellation(&tool_call, callback_token)
+                        .await
                 }
             };
 
@@ -496,7 +479,8 @@ impl App {
                 initial_messages: api_messages,
                 system_prompt: Some(system_prompt),
                 available_tools: tool_schemas,
-                tool_executor_callback,
+                tool_approval_callback,
+                tool_execution_callback,
             };
             let operation_result = agent_executor
                 .run(request, agent_event_tx, token)
