@@ -212,7 +212,7 @@ where
             Tag::BlockQuote => self.end_blockquote(),
             Tag::CodeBlock(_) => self.end_codeblock(),
             Tag::List(_) => self.end_list(),
-            Tag::Item => {}
+            Tag::Item => self.end_item(),
             Tag::FootnoteDefinition(_) => {}
             Tag::Table(_) => self.end_table(),
             Tag::TableHead => self.end_table_head(),
@@ -345,6 +345,15 @@ where
         self.in_list_item_start = true;
         // Don't push the list marker yet - wait for task list marker if present
         self.needs_newline = false;
+    }
+
+    fn end_item(&mut self) {
+        // If we still have in_list_item_start set, it means we had an empty list item
+        // We need to push the list marker for empty items
+        if self.in_list_item_start {
+            self.push_list_marker();
+            self.in_list_item_start = false;
+        }
     }
 
     fn soft_break(&mut self) {
@@ -969,5 +978,129 @@ Mixed list:
             .any(|line| line.spans.iter().any(|span| span.content.contains("[ ]")));
         assert!(has_checked, "Should contain checked checkboxes");
         assert!(has_unchecked, "Should contain unchecked checkboxes");
+    }
+
+    #[test]
+    fn test_empty_list_items() {
+        // Test #2: Empty list items that might leave in_list_item_start as true
+        let markdown = r#"Empty list items:
+- 
+- Item with content
+- 
+- Another item
+
+Empty numbered items:
+1. 
+2. Content here
+3. "#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles);
+
+        println!("\n=== Empty List Items Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        // Ensure no panic occurred
+        assert!(!rendered.lines.is_empty());
+    }
+
+    #[test]
+    fn test_malformed_lists() {
+        // Test #3: Various edge cases that might cause state issues
+        let markdown = r#"List interrupted by other content:
+- Item 1
+This is a paragraph, not in the list
+- Item 2
+
+Nested list edge cases:
+- Outer item
+  - Inner item
+  Some text here
+- Back to outer
+
+Task list edge cases:
+- [ ] 
+- [x] Task with content
+- [ ] 
+
+Mixed content:
+1. [ ] Task in numbered list
+Regular text
+2. Another item"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles);
+
+        println!("\n=== Malformed Lists Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        // Ensure no panic occurred
+        assert!(!rendered.lines.is_empty());
+    }
+
+    #[test]
+    fn test_state_tracking_debug() {
+        // Test with debug output to track state
+        let markdown = r#"- Item 1
+- 
+- [ ] Task item
+- 
+Regular paragraph
+
+- New list"#;
+
+        let mut options = Options::empty();
+        options.insert(Options::ENABLE_TASKLISTS);
+        let parser = Parser::new_ext(markdown, options);
+
+        println!("\n=== State Tracking Debug ===");
+
+        // Create a custom writer to track state
+        struct DebugTextWriter<'a, I> {
+            inner: TextWriter<'a, I>,
+        }
+
+        let styles = MarkdownStyles::from_theme(&Theme::default());
+        let mut writer = TextWriter::new(parser, &styles);
+
+        // Manually process events to see state changes
+        let parser = Parser::new_ext(markdown, options);
+        for (idx, event) in parser.enumerate() {
+            println!("Event {idx}: {event:?}");
+            println!("  list_indices.len() = {}", writer.list_indices.len());
+            println!("  in_list_item_start = {}", writer.in_list_item_start);
+            writer.handle_event(event);
+        }
+
+        // Check final state
+        println!("\nFinal state:");
+        println!("  list_indices.len() = {}", writer.list_indices.len());
+        println!("  in_list_item_start = {}", writer.in_list_item_start);
+
+        assert_eq!(
+            writer.list_indices.len(),
+            0,
+            "list_indices should be empty at end"
+        );
+        assert!(
+            !writer.in_list_item_start,
+            "in_list_item_start should be false at end"
+        );
     }
 }
