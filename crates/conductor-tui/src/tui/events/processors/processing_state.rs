@@ -5,6 +5,7 @@
 
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
+use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 
 /// Processor for events that affect the overall processing state
@@ -20,6 +21,7 @@ impl ProcessingStateProcessor {
     }
 }
 
+#[async_trait]
 impl EventProcessor for ProcessingStateProcessor {
     fn priority(&self) -> usize {
         10 // High priority - state changes should happen early
@@ -35,7 +37,7 @@ impl EventProcessor for ProcessingStateProcessor {
         )
     }
 
-    fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::ThinkingStarted => {
                 *ctx.is_processing = true;
@@ -53,7 +55,8 @@ impl EventProcessor for ProcessingStateProcessor {
                         &self.notification_config,
                         NotificationSound::ProcessingComplete,
                         "Processing complete - waiting for input",
-                    );
+                    )
+                    .await;
                 }
 
                 ProcessingResult::Handled
@@ -69,7 +72,8 @@ impl EventProcessor for ProcessingStateProcessor {
                         &self.notification_config,
                         NotificationSound::Error,
                         "An error occurred during processing",
-                    );
+                    )
+                    .await;
                 }
 
                 ProcessingResult::Handled

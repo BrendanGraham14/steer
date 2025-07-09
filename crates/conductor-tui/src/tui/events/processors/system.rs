@@ -5,6 +5,7 @@
 
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItem, generate_row_id};
+use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 
 /// Processor for system-level events
@@ -32,6 +33,7 @@ impl SystemEventProcessor {
     }
 }
 
+#[async_trait]
 impl EventProcessor for SystemEventProcessor {
     fn priority(&self) -> usize {
         90 // Low priority - run after most other processors
@@ -44,7 +46,7 @@ impl EventProcessor for SystemEventProcessor {
         )
     }
 
-    fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::ModelChanged { model } => {
                 *ctx.current_model = model;

@@ -4,6 +4,11 @@
 
 use crate::error::Result;
 use notify_rust::Notification;
+use process_wrap::tokio::{ProcessGroup, TokioCommandWrap};
+use std::fmt;
+use std::str::FromStr;
+use std::time::Duration;
+use tokio::time::sleep;
 use tracing::debug;
 
 /// Type of notification sound to play
@@ -15,6 +20,30 @@ pub enum NotificationSound {
     ToolApproval,
     /// Error occurred - descending tones
     Error,
+}
+
+impl FromStr for NotificationSound {
+    type Err = ();
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "ProcessingComplete" => Ok(NotificationSound::ProcessingComplete),
+            "ToolApproval" => Ok(NotificationSound::ToolApproval),
+            "Error" => Ok(NotificationSound::Error),
+            _ => Err(()),
+        }
+    }
+}
+
+impl fmt::Display for NotificationSound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            NotificationSound::ProcessingComplete => "ProcessingComplete",
+            NotificationSound::ToolApproval => "ToolApproval",
+            NotificationSound::Error => "Error",
+        };
+        write!(f, "{s}")
+    }
 }
 
 /// Get the appropriate system sound name for the notification type
@@ -63,7 +92,8 @@ pub fn show_notification_with_sound(
     notification
         .summary(title)
         .body(message)
-        .appname("conductor");
+        .appname("conductor")
+        .timeout(5000);
 
     // Add sound if specified
     if let Some(sound) = sound_type {
@@ -109,27 +139,61 @@ impl NotificationConfig {
     }
 }
 
-/// Trigger notifications with specific sound
-pub fn notify_with_sound(config: &NotificationConfig, sound: NotificationSound, message: &str) {
-    if config.enable_desktop_notification {
-        let sound_option = if config.enable_sound {
-            Some(sound)
-        } else {
-            None
-        };
-        let message = message.to_string();
+/// We need to do this in a subprocess because on mac at least, notify-rust's Notification::show()
+/// **NEVER RETURNS**.
+/// This is a workaround to ensure that both:
+/// 1. The notification is shown
+/// 2. We don't leak tokio tasks / threads
+/// 3. We don't end up with blocking tokio tasks which prevent the main thread from exiting.
+async fn trigger_notification_subprocess(
+    title: &str,
+    message: &str,
+    sound: Option<NotificationSound>,
+) -> Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let mut args = vec![
+        "notify".to_string(),
+        "--title".to_string(),
+        title.to_string(),
+        "--message".to_string(),
+        message.to_string(),
+    ];
 
-        // Spawn blocking task to avoid blocking the async runtime
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = show_notification_with_sound("Conductor", &message, sound_option) {
-                debug!("Failed to show desktop notification: {}", e);
-            }
-        });
+    if let Some(sound_type) = sound {
+        args.push("--sound".to_string());
+        args.push(sound_type.to_string());
     }
+
+    let mut child = TokioCommandWrap::with_new(current_exe, |command| {
+        command.args(args);
+    })
+    .wrap(ProcessGroup::leader())
+    .spawn()?;
+
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(2)).await;
+        match child.start_kill() {
+            Ok(_) => {}
+            Err(e) => {
+                debug!("Failed to kill notification subprocess: {}", e);
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Trigger notifications with specific sound
+pub async fn notify_with_sound(
+    config: &NotificationConfig,
+    sound: NotificationSound,
+    message: &str,
+) {
+    notify_with_title_and_sound(config, sound, "Conductor", message).await;
 }
 
 /// Trigger notifications with custom title and sound
-pub fn notify_with_title_and_sound(
+pub async fn notify_with_title_and_sound(
     config: &NotificationConfig,
     sound: NotificationSound,
     title: &str,
@@ -141,14 +205,11 @@ pub fn notify_with_title_and_sound(
         } else {
             None
         };
-        let title = title.to_string();
-        let message = message.to_string();
-
-        // Spawn blocking task to avoid blocking the async runtime
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = show_notification_with_sound(&title, &message, sound_option) {
-                debug!("Failed to show desktop notification: {}", e);
+        match trigger_notification_subprocess(title, message, sound_option).await {
+            Ok(_) => {}
+            Err(e) => {
+                debug!("Failed to trigger notification subprocess: {}", e);
             }
-        });
+        }
     }
 }

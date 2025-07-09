@@ -31,13 +31,17 @@ impl EventPipeline {
     }
 
     /// Process an event through the pipeline
-    pub fn process_event(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> Result<()> {
+    pub async fn process_event<'a>(
+        &mut self,
+        event: AppEvent,
+        ctx: &mut ProcessingContext<'a>,
+    ) -> Result<()> {
         for processor in &mut self.processors {
             if !processor.can_handle(&event) {
                 continue;
             }
 
-            match processor.process(event.clone(), ctx) {
+            match processor.process(event.clone(), ctx).await {
                 ProcessingResult::Handled => {
                     continue; // Try next processor
                 }
