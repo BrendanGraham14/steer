@@ -1,10 +1,26 @@
 use crate::error::Result;
 use crate::tui::{InputMode, Tui};
-use ratatui::crossterm::event::KeyEvent;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tui_textarea::Input;
 
 impl Tui {
     pub async fn handle_fuzzy_finder_mode(&mut self, key: KeyEvent) -> Result<bool> {
         use crate::tui::widgets::fuzzy_finder::FuzzyFinderResult;
+
+        // Handle various newline key combinations
+        if (key.code == KeyCode::Enter
+            && (key.modifiers == KeyModifiers::SHIFT
+                || key.modifiers == KeyModifiers::ALT
+                || key.modifiers == KeyModifiers::CONTROL))
+            || (key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL)
+        {
+            self.input_panel_state
+                .handle_input(Input::from(KeyEvent::new(
+                    KeyCode::Char('\n'),
+                    KeyModifiers::empty(),
+                )));
+            return Ok(false);
+        }
 
         // First, let the input panel process the key
         let post_result = self.input_panel_state.handle_fuzzy_key(key).await;

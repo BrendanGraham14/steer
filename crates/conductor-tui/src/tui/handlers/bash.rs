@@ -49,6 +49,18 @@ impl Tui {
                     self.input_panel_state.handle_input(input);
                 }
             }
+        } else if (key.code == KeyCode::Enter
+            && (key.modifiers == KeyModifiers::SHIFT
+                || key.modifiers == KeyModifiers::ALT
+                || key.modifiers == KeyModifiers::CONTROL))
+            || (key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL)
+        {
+            // Insert a newline for various key combinations
+            let input = tui_textarea::Input::from(KeyEvent::new(
+                KeyCode::Char('\n'),
+                KeyModifiers::empty(),
+            ));
+            self.input_panel_state.handle_input(input);
         } else if key.code == KeyCode::Enter {
             // Execute the bash command
             let command = self.input_panel_state.content();

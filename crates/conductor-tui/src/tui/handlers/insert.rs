@@ -23,8 +23,8 @@ impl Tui {
             return Ok(false);
         }
 
-        // Check for Alt+Enter before passing to textarea
-        if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::ALT {
+        // Check for plain Enter to send message
+        if key.code == KeyCode::Enter && key.modifiers == KeyModifiers::empty() {
             // Send message
             let content = self.input_panel_state.content();
             if !content.trim().is_empty() {
@@ -32,6 +32,21 @@ impl Tui {
                 self.input_panel_state.clear(); // Clear after sending
                 self.input_mode = InputMode::Normal;
             }
+            return Ok(false);
+        }
+
+        // Check for various newline key combinations
+        if (key.code == KeyCode::Enter
+            && (key.modifiers == KeyModifiers::SHIFT
+                || key.modifiers == KeyModifiers::ALT
+                || key.modifiers == KeyModifiers::CONTROL))
+            || (key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL)
+        {
+            self.input_panel_state
+                .handle_input(Input::from(KeyEvent::new(
+                    KeyCode::Char('\n'),
+                    KeyModifiers::empty(),
+                )));
             return Ok(false);
         }
 
