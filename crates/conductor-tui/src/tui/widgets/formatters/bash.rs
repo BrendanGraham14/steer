@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::{Component, Theme};
 use conductor_core::app::conversation::ToolResult;
 use conductor_tools::tools::bash::BashParams;
 use ratatui::{
@@ -16,13 +16,14 @@ impl ToolFormatter for BashFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<BashParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid bash params",
-                styles::ERROR_TEXT,
+                theme.style(Component::ErrorText),
             ))];
         };
 
@@ -31,8 +32,8 @@ impl ToolFormatter for BashFormatter {
         if command_lines.len() == 1 && params.command.len() <= wrap_width.saturating_sub(2) {
             // Single line that fits - show inline with prompt
             let mut spans = vec![
-                Span::styled("$ ", styles::COMMAND_PROMPT),
-                Span::styled(params.command.clone(), styles::COMMAND_TEXT),
+                Span::styled("$ ", theme.style(Component::CommandPrompt)),
+                Span::styled(params.command.clone(), theme.style(Component::CommandText)),
             ];
 
             // Add exit code if error
@@ -44,7 +45,7 @@ impl ToolFormatter for BashFormatter {
                 {
                     spans.push(Span::styled(
                         format!(" (exit {exit_code})"),
-                        styles::ERROR_TEXT,
+                        theme.style(Component::ErrorText),
                     ));
                 }
             }
@@ -60,14 +61,20 @@ impl ToolFormatter for BashFormatter {
                     if i == 0 && j == 0 {
                         // First line gets the prompt
                         lines.push(Line::from(vec![
-                            Span::styled("$ ", styles::COMMAND_PROMPT),
-                            Span::styled(wrapped_line.to_string(), styles::COMMAND_TEXT),
+                            Span::styled("$ ", theme.style(Component::CommandPrompt)),
+                            Span::styled(
+                                wrapped_line.to_string(),
+                                theme.style(Component::CommandText),
+                            ),
                         ]));
                     } else {
                         // Subsequent lines are indented
                         lines.push(Line::from(vec![
                             Span::styled("  ", Style::default()),
-                            Span::styled(wrapped_line.to_string(), styles::COMMAND_TEXT),
+                            Span::styled(
+                                wrapped_line.to_string(),
+                                theme.style(Component::CommandText),
+                            ),
                         ]));
                     }
                 }
@@ -82,7 +89,7 @@ impl ToolFormatter for BashFormatter {
                 {
                     lines.push(Line::from(Span::styled(
                         format!("(exit {exit_code})"),
-                        styles::ERROR_TEXT,
+                        theme.style(Component::ErrorText),
                     )));
                 }
             }
@@ -96,13 +103,14 @@ impl ToolFormatter for BashFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<BashParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid bash params",
-                styles::ERROR_TEXT,
+                theme.style(Component::ErrorText),
             ))];
         };
 
@@ -119,13 +127,13 @@ impl ToolFormatter for BashFormatter {
         if let Some(timeout) = params.timeout {
             lines.push(Line::from(Span::styled(
                 format!("Timeout: {timeout}ms"),
-                styles::DIM_TEXT,
+                theme.style(Component::DimText),
             )));
         }
 
         // Show output if we have results
         if let Some(result) = result {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+            lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
 
             match result {
                 ToolResult::Bash(bash_result) => {
@@ -147,7 +155,9 @@ impl ToolFormatter for BashFormatter {
                                     "... ({} more lines)",
                                     bash_result.stdout.lines().count() - MAX_OUTPUT_LINES
                                 ),
-                                styles::ITALIC_GRAY,
+                                theme
+                                    .style(Component::DimText)
+                                    .add_modifier(ratatui::style::Modifier::ITALIC),
                             )));
                         }
                     }
@@ -155,9 +165,12 @@ impl ToolFormatter for BashFormatter {
                     // Show stderr if present
                     if !bash_result.stderr.trim().is_empty() {
                         if !bash_result.stdout.trim().is_empty() {
-                            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                            lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
                         }
-                        lines.push(Line::from(Span::styled("[stderr]", styles::ERROR_TEXT)));
+                        lines.push(Line::from(Span::styled(
+                            "[stderr]",
+                            theme.style(Component::ErrorText),
+                        )));
 
                         const MAX_ERROR_LINES: usize = 10;
                         let (error_lines, truncated) =
@@ -167,7 +180,7 @@ impl ToolFormatter for BashFormatter {
                             for wrapped in textwrap::wrap(line, wrap_width) {
                                 lines.push(Line::from(Span::styled(
                                     wrapped.to_string(),
-                                    styles::ERROR_TEXT,
+                                    theme.style(Component::ErrorText),
                                 )));
                             }
                         }
@@ -178,7 +191,9 @@ impl ToolFormatter for BashFormatter {
                                     "... ({} more lines)",
                                     bash_result.stderr.lines().count() - MAX_ERROR_LINES
                                 ),
-                                styles::ITALIC_GRAY,
+                                theme
+                                    .style(Component::DimText)
+                                    .add_modifier(ratatui::style::Modifier::ITALIC),
                             )));
                         }
                     }
@@ -187,14 +202,16 @@ impl ToolFormatter for BashFormatter {
                     if bash_result.exit_code != 0 {
                         lines.push(Line::from(Span::styled(
                             format!("Exit code: {}", bash_result.exit_code),
-                            styles::ERROR_TEXT,
+                            theme.style(Component::ErrorText),
                         )));
                     } else if bash_result.stdout.trim().is_empty()
                         && bash_result.stderr.trim().is_empty()
                     {
                         lines.push(Line::from(Span::styled(
                             "(Command completed successfully with no output)",
-                            styles::ITALIC_GRAY,
+                            theme
+                                .style(Component::DimText)
+                                .add_modifier(ratatui::style::Modifier::ITALIC),
                         )));
                     }
                 }
@@ -208,7 +225,7 @@ impl ToolFormatter for BashFormatter {
                         for wrapped in textwrap::wrap(line, wrap_width) {
                             lines.push(Line::from(Span::styled(
                                 wrapped.to_string(),
-                                styles::ERROR_TEXT,
+                                theme.style(Component::ErrorText),
                             )));
                         }
                     }
@@ -219,7 +236,7 @@ impl ToolFormatter for BashFormatter {
                                 "... ({} more lines)",
                                 error_message.lines().count() - MAX_ERROR_LINES
                             ),
-                            styles::ERROR_TEXT,
+                            theme.style(Component::ErrorText),
                         )));
                     }
                 }
@@ -227,7 +244,7 @@ impl ToolFormatter for BashFormatter {
                     // Other result types shouldn't appear for bash tool
                     lines.push(Line::from(Span::styled(
                         "Unexpected result type",
-                        styles::ERROR_TEXT,
+                        theme.style(Component::ErrorText),
                     )));
                 }
             }

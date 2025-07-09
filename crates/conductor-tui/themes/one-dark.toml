@@ -1,0 +1,112 @@
+# One Dark Theme for Conductor
+# A dark theme inspired by Atom's One Dark
+
+name = "One Dark"
+
+# Color palette - One Dark colors
+[palette]
+background = "#282c34"
+foreground = "#abb2bf"
+black = "#282c34"
+red = "#e06c75"
+green = "#98c379"
+yellow = "#e5c07b"
+blue = "#61afef"
+magenta = "#c678dd"
+cyan = "#56b6c2"
+white = "#abb2bf"
+bright_black = "#5c6370"
+bright_red = "#e06c75"
+bright_green = "#98c379"
+bright_yellow = "#e5c07b"
+bright_blue = "#61afef"
+bright_magenta = "#c678dd"
+bright_cyan = "#56b6c2"
+bright_white = "#ffffff"
+dark_gray = "#3e4452"
+gray = "#5c6370"
+comment = "#5c6370"
+bg_visual = "#3e4452"
+bg_highlight = "#3e4452"
+gutter_fg_grey = "#4b5263"
+dark_red = "#be5046"
+orange = "#d19a66"
+purple = "#c678dd"
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "foreground", bg = "dark_gray" }
+
+# Input panel
+input_panel_border = { fg = "gutter_fg_grey" }
+input_panel_border_active = { fg = "blue" }
+input_panel_border_command = { fg = "cyan" }
+input_panel_border_approval = { fg = "red", bold = true }
+input_panel_border_error = { fg = "dark_red", bold = true }
+input_panel_label = { fg = "foreground" }
+input_panel_label_active = { fg = "blue" }
+input_panel_label_command = { fg = "cyan" }
+input_panel_label_confirm_exit = { fg = "red" }
+
+# Chat list
+chat_list_border = { fg = "gutter_fg_grey" }
+user_message = { fg = "foreground" }
+user_message_role = { fg = "green", bold = true }
+assistant_message = { fg = "foreground" }
+assistant_message_role = { fg = "blue", bold = true }
+system_message = { fg = "gray" }
+system_message_role = { fg = "yellow" }
+
+# Tool calls
+tool_call = { fg = "cyan" }
+tool_call_border = { fg = "cyan" }
+tool_call_header = { fg = "cyan" }
+tool_call_id = { fg = "gray" }
+tool_output = { fg = "foreground" }
+tool_success = { fg = "green" }
+tool_error = { fg = "red" }
+
+# Assistant thoughts
+thought_box = { fg = "gray" }
+thought_header = { fg = "gray" }
+thought_border = { fg = "gutter_fg_grey" }
+thought_text = { fg = "gray", italic = true }
+
+# Commands
+command_prompt = { fg = "green", bold = true }
+command_text = { fg = "cyan" }
+command_success = { fg = "green" }
+command_error = { fg = "red" }
+
+# General
+error_text = { fg = "red" }
+error_bold = { fg = "red", bold = true }
+dim_text = { fg = "gray" }
+selection_highlight = { fg = "yellow", bold = true }
+placeholder_text = { fg = "gray", italic = true }
+
+# Model info
+model_info = { fg = "purple" }
+
+# Notices
+notice_info = { fg = "blue" }
+notice_warn = { fg = "yellow" }
+notice_error = { fg = "red" }
+
+# Todo items
+todo_high = { fg = "red" }
+todo_medium = { fg = "orange" }
+todo_low = { fg = "green" }
+todo_pending = { fg = "blue" }
+todo_in_progress = { fg = "yellow" }
+todo_completed = { fg = "green" }
+
+# Code editing
+code_addition = { fg = "green" }
+code_deletion = { fg = "red" }
+code_file_path = { fg = "orange" }
+
+# Popup
+popup_border = { fg = "foreground" }
+popup_selection = { fg = "foreground", bg = "bg_visual" }

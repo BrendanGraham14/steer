@@ -1,0 +1,106 @@
+# Solarized Light Theme
+name = "Solarized Light"
+
+# Color palette - Solarized Light colors
+[palette]
+# Essential colors
+background = "#fdf6e3"  # base3
+foreground = "#657b83"  # base00
+
+# Base colors (light background)
+base03 = "#002b36"  # darkest
+base02 = "#073642"
+base01 = "#586e75"  # emphasized content
+base00 = "#657b83"  # body text
+base0 = "#839496"
+base1 = "#93a1a1"   # comments
+base2 = "#eee8d5"   # background highlights
+base3 = "#fdf6e3"   # background
+
+# Accent colors
+yellow = "#b58900"
+orange = "#cb4b16"
+red = "#dc322f"
+magenta = "#d33682"
+violet = "#6c71c4"
+blue = "#268bd2"
+cyan = "#2aa198"
+green = "#859900"
+
+# Component styles
+[components]
+# Status bar - light background with dark text
+status_bar = { fg = "base00", bg = "base2" }
+
+# Input panel
+input_panel_border = { fg = "base1" }
+input_panel_border_active = { fg = "blue" }
+input_panel_border_command = { fg = "cyan" }
+input_panel_border_approval = { fg = "orange", bold = true }
+input_panel_border_error = { fg = "red", bold = true }
+input_panel_label = { fg = "base00" }
+input_panel_label_active = { fg = "blue" }
+input_panel_label_command = { fg = "cyan" }
+input_panel_label_confirm_exit = { fg = "red" }
+
+# Chat list
+chat_list_border = { fg = "base1" }
+user_message = { fg = "base00" }
+user_message_role = { fg = "base01", bold = true }
+assistant_message = { fg = "base00" }
+assistant_message_role = { fg = "green", bold = true }
+system_message = { fg = "base1" }
+system_message_role = { fg = "orange" }
+
+# Tool calls
+tool_call = { fg = "cyan" }
+tool_call_border = { fg = "cyan" }
+tool_call_header = { fg = "violet" }
+tool_call_id = { fg = "base1" }
+tool_output = { fg = "base00" }
+tool_success = { fg = "green" }
+tool_error = { fg = "red" }
+
+# Assistant thoughts
+thought_box = { fg = "base1" }
+thought_header = { fg = "base1" }
+thought_border = { fg = "base2" }
+thought_text = { fg = "base1", italic = true }
+
+# Commands
+command_prompt = { fg = "green", bold = true }
+command_text = { fg = "cyan" }
+command_success = { fg = "green" }
+command_error = { fg = "red" }
+
+# General
+error_text = { fg = "red" }
+error_bold = { fg = "red", bold = true }
+dim_text = { fg = "base1" }
+selection_highlight = { fg = "yellow", bold = true }
+placeholder_text = { fg = "base1", italic = true }
+
+# Model info
+model_info = { fg = "violet" }
+
+# Notices
+notice_info = { fg = "blue" }
+notice_warn = { fg = "yellow" }
+notice_error = { fg = "red" }
+
+# Todo items
+todo_high = { fg = "red" }
+todo_medium = { fg = "orange" }
+todo_low = { fg = "green" }
+todo_pending = { fg = "blue" }
+todo_in_progress = { fg = "yellow" }
+todo_completed = { fg = "green" }
+
+# Code editing
+code_addition = { fg = "green" }
+code_deletion = { fg = "red" }
+code_file_path = { fg = "orange" }
+
+# Popup
+popup_border = { fg = "blue" }
+popup_selection = { fg = "base3", bg = "base00" }

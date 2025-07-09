@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::{Component, Theme};
 use conductor_core::app::conversation::ToolResult;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
@@ -12,8 +12,12 @@ impl ToolFormatter for DefaultFormatter {
         _params: &Value,
         _result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
-        vec![Line::from(Span::styled("Unknown tool", styles::ERROR_TEXT))]
+        vec![Line::from(Span::styled(
+            "Unknown tool",
+            theme.style(Component::ErrorText),
+        ))]
     }
 
     fn detailed(
@@ -21,12 +25,13 @@ impl ToolFormatter for DefaultFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         lines.push(Line::from(Span::styled(
             "Tool Parameters:",
-            styles::TOOL_HEADER,
+            theme.style(Component::ToolCallHeader),
         )));
 
         // Show parameters as pretty-printed JSON
@@ -36,14 +41,14 @@ impl ToolFormatter for DefaultFormatter {
             for wrapped_line in wrapped_lines {
                 lines.push(Line::from(Span::styled(
                     wrapped_line.to_string(),
-                    styles::DIM_TEXT,
+                    theme.style(Component::DimText),
                 )));
             }
         }
 
         // Show result if available
         if let Some(result) = result {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+            lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
 
             // Show the result as pretty-printed JSON
             match serde_json::to_string_pretty(result) {
@@ -63,14 +68,18 @@ impl ToolFormatter for DefaultFormatter {
                                 "... ({} more lines)",
                                 pretty_result.lines().count() - MAX_LINES
                             ),
-                            styles::ITALIC_GRAY,
+                            theme
+                                .style(Component::DimText)
+                                .add_modifier(ratatui::style::Modifier::ITALIC),
                         )));
                     }
                 }
                 Err(_) => {
                     lines.push(Line::from(Span::styled(
                         "(Unable to display result)",
-                        styles::ITALIC_GRAY,
+                        theme
+                            .style(Component::DimText)
+                            .add_modifier(ratatui::style::Modifier::ITALIC),
                     )));
                 }
             }

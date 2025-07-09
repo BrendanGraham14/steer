@@ -33,6 +33,8 @@ impl fmt::Display for TuiCommandError {
 pub enum TuiCommand {
     /// Reload files in the TUI
     ReloadFiles,
+    /// Change or list themes
+    Theme(Option<String>),
 }
 
 /// Unified command type that can represent either TUI or Core commands
@@ -47,16 +49,23 @@ pub enum AppCommand {
 impl TuiCommand {
     /// Parse a command string into a TuiCommand (without leading slash)
     fn parse_without_slash(command: &str) -> Result<Self, TuiCommandError> {
-        match command {
-            "reload-files" => Ok(TuiCommand::ReloadFiles),
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        match parts.first() {
+            Some(&"reload-files") => Ok(TuiCommand::ReloadFiles),
+            Some(&"theme") => {
+                let theme_name = parts.get(1).map(|s| s.to_string());
+                Ok(TuiCommand::Theme(theme_name))
+            }
             _ => Err(TuiCommandError::UnknownCommand(command.to_string())),
         }
     }
 
     /// Convert the command to its string representation (without leading slash)
-    pub fn as_command_str(&self) -> &'static str {
+    pub fn as_command_str(&self) -> String {
         match self {
-            TuiCommand::ReloadFiles => "reload-files",
+            TuiCommand::ReloadFiles => "reload-files".to_string(),
+            TuiCommand::Theme(None) => "theme".to_string(),
+            TuiCommand::Theme(Some(name)) => format!("theme {name}"),
         }
     }
 }
@@ -68,11 +77,8 @@ impl AppCommand {
         let command = input.trim();
         let command = command.strip_prefix('/').unwrap_or(command);
 
-        // Split to get just the command name (without args)
-        let cmd_name = command.split_whitespace().next().unwrap_or("");
-
         // First try to parse as a TUI command
-        match TuiCommand::parse_without_slash(cmd_name) {
+        match TuiCommand::parse_without_slash(command) {
             Ok(tui_cmd) => Ok(AppCommand::Tui(tui_cmd)),
             Err(_) => {
                 // If not a TUI command, try to parse as a core command

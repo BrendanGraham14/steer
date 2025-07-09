@@ -1,0 +1,109 @@
+# One Light Theme
+name = "One Light"
+
+# Color palette - One Light colors
+[palette]
+# Essential colors
+background = "#fafafa"
+foreground = "#383a42"
+
+# Monochrome
+mono_1 = "#383a42"
+mono_2 = "#696c77"
+mono_3 = "#a0a1a7"
+
+# Background/UI
+bg = "#fafafa"
+gutter = "#9e9e9e"
+guide = "#d3d3d3"
+accent = "#526fff"
+selection = "#e5e5e6"
+line_highlight = "#f0f0f0"
+
+# Syntax colors
+hue_1 = "#0184bc"  # cyan
+hue_2 = "#4078f2"  # blue
+hue_3 = "#a626a4"  # purple
+hue_4 = "#50a14f"  # green
+hue_5 = "#e45649"  # red
+hue_5_2 = "#ca1243" # red variant
+hue_6 = "#986801"  # orange
+hue_6_2 = "#c18401" # orange variant
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "mono_1", bg = "line_highlight" }
+
+# Input panel
+input_panel_border = { fg = "guide" }
+input_panel_border_active = { fg = "accent" }
+input_panel_border_command = { fg = "hue_1" }
+input_panel_border_approval = { fg = "hue_6", bold = true }
+input_panel_border_error = { fg = "hue_5", bold = true }
+input_panel_label = { fg = "mono_1" }
+input_panel_label_active = { fg = "accent" }
+input_panel_label_command = { fg = "hue_1" }
+input_panel_label_confirm_exit = { fg = "hue_5" }
+
+# Chat list
+chat_list_border = { fg = "guide" }
+user_message = { fg = "mono_1" }
+user_message_role = { fg = "hue_2", bold = true }
+assistant_message = { fg = "mono_1" }
+assistant_message_role = { fg = "hue_4", bold = true }
+system_message = { fg = "mono_2" }
+system_message_role = { fg = "hue_6" }
+
+# Tool calls
+tool_call = { fg = "hue_1" }
+tool_call_border = { fg = "guide" }
+tool_call_header = { fg = "hue_3" }
+tool_call_id = { fg = "mono_3" }
+tool_output = { fg = "mono_1" }
+tool_success = { fg = "hue_4" }
+tool_error = { fg = "hue_5" }
+
+# Assistant thoughts
+thought_box = { fg = "mono_3" }
+thought_header = { fg = "mono_2" }
+thought_border = { fg = "guide" }
+thought_text = { fg = "mono_2", italic = true }
+
+# Commands
+command_prompt = { fg = "hue_4", bold = true }
+command_text = { fg = "hue_1" }
+command_success = { fg = "hue_4" }
+command_error = { fg = "hue_5" }
+
+# General
+error_text = { fg = "hue_5" }
+error_bold = { fg = "hue_5", bold = true }
+dim_text = { fg = "mono_3" }
+selection_highlight = { fg = "hue_6_2", bold = true }
+placeholder_text = { fg = "mono_3", italic = true }
+
+# Model info
+model_info = { fg = "hue_3" }
+
+# Notices
+notice_info = { fg = "hue_2" }
+notice_warn = { fg = "hue_6" }
+notice_error = { fg = "hue_5" }
+
+# Todo items
+todo_high = { fg = "hue_5" }
+todo_medium = { fg = "hue_6" }
+todo_low = { fg = "hue_4" }
+todo_pending = { fg = "hue_2" }
+todo_in_progress = { fg = "hue_6" }
+todo_completed = { fg = "hue_4" }
+
+# Code editing
+code_addition = { fg = "hue_4" }
+code_deletion = { fg = "hue_5" }
+code_file_path = { fg = "hue_6" }
+
+# Popup
+popup_border = { fg = "accent" }
+popup_selection = { fg = "mono_1", bg = "selection" }

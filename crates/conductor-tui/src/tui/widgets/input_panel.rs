@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::prelude::{Buffer, StatefulWidget, Widget};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
@@ -15,28 +15,26 @@ use crate::tui::InputMode;
 use crate::tui::get_spinner_char;
 use crate::tui::model::ChatItem;
 use crate::tui::state::file_cache::FileCache;
+use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::fuzzy_finder::FuzzyFinder;
 
 /// Helper function to format keybind hints with consistent styling
-fn format_keybind(key: &str, description: &str) -> Vec<Span<'static>> {
+fn format_keybind(key: &str, description: &str, theme: &Theme) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!("[{key}]"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!(" {description}"),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(format!(" {description}"), theme.style(Component::DimText)),
     ]
 }
 
-fn format_keybinds(keybinds: &[(&str, &str)]) -> Vec<Span<'static>> {
+fn format_keybinds(keybinds: &[(&str, &str)], theme: &Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (i, (key, description)) in keybinds.iter().enumerate() {
-        spans.extend(format_keybind(key, description));
+        spans.extend(format_keybind(key, description, theme));
         if i < keybinds.len() - 1 {
-            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(" │ ", theme.style(Component::DimText)));
         }
     }
     spans
@@ -221,11 +219,13 @@ impl InputPanelState {
 
     /// Calculate required height for approval mode
     pub fn required_height_for_approval(tool_call: &ToolCall, width: u16, max_height: u16) -> u16 {
+        let theme = &Theme::default();
         let formatter = crate::tui::widgets::formatters::get_formatter(&tool_call.name);
         let preview_lines = formatter.compact(
             &tool_call.parameters,
             &None,
             width.saturating_sub(4) as usize,
+            theme,
         );
         // 2 lines for header + preview lines + 2 for borders + 1 for padding
         (2 + preview_lines.len() + 3).min(max_height as usize) as u16
@@ -401,7 +401,7 @@ impl InputPanelState {
     }
 }
 
-fn get_formatted_mode(mode: InputMode) -> Span<'static> {
+fn get_formatted_mode(mode: InputMode, theme: &Theme) -> Span<'static> {
     // Add mode name with special styling
     let mode_name = match mode {
         InputMode::Insert => "Insert",
@@ -412,15 +412,17 @@ fn get_formatted_mode(mode: InputMode) -> Span<'static> {
         InputMode::EditMessageSelection => "Edit Selection",
         InputMode::FuzzyFinder => "Insert",
     };
-    let color = match mode {
-        InputMode::ConfirmExit => Color::Red,
-        _ => Color::Yellow,
+
+    let component = match mode {
+        InputMode::ConfirmExit => Component::ErrorBold,
+        InputMode::BashCommand => Component::CommandPrompt,
+        InputMode::AwaitingApproval => Component::ErrorBold,
+        InputMode::EditMessageSelection => Component::SelectionHighlight,
+        InputMode::FuzzyFinder => Component::SelectionHighlight,
+        _ => Component::ModelInfo,
     };
 
-    Span::styled(
-        mode_name,
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    )
+    Span::styled(mode_name, theme.style(component))
 }
 
 /// Properties for the [`InputPanel`] widget.
@@ -430,6 +432,7 @@ pub struct InputPanel<'a> {
     pub current_approval: Option<&'a ToolCall>,
     pub is_processing: bool,
     pub spinner_state: usize,
+    pub theme: &'a Theme,
 }
 
 impl<'a> InputPanel<'a> {
@@ -438,12 +441,14 @@ impl<'a> InputPanel<'a> {
         current_approval: Option<&'a ToolCall>,
         is_processing: bool,
         spinner_state: usize,
+        theme: &'a Theme,
     ) -> Self {
         Self {
             input_mode,
             current_approval,
             is_processing,
             spinner_state,
+            theme,
         }
     }
 
@@ -451,46 +456,50 @@ impl<'a> InputPanel<'a> {
     fn get_mode_title(&self) -> Line<'static> {
         let mut spans = vec![Span::raw(" ")];
 
-        spans.push(get_formatted_mode(self.input_mode));
-        spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        spans.push(get_formatted_mode(self.input_mode, self.theme));
+        spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
 
         match self.input_mode {
             InputMode::Insert => {
                 spans.extend(format_keybinds(&[("Enter", "send"), ("Esc", "cancel")]));
             }
             InputMode::Normal => {
-                spans.extend(format_keybinds(&[
-                    ("i", "insert"),
-                    ("!", "bash"),
-                    ("u/d/j/k", "scroll"),
-                    ("e", "edit previous"),
-                ]));
+                spans.extend(format_keybinds(
+                    &[
+                        ("i", "insert"),
+                        ("!", "bash"),
+                        ("u/d/j/k", "scroll"),
+                        ("e", "edit previous"),
+                    ],
+                    self.theme,
+                ));
             }
             InputMode::BashCommand => {
-                spans.extend(format_keybinds(&[("Enter", "execute"), ("Esc", "cancel")]));
+                spans.extend(format_keybinds(
+                    &[("Enter", "execute"), ("Esc", "cancel")],
+                    self.theme,
+                ));
             }
             InputMode::AwaitingApproval => {
                 // No keybinds for this mode
             }
             InputMode::ConfirmExit => {
-                spans.extend(format_keybinds(&[
-                    ("y/Y", "confirm"),
-                    ("any other key", "cancel"),
-                ]));
+                spans.extend(format_keybinds(
+                    &[("y/Y", "confirm"), ("any other key", "cancel")],
+                    self.theme,
+                ));
             }
             InputMode::EditMessageSelection => {
-                spans.extend(format_keybinds(&[
-                    ("↑↓", "navigate"),
-                    ("Enter", "select"),
-                    ("Esc", "cancel"),
-                ]));
+                spans.extend(format_keybinds(
+                    &[("↑↓", "navigate"), ("Enter", "select"), ("Esc", "cancel")],
+                    self.theme,
+                ));
             }
             InputMode::FuzzyFinder => {
-                spans.extend(format_keybinds(&[
-                    ("↑↓", "navigate"),
-                    ("Enter", "select"),
-                    ("Esc", "cancel"),
-                ]));
+                spans.extend(format_keybinds(
+                    &[("↑↓", "navigate"), ("Enter", "select"), ("Esc", "cancel")],
+                    self.theme,
+                ));
             }
         }
 
@@ -510,18 +519,14 @@ impl StatefulWidget for InputPanel<'_> {
                 &tool_call.parameters,
                 &None,
                 (area.width.saturating_sub(4)) as usize,
+                self.theme,
             );
 
             let mut approval_text = vec![
                 Line::from(vec![
-                    Span::styled("Tool ", Style::default().fg(Color::White)),
-                    Span::styled(
-                        &tool_call.name,
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" requests approval:", Style::default().fg(Color::White)),
+                    Span::styled("Tool ", Style::default()),
+                    Span::styled(&tool_call.name, self.theme.style(Component::ToolCallHeader)),
+                    Span::styled(" requests approval:", Style::default()),
                 ]),
                 Line::from(""),
             ];
@@ -530,27 +535,14 @@ impl StatefulWidget for InputPanel<'_> {
             let title = Line::from(vec![
                 Span::raw(" Tool Approval Required "),
                 Span::raw("─ "),
-                Span::styled(
-                    "[Y]",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" once", Style::default().fg(Color::White)),
+                Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
+                Span::styled(" once", Style::default()),
                 Span::raw(" "),
-                Span::styled(
-                    "[A]",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("lways", Style::default().fg(Color::White)),
+                Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
+                Span::styled("lways", Style::default()),
                 Span::raw(" "),
-                Span::styled(
-                    "[N]",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("o", Style::default().fg(Color::White)),
+                Span::styled("[N]", self.theme.style(Component::ToolError)),
+                Span::styled("o", Style::default()),
                 Span::raw(" "),
             ]);
 
@@ -558,7 +550,7 @@ impl StatefulWidget for InputPanel<'_> {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(title)
-                    .style(Style::default().fg(Color::Yellow)),
+                    .style(self.theme.style(Component::InputPanelBorderApproval)),
             );
 
             approval_block.render(area, buf);
@@ -572,7 +564,7 @@ impl StatefulWidget for InputPanel<'_> {
         if self.is_processing {
             title_spans.push(Span::styled(
                 format!(" {}", get_spinner_char(self.spinner_state)),
-                Style::default().fg(Color::Cyan),
+                self.theme.style(Component::ToolCall),
             ));
         }
 
@@ -583,13 +575,15 @@ impl StatefulWidget for InputPanel<'_> {
             .borders(Borders::ALL)
             .title(Line::from(title_spans))
             .style(match self.input_mode {
-                InputMode::Insert => Style::default().fg(Color::Gray),
-                InputMode::Normal => Style::default().fg(Color::DarkGray),
-                InputMode::BashCommand => Style::default().fg(Color::Cyan),
-                InputMode::ConfirmExit => Style::default().fg(Color::Red),
-                InputMode::EditMessageSelection => Style::default().fg(Color::Yellow),
-                InputMode::FuzzyFinder => Style::default().fg(Color::Gray),
-                _ => Style::default(),
+                InputMode::Insert => self.theme.style(Component::InputPanelBorderActive),
+                InputMode::Normal => self.theme.style(Component::InputPanelBorder),
+                InputMode::BashCommand => self.theme.style(Component::InputPanelBorderCommand),
+                InputMode::ConfirmExit => self.theme.style(Component::InputPanelBorderError),
+                InputMode::EditMessageSelection => {
+                    self.theme.style(Component::InputPanelBorderCommand)
+                }
+                InputMode::FuzzyFinder => self.theme.style(Component::InputPanelBorderActive),
+                _ => self.theme.style(Component::InputPanelBorder),
             });
 
         if self.input_mode == InputMode::EditMessageSelection {
@@ -598,7 +592,7 @@ impl StatefulWidget for InputPanel<'_> {
             if state.edit_selection_messages.is_empty() {
                 items.push(
                     ListItem::new("No user messages to edit")
-                        .style(Style::default().fg(Color::DarkGray)),
+                        .style(self.theme.style(Component::DimText)),
                 );
             } else {
                 let max_visible = 3;
@@ -632,9 +626,9 @@ impl StatefulWidget for InputPanel<'_> {
                 let mut list_state = ListState::default();
                 list_state.select(Some(state.edit_selection_index.saturating_sub(start_idx)));
 
-                let highlight_style = Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
+                let highlight_style = self
+                    .theme
+                    .style(Component::SelectionHighlight)
                     .add_modifier(Modifier::REVERSED);
 
                 let list = List::new(items)
@@ -665,7 +659,7 @@ impl StatefulWidget for InputPanel<'_> {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("▲"))
                 .end_symbol(Some("▼"))
-                .thumb_style(Style::default().fg(Color::Gray));
+                .thumb_style(self.theme.style(Component::DimText));
             let scrollbar_area = Rect {
                 x: area.x + area.width - 1,
                 y: area.y + 1,

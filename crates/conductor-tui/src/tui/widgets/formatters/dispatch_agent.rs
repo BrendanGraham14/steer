@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::Theme;
 use conductor_core::app::conversation::ToolResult;
 use conductor_core::tools::dispatch_agent::DispatchAgentParams;
 use ratatui::{
@@ -16,13 +16,14 @@ impl ToolFormatter for DispatchAgentFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<DispatchAgentParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid agent params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
@@ -44,7 +45,7 @@ impl ToolFormatter for DispatchAgentFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("task='{preview}' "), Style::default()),
-            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
+            Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
 
         lines
@@ -55,17 +56,18 @@ impl ToolFormatter for DispatchAgentFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<DispatchAgentParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid agent params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
-        lines.push(Line::from(Span::styled("Agent Task:", styles::TOOL_HEADER)));
+        lines.push(Line::from(Span::styled("Agent Task:", theme.text())));
         for line in params.prompt.lines() {
             for wrapped_line in textwrap::wrap(line, wrap_width) {
                 lines.push(Line::from(Span::styled(
@@ -80,7 +82,7 @@ impl ToolFormatter for DispatchAgentFormatter {
             match result {
                 ToolResult::Agent(agent_result) => {
                     if !agent_result.content.trim().is_empty() {
-                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                        lines.push(separator_line(wrap_width, theme.dim_text()));
 
                         const MAX_OUTPUT_LINES: usize = 30;
                         let (output_lines, truncated) =
@@ -98,22 +100,22 @@ impl ToolFormatter for DispatchAgentFormatter {
                                     "... ({} more lines)",
                                     agent_result.content.lines().count() - MAX_OUTPUT_LINES
                                 ),
-                                styles::ITALIC_GRAY,
+                                theme.subtle_text(),
                             )));
                         }
                     }
                 }
                 ToolResult::Error(error) => {
-                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                    lines.push(separator_line(wrap_width, theme.dim_text()));
                     lines.push(Line::from(Span::styled(
                         error.to_string(),
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
                 _ => {
                     lines.push(Line::from(Span::styled(
                         "Unexpected result type",
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
             }
