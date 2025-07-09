@@ -121,3 +121,24 @@ code_file_path = { fg = "nord12" }
 # Popup
 popup_border = { fg = "nord4" }
 popup_selection = { fg = "nord6", bg = "nord2" }
+
+# Markdown
+markdown_h1 = { fg = "nord8" }
+markdown_h2 = { fg = "nord8" }
+markdown_h3 = { fg = "nord8" }
+markdown_h4 = { fg = "nord9" }
+markdown_h5 = { fg = "nord9" }
+markdown_h6 = { fg = "nord3" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "nord13", bg = "nord1" }
+markdown_code_block = { bg = "nord1" }
+markdown_link = { fg = "nord8" }
+markdown_blockquote = { fg = "comment" }
+markdown_list_bullet = { fg = "nord3" }
+markdown_list_number = { fg = "nord9" }
+markdown_table_border = { fg = "nord3" }
+markdown_table_header = { fg = "nord8", bold = true }
+markdown_table_cell = { fg = "nord4" }

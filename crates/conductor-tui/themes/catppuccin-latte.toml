@@ -114,3 +114,24 @@ code_file_path = { fg = "peach" }
 # Popup
 popup_border = { fg = "lavender" }
 popup_selection = { fg = "text", bg = "surface1" }
+
+# Markdown  
+markdown_h1 = { fg = "base", bg = "blue", bold = true }
+markdown_h2 = { fg = "blue", bold = true, reversed = true }
+markdown_h3 = { fg = "blue", bold = true, underlined = true }
+markdown_h4 = { fg = "lavender" }
+markdown_h5 = { fg = "lavender", italic = true }
+markdown_h6 = { fg = "subtext0", italic = true }
+markdown_paragraph = { fg = "text" }
+markdown_bold = { bold = true }
+markdown_italic = { italic = true }
+markdown_strikethrough = { crossed_out = true }
+markdown_code = { fg = "pink", bg = "surface0" }
+markdown_code_block = { fg = "text", bg = "surface0" }
+markdown_link = { fg = "sky", underlined = true }
+markdown_blockquote = { fg = "overlay2", italic = true }
+markdown_list_bullet = { fg = "overlay1" }
+markdown_list_number = { fg = "lavender" }
+markdown_table_border = { fg = "surface2" }
+markdown_table_header = { fg = "blue", bold = true }
+markdown_table_cell = { fg = "foreground" }

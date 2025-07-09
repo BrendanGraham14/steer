@@ -104,3 +104,24 @@ code_file_path = { fg = "orange" }
 # Popup
 popup_border = { fg = "blue" }
 popup_selection = { fg = "base3", bg = "base00" }
+
+# Markdown
+markdown_h1 = { fg = "blue" }
+markdown_h2 = { fg = "blue" }
+markdown_h3 = { fg = "blue" }
+markdown_h4 = { fg = "violet" }
+markdown_h5 = { fg = "violet" }
+markdown_h6 = { fg = "base1" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "orange", bg = "base2" }
+markdown_code_block = { bg = "base2" }
+markdown_link = { fg = "blue" }
+markdown_blockquote = { fg = "base1" }
+markdown_list_bullet = { fg = "base1" }
+markdown_list_number = { fg = "blue" }
+markdown_table_border = { fg = "base1" }
+markdown_table_header = { fg = "cyan", bold = true }
+markdown_table_cell = { fg = "base00" }

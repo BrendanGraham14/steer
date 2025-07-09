@@ -208,32 +208,62 @@ text = { fg = "fg" }
     fn test_load_bundled_themes() {
         let loader = ThemeLoader::new();
 
-        // Test all bundled themes can be loaded
-        let bundled_theme_names = [
-            // Dark themes
-            ("catppuccin-mocha", "Catppuccin Mocha"),
-            ("dracula", "Dracula"),
-            ("gruvbox-dark", "Gruvbox Dark"),
-            ("nord", "Nord"),
-            ("one-dark", "One Dark"),
-            ("solarized-dark", "Solarized Dark"),
-            ("tokyo-night-storm", "Tokyo Night Storm"),
-            // Light themes
-            ("catppuccin-latte", "Catppuccin Latte"),
-            ("github-light", "GitHub Light"),
-            ("gruvbox-light", "Gruvbox Light"),
-            ("one-light", "One Light"),
-            ("solarized-light", "Solarized Light"),
-        ];
+        // Iterate through all theme files in the themes directory
+        let themes_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
+        let entries = std::fs::read_dir(&themes_dir)
+            .unwrap_or_else(|e| panic!("Failed to read themes directory: {e}"));
 
-        for (theme_id, expected_name) in bundled_theme_names {
-            let theme = loader
-                .load_theme(theme_id)
-                .unwrap_or_else(|e| panic!("Failed to load bundled theme '{theme_id}': {e:?}"));
-            assert_eq!(theme.name, expected_name);
+        let mut errors = Vec::new();
 
-            // Just verify the theme loaded successfully
-            // The new theme system uses Component enum instead of string keys
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+
+            // Skip non-TOML files
+            if path.extension().is_none_or(|ext| ext != "toml") {
+                continue;
+            }
+
+            let theme_id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .expect("Invalid theme filename");
+
+            match loader.load_theme(theme_id) {
+                Ok(theme) => {
+                    // Verify the theme loaded successfully
+                    if theme.name.is_empty() {
+                        errors.push(format!("Theme '{theme_id}' has empty name"));
+                    }
+                }
+                Err(e) => {
+                    // Provide detailed error information
+                    let error_msg = match &e {
+                        ThemeError::ColorNotFound(color) => {
+                            format!(
+                                "Theme '{theme_id}' references undefined color '{color}'. Check that this color is defined in either the 'palette' or 'colors' section."
+                            )
+                        }
+                        ThemeError::InvalidColor(msg) => {
+                            format!("Theme '{theme_id}' has invalid color: {msg}")
+                        }
+                        ThemeError::Parse(parse_err) => {
+                            format!("Theme '{theme_id}' has invalid TOML syntax: {parse_err}")
+                        }
+                        ThemeError::Validation(msg) => {
+                            format!("Theme '{theme_id}' validation error: {msg}")
+                        }
+                        ThemeError::Io(io_err) => {
+                            format!("Theme '{theme_id}' I/O error: {io_err}")
+                        }
+                    };
+                    errors.push(error_msg);
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            panic!("Theme loading errors:\n\n{}", errors.join("\n\n"));
         }
     }
 

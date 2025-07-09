@@ -429,7 +429,10 @@ impl<'a> ChatList<'a> {
                         match block {
                             UserContent::Text { text } => {
                                 // Parse markdown
-                                let markdown_text = tui_markdown::from_str(text);
+                                let markdown_styles =
+                                    super::markdown::MarkdownStyles::from_theme(self.theme);
+                                let markdown_text =
+                                    super::markdown::from_str(text, &markdown_styles);
 
                                 // Process each line from markdown
                                 for (line_idx, line) in markdown_text.lines.into_iter().enumerate()
@@ -634,7 +637,9 @@ impl<'a> ChatList<'a> {
                             }
 
                             // Parse markdown
-                            let markdown_text = tui_markdown::from_str(text);
+                            let markdown_styles =
+                                super::markdown::MarkdownStyles::from_theme(self.theme);
+                            let markdown_text = super::markdown::from_str(text, &markdown_styles);
 
                             // Process each line
                             for line in markdown_text.lines {
@@ -675,7 +680,10 @@ impl<'a> ChatList<'a> {
                             let thought_text = thought.display_text();
 
                             // Parse markdown for the thought
-                            let markdown_text = tui_markdown::from_str(&thought_text);
+                            let markdown_styles =
+                                super::markdown::MarkdownStyles::from_theme(self.theme);
+                            let markdown_text =
+                                super::markdown::from_str(&thought_text, &markdown_styles);
 
                             // Process each line
                             for line in markdown_text.lines {
