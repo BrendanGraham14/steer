@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::Theme;
 use conductor_core::app::conversation::ToolResult;
 use ratatui::{
     style::{Color, Style},
@@ -15,6 +15,7 @@ impl ToolFormatter for TodoReadFormatter {
         _params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
@@ -43,8 +44,8 @@ impl ToolFormatter for TodoReadFormatter {
         };
 
         lines.push(Line::from(vec![
-            Span::styled("TODO READ ", styles::DIM_TEXT),
-            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
+            Span::styled("TODO READ ", theme.dim_text()),
+            Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
 
         lines
@@ -55,17 +56,18 @@ impl ToolFormatter for TodoReadFormatter {
         _params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         if let Some(result) = result {
             match result {
                 ToolResult::TodoRead(todo_list) => {
-                    lines.push(Line::from(Span::styled("Todo List:", styles::TOOL_HEADER)));
-                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                    lines.push(Line::from(Span::styled("Todo List:", theme.text())));
+                    lines.push(separator_line(wrap_width, theme.dim_text()));
 
                     if todo_list.todos.is_empty() {
-                        lines.push(Line::from(Span::styled("No todos", styles::ITALIC_GRAY)));
+                        lines.push(Line::from(Span::styled("No todos", theme.subtle_text())));
                     } else {
                         // Group by status
                         let mut by_status: std::collections::HashMap<&str, Vec<_>> =
@@ -99,7 +101,7 @@ impl ToolFormatter for TodoReadFormatter {
 
                                         lines.push(Line::from(vec![
                                             Span::styled("  ", Style::default()),
-                                            Span::styled(priority_prefix, styles::DIM_TEXT),
+                                            Span::styled(priority_prefix, theme.dim_text()),
                                             Span::raw(todo.content.clone()),
                                         ]));
                                     }
@@ -111,13 +113,13 @@ impl ToolFormatter for TodoReadFormatter {
                 ToolResult::Error(error) => {
                     lines.push(Line::from(Span::styled(
                         error.to_string(),
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
                 _ => {
                     lines.push(Line::from(Span::styled(
                         "Unexpected result type",
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
             }

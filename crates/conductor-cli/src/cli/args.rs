@@ -64,6 +64,10 @@ pub struct Cli {
     #[arg(long)]
     pub session_config: Option<PathBuf>,
 
+    /// Theme to use for the TUI (defaults to "default")
+    #[arg(long)]
+    pub theme: Option<String>,
+
     /// Subcommands
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -79,6 +83,9 @@ pub enum Commands {
         /// Path to session configuration file (TOML format) for new sessions (overrides global)
         #[arg(long)]
         session_config: Option<PathBuf>,
+        /// Theme to use for the TUI (overrides global)
+        #[arg(long)]
+        theme: Option<String>,
     },
     /// Initialize a new config file
     Init {

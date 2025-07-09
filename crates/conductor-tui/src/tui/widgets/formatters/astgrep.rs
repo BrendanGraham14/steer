@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::Theme;
 use conductor_core::app::conversation::ToolResult;
 use conductor_tools::tools::astgrep::AstGrepParams;
 use ratatui::{
@@ -16,13 +16,14 @@ impl ToolFormatter for AstGrepFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<AstGrepParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid astgrep params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
@@ -43,8 +44,8 @@ impl ToolFormatter for AstGrepFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("pattern='{}' ", params.pattern), Style::default()),
-            Span::styled(format!("path={path_display} "), styles::DIM_TEXT),
-            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
+            Span::styled(format!("path={path_display} "), theme.dim_text()),
+            Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
 
         lines
@@ -55,20 +56,18 @@ impl ToolFormatter for AstGrepFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<AstGrepParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid astgrep params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
-        lines.push(Line::from(Span::styled(
-            "Search Parameters:",
-            styles::TOOL_HEADER,
-        )));
+        lines.push(Line::from(Span::styled("Search Parameters:", theme.text())));
         lines.push(Line::from(Span::styled(
             format!("  Pattern: {}", params.pattern),
             Style::default(),
@@ -104,7 +103,7 @@ impl ToolFormatter for AstGrepFormatter {
             match result {
                 ToolResult::Search(search_result) => {
                     if !search_result.matches.is_empty() {
-                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                        lines.push(separator_line(wrap_width, theme.dim_text()));
 
                         const MAX_LINES: usize = 20;
                         let matches = &search_result.matches;
@@ -125,27 +124,27 @@ impl ToolFormatter for AstGrepFormatter {
                         if matches.len() > MAX_LINES {
                             lines.push(Line::from(Span::styled(
                                 format!("... ({} more matches)", matches.len() - MAX_LINES),
-                                styles::ITALIC_GRAY,
+                                theme.subtle_text(),
                             )));
                         }
                     } else {
                         lines.push(Line::from(Span::styled(
                             "No matches found",
-                            styles::ITALIC_GRAY,
+                            theme.subtle_text(),
                         )));
                     }
                 }
                 ToolResult::Error(error) => {
-                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                    lines.push(separator_line(wrap_width, theme.dim_text()));
                     lines.push(Line::from(Span::styled(
                         error.to_string(),
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
                 _ => {
                     lines.push(Line::from(Span::styled(
                         "Unexpected result type",
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
             }

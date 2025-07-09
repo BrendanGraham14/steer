@@ -1,14 +1,14 @@
 //! ChatList widget - simplified message list for the new data model
 
 use crate::tui::model::{ChatItem, MessageRow, NoticeLevel};
+use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::formatters;
 use crate::tui::widgets::formatters::helpers::style_wrap;
-use crate::tui::widgets::styles;
 use conductor_core::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
     widgets::{Block, Paragraph, StatefulWidget, Widget, Wrap},
 };
@@ -130,14 +130,16 @@ pub struct ChatList<'a> {
     items: &'a [ChatItem],
     block: Option<Block<'a>>,
     hovered_message_id: Option<&'a str>,
+    theme: &'a Theme,
 }
 
 impl<'a> ChatList<'a> {
-    pub fn new(items: &'a [ChatItem]) -> Self {
+    pub fn new(items: &'a [ChatItem], theme: &'a Theme) -> Self {
         Self {
             items,
             block: None,
             hovered_message_id: None,
+            theme,
         }
     }
 
@@ -155,18 +157,18 @@ impl<'a> ChatList<'a> {
         let mut spans = vec![];
 
         // Role indicator
-        let (symbol, color) = match &message.inner {
-            Message::User { .. } => ("▶", Color::Blue),
-            Message::Assistant { .. } => ("◀", Color::Green),
-            Message::Tool { .. } => ("⚙", Color::Cyan),
+        let (symbol, component) = match &message.inner {
+            Message::User { .. } => ("▶", Component::UserMessageRole),
+            Message::Assistant { .. } => ("◀", Component::AssistantMessageRole),
+            Message::Tool { .. } => ("⚙", Component::ToolCall),
         };
 
-        let style = if is_hovered {
-            // Hovered style - reversed or highlighted
-            Style::default().fg(color).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(color)
-        };
+        let mut style = self.theme.style(component);
+
+        if is_hovered {
+            // Hovered style - add bold
+            style = style.add_modifier(Modifier::BOLD);
+        }
 
         spans.push(Span::styled(symbol, style));
 
@@ -174,7 +176,7 @@ impl<'a> ChatList<'a> {
     }
 
     fn render_meta_gutter(&self) -> Line<'static> {
-        let style = Style::default().fg(Color::Gray);
+        let style = self.theme.style(Component::DimText);
         Line::from(vec![Span::styled("•", style)])
     }
 
@@ -232,16 +234,19 @@ impl<'a> ChatList<'a> {
                 // Render the pending tool call
                 let first_line = vec![
                     Span::raw("  "), // Indent
-                    Span::styled("⚙", Style::default().fg(Color::Cyan)),
+                    Span::styled("⚙", self.theme.style(Component::ToolCall)),
                     Span::raw(" "),
                     Span::styled(
                         tool_call.name.clone(),
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
+                        self.theme.style(Component::ToolCallHeader),
                     ),
-                    Span::styled(" ⋯ ", styles::DIM_TEXT),
-                    Span::styled("Pending...", styles::ITALIC_GRAY),
+                    Span::styled(" ⋯ ", self.theme.style(Component::DimText)),
+                    Span::styled(
+                        "Pending...",
+                        self.theme
+                            .style(Component::DimText)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
                 ];
                 lines.push(Line::from(first_line));
 
@@ -258,9 +263,7 @@ impl<'a> ChatList<'a> {
                 first_line.push(Span::raw(" "));
                 first_line.push(Span::styled(
                     raw.clone(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
+                    self.theme.style(Component::CommandPrompt),
                 ));
                 lines.push(Line::from(first_line));
 
@@ -324,14 +327,12 @@ impl<'a> ChatList<'a> {
                     first_line.push(Span::raw(" "));
                     first_line.push(Span::styled(
                         command_str.to_string(),
-                        Style::default()
-                            .fg(Color::Magenta)
-                            .add_modifier(Modifier::BOLD),
+                        self.theme.style(Component::CommandPrompt),
                     ));
                     first_line.push(Span::raw(": "));
                     first_line.push(Span::styled(
                         response_text,
-                        Style::default().fg(Color::White),
+                        self.theme.style(Component::CommandText),
                     ));
                     lines.push(Line::from(first_line));
                 } else {
@@ -341,9 +342,7 @@ impl<'a> ChatList<'a> {
                     first_line.push(Span::raw(" "));
                     first_line.push(Span::styled(
                         command_str.to_string(),
-                        Style::default()
-                            .fg(Color::Magenta)
-                            .add_modifier(Modifier::BOLD),
+                        self.theme.style(Component::CommandPrompt),
                     ));
                     first_line.push(Span::raw(":"));
                     lines.push(Line::from(first_line));
@@ -360,7 +359,7 @@ impl<'a> ChatList<'a> {
                                     Span::raw("    "),
                                     Span::styled(
                                         wrapped_line.to_string(),
-                                        Style::default().fg(Color::White),
+                                        self.theme.style(Component::CommandText),
                                     ),
                                 ]));
                             }
@@ -377,10 +376,10 @@ impl<'a> ChatList<'a> {
             } => {
                 let mut lines = vec![];
 
-                let (prefix, color) = match level {
-                    NoticeLevel::Info => ("info: ", Color::Blue),
-                    NoticeLevel::Warn => ("warn: ", Color::Yellow),
-                    NoticeLevel::Error => ("error: ", Color::Red),
+                let (prefix, component) = match level {
+                    NoticeLevel::Info => ("info: ", Component::NoticeInfo),
+                    NoticeLevel::Warn => ("warn: ", Component::NoticeWarn),
+                    NoticeLevel::Error => ("error: ", Component::NoticeError),
                 };
 
                 // Format timestamp
@@ -392,11 +391,13 @@ impl<'a> ChatList<'a> {
                 let mut first_line = vec![];
                 first_line.extend(self.render_meta_gutter().spans);
                 first_line.push(Span::raw(" "));
-                first_line.push(Span::styled(prefix, Style::default().fg(color)));
+                first_line.push(Span::styled(prefix, self.theme.style(component)));
                 first_line.push(Span::raw(text.clone()));
                 first_line.push(Span::styled(
                     format!(" ({time_str})"),
-                    Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+                    self.theme
+                        .style(Component::DimText)
+                        .add_modifier(Modifier::DIM),
                 ));
                 lines.push(Line::from(first_line));
 
@@ -472,7 +473,7 @@ impl<'a> ChatList<'a> {
                                     cmd_line.push(Span::raw(" "));
                                     cmd_line.push(Span::styled(
                                         "$ ",
-                                        Style::default().fg(Color::Yellow),
+                                        self.theme.style(Component::CommandPrompt),
                                     ));
                                     cmd_line.push(Span::raw(command.clone()));
                                     all_lines.push(Line::from(cmd_line));
@@ -481,7 +482,7 @@ impl<'a> ChatList<'a> {
                                     let mut cmd_line = vec![Span::raw("  ")]; // Indent
                                     cmd_line.push(Span::styled(
                                         "$ ",
-                                        Style::default().fg(Color::Yellow),
+                                        self.theme.style(Component::CommandPrompt),
                                     ));
                                     cmd_line.push(Span::raw(command.clone()));
                                     all_lines.push(Line::from(cmd_line));
@@ -493,7 +494,7 @@ impl<'a> ChatList<'a> {
                                         Span::raw("  "),
                                         Span::styled(
                                             format!("Exit code: {exit_code}"),
-                                            Style::default().fg(Color::Red),
+                                            self.theme.style(Component::ErrorText),
                                         ),
                                     ]));
                                 }
@@ -507,7 +508,7 @@ impl<'a> ChatList<'a> {
                                             Span::raw("  "),
                                             Span::styled(
                                                 line.to_string(),
-                                                Style::default().fg(Color::DarkGray),
+                                                self.theme.style(Component::DimText),
                                             ),
                                         ]));
                                     }
@@ -517,7 +518,10 @@ impl<'a> ChatList<'a> {
                                 if !stderr.is_empty() {
                                     all_lines.push(Line::from(vec![
                                         Span::raw("  "),
-                                        Span::styled("Error:", Style::default().fg(Color::Red)),
+                                        Span::styled(
+                                            "Error:",
+                                            self.theme.style(Component::ErrorBold),
+                                        ),
                                     ]));
                                     let stderr_wrapped =
                                         textwrap::wrap(stderr, max_width.saturating_sub(2));
@@ -526,7 +530,7 @@ impl<'a> ChatList<'a> {
                                             Span::raw("  "),
                                             Span::styled(
                                                 line.to_string(),
-                                                Style::default().fg(Color::Red),
+                                                self.theme.style(Component::ErrorText),
                                             ),
                                         ]));
                                     }
@@ -569,7 +573,7 @@ impl<'a> ChatList<'a> {
                                     cmd_line.push(Span::raw(" "));
                                     cmd_line.push(Span::styled(
                                         command_str,
-                                        Style::default().fg(Color::Magenta),
+                                        self.theme.style(Component::CommandPrompt),
                                     ));
                                     all_lines.push(Line::from(cmd_line));
                                 } else {
@@ -577,7 +581,7 @@ impl<'a> ChatList<'a> {
                                     let mut cmd_line = vec![Span::raw("  ")]; // Indent
                                     cmd_line.push(Span::styled(
                                         command_str,
-                                        Style::default().fg(Color::Magenta),
+                                        self.theme.style(Component::CommandPrompt),
                                     ));
                                     all_lines.push(Line::from(cmd_line));
                                 }
@@ -589,7 +593,7 @@ impl<'a> ChatList<'a> {
                                             for line in wrapped {
                                                 all_lines.push(Line::from(vec![
                                                     Span::raw("  "),
-                                                    Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
+                                                    Span::styled(line.to_string(), self.theme.style(Component::DimText)),
                                                 ]));
                                             }
                                         }
@@ -603,7 +607,7 @@ impl<'a> ChatList<'a> {
                                             for line in wrapped {
                                                 all_lines.push(Line::from(vec![
                                                     Span::raw("  "),
-                                                    Span::styled(line.to_string(), Style::default().fg(Color::Green)),
+                                                    Span::styled(line.to_string(), self.theme.style(Component::ToolSuccess)),
                                                 ]));
                                             }
                                         }
@@ -686,9 +690,7 @@ impl<'a> ChatList<'a> {
                                     for span in wrapped_line.spans {
                                         styled_spans.push(Span::styled(
                                             span.content.into_owned(),
-                                            span.style
-                                                .fg(Color::DarkGray)
-                                                .add_modifier(Modifier::ITALIC),
+                                            self.theme.style(Component::ThoughtText),
                                         ));
                                     }
 
@@ -763,11 +765,13 @@ impl<'a> ChatList<'a> {
                             &tool_call.parameters,
                             &Some(result.clone()),
                             wrap_width,
+                            self.theme,
                         ),
                         ViewMode::Detailed => formatter.detailed(
                             &tool_call.parameters,
                             &Some(result.clone()),
                             wrap_width,
+                            self.theme,
                         ),
                     };
 
@@ -777,9 +781,7 @@ impl<'a> ChatList<'a> {
                     first_line.push(Span::raw(" "));
                     first_line.push(Span::styled(
                         tool_call.name.clone(),
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
+                        self.theme.style(Component::ToolCallHeader),
                     ));
 
                     // For compact mode, try to fit first output on same line
@@ -791,10 +793,16 @@ impl<'a> ChatList<'a> {
                             // Add status indicator
                             match result {
                                 ToolResult::Error(_) => {
-                                    first_line.push(Span::styled(" ✗ ", styles::ERROR_TEXT));
+                                    first_line.push(Span::styled(
+                                        " ✗ ",
+                                        self.theme.style(Component::ErrorText),
+                                    ));
                                 }
                                 _ => {
-                                    first_line.push(Span::styled(" ✓ ", styles::TOOL_SUCCESS));
+                                    first_line.push(Span::styled(
+                                        " ✓ ",
+                                        self.theme.style(Component::ToolSuccess),
+                                    ));
                                 }
                             }
                             first_line.extend(first_output.spans.clone());
@@ -810,10 +818,16 @@ impl<'a> ChatList<'a> {
                             // Add status indicator on first line
                             match result {
                                 ToolResult::Error(_) => {
-                                    first_line.push(Span::styled(" ✗", styles::ERROR_TEXT));
+                                    first_line.push(Span::styled(
+                                        " ✗",
+                                        self.theme.style(Component::ErrorText),
+                                    ));
                                 }
                                 _ => {
-                                    first_line.push(Span::styled(" ✓", styles::TOOL_SUCCESS));
+                                    first_line.push(Span::styled(
+                                        " ✓",
+                                        self.theme.style(Component::ToolSuccess),
+                                    ));
                                 }
                             }
                             all_lines.push(Line::from(first_line));
@@ -841,23 +855,21 @@ impl<'a> ChatList<'a> {
                     fallback_line.push(Span::raw(" "));
                     fallback_line.push(Span::styled(
                         "Tool Result",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
+                        self.theme.style(Component::ToolCallHeader),
                     ));
                     all_lines.push(Line::from(fallback_line));
 
                     // Show a simple message for the fallback case
-                    let color = match result {
-                        ToolResult::Error(_) => Color::Red,
-                        _ => Color::DarkGray,
+                    let component = match result {
+                        ToolResult::Error(_) => Component::ToolError,
+                        _ => Component::DimText,
                     };
 
                     all_lines.push(Line::from(vec![
                         Span::raw("    "),
                         Span::styled(
                             "(Result display unavailable)",
-                            Style::default().fg(color).add_modifier(Modifier::ITALIC),
+                            self.theme.style(component).add_modifier(Modifier::ITALIC),
                         ),
                     ]));
                 }

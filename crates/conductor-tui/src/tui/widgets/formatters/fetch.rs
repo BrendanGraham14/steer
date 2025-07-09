@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::Theme;
 use conductor_core::app::conversation::ToolResult;
 use conductor_core::tools::fetch::FetchParams;
 use ratatui::{
@@ -16,13 +16,14 @@ impl ToolFormatter for FetchFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<FetchParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid fetch params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
@@ -41,7 +42,7 @@ impl ToolFormatter for FetchFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("url={url_display} "), Style::default()),
-            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
+            Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
 
         lines
@@ -52,20 +53,18 @@ impl ToolFormatter for FetchFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<FetchParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid fetch params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
-        lines.push(Line::from(Span::styled(
-            "Fetch Parameters:",
-            styles::TOOL_HEADER,
-        )));
+        lines.push(Line::from(Span::styled("Fetch Parameters:", theme.text())));
         lines.push(Line::from(Span::styled(
             format!("  URL: {}", params.url),
             Style::default(),
@@ -77,7 +76,7 @@ impl ToolFormatter for FetchFormatter {
             for wrapped in textwrap::wrap(line, wrap_width.saturating_sub(4)) {
                 lines.push(Line::from(Span::styled(
                     format!("    {wrapped}"),
-                    styles::DIM_TEXT,
+                    theme.dim_text(),
                 )));
             }
         }
@@ -87,7 +86,7 @@ impl ToolFormatter for FetchFormatter {
             match result {
                 ToolResult::Fetch(fetch_result) => {
                     if !fetch_result.content.trim().is_empty() {
-                        lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                        lines.push(separator_line(wrap_width, theme.dim_text()));
 
                         const MAX_OUTPUT_LINES: usize = 25;
                         let (output_lines, truncated) =
@@ -105,22 +104,22 @@ impl ToolFormatter for FetchFormatter {
                                     "... ({} more lines)",
                                     fetch_result.content.lines().count() - MAX_OUTPUT_LINES
                                 ),
-                                styles::ITALIC_GRAY,
+                                theme.subtle_text(),
                             )));
                         }
                     }
                 }
                 ToolResult::Error(error) => {
-                    lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+                    lines.push(separator_line(wrap_width, theme.dim_text()));
                     lines.push(Line::from(Span::styled(
                         error.to_string(),
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
                 _ => {
                     lines.push(Line::from(Span::styled(
                         "Unexpected result type",
-                        styles::ERROR_TEXT,
+                        theme.error_text(),
                     )));
                 }
             }

@@ -1,0 +1,115 @@
+# GitHub Light Theme
+name = "GitHub Light"
+
+# Color palette - GitHub Light colors
+[palette]
+# Essential colors
+background = "#ffffff"
+foreground = "#24292e"
+
+# Base colors
+bg = "#ffffff"
+bg_highlight = "#f6f8fa"
+border_default = "#d1d5da"
+border_muted = "#e1e4e8"
+fg_default = "#24292e"
+fg_muted = "#586069"
+fg_subtle = "#6a737d"
+
+# Accent colors
+accent_fg = "#0366d6"
+accent_emphasis = "#0366d6"
+danger_fg = "#d73a49"
+success_fg = "#28a745"
+attention_fg = "#e36209"
+warning_fg = "#f9c513"
+done_fg = "#6f42c1"
+sponsors_fg = "#ea4aaa"
+
+# Syntax colors
+syntax_comment = "#6a737d"
+syntax_constant = "#005cc5"
+syntax_entity = "#6f42c1"
+syntax_keyword = "#d73a49"
+syntax_string = "#032f62"
+syntax_variable = "#e36209"
+syntax_regexp = "#032f62"
+syntax_markup_heading = "#005cc5"
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "fg_default", bg = "bg_highlight" }
+
+# Input panel
+input_panel_border = { fg = "border_default" }
+input_panel_border_active = { fg = "accent_fg" }
+input_panel_border_command = { fg = "syntax_constant" }
+input_panel_border_approval = { fg = "attention_fg", bold = true }
+input_panel_border_error = { fg = "danger_fg", bold = true }
+input_panel_label = { fg = "fg_default" }
+input_panel_label_active = { fg = "accent_fg" }
+input_panel_label_command = { fg = "syntax_constant" }
+input_panel_label_confirm_exit = { fg = "danger_fg" }
+
+# Chat list
+chat_list_border = { fg = "border_default" }
+user_message = { fg = "fg_default" }
+user_message_role = { fg = "accent_fg", bold = true }
+assistant_message = { fg = "fg_default" }
+assistant_message_role = { fg = "success_fg", bold = true }
+system_message = { fg = "fg_muted" }
+system_message_role = { fg = "attention_fg" }
+
+# Tool calls
+tool_call = { fg = "syntax_constant" }
+tool_call_border = { fg = "border_default" }
+tool_call_header = { fg = "done_fg" }
+tool_call_id = { fg = "fg_subtle" }
+tool_output = { fg = "fg_default" }
+tool_success = { fg = "success_fg" }
+tool_error = { fg = "danger_fg" }
+
+# Assistant thoughts
+thought_box = { fg = "fg_subtle" }
+thought_header = { fg = "fg_muted" }
+thought_border = { fg = "border_muted" }
+thought_text = { fg = "fg_muted", italic = true }
+
+# Commands
+command_prompt = { fg = "success_fg", bold = true }
+command_text = { fg = "syntax_constant" }
+command_success = { fg = "success_fg" }
+command_error = { fg = "danger_fg" }
+
+# General
+error_text = { fg = "danger_fg" }
+error_bold = { fg = "danger_fg", bold = true }
+dim_text = { fg = "fg_subtle" }
+selection_highlight = { fg = "warning_fg", bold = true }
+placeholder_text = { fg = "fg_subtle", italic = true }
+
+# Model info
+model_info = { fg = "done_fg" }
+
+# Notices
+notice_info = { fg = "accent_fg" }
+notice_warn = { fg = "attention_fg" }
+notice_error = { fg = "danger_fg" }
+
+# Todo items
+todo_high = { fg = "danger_fg" }
+todo_medium = { fg = "attention_fg" }
+todo_low = { fg = "success_fg" }
+todo_pending = { fg = "accent_fg" }
+todo_in_progress = { fg = "attention_fg" }
+todo_completed = { fg = "success_fg" }
+
+# Code editing
+code_addition = { fg = "success_fg" }
+code_deletion = { fg = "danger_fg" }
+code_file_path = { fg = "done_fg" }
+
+# Popup
+popup_border = { fg = "accent_fg" }
+popup_selection = { fg = "fg_default", bg = "bg_highlight" }

@@ -1,3 +1,4 @@
+use crate::tui::theme::Theme;
 use conductor_core::app::conversation::ToolResult;
 use lazy_static::lazy_static;
 use ratatui::text::Line;
@@ -45,6 +46,7 @@ pub trait ToolFormatter: Send + Sync {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>>;
 
     /// Format tool call and result in detailed mode (full parameters and output)
@@ -53,6 +55,7 @@ pub trait ToolFormatter: Send + Sync {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>>;
 }
 

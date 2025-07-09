@@ -37,12 +37,14 @@ async fn main() -> Result<()> {
     let cmd = cli.command.clone().unwrap_or(Commands::Tui {
         remote: None,         // Will use global --remote if set
         session_config: None, // Will use global --session-config if set
+        theme: None,          // Will use global --theme if set
     });
 
     match cmd {
         Commands::Tui {
             remote,
             session_config,
+            theme,
         } => {
             #[cfg(feature = "ui")]
             {
@@ -50,6 +52,8 @@ async fn main() -> Result<()> {
                 let remote_addr = remote.or(cli.remote.clone());
                 // Use subcommand session_config if provided, otherwise fall back to global
                 let session_config_path = session_config.or(cli.session_config.clone());
+                // Use subcommand theme if provided, otherwise fall back to global
+                let theme_name = theme.or(cli.theme.clone());
 
                 // Set panic hook for terminal cleanup
                 setup_panic_hook();
@@ -64,6 +68,7 @@ async fn main() -> Result<()> {
                         cli.directory,
                         cli.system_prompt,
                         session_config_path,
+                        theme_name.clone(),
                     )
                     .await
                 } else {
@@ -75,6 +80,7 @@ async fn main() -> Result<()> {
                         cli.system_prompt,
                         cli.session_db,
                         session_config_path,
+                        theme_name,
                     )
                     .await
                 }
@@ -160,6 +166,7 @@ async fn run_tui_local(
     system_prompt: Option<String>,
     session_db: Option<std::path::PathBuf>,
     session_config_path: Option<std::path::PathBuf>,
+    theme: Option<String>,
 ) -> Result<()> {
     use conductor_grpc::local_server;
     use std::sync::Arc;
@@ -228,6 +235,7 @@ async fn run_tui_local(
         model,
         directory,
         None, // system_prompt is already applied to the session
+        theme,
     )
     .await
     .map_err(|e| eyre::eyre!("TUI error: {}", e))
@@ -241,6 +249,7 @@ async fn run_tui_remote(
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
     session_config_path: Option<std::path::PathBuf>,
+    theme: Option<String>,
 ) -> Result<()> {
     use conductor_grpc::GrpcClientAdapter;
     use std::sync::Arc;
@@ -298,6 +307,7 @@ async fn run_tui_remote(
         model,
         directory,
         None, // system_prompt is already applied to the session
+        theme,
     )
     .await
     .map_err(|e| eyre::eyre!("TUI error: {}", e))

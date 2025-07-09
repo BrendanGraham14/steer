@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::Theme;
 use conductor_core::app::conversation::ToolResult;
 use ratatui::{
     style::Style,
@@ -18,13 +18,14 @@ impl ToolFormatter for ExternalFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         // Show a one-liner with param preview and short payload/error summary.
         let mut spans = Vec::new();
 
         // Param preview
         let preview = json_preview(params, 30);
-        spans.push(Span::styled(preview.to_string(), styles::DIM_TEXT));
+        spans.push(Span::styled(preview.to_string(), theme.dim_text()));
 
         if let Some(result) = result {
             match result {
@@ -35,7 +36,7 @@ impl ToolFormatter for ExternalFormatter {
                 }
                 ToolResult::Error(err) => {
                     spans.push(Span::raw(" ✗ "));
-                    spans.push(Span::styled(err.to_string(), styles::ERROR_TEXT));
+                    spans.push(Span::styled(err.to_string(), theme.error_text()));
                 }
                 _ => {}
             }
@@ -49,20 +50,21 @@ impl ToolFormatter for ExternalFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         // Parameters block
-        lines.push(Line::from(Span::styled("Parameters:", styles::TOOL_HEADER)));
+        lines.push(Line::from(Span::styled("Parameters:", theme.text())));
 
         let pretty_params = serde_json::to_string_pretty(params).unwrap_or_default();
         for line in wrap_lines(pretty_params.lines(), wrap_width) {
-            lines.push(Line::from(Span::styled(line, styles::DIM_TEXT)));
+            lines.push(Line::from(Span::styled(line, theme.dim_text())));
         }
 
         // Result block
         if let Some(result) = result {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
+            lines.push(separator_line(wrap_width, theme.dim_text()));
             match result {
                 ToolResult::External(ext) => {
                     // Attempt to pretty-print JSON payload with 2-space indent
@@ -88,7 +90,7 @@ impl ToolFormatter for ExternalFormatter {
                     for wrapped in textwrap::wrap(&err.to_string(), wrap_width) {
                         lines.push(Line::from(Span::styled(
                             wrapped.to_string(),
-                            styles::ERROR_TEXT,
+                            theme.error_text(),
                         )));
                     }
                 }

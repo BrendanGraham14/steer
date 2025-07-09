@@ -5,7 +5,6 @@ pub mod fuzzy_finder;
 pub mod input_panel;
 pub mod popup_list;
 pub mod status_bar;
-pub mod styles;
 
 pub use chat_list::{ChatList, ChatListState, ViewMode};
 pub use fuzzy_finder::{FuzzyFinder, FuzzyFinderResult};

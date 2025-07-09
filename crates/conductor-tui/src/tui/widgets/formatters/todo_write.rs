@@ -1,9 +1,9 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::{Component, Theme};
 use conductor_core::app::conversation::ToolResult;
 use conductor_tools::tools::todo::write::TodoWriteParams;
 use ratatui::{
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 use serde_json::Value;
@@ -16,13 +16,14 @@ impl ToolFormatter for TodoWriteFormatter {
         params: &Value,
         _result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<TodoWriteParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid todo write params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
@@ -43,12 +44,12 @@ impl ToolFormatter for TodoWriteFormatter {
         );
 
         lines.push(Line::from(vec![
-            Span::styled("TODO WRITE ", styles::DIM_TEXT),
+            Span::styled("TODO WRITE ", theme.dim_text()),
             Span::styled(
                 format!(
                     "({todo_count} items: {completed_count} completed, {in_progress_count} in progress, {pending_count} pending)"
                 ),
-                styles::ITALIC_GRAY,
+                theme.subtle_text(),
             ),
         ]));
 
@@ -60,13 +61,14 @@ impl ToolFormatter for TodoWriteFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<TodoWriteParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid todo write params",
-                styles::ERROR_TEXT,
+                theme.error_text(),
             ))];
         };
 
@@ -81,26 +83,30 @@ impl ToolFormatter for TodoWriteFormatter {
                 conductor_tools::tools::todo::TodoStatus::InProgress => "🔄",
                 conductor_tools::tools::todo::TodoStatus::Completed => "✅",
             };
-            let priority_color = match todo.priority {
-                conductor_tools::tools::todo::TodoPriority::High => Color::Red,
-                conductor_tools::tools::todo::TodoPriority::Medium => Color::Yellow,
-                conductor_tools::tools::todo::TodoPriority::Low => Color::Green,
+            let priority_style = match todo.priority {
+                conductor_tools::tools::todo::TodoPriority::High => {
+                    theme.style(Component::TodoHigh)
+                }
+                conductor_tools::tools::todo::TodoPriority::Medium => {
+                    theme.style(Component::TodoMedium)
+                }
+                conductor_tools::tools::todo::TodoPriority::Low => theme.style(Component::TodoLow),
             };
             lines.push(Line::from(vec![
                 Span::styled(format!("{status_icon} "), Style::default()),
                 Span::styled(
                     format!("[{}] ", format!("{:?}", todo.priority).to_uppercase()),
-                    Style::default().fg(priority_color),
+                    priority_style,
                 ),
                 Span::styled(todo.content.clone(), Style::default()),
             ]));
         }
 
         if let Some(ToolResult::Error(error)) = result {
-            lines.push(separator_line(40, styles::DIM_TEXT));
+            lines.push(separator_line(40, theme.dim_text()));
             lines.push(Line::from(Span::styled(
                 error.to_string(),
-                styles::ERROR_TEXT,
+                theme.error_text(),
             )));
         }
 

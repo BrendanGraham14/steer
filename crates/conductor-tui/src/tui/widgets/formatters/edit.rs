@@ -1,5 +1,5 @@
 use super::{ToolFormatter, helpers::*};
-use crate::tui::widgets::styles;
+use crate::tui::theme::{Component, Theme};
 use conductor_core::app::conversation::ToolResult;
 use conductor_tools::tools::edit::{EditParams, multi_edit::MultiEditParams};
 use ratatui::{
@@ -7,128 +7,106 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use similar::{ChangeTag, TextDiff};
-use tracing::debug;
+use similar::{Algorithm, ChangeTag, TextDiff};
+use std::path::Path;
 
 pub struct EditFormatter;
 
-impl EditFormatter {
-    fn format_single_edit(
-        &self,
-        params: EditParams,
-        lines: &mut Vec<Line<'static>>,
-        wrap_width: usize,
-    ) {
-        if params.old_string.is_empty() {
-            lines.push(Line::from(Span::styled(
-                format!("Creating {}", params.file_path),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            )));
+// Helper for detailed diffs
+fn render_detailed_diff(
+    old_string: &str,
+    new_string: &str,
+    wrap_width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let diff = TextDiff::configure()
+        .algorithm(Algorithm::Myers)
+        .diff_lines(old_string, new_string);
 
-            // Show preview of what will be created
-            lines.push(Line::from(Span::styled(
-                format!("+++ {}", params.file_path),
-                styles::TOOL_SUCCESS,
-            )));
+    for change in diff.iter_all_changes() {
+        let (prefix, style) = match change.tag() {
+            ChangeTag::Delete => ("-", theme.style(Component::CodeDeletion)),
+            ChangeTag::Insert => ("+", theme.style(Component::CodeAddition)),
+            ChangeTag::Equal => (" ", theme.style(Component::DimText)),
+        };
 
-            for line in params.new_string.lines() {
-                for wrapped_line in textwrap::wrap(line, wrap_width) {
-                    lines.push(Line::from(Span::styled(
-                        format!("+ {wrapped_line}"),
-                        styles::TOOL_SUCCESS,
-                    )));
-                }
-            }
+        let content = change.value().trim_end();
+
+        // Only show a limited context for unchanged lines
+        if change.tag() == ChangeTag::Equal {
+            // Skip most unchanged lines, just show a few for context
+            continue;
+        }
+
+        // Wrap long lines
+        let wrapped_lines = textwrap::wrap(content, wrap_width.saturating_sub(2));
+        if wrapped_lines.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(" ", style),
+            ]));
         } else {
-            lines.push(Line::from(Span::styled(
-                format!("Applying diff to {}", params.file_path),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-
-            // Show diff preview
-            let diff = TextDiff::from_lines(&params.old_string, &params.new_string);
-
-            for change in diff.iter_all_changes() {
-                let (sign, style) = match change.tag() {
-                    ChangeTag::Delete => ("-", styles::ERROR_TEXT),
-                    ChangeTag::Insert => ("+", styles::TOOL_SUCCESS),
-                    ChangeTag::Equal => (" ", styles::DIM_TEXT),
-                };
-
-                let content = change.value();
-
-                if content.is_empty() || content == "\n" {
-                    lines.push(Line::from(Span::styled(sign.to_string(), style)));
+            for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
+                if i == 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, style),
+                        Span::styled(format!(" {wrapped_line}"), style),
+                    ]));
                 } else {
-                    let lines_to_process: Vec<&str> =
-                        if let Some(stripped) = content.strip_suffix('\n') {
-                            stripped.lines().collect()
-                        } else {
-                            content.lines().collect()
-                        };
-
-                    for line in lines_to_process {
-                        if line.is_empty() {
-                            lines.push(Line::from(Span::styled(sign.to_string(), style)));
-                        } else {
-                            for wrapped_line in textwrap::wrap(line, wrap_width.saturating_sub(2)) {
-                                lines.push(Line::from(Span::styled(
-                                    format!("{sign} {wrapped_line}"),
-                                    style,
-                                )));
-                            }
-                        }
-                    }
+                    // Continuation lines
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", style),
+                        Span::styled(wrapped_line.to_string(), style),
+                    ]));
                 }
             }
         }
     }
 
-    fn format_multi_edit(
-        &self,
-        params: MultiEditParams,
-        lines: &mut Vec<Line<'static>>,
-        wrap_width: usize,
-    ) {
+    // Limit the number of diff lines shown
+    const MAX_DIFF_LINES: usize = 20;
+    if lines.len() > MAX_DIFF_LINES {
+        let truncated_count = lines.len() - MAX_DIFF_LINES;
+        lines.truncate(MAX_DIFF_LINES);
+        lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
         lines.push(Line::from(Span::styled(
-            format!(
-                "Applying {} edits to {}",
-                params.edits.len(),
-                params.file_path
-            ),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            format!("... ({truncated_count} more lines in diff)"),
+            theme
+                .style(Component::DimText)
+                .add_modifier(Modifier::ITALIC),
         )));
+    }
 
-        for (i, edit) in params.edits.iter().enumerate() {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-            lines.push(Line::from(Span::styled(
-                format!("Edit {}/{}", i + 1, params.edits.len()),
-                styles::ITALIC_GRAY,
-            )));
+    lines
+}
 
-            // Show a brief preview of each edit
-            let old_preview = if edit.old_string.is_empty() {
-                "(new content)".to_string()
+// Helper to show short context
+fn show_short_context(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.len() <= max_len {
+        trimmed.to_string()
+    } else {
+        format!("{}...", &trimmed[..max_len.saturating_sub(3)])
+    }
+}
+
+// Extract info for single edit
+fn extract_edit_info(result: &Option<ToolResult>, old_string: &str, new_string: &str) -> String {
+    match result {
+        Some(ToolResult::Edit(_)) => {
+            if old_string.is_empty() {
+                "created".to_string()
             } else {
-                truncate_middle(&edit.old_string.replace('\n', " "), 40)
-            };
-            let new_preview = truncate_middle(&edit.new_string.replace('\n', " "), 40);
-
-            lines.push(Line::from(vec![
-                Span::styled("- ", styles::ERROR_TEXT),
-                Span::raw(old_preview),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("+ ", styles::TOOL_SUCCESS),
-                Span::raw(new_preview),
-            ]));
+                format!(
+                    "+{} -{}",
+                    new_string.lines().count(),
+                    old_string.lines().count()
+                )
+            }
         }
+        Some(ToolResult::Error(_)) => "error".to_string(),
+        _ => "pending".to_string(),
     }
 }
 
@@ -138,53 +116,68 @@ impl ToolFormatter for EditFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
-        // Try to parse as EditParams first, then MultiEditParams
-        let (file_path, action, line_change) = match (
-            serde_json::from_value::<EditParams>(params.clone()),
-            serde_json::from_value::<MultiEditParams>(params.clone()),
-        ) {
-            (Ok(edit_params), _) => {
-                let action = if edit_params.old_string.is_empty() {
-                    "CREATE"
-                } else {
-                    "EDIT"
-                };
-                let line_change = edit_params.new_string.lines().count();
-                (edit_params.file_path, action.to_string(), line_change)
-            }
-            (_, Ok(multi_params)) => {
-                let total_lines: usize = multi_params
-                    .edits
-                    .iter()
-                    .map(|edit| edit.new_string.lines().count())
-                    .sum();
-                let action = format!("MULTI-EDIT ({})", multi_params.edits.len());
-                (multi_params.file_path, action, total_lines)
-            }
-            (Err(edit_error), Err(multi_error)) => {
-                debug!("Error parsing params as edit: {:?}", edit_error);
-                debug!("Error parsing params as multi edit: {:?}", multi_error);
-                return vec![Line::from(Span::styled(
-                    "Invalid edit params",
-                    styles::ERROR_TEXT,
-                ))];
-            }
-        };
+        // Try parsing as MultiEditParams first
+        if let Ok(params) = serde_json::from_value::<MultiEditParams>(params.clone()) {
+            // Multi-edit formatting
+            let file_name = Path::new(&params.file_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&params.file_path);
 
-        let info = if result.is_some() {
-            format!("{line_change} lines changed")
+            let edit_count = params.edits.len();
+            let info = match result {
+                Some(ToolResult::Edit(_)) => {
+                    if edit_count == 1 {
+                        "1 edit applied".to_string()
+                    } else {
+                        format!("{edit_count} edits applied")
+                    }
+                }
+                Some(ToolResult::Error(_)) => "error".to_string(),
+                _ => format!("{edit_count} edits pending"),
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(file_name.to_string(), Style::default()),
+                Span::raw(" "),
+                Span::styled(
+                    format!("({info})"),
+                    theme
+                        .style(Component::DimText)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]));
+        } else if let Ok(params) = serde_json::from_value::<EditParams>(params.clone()) {
+            // Single edit formatting
+            let file_name = Path::new(&params.file_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&params.file_path);
+
+            // Show a brief summary
+            let mut spans = vec![Span::styled(file_name.to_string(), Style::default())];
+
+            // Add info about the edit
+            let info = extract_edit_info(result, &params.old_string, &params.new_string);
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!("({info})"),
+                theme
+                    .style(Component::DimText)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+
+            lines.push(Line::from(spans));
         } else {
-            format!("{line_change} lines")
-        };
-
-        lines.push(Line::from(vec![
-            Span::styled(format!("{action} "), Style::default().fg(Color::Yellow)),
-            Span::styled(format!("{file_path} "), Style::default()),
-            Span::styled(format!("({info})"), styles::ITALIC_GRAY),
-        ]));
+            return vec![Line::from(Span::styled(
+                "Invalid edit params",
+                theme.style(Component::ErrorText),
+            ))];
+        }
 
         lines
     }
@@ -194,28 +187,123 @@ impl ToolFormatter for EditFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
-        // Handle both EditParams and MultiEditParams
-        if let Ok(params) = serde_json::from_value::<EditParams>(params.clone()) {
-            self.format_single_edit(params, &mut lines, wrap_width);
-        } else if let Ok(params) = serde_json::from_value::<MultiEditParams>(params.clone()) {
-            self.format_multi_edit(params, &mut lines, wrap_width);
+        // Try parsing as MultiEditParams first
+        if let Ok(params) = serde_json::from_value::<MultiEditParams>(params.clone()) {
+            // Multi-edit formatting
+            lines.push(Line::from(Span::styled(
+                format!("Editing: {}", params.file_path),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            let edit_count = params.edits.len();
+            lines.push(Line::from(Span::styled(
+                format!("{edit_count} edits"),
+                theme.style(Component::DimText),
+            )));
+
+            // Show each edit
+            for (i, edit) in params.edits.iter().enumerate() {
+                lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
+                lines.push(Line::from(Span::styled(
+                    format!("Edit {}/{edit_count}:", i + 1),
+                    theme.style(Component::ToolCallHeader),
+                )));
+
+                if edit.old_string.is_empty() {
+                    // File creation or insertion
+                    lines.push(Line::from(vec![
+                        Span::styled("+ Insert: ", theme.style(Component::CodeAddition)),
+                        Span::raw(show_short_context(&edit.new_string, 60)),
+                    ]));
+                } else if edit.new_string.is_empty() {
+                    // Deletion
+                    lines.push(Line::from(vec![
+                        Span::styled("- Delete: ", theme.style(Component::CodeDeletion)),
+                        Span::raw(show_short_context(&edit.old_string, 60)),
+                    ]));
+                } else {
+                    // Replacement
+                    lines.push(Line::from(vec![
+                        Span::styled("- ", theme.style(Component::CodeDeletion)),
+                        Span::raw(show_short_context(&edit.old_string, 60)),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled("+ ", theme.style(Component::CodeAddition)),
+                        Span::raw(show_short_context(&edit.new_string, 60)),
+                    ]));
+                }
+            }
+
+            // Show result if available
+            if let Some(result) = result {
+                lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
+                match result {
+                    ToolResult::Edit(_) => {
+                        lines.push(Line::from(Span::styled(
+                            format!("✓ All {edit_count} edits applied successfully"),
+                            theme.style(Component::ToolSuccess),
+                        )));
+                    }
+                    ToolResult::Error(error) => {
+                        lines.push(Line::from(Span::styled(
+                            error.to_string(),
+                            theme.style(Component::ErrorText),
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+        } else if let Ok(params) = serde_json::from_value::<EditParams>(params.clone()) {
+            // Single edit formatting
+            lines.push(Line::from(Span::styled(
+                format!("Editing: {}", params.file_path),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            if result.is_none() && !params.old_string.is_empty() {
+                // Show what we're looking for
+                lines.push(Line::from(Span::styled(
+                    "Searching for:",
+                    theme.style(Component::DimText),
+                )));
+                let search_preview =
+                    show_short_context(&params.old_string, wrap_width.saturating_sub(2));
+                for line in search_preview.lines() {
+                    lines.push(Line::from(Span::raw(format!("  {line}"))));
+                }
+            }
+
+            // Show detailed diff if we have room
+            if !params.old_string.is_empty() || !params.new_string.is_empty() {
+                lines.extend(render_detailed_diff(
+                    &params.old_string,
+                    &params.new_string,
+                    wrap_width,
+                    theme,
+                ));
+            }
+
+            // Show result if available
+            if let Some(ToolResult::Error(error)) = result {
+                lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
+                lines.push(Line::from(Span::styled(
+                    error.to_string(),
+                    theme.style(Component::ErrorText),
+                )));
+            }
         } else {
             return vec![Line::from(Span::styled(
                 "Invalid edit params",
-                styles::ERROR_TEXT,
+                theme.style(Component::ErrorText),
             ))];
-        }
-
-        // Show error if result is an error
-        if let Some(ToolResult::Error(error)) = result {
-            lines.push(separator_line(wrap_width, styles::DIM_TEXT));
-            lines.push(Line::from(Span::styled(
-                error.to_string(),
-                styles::ERROR_TEXT,
-            )));
         }
 
         lines

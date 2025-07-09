@@ -1,5 +1,5 @@
 use super::ToolFormatter;
-use crate::tui::widgets::styles;
+use crate::tui::theme::{Component, Theme};
 use conductor_core::app::conversation::ToolResult;
 use conductor_tools::tools::replace::ReplaceParams;
 use ratatui::{
@@ -16,13 +16,14 @@ impl ToolFormatter for ReplaceFormatter {
         params: &Value,
         _result: &Option<ToolResult>,
         _wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<ReplaceParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid replace params",
-                styles::ERROR_TEXT,
+                theme.style(Component::ErrorText),
             ))];
         };
 
@@ -30,7 +31,12 @@ impl ToolFormatter for ReplaceFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", params.file_path), Style::default()),
-            Span::styled(format!("({line_count} lines)"), styles::ITALIC_GRAY),
+            Span::styled(
+                format!("({line_count} lines)"),
+                theme
+                    .style(Component::DimText)
+                    .add_modifier(Modifier::ITALIC),
+            ),
         ]));
 
         lines
@@ -41,13 +47,14 @@ impl ToolFormatter for ReplaceFormatter {
         params: &Value,
         result: &Option<ToolResult>,
         wrap_width: usize,
+        theme: &Theme,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         let Ok(params) = serde_json::from_value::<ReplaceParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
                 "Invalid replace params",
-                styles::ERROR_TEXT,
+                theme.style(Component::ErrorText),
             ))];
         };
 
@@ -62,7 +69,7 @@ impl ToolFormatter for ReplaceFormatter {
             // Show preview of new content
             lines.push(Line::from(Span::styled(
                 format!("+++ {} (Full New Content)", params.file_path),
-                styles::TOOL_SUCCESS,
+                theme.style(Component::ToolSuccess),
             )));
 
             const MAX_PREVIEW_LINES: usize = 15;
@@ -73,14 +80,16 @@ impl ToolFormatter for ReplaceFormatter {
                             "... ({} more lines)",
                             params.content.lines().count() - MAX_PREVIEW_LINES
                         ),
-                        styles::ITALIC_GRAY,
+                        theme
+                            .style(Component::DimText)
+                            .add_modifier(Modifier::ITALIC),
                     )));
                     break;
                 }
                 for wrapped_line in textwrap::wrap(line, wrap_width) {
                     lines.push(Line::from(Span::styled(
                         format!("+ {wrapped_line}"),
-                        styles::TOOL_SUCCESS,
+                        theme.style(Component::ToolSuccess),
                     )));
                 }
             }
@@ -90,7 +99,7 @@ impl ToolFormatter for ReplaceFormatter {
         if let Some(ToolResult::Error(error)) = result {
             lines.push(Line::from(Span::styled(
                 error.to_string(),
-                styles::ERROR_TEXT,
+                theme.style(Component::ErrorText),
             )));
         }
 

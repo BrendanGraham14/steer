@@ -3,39 +3,34 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::{Color, Style},
     widgets::{Paragraph, Widget},
 };
 
+use crate::tui::theme::{Component, Theme};
 use conductor_core::api::Model;
 
 /// A status bar widget that displays the current model and other status information
 pub struct StatusBar<'a> {
     current_model: &'a Model,
-    style: Style,
+    theme: &'a Theme,
 }
 
 impl<'a> StatusBar<'a> {
-    /// Create a new status bar with the given model
-    pub fn new(current_model: &'a Model) -> Self {
+    /// Create a new status bar with the given model and theme
+    pub fn new(current_model: &'a Model, theme: &'a Theme) -> Self {
         Self {
             current_model,
-            style: Style::default().fg(Color::LightCyan),
+            theme,
         }
-    }
-
-    /// Set the style for the status bar
-    pub fn style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
     }
 }
 
 impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let status_text = format!(" {} ", self.current_model);
+        let style = self.theme.style(Component::StatusBar);
         let paragraph = Paragraph::new(status_text)
-            .style(self.style)
+            .style(style)
             .alignment(Alignment::Right);
         paragraph.render(area, buf);
     }

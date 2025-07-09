@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+use crate::tui::theme::Theme;
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{AssistantContent, Message};
 use conductor_core::app::io::{AppCommandSink, AppEventSource};
@@ -26,8 +27,8 @@ use ratatui::crossterm::{
     terminal::SetTitle,
 };
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::Style;
-use ratatui::widgets::{Block, Borders};
+
+use ratatui::widgets::Borders;
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -46,6 +47,7 @@ use crate::tui::widgets::{InputPanel, InputPanelState, StatusBar};
 pub mod commands;
 pub mod model;
 pub mod state;
+pub mod theme;
 pub mod widgets;
 
 mod events;
@@ -138,6 +140,8 @@ pub struct Tui {
     view_model: MessageViewModel,
     /// Session ID
     session_id: String,
+    /// Current theme
+    theme: Theme,
 }
 
 impl Tui {
@@ -148,6 +152,7 @@ impl Tui {
         current_model: Model,
         models: Vec<Model>,
         session_id: String,
+        theme: Option<Theme>,
     ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -196,6 +201,7 @@ impl Tui {
             event_pipeline: Self::create_event_pipeline(),
             view_model: MessageViewModel::new(),
             session_id,
+            theme: theme.unwrap_or_default(),
         };
 
         // Restore messages using the public method
@@ -502,16 +508,21 @@ impl Tui {
                 spinner_state,
                 hovered_id.as_deref(),
                 &mut self.input_panel_state,
+                &self.theme,
             ) {
                 error!(target:"tui.run.draw", "UI rendering failed: {}", e);
             }
 
             // Render fuzzy finder overlay when active
             if let Some((results, selected_index, input_height)) = fuzzy_finder_data {
-                Self::render_fuzzy_finder_overlay_static(f, &results, selected_index, input_height);
+                Self::render_fuzzy_finder_overlay_static(
+                    f,
+                    &results,
+                    selected_index,
+                    input_height,
+                    &self.theme,
+                );
             }
-
-            // Progress is now shown in the status bar, no overlay needed
         })?;
         Ok(())
     }
@@ -522,10 +533,13 @@ impl Tui {
         results: &[String],
         selected_index: usize,
         input_panel_height: u16,
+        theme: &Theme,
     ) {
         use ratatui::layout::Rect;
-        use ratatui::style::{Color, Style};
+        use ratatui::style::Style;
         use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
+
+        // imports already handled above
 
         if results.is_empty() {
             return; // Nothing to show
@@ -561,7 +575,7 @@ impl Tui {
             .map(|(i, path)| {
                 let is_selected = selected_index == i;
                 let style = if is_selected {
-                    Style::default().bg(Color::DarkGray).fg(Color::White)
+                    theme.style(theme::Component::PopupSelection)
                 } else {
                     Style::default()
                 };
@@ -572,12 +586,12 @@ impl Tui {
         // Create the list widget
         let list_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(theme.style(theme::Component::PopupBorder))
             .title(" Files (best match at bottom) ");
 
         let list = List::new(items)
             .block(list_block)
-            .highlight_style(Style::default().bg(Color::DarkGray));
+            .highlight_style(theme.style(theme::Component::PopupSelection));
 
         // Create list state with reversed selection
         let mut list_state = ListState::default();
@@ -695,8 +709,20 @@ impl Tui {
         spinner_state: usize,
         edit_selection_hovered_id: Option<&str>,
         input_panel_state: &mut InputPanelState,
+        theme: &Theme,
     ) -> Result<()> {
         let size = f.area();
+
+        // Clear the entire terminal area with the theme's background color
+        use ratatui::widgets::{Block, Clear};
+        f.render_widget(Clear, size);
+
+        // Apply background color if theme has one
+        if let Some(bg_color) = theme.get_background_color() {
+            let background_block =
+                Block::default().style(ratatui::style::Style::default().bg(bg_color));
+            f.render_widget(background_block, size);
+        }
 
         // Calculate required height for input/approval area
         let input_area_height = if let Some(tool_call) = current_approval {
@@ -725,19 +751,25 @@ impl Tui {
         let _message_block = Block::default()
             .borders(Borders::ALL)
             .title(" Messages ")
-            .style(Style::default().fg(ratatui::style::Color::DarkGray));
+            .style(theme.style(theme::Component::ChatListBorder));
 
         // Use the ChatList widget as a stateful widget
-        let chat_list = ChatList::new(chat_items).hovered_message_id(edit_selection_hovered_id);
+        let chat_list =
+            ChatList::new(chat_items, theme).hovered_message_id(edit_selection_hovered_id);
         f.render_stateful_widget(chat_list, chunks[0], chat_list_state);
 
         // Render input panel using stateful widget
-        let input_panel =
-            InputPanel::new(input_mode, current_approval, is_processing, spinner_state);
+        let input_panel = InputPanel::new(
+            input_mode,
+            current_approval,
+            is_processing,
+            spinner_state,
+            theme,
+        );
         f.render_stateful_widget(input_panel, chunks[1], input_panel_state);
 
         // Render status bar using the new widget
-        let status_bar = StatusBar::new(current_model);
+        let status_bar = StatusBar::new(current_model, theme);
         f.render_widget(status_bar, chunks[2]);
 
         Ok(())
@@ -828,6 +860,49 @@ impl Tui {
                                 id: generate_row_id(),
                                 level: NoticeLevel::Error,
                                 text: format!("Cannot reload files: {e}"),
+                                ts: time::OffsetDateTime::now_utc(),
+                            };
+                            self.view_model.chat_store.push(notice);
+                        }
+                    }
+                    TuiCommand::Theme(theme_name) => {
+                        if let Some(name) = theme_name {
+                            // Load the specified theme
+                            let loader = theme::ThemeLoader::new();
+                            match loader.load_theme(&name) {
+                                Ok(new_theme) => {
+                                    self.theme = new_theme;
+                                    let notice = ChatItem::SystemNotice {
+                                        id: generate_row_id(),
+                                        level: NoticeLevel::Info,
+                                        text: format!("Loaded theme: {name}"),
+                                        ts: time::OffsetDateTime::now_utc(),
+                                    };
+                                    self.view_model.chat_store.push(notice);
+                                }
+                                Err(e) => {
+                                    let notice = ChatItem::SystemNotice {
+                                        id: generate_row_id(),
+                                        level: NoticeLevel::Error,
+                                        text: format!("Failed to load theme '{name}': {e}"),
+                                        ts: time::OffsetDateTime::now_utc(),
+                                    };
+                                    self.view_model.chat_store.push(notice);
+                                }
+                            }
+                        } else {
+                            // List available themes
+                            let loader = theme::ThemeLoader::new();
+                            let themes = loader.list_themes();
+                            let theme_list = if themes.is_empty() {
+                                "No themes found.".to_string()
+                            } else {
+                                format!("Available themes:\n{}", themes.join("\n"))
+                            };
+                            let notice = ChatItem::SystemNotice {
+                                id: generate_row_id(),
+                                level: NoticeLevel::Info,
+                                text: theme_list,
                                 ts: time::OffsetDateTime::now_utc(),
                             };
                             self.view_model.chat_store.push(notice);
@@ -967,10 +1042,41 @@ pub async fn run_tui(
     model: conductor_core::api::Model,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
+    theme_name: Option<String>,
 ) -> Result<()> {
     use conductor_core::app::io::{AppCommandSink, AppEventSource};
     use conductor_core::session::{SessionConfig, SessionToolConfig};
     use std::collections::HashMap;
+
+    // Load theme if specified
+    let theme = if let Some(theme_name) = theme_name {
+        let loader = theme::ThemeLoader::new();
+        // Check if theme_name is an absolute path
+        let path = std::path::Path::new(&theme_name);
+        let theme_result = if path.is_absolute() || path.exists() {
+            // Load from specific path
+            loader.load_theme_from_path(path)
+        } else {
+            // Load by name from search paths
+            loader.load_theme(&theme_name)
+        };
+
+        match theme_result {
+            Ok(theme) => {
+                info!("Loaded theme: {}", theme_name);
+                Some(theme)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load theme '{}': {}. Using default theme.",
+                    theme_name, e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // If session_id is provided, resume that session
     if let Some(session_id) = session_id {
@@ -999,6 +1105,7 @@ pub async fn run_tui(
             model,
             vec![model], // For now, just pass the single model
             session_id,
+            theme.clone(),
         )
         .await?;
 
@@ -1053,6 +1160,7 @@ pub async fn run_tui(
             model,
             vec![model], // For now, just pass the single model
             session_id,
+            theme,
         )
         .await?;
 
@@ -1115,7 +1223,7 @@ mod tests {
         let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let models = vec![model];
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, event_source, model, models, session_id)
+        let mut tui = Tui::new(command_sink, event_source, model, models, session_id, None)
             .await
             .unwrap();
 
@@ -1182,7 +1290,7 @@ mod tests {
         let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let models = vec![model];
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, event_source, model, models, session_id)
+        let mut tui = Tui::new(command_sink, event_source, model, models, session_id, None)
             .await
             .unwrap();
 

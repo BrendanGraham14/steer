@@ -1,0 +1,122 @@
+# Gruvbox Light Theme
+name = "Gruvbox Light"
+
+# Color palette - Gruvbox Light colors
+[palette]
+# Essential colors
+background = "#fbf1c7"
+foreground = "#3c3836"
+
+# Light mode colors
+bg0 = "#fbf1c7"
+bg0_h = "#f9f5d7"
+bg0_s = "#f2e5bc"
+bg1 = "#ebdbb2"
+bg2 = "#d5c4a1"
+bg3 = "#bdae93"
+bg4 = "#a89984"
+
+fg0 = "#282828"
+fg1 = "#3c3836"
+fg2 = "#504945"
+fg3 = "#665c54"
+fg4 = "#7c6f64"
+
+# Grays
+gray = "#928374"
+
+# Accent colors
+red = "#cc241d"
+green = "#98971a"
+yellow = "#d79921"
+blue = "#458588"
+purple = "#b16286"
+aqua = "#689d6a"
+orange = "#d65d0e"
+
+# Bright variants
+bright_red = "#9d0006"
+bright_green = "#79740e"
+bright_yellow = "#b57614"
+bright_blue = "#076678"
+bright_purple = "#8f3f71"
+bright_aqua = "#427b58"
+bright_orange = "#af3a03"
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "fg1", bg = "bg2" }
+
+# Input panel
+input_panel_border = { fg = "bg4" }
+input_panel_border_active = { fg = "blue" }
+input_panel_border_command = { fg = "aqua" }
+input_panel_border_approval = { fg = "orange", bold = true }
+input_panel_border_error = { fg = "red", bold = true }
+input_panel_label = { fg = "fg1" }
+input_panel_label_active = { fg = "blue" }
+input_panel_label_command = { fg = "aqua" }
+input_panel_label_confirm_exit = { fg = "red" }
+
+# Chat list
+chat_list_border = { fg = "bg4" }
+user_message = { fg = "fg1" }
+user_message_role = { fg = "bright_blue", bold = true }
+assistant_message = { fg = "fg1" }
+assistant_message_role = { fg = "bright_green", bold = true }
+system_message = { fg = "fg3" }
+system_message_role = { fg = "orange" }
+
+# Tool calls
+tool_call = { fg = "aqua" }
+tool_call_border = { fg = "aqua" }
+tool_call_header = { fg = "purple" }
+tool_call_id = { fg = "gray" }
+tool_output = { fg = "fg1" }
+tool_success = { fg = "green" }
+tool_error = { fg = "red" }
+
+# Assistant thoughts
+thought_box = { fg = "gray" }
+thought_header = { fg = "fg3" }
+thought_border = { fg = "bg3" }
+thought_text = { fg = "fg3", italic = true }
+
+# Commands
+command_prompt = { fg = "green", bold = true }
+command_text = { fg = "aqua" }
+command_success = { fg = "green" }
+command_error = { fg = "red" }
+
+# General
+error_text = { fg = "red" }
+error_bold = { fg = "red", bold = true }
+dim_text = { fg = "gray" }
+selection_highlight = { fg = "yellow", bold = true }
+placeholder_text = { fg = "gray", italic = true }
+
+# Model info
+model_info = { fg = "purple" }
+
+# Notices
+notice_info = { fg = "blue" }
+notice_warn = { fg = "yellow" }
+notice_error = { fg = "red" }
+
+# Todo items
+todo_high = { fg = "red" }
+todo_medium = { fg = "orange" }
+todo_low = { fg = "green" }
+todo_pending = { fg = "blue" }
+todo_in_progress = { fg = "yellow" }
+todo_completed = { fg = "green" }
+
+# Code editing
+code_addition = { fg = "green" }
+code_deletion = { fg = "red" }
+code_file_path = { fg = "orange" }
+
+# Popup
+popup_border = { fg = "fg1" }
+popup_selection = { fg = "bg0", bg = "bg2" }
