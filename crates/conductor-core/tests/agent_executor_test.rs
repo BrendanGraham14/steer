@@ -2,7 +2,9 @@
 mod tests {
     use conductor_core::api::{Client, Model};
     use conductor_core::app::conversation::{AssistantContent, Message, Role, UserContent};
-    use conductor_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
+    use conductor_core::app::{
+        AgentEvent, AgentExecutor, AgentExecutorRunRequest, ApprovalDecision,
+    };
     use conductor_core::test_utils;
     use conductor_core::tools::ToolError;
     use conductor_tools::{
@@ -67,7 +69,10 @@ mod tests {
         let (event_tx, mut event_rx) = mpsc::channel(10);
         let token = CancellationToken::new();
         // Dummy tool executor callback (shouldn't be called)
-        let tool_executor_callback = |_call: ToolCall, _token: CancellationToken| async {
+        let tool_approval_callback = |_call: ToolCall| async {
+            unreachable!("Tool approval should not be called");
+        };
+        let tool_execution_callback = |_call: ToolCall, _token: CancellationToken| async {
             unreachable!("Tool executor should not be called");
         };
 
@@ -78,7 +83,8 @@ mod tests {
                     initial_messages,
                     system_prompt,
                     available_tools,
-                    tool_executor_callback,
+                    tool_approval_callback,
+                    tool_execution_callback,
                 },
                 event_tx,
                 token,
@@ -143,8 +149,12 @@ mod tests {
         let (event_tx, mut event_rx) = mpsc::channel(20);
         let token = CancellationToken::new();
 
+        // Tool approval callback - always approve
+        let tool_approval_callback =
+            move |_call: ToolCall| async move { Ok(ApprovalDecision::Approved) };
+
         // Tool executor callback - expects get_capital
-        let tool_executor_callback = move |call: ToolCall, _token: CancellationToken| async move {
+        let tool_execution_callback = move |call: ToolCall, _token: CancellationToken| async move {
             if call.name == "get_capital" {
                 let input_country = call.parameters.get("country").and_then(|v| v.as_str());
                 if input_country == Some("France") {
@@ -170,7 +180,8 @@ mod tests {
                     initial_messages,
                     system_prompt: Some("You are a helpful assistant.".to_string()),
                     available_tools,
-                    tool_executor_callback,
+                    tool_approval_callback,
+                    tool_execution_callback,
                 },
                 event_tx,
                 token,

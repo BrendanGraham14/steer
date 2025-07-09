@@ -58,12 +58,13 @@ pub struct AgentExecutor {
     api_client: Arc<ApiClient>,
 }
 
-pub struct AgentExecutorRunRequest<F> {
+pub struct AgentExecutorRunRequest<A, E> {
     pub model: Model,
     pub initial_messages: Vec<Message>,
     pub system_prompt: Option<String>,
     pub available_tools: Vec<ToolSchema>,
-    pub tool_executor_callback: F,
+    pub tool_approval_callback: A,
+    pub tool_execution_callback: E,
 }
 
 impl AgentExecutor {
@@ -72,15 +73,17 @@ impl AgentExecutor {
     }
 
     #[instrument(skip_all, name = "AgentExecutor::run")]
-    pub async fn run<F, Fut>(
+    pub async fn run<A, AFut, E, EFut>(
         &self,
-        request: AgentExecutorRunRequest<F>,
+        request: AgentExecutorRunRequest<A, E>,
         event_sender: mpsc::Sender<AgentEvent>,
         token: CancellationToken,
     ) -> Result<Message, AgentExecutorError>
     where
-        F: Fn(ToolCall, CancellationToken) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
+        A: Fn(ToolCall) -> AFut + Send + Sync + 'static,
+        AFut: Future<Output = Result<ApprovalDecision, ToolError>> + Send + 'static,
+        E: Fn(ToolCall, CancellationToken) -> EFut + Send + Sync + 'static,
+        EFut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
     {
         let mut messages = request.initial_messages.clone();
         let tools = if request.available_tools.is_empty() {
@@ -156,7 +159,8 @@ impl AgentExecutor {
                 let tool_results_with_ids = self
                     .handle_tool_calls(
                         &tool_calls,
-                        &request.tool_executor_callback,
+                        &request.tool_approval_callback,
+                        &request.tool_execution_callback,
                         &event_sender,
                         &token,
                     )
@@ -197,55 +201,58 @@ impl AgentExecutor {
     }
 
     #[instrument(
-        skip(self, tool_calls, tool_executor_callback, event_sender, token),
+        skip(
+            self,
+            tool_calls,
+            approval_callback,
+            execution_callback,
+            event_sender,
+            token
+        ),
         name = "AgentExecutor::handle_tool_calls"
     )]
-    async fn handle_tool_calls<F, Fut>(
+    async fn handle_tool_calls<A, AFut, E, EFut>(
         &self,
         tool_calls: &[ToolCall],
-        tool_executor_callback: &F,
+        approval_callback: &A,
+        execution_callback: &E,
         event_sender: &mpsc::Sender<AgentEvent>,
         token: &CancellationToken,
     ) -> Result<Vec<(ConductorToolResult, String)>, AgentExecutorError>
     where
-        F: Fn(ToolCall, CancellationToken) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
+        A: Fn(ToolCall) -> AFut + Send + Sync + 'static,
+        AFut: Future<Output = Result<ApprovalDecision, ToolError>> + Send + 'static,
+        E: Fn(ToolCall, CancellationToken) -> EFut + Send + Sync + 'static,
+        EFut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
     {
-        info!("Processing tool calls via provided callback.");
+        info!("Processing tool calls with separate approval and execution callbacks.");
         let futures: Vec<_> = tool_calls
                     .iter()
                     .map(|call| {
                         // Clone necessary items for the async block
                         let call_id = call.id.clone();
-                        let tool_name = call.name.clone(); // Keep for potential cancellation error
+                        let tool_name = call.name.clone();
                         let event_sender_clone = event_sender.clone();
                         let token_clone = token.clone();
 
-                        // The callback is now responsible for both tool approval and execution
                         async move {
-                            // Invoke the callback which handles approval + execution
-                            // The callback now returns either:
-                            // 1. Ok(output) - Tool was approved and executed successfully
-                            // 2. Err(ToolError::DeniedByUser) - Tool was denied by user
-                            // 3. Err(other) - Tool was approved but failed for other reasons
-
-                            // Call the callback - this handles approval logic inside
-                            let result = tokio::select! {
+                            // First, check approval
+                            let approval_result = tokio::select! {
                                 biased;
                                 _ = token_clone.cancelled() => {
-                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool callback/approval for tool");
-                                    Err(ToolError::Cancelled(tool_name.clone())) // Return cancellation error
+                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool approval");
+                                    Err(ToolError::Cancelled(tool_name.clone()))
                                }
-                                res = tool_executor_callback(call.clone(), token_clone.clone()) => res,
+                                res = approval_callback(call.clone()) => res,
                             };
 
                             let message_id = uuid::Uuid::new_v4().to_string();
 
-                            let tool_result = match result {
-                                Ok(output) => {
-                                    debug!(tool_id=%call_id, tool_name=%tool_name, "Tool executed successfully via callback");
+                            let tool_result = match approval_result {
+                                Ok(ApprovalDecision::Approved) => {
+                                    debug!(tool_id=%call_id, tool_name=%tool_name, "Tool approved, executing");
 
-                                    // Send ExecutingTool event for successful execution
+                                    // Send ExecutingTool event for approved execution
                                     if let Err(e) = event_sender_clone
                                         .send(AgentEvent::ExecutingTool {
                                             tool_call_id: call_id.clone(),
@@ -256,33 +263,37 @@ impl AgentExecutor {
                                         warn!(tool_id=%call_id, tool_name=%tool_name, "Failed to send ExecutingTool event: {}", e);
                                     }
 
-                                    output
+                                    // Execute the tool
+                                    let execution_result = tokio::select! {
+                                        biased;
+                                        _ = token_clone.cancelled() => {
+                                            warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool execution");
+                                            Err(ToolError::Cancelled(tool_name.clone()))
+                                        }
+                                        res = execution_callback(call.clone(), token_clone.clone()) => res,
+                                    };
+
+                                    match execution_result {
+                                        Ok(output) => {
+                                            debug!(tool_id=%call_id, tool_name=%tool_name, "Tool executed successfully");
+                                            output
+                                        }
+                                        Err(e) => {
+                                            error!(tool_id=%call_id, tool_name=%tool_name, "Tool execution failed: {}", e);
+                                            ConductorToolResult::Error(e)
+                                        }
+                                    }
                                 }
-                                Err(e @ ToolError::DeniedByUser(_)) => {
-                                    // Tool was denied, don't send ExecutingTool event
-                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Tool callback resulted in denial");
-                                    ConductorToolResult::Error(e)
+                                Ok(ApprovalDecision::Denied) => {
+                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Tool approval denied");
+                                    ConductorToolResult::Error(ToolError::DeniedByUser(tool_name.clone()))
                                 }
                                 Err(e @ ToolError::Cancelled(_)) => {
-                                    // Tool was cancelled
-                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Tool callback resulted in cancellation: {}", e);
+                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Tool approval cancelled: {}", e);
                                     ConductorToolResult::Error(e)
                                 }
                                 Err(e) => {
-                                    // Other errors (tool was approved but failed during execution)
-                                    error!(tool_id=%call_id, tool_name=%tool_name, "Tool callback failed: {}", e);
-
-                                    // Still send ExecutingTool event since the tool was attempted
-                                    if let Err(send_err) = event_sender_clone
-                                        .send(AgentEvent::ExecutingTool {
-                                            tool_call_id: call_id.clone(),
-                                            name: tool_name.clone(),
-                                        })
-                                        .await
-                                    {
-                                        warn!(tool_id=%call_id, tool_name=%tool_name, "Failed to send ExecutingTool event: {}", send_err);
-                                    }
-
+                                    error!(tool_id=%call_id, tool_name=%tool_name, "Tool approval failed: {}", e);
                                     ConductorToolResult::Error(e)
                                 }
                             };

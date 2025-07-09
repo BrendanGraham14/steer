@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::{
     api::Model,
     app::{
-        ToolExecutor,
+        ApprovalDecision, ToolExecutor,
         conversation::{Message, UserContent},
         validation::ValidatorRegistry,
     },
@@ -73,8 +73,13 @@ Usage notes:
         // Get available tools before moving read_only_tool_executor into the closure
         let available_tools: Vec<ToolSchema> = tool_executor.get_tool_schemas().await;
 
-        // Define the tool executor callback for the agent
-        let tool_executor_callback =
+        // Define the tool approval callback - all tools are pre-approved for dispatch agent
+        let tool_approval_callback = move |_tool_call: ToolCall| {
+            async move { Ok(ApprovalDecision::Approved) }
+        };
+
+        // Define the tool execution callback for the agent
+        let tool_execution_callback =
             move |tool_call: ToolCall, callback_token: CancellationToken| {
                 let executor = tool_executor.clone();
                 async move {
@@ -108,7 +113,8 @@ Usage notes:
                     initial_messages,
                     system_prompt: Some(system_prompt),
                     available_tools,
-                    tool_executor_callback,
+                    tool_approval_callback,
+                    tool_execution_callback,
                 },
                 event_tx,
                 token,
