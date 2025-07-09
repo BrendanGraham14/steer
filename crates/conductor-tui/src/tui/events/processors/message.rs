@@ -5,6 +5,7 @@
 
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItem;
+use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::AssistantContent;
 
@@ -17,6 +18,7 @@ impl MessageEventProcessor {
     }
 }
 
+#[async_trait]
 impl EventProcessor for MessageEventProcessor {
     fn priority(&self) -> usize {
         50 // Medium priority - after state changes but before tool events
@@ -31,7 +33,7 @@ impl EventProcessor for MessageEventProcessor {
         )
     }
 
-    fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::MessageAdded { message, .. } => {
                 self.handle_message_added(message, ctx);
@@ -245,8 +247,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_assistant_message_updates_placeholder_tool_params() {
+    #[tokio::test]
+    async fn test_assistant_message_updates_placeholder_tool_params() {
         let mut processor = MessageEventProcessor::new();
         let mut ctx = create_test_context();
 
@@ -316,13 +318,15 @@ mod tests {
         };
 
         // Process the Assistant message
-        let result = processor.process(
-            conductor_core::app::AppEvent::MessageAdded {
-                message: assistant_message,
-                model: conductor_core::api::Model::Claude3_5Sonnet20241022,
-            },
-            &mut ctx,
-        );
+        let result = processor
+            .process(
+                conductor_core::app::AppEvent::MessageAdded {
+                    message: assistant_message,
+                    model: conductor_core::api::Model::Claude3_5Sonnet20241022,
+                },
+                &mut ctx,
+            )
+            .await;
 
         assert!(matches!(result, ProcessingResult::Handled));
 

@@ -132,6 +132,17 @@ pub enum Commands {
         #[command(subcommand)]
         auth_command: crate::commands::auth::AuthCommands,
     },
+
+    /// Show a notification (internal use only)
+    #[clap(hide = true)]
+    Notify {
+        #[clap(long)]
+        title: String,
+        #[clap(long)]
+        message: String,
+        #[clap(long)]
+        sound: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Clone)]

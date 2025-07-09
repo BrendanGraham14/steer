@@ -5,6 +5,7 @@
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItem;
+use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::ToolResult;
 use conductor_tools::error::ToolError;
@@ -22,6 +23,7 @@ impl ToolEventProcessor {
     }
 }
 
+#[async_trait]
 impl EventProcessor for ToolEventProcessor {
     fn priority(&self) -> usize {
         75 // After message events but before system events
@@ -37,7 +39,7 @@ impl EventProcessor for ToolEventProcessor {
         )
     }
 
-    fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
             AppEvent::ToolCallStarted { name, id, .. } => {
                 tracing::debug!(
@@ -162,7 +164,8 @@ impl EventProcessor for ToolEventProcessor {
                     &self.notification_config,
                     NotificationSound::ToolApproval,
                     &format!("Tool approval needed: {name}"),
-                );
+                )
+                .await;
 
                 ProcessingResult::Handled
             }
@@ -245,8 +248,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_toolcallstarted_after_assistant_keeps_params() {
+    #[tokio::test]
+    async fn test_toolcallstarted_after_assistant_keeps_params() {
         let mut tool_proc = ToolEventProcessor::new();
         let mut msg_proc = MessageEventProcessor::new();
         let mut ctx = create_test_context();
@@ -285,13 +288,15 @@ mod tests {
                 messages_updated: &mut ctx.messages_updated,
                 current_thread: None,
             };
-            msg_proc.process(
-                conductor_core::app::AppEvent::MessageAdded {
-                    message: assistant,
-                    model,
-                },
-                &mut ctx,
-            );
+            let _ = msg_proc
+                .process(
+                    conductor_core::app::AppEvent::MessageAdded {
+                        message: assistant,
+                        model,
+                    },
+                    &mut ctx,
+                )
+                .await;
         }
 
         // 2. ToolCallStarted arrives afterwards
@@ -309,14 +314,16 @@ mod tests {
                 messages_updated: &mut ctx.messages_updated,
                 current_thread: None,
             };
-            tool_proc.process(
-                conductor_core::app::AppEvent::ToolCallStarted {
-                    name: "view".to_string(),
-                    id: "id123".to_string(),
-                    model,
-                },
-                &mut ctx,
-            );
+            let _ = tool_proc
+                .process(
+                    conductor_core::app::AppEvent::ToolCallStarted {
+                        name: "view".to_string(),
+                        id: "id123".to_string(),
+                        model,
+                    },
+                    &mut ctx,
+                )
+                .await;
         }
 
         // Assert the tool was registered and stored properly

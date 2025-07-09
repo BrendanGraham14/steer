@@ -631,7 +631,7 @@ impl Tui {
         };
 
         // Process the event through the pipeline
-        if let Err(e) = self.event_pipeline.process_event(event, &mut ctx) {
+        if let Err(e) = self.event_pipeline.process_event(event, &mut ctx).await {
             tracing::error!(target: "tui.handle_app_event", "Event processing failed: {}", e);
         }
 

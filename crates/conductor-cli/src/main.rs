@@ -137,6 +137,18 @@ async fn main() -> Result<()> {
             };
             command.execute().await
         }
+        Commands::Notify {
+            title,
+            message,
+            sound,
+        } => {
+            let sound_type = sound.and_then(|s| {
+                s.parse::<conductor_tui::notifications::NotificationSound>()
+                    .ok()
+            });
+            conductor_tui::notifications::show_notification_with_sound(&title, &message, sound_type)
+                .map_err(|e| eyre::eyre!("Failed to show notification: {}", e))
+        }
     }
 }
 

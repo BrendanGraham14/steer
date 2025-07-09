@@ -4,6 +4,7 @@
 //! Each processor handles a specific category of events and can be composed
 //! into a pipeline for modular event handling.
 
+use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::tui::state::{ChatStore, ToolCallRegistry};
@@ -55,7 +56,7 @@ pub struct ProcessingContext<'a> {
     pub current_thread: Option<uuid::Uuid>,
 }
 
-/// Trait for processing specific types of AppEvents
+#[async_trait]
 pub trait EventProcessor: Send + Sync {
     /// Priority for this processor (lower numbers run first)
     fn priority(&self) -> usize {
@@ -70,7 +71,7 @@ pub trait EventProcessor: Send + Sync {
     /// Processors should be deterministic and side-effect-free except through
     /// the provided context. They should not directly call external APIs or
     /// perform I/O operations.
-    fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult;
+    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult;
 
     /// Name of this processor for debugging
     fn name(&self) -> &'static str;
