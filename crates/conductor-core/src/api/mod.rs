@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod error;
 pub mod gemini;
+pub mod grok;
 pub mod openai;
 pub mod provider;
 
@@ -10,6 +11,7 @@ pub use claude::AnthropicClient;
 pub use conductor_tools::{InputSchema, ToolCall, ToolSchema};
 pub use error::ApiError;
 pub use gemini::GeminiClient;
+pub use grok::GrokClient;
 pub use openai::OpenAIClient;
 pub use provider::{CompletionResponse, Provider};
 use std::collections::HashMap;
@@ -31,6 +33,7 @@ pub enum ProviderKind {
     Anthropic,
     OpenAI,
     Google,
+    Grok,
 }
 
 #[derive(
@@ -81,6 +84,10 @@ pub enum Model {
     Gemini2_5ProPreview0506,
     #[strum(serialize = "gemini-2.5-pro-preview-06-05", serialize = "gemini")]
     Gemini2_5ProPreview0605,
+    #[strum(serialize = "grok-3", serialize = "grok")]
+    Grok3,
+    #[strum(serialize = "grok-3-mini", serialize = "grok-mini")]
+    Grok3Mini,
 }
 
 impl Model {
@@ -103,6 +110,8 @@ impl Model {
             Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
             | Model::Gemini2_5ProPreview0605 => ProviderKind::Google,
+
+            Model::Grok3 | Model::Grok3Mini => ProviderKind::Grok,
         }
     }
 
@@ -114,6 +123,8 @@ impl Model {
             Model::O3Pro20250610 => vec!["o3-pro"],
             Model::O4Mini20250416 => vec!["o4-mini"],
             Model::Gemini2_5ProPreview0605 => vec!["gemini"],
+            Model::Grok3 => vec!["grok"],
+            Model::Grok3Mini => vec!["grok-mini"],
             _ => vec![],
         }
     }
@@ -130,6 +141,7 @@ impl Model {
                 | Model::Gemini2_5FlashPreview0417
                 | Model::Gemini2_5ProPreview0506
                 | Model::Gemini2_5ProPreview0605
+                | Model::Grok3Mini
         )
     }
 
@@ -191,6 +203,7 @@ impl Client {
                 ProviderKind::Anthropic => Arc::new(AnthropicClient::with_api_key(&key)),
                 ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key)),
                 ProviderKind::Google => Arc::new(GeminiClient::new(&key)),
+                ProviderKind::Grok => Arc::new(GrokClient::new(key)),
             },
 
             None => {
@@ -327,6 +340,8 @@ mod tests {
             Model::from_str("gemini").unwrap(),
             Model::Gemini2_5ProPreview0605
         );
+        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok3);
+        assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
 
         // Also test the full names work
         assert_eq!(
@@ -342,5 +357,9 @@ mod tests {
             Model::from_str("o4-mini-2025-04-16").unwrap(),
             Model::O4Mini20250416
         );
+        assert_eq!(Model::from_str("grok-3").unwrap(), Model::Grok3);
+        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok3);
+        assert_eq!(Model::from_str("grok-3-mini").unwrap(), Model::Grok3Mini);
+        assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
     }
 }

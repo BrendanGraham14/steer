@@ -115,6 +115,7 @@ pub struct LlmConfig {
     pub anthropic_auth: Option<ApiAuth>,
     pub openai_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
+    pub grok_api_key: Option<String>,
     pub auth_storage: Option<Arc<dyn AuthStorage>>,
 }
 
@@ -129,6 +130,10 @@ impl std::fmt::Debug for LlmConfig {
             .field(
                 "gemini_api_key",
                 &self.gemini_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "grok_api_key",
+                &self.grok_api_key.as_ref().map(|_| "<redacted>"),
             )
             .field("auth_storage", &self.auth_storage.is_some())
             .finish()
@@ -152,6 +157,7 @@ impl LlmConfig {
                 .gemini_api_key
                 .as_ref()
                 .map(|k| ApiAuth::Key(k.clone())),
+            ProviderKind::Grok => self.grok_api_key.as_ref().map(|k| ApiAuth::Key(k.clone())),
         }
     }
 
@@ -171,6 +177,9 @@ impl LlmConfig {
         if self.gemini_api_key.is_some() {
             providers.push(ProviderKind::Google);
         }
+        if self.grok_api_key.is_some() {
+            providers.push(ProviderKind::Grok);
+        }
         providers
     }
 }
@@ -181,6 +190,7 @@ pub struct LlmConfigBuilder {
     anthropic_auth: Option<ApiAuth>,
     openai_api_key: Option<String>,
     gemini_api_key: Option<String>,
+    grok_api_key: Option<String>,
     auth_storage: Option<Arc<dyn AuthStorage>>,
 }
 
@@ -200,6 +210,11 @@ impl LlmConfigBuilder {
         self
     }
 
+    pub fn with_grok_api_key(mut self, api_key: String) -> Self {
+        self.grok_api_key = Some(api_key);
+        self
+    }
+
     pub fn with_auth_storage(mut self, storage: Arc<dyn AuthStorage>) -> Self {
         self.auth_storage = Some(storage);
         self
@@ -210,6 +225,7 @@ impl LlmConfigBuilder {
             anthropic_auth: self.anthropic_auth,
             openai_api_key: self.openai_api_key,
             gemini_api_key: self.gemini_api_key,
+            grok_api_key: self.grok_api_key,
             auth_storage: self.auth_storage,
         }
     }
@@ -282,10 +298,24 @@ impl LlmConfigLoader {
             None
         };
 
+        // For Grok: Check env var first, then stored API key
+        let grok_api_key = if let Ok(key) = std::env::var("GROK_API_KEY") {
+            Some(key)
+        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+            .storage
+            .get_credential("grok", crate::auth::CredentialType::ApiKey)
+            .await?
+        {
+            Some(value)
+        } else {
+            None
+        };
+
         Ok(LlmConfig {
             anthropic_auth,
             openai_api_key,
             gemini_api_key,
+            grok_api_key,
             auth_storage: Some(self.storage.clone()),
         })
     }
@@ -297,6 +327,7 @@ impl LlmConfigLoader {
             anthropic_auth: None,
             openai_api_key: None,
             gemini_api_key: None,
+            grok_api_key: None,
             auth_storage: Some(self.storage.clone()),
         })
     }
@@ -367,6 +398,7 @@ impl LlmConfigProvider {
             anthropic_auth: None,
             openai_api_key: None,
             gemini_api_key: None,
+            grok_api_key: None,
             auth_storage: Some(self.inner.storage.clone()),
         })
     }
