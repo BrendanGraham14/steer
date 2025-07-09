@@ -461,7 +461,10 @@ impl<'a> InputPanel<'a> {
 
         match self.input_mode {
             InputMode::Insert => {
-                spans.extend(format_keybinds(&[("Enter", "send"), ("Esc", "cancel")]));
+                spans.extend(format_keybinds(
+                    &[("Enter", "send"), ("Esc", "cancel")],
+                    self.theme,
+                ));
             }
             InputMode::Normal => {
                 spans.extend(format_keybinds(
