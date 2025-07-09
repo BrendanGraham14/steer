@@ -297,12 +297,11 @@ impl Tui {
         // Load the initial file list
         self.load_file_cache().await;
 
-        // No need to request current conversation - messages are restored in the constructor
-
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
-        let _input_handle: JoinHandle<()> = tokio::spawn(async move {
+        let input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
-                if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+                // Non-blocking poll
+                if event::poll(Duration::ZERO).unwrap_or(false) {
                     match event::read() {
                         Ok(evt) => {
                             if term_event_tx.send(Ok(evt)).await.is_err() {
@@ -325,6 +324,9 @@ impl Tui {
                             break;
                         }
                     }
+                } else {
+                    // Async sleep that CAN be interrupted by abort
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
         });
@@ -421,6 +423,7 @@ impl Tui {
 
         // Cleanup terminal on exit
         self.cleanup_terminal()?;
+        input_handle.abort();
         Ok(())
     }
 
