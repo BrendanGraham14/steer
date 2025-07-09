@@ -646,10 +646,18 @@ where
 
     /// Push the appropriate list marker (bullet or number)
     fn push_list_marker(&mut self) {
-        let width = self.list_indices.len() * 4 - 3;
+        // If we're not inside a list, there's nothing to render – avoid underflow.
+        if self.list_indices.is_empty() {
+            return;
+        }
+
+        let width = self.list_indices.len().saturating_mul(4).saturating_sub(3);
         if let Some(last_index) = self.list_indices.last_mut() {
             let span = match last_index {
-                None => Span::styled(" ".repeat(width - 1) + "- ", self.styles.list_marker),
+                None => Span::styled(
+                    " ".repeat(width.saturating_sub(1)) + "- ",
+                    self.styles.list_marker,
+                ),
                 Some(index) => {
                     *index += 1;
                     Span::styled(format!("{:width$}. ", *index - 1), self.styles.list_number)
@@ -661,8 +669,13 @@ where
 
     /// Render a task list marker (checkbox)
     fn task_list_marker(&mut self, checked: bool) {
+        // If we're not inside a list, there's nothing to render – avoid underflow.
+        if self.list_indices.is_empty() {
+            return;
+        }
+
         // Push the list indentation and marker
-        let width = self.list_indices.len() * 4 - 3;
+        let width = self.list_indices.len().saturating_mul(4).saturating_sub(3);
         let indent = " ".repeat(width.saturating_sub(1));
 
         // Use checkbox characters
