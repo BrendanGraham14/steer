@@ -24,6 +24,7 @@ async fn test_api_basic() {
         Model::Gpt4_1Nano20250414,
         Model::Gemini2_5FlashPreview0417,
         Model::ClaudeSonnet4_20250514,
+        Model::Grok3Mini,
     ];
 
     let mut tasks = Vec::new();
@@ -127,6 +128,7 @@ async fn test_api_with_tools() {
         Model::Claude3_5Haiku20241022,
         Model::Gpt4_1Nano20250414,
         Model::Gemini2_5FlashPreview0417,
+        Model::Grok3Mini,
     ];
 
     let mut tasks = Vec::new();
@@ -281,6 +283,7 @@ async fn test_api_with_tool_response() {
         Model::Claude3_5Haiku20241022,
         Model::Gpt4_1Nano20250414,
         Model::Gemini2_5FlashPreview0417,
+        Model::Grok3Mini,
     ];
     let mut tasks = Vec::new();
 
@@ -813,6 +816,7 @@ async fn test_api_with_cancelled_tool_execution() {
         Model::Claude3_5Haiku20241022,
         Model::Gpt4_1Nano20250414,
         Model::Gemini2_5FlashPreview0417,
+        Model::Grok3Mini,
     ];
     let mut tasks = Vec::new();
 

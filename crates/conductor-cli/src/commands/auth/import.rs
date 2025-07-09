@@ -24,6 +24,7 @@ impl clap::ValueEnum for ProviderKindArg {
                 ProviderKindArg(ProviderKind::Anthropic),
                 ProviderKindArg(ProviderKind::OpenAI),
                 ProviderKindArg(ProviderKind::Google),
+                ProviderKindArg(ProviderKind::Grok),
             ]
         });
         &VARIANTS
@@ -34,6 +35,7 @@ impl clap::ValueEnum for ProviderKindArg {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::OpenAI => "openai",
             ProviderKind::Google => "google",
+            ProviderKind::Grok => "grok",
         };
 
         let mut pv = clap::builder::PossibleValue::new(provider_str);
@@ -48,6 +50,9 @@ impl clap::ValueEnum for ProviderKindArg {
             }
             ProviderKind::Google => {
                 pv = pv.alias("gemini");
+            }
+            ProviderKind::Grok => {
+                pv = pv.alias("xai");
             }
         }
 

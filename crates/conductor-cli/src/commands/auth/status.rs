@@ -34,6 +34,9 @@ pub async fn execute() -> Result<()> {
     // Check Google/Gemini
     add_other_provider_status(&mut table, "Google (Gemini)", ProviderKind::Google, &config);
 
+    // Check Grok
+    add_other_provider_status(&mut table, "Grok (xAI)", ProviderKind::Grok, &config);
+
     println!("{table}");
 
     Ok(())
