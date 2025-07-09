@@ -135,3 +135,5 @@ markdown_list_number = { fg = "lavender" }
 markdown_table_border = { fg = "surface2" }
 markdown_table_header = { fg = "blue", bold = true }
 markdown_table_cell = { fg = "foreground" }
+markdown_task_checked = { fg = "green" }
+markdown_task_unchecked = { fg = "overlay1" }

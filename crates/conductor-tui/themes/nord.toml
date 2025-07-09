@@ -142,3 +142,5 @@ markdown_list_number = { fg = "nord9" }
 markdown_table_border = { fg = "nord3" }
 markdown_table_header = { fg = "nord8", bold = true }
 markdown_table_cell = { fg = "nord4" }
+markdown_task_checked = { fg = "nord14" }
+markdown_task_unchecked = { fg = "nord3" }

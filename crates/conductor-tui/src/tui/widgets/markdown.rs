@@ -33,6 +33,8 @@ pub struct MarkdownStyles {
     pub table_border: Style,
     pub table_header: Style,
     pub table_cell: Style,
+    pub task_checked: Style,
+    pub task_unchecked: Style,
 }
 
 impl MarkdownStyles {
@@ -80,6 +82,8 @@ impl MarkdownStyles {
             table_border: theme.style(Component::MarkdownTableBorder),
             table_header: theme.style(Component::MarkdownTableHeader),
             table_cell: theme.style(Component::MarkdownTableCell),
+            task_checked: theme.style(Component::MarkdownTaskChecked),
+            task_unchecked: theme.style(Component::MarkdownTaskUnchecked),
         }
     }
 }
@@ -130,6 +134,9 @@ struct TextWriter<'a, I> {
     table_alignments: Vec<pulldown_cmark::Alignment>,
     table_rows: Vec<Vec<Vec<Span<'a>>>>, // rows of cells, each cell is a vec of spans
     in_table_header: bool,
+
+    /// Track if we just started a list item (for task list markers)
+    in_list_item_start: bool,
 }
 
 impl<'a, I> TextWriter<'a, I>
@@ -150,6 +157,7 @@ where
             table_alignments: Vec::new(),
             table_rows: Vec::new(),
             in_table_header: false,
+            in_list_item_start: false,
         }
     }
 
@@ -171,8 +179,8 @@ where
             Event::FootnoteReference(_) => warn!("Footnote reference not yet supported"),
             Event::SoftBreak => self.soft_break(),
             Event::HardBreak => self.hard_break(),
-            Event::Rule => warn!("Rule not yet supported"),
-            Event::TaskListMarker(_) => warn!("Task list marker not yet supported"),
+            Event::Rule => self.rule(),
+            Event::TaskListMarker(checked) => self.task_list_marker(checked),
         }
     }
 
@@ -273,6 +281,13 @@ where
     }
 
     fn text(&mut self, text: CowStr<'a>) {
+        // If we're at the start of a list item and haven't seen a task list marker,
+        // push the regular list marker
+        if self.in_list_item_start {
+            self.push_list_marker();
+            self.in_list_item_start = false;
+        }
+
         // Check if we're in a table cell
         let in_table =
             self.table_rows.last().is_some() && self.table_rows.last().unwrap().last().is_some();
@@ -307,6 +322,8 @@ where
     }
 
     fn hard_break(&mut self) {
+        // Hard break should add a line break but stay in the same paragraph
+        self.push_span("  ".into()); // Two spaces to visually indicate hard break
         self.push_line(Line::default());
     }
 
@@ -324,22 +341,21 @@ where
 
     fn start_item(&mut self) {
         self.push_line(Line::default());
-        let width = self.list_indices.len() * 4 - 3;
-        if let Some(last_index) = self.list_indices.last_mut() {
-            let span = match last_index {
-                None => Span::from(" ".repeat(width - 1) + "- "),
-                Some(index) => {
-                    *index += 1;
-                    Span::styled(format!("{:width$}. ", *index - 1), self.styles.list_number)
-                }
-            };
-            self.push_span(span);
-        }
+        // Mark that we're at the start of a list item
+        self.in_list_item_start = true;
+        // Don't push the list marker yet - wait for task list marker if present
         self.needs_newline = false;
     }
 
     fn soft_break(&mut self) {
-        self.push_line(Line::default());
+        // Soft break: In markdown, this is typically rendered as a space
+        // unless it's at the end of a line
+        if let Some(line) = self.text.lines.last() {
+            if !line.spans.is_empty() {
+                // Add a space if there's content on the current line
+                self.push_span(" ".into());
+            }
+        }
     }
 
     fn start_codeblock(&mut self, kind: CodeBlockKind<'_>) {
@@ -608,6 +624,63 @@ where
             }
         }
     }
+
+    /// Render a horizontal rule
+    fn rule(&mut self) {
+        if self.needs_newline {
+            self.push_line(Line::default());
+        }
+
+        // Create a horizontal rule using box-drawing characters
+        // We'll use a solid line of dashes or unicode box characters
+        let terminal_width = 80; // Default width, could be made configurable
+        let rule_char = "─"; // Unicode box drawing character
+        let rule_content = rule_char.repeat(terminal_width.min(120)); // Cap at 120 chars
+
+        // Use the blockquote style for rules (or we could add a dedicated rule style)
+        let rule_style = self.styles.blockquote;
+        self.push_line(Line::from(Span::styled(rule_content, rule_style)));
+
+        self.needs_newline = true;
+    }
+
+    /// Push the appropriate list marker (bullet or number)
+    fn push_list_marker(&mut self) {
+        let width = self.list_indices.len() * 4 - 3;
+        if let Some(last_index) = self.list_indices.last_mut() {
+            let span = match last_index {
+                None => Span::styled(" ".repeat(width - 1) + "- ", self.styles.list_marker),
+                Some(index) => {
+                    *index += 1;
+                    Span::styled(format!("{:width$}. ", *index - 1), self.styles.list_number)
+                }
+            };
+            self.push_span(span);
+        }
+    }
+
+    /// Render a task list marker (checkbox)
+    fn task_list_marker(&mut self, checked: bool) {
+        // Push the list indentation and marker
+        let width = self.list_indices.len() * 4 - 3;
+        let indent = " ".repeat(width.saturating_sub(1));
+
+        // Use checkbox characters
+        let checkbox = if checked { "[✓] " } else { "[ ] " };
+
+        // Apply appropriate style based on checked state
+        let style = if checked {
+            self.styles.task_checked
+        } else {
+            self.styles.task_unchecked
+        };
+
+        let span = Span::styled(format!("{indent}- {checkbox}"), style);
+        self.push_span(span);
+
+        // Mark that we've handled the list item start
+        self.in_list_item_start = false;
+    }
 }
 
 #[cfg(test)]
@@ -770,5 +843,118 @@ mod tests {
                 .collect();
             println!("Line {idx}: '{line_text}'");
         }
+    }
+
+    #[test]
+    fn test_line_breaks() {
+        let markdown = r#"This is a line with a hard break  
+at the end.
+
+This is a soft break
+that should become a space.
+
+Multiple
+soft
+breaks
+in
+a
+row."#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles);
+
+        println!("\n=== Line Breaks Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+    }
+
+    #[test]
+    fn test_horizontal_rules() {
+        let markdown = r#"Some text before
+
+---
+
+Some text after
+
+* * *
+
+Another section
+
+___
+
+Final section"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles);
+
+        println!("\n=== Horizontal Rules Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        // Check that rules are present
+        let has_rule = rendered
+            .lines
+            .iter()
+            .any(|line| line.spans.iter().any(|span| span.content.contains("─")));
+        assert!(has_rule, "Should contain horizontal rules");
+    }
+
+    #[test]
+    fn test_task_lists() {
+        let markdown = r#"## Todo List
+
+- [x] Complete the parser implementation
+- [ ] Add more tests
+- [x] Write documentation
+- [ ] Review code
+
+Regular list items:
+- Item 1
+- Item 2
+
+Mixed list:
+1. [x] First task (done)
+2. [ ] Second task (pending)
+3. Regular numbered item"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles);
+
+        println!("\n=== Task Lists Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        // Check that checkboxes are present
+        let has_checked = rendered
+            .lines
+            .iter()
+            .any(|line| line.spans.iter().any(|span| span.content.contains("[✓]")));
+        let has_unchecked = rendered
+            .lines
+            .iter()
+            .any(|line| line.spans.iter().any(|span| span.content.contains("[ ]")));
+        assert!(has_checked, "Should contain checked checkboxes");
+        assert!(has_unchecked, "Should contain unchecked checkboxes");
     }
 }
