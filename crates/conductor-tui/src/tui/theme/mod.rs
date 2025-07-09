@@ -211,6 +211,8 @@ pub enum Component {
     MarkdownBlockquote,
     MarkdownListBullet,
     MarkdownListNumber,
+    MarkdownTaskChecked,
+    MarkdownTaskUnchecked,
 
     // Markdown table elements
     MarkdownTableBorder,

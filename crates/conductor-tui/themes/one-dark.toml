@@ -131,3 +131,5 @@ markdown_list_number = { fg = "blue" }
 markdown_table_border = { fg = "gray" }
 markdown_table_header = { fg = "blue", bold = true }
 markdown_table_cell = { fg = "foreground" }
+markdown_task_checked = { fg = "green" }
+markdown_task_unchecked = { fg = "gray" }

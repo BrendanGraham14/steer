@@ -153,3 +153,5 @@ markdown_list_number = { fg = "storm_blue" }
 markdown_table_border = { fg = "storm_terminal_black" }
 markdown_table_header = { fg = "storm_cyan", bold = true }
 markdown_table_cell = { fg = "storm_fg" }
+markdown_task_checked = { fg = "storm_green" }
+markdown_task_unchecked = { fg = "storm_fg_dark" }

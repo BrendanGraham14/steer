@@ -134,3 +134,5 @@ markdown_list_number = { fg = "accent_fg" }
 markdown_table_border = { fg = "border_default" }
 markdown_table_header = { fg = "accent_fg", bold = true }
 markdown_table_cell = { fg = "fg_default" }
+markdown_task_checked = { fg = "success_fg" }
+markdown_task_unchecked = { fg = "fg_muted" }
