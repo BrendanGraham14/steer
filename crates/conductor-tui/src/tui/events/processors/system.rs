@@ -3,17 +3,22 @@
 //! Processes events related to model changes, command responses, and other
 //! system-level state changes.
 
+use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::model::{ChatItem, generate_row_id};
+use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 
 /// Processor for system-level events
-pub struct SystemEventProcessor;
+pub struct SystemEventProcessor {
+    notification_config: NotificationConfig,
+}
 
 impl SystemEventProcessor {
     pub fn new() -> Self {
-        Self
+        Self {
+            notification_config: NotificationConfig::from_env(),
+        }
     }
 
     /// Handle command response by adding it to the chat store
@@ -42,7 +47,9 @@ impl EventProcessor for SystemEventProcessor {
     fn can_handle(&self, event: &AppEvent) -> bool {
         matches!(
             event,
-            AppEvent::ModelChanged { .. } | AppEvent::CommandResponse { .. }
+            AppEvent::ModelChanged { .. }
+                | AppEvent::CommandResponse { .. }
+                | AppEvent::Error { .. }
         )
     }
 
@@ -59,6 +66,27 @@ impl EventProcessor for SystemEventProcessor {
             } => {
                 self.handle_command_response(command, response, ctx);
                 *ctx.messages_updated = true;
+                ProcessingResult::Handled
+            }
+            AppEvent::Error { message } => {
+                // Add error as a system notice
+                let chat_item = ChatItem::SystemNotice {
+                    id: generate_row_id(),
+                    level: NoticeLevel::Error,
+                    text: message.clone(),
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+                ctx.chat_store.push(chat_item);
+                *ctx.messages_updated = true;
+
+                // Trigger error notification with sound
+                notify_with_sound(
+                    &self.notification_config,
+                    NotificationSound::Error,
+                    &message,
+                )
+                .await;
+
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,

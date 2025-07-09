@@ -11,19 +11,19 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("API error: {0}")]
+    #[error(transparent)]
     Api(#[from] ApiError),
-    #[error("Auth error: {0}")]
+    #[error(transparent)]
     Auth(#[from] AuthError),
-    #[error("Agent executor error: {0}")]
+    #[error(transparent)]
     AgentExecutor(#[from] AgentExecutorError),
-    #[error("Session manager error: {0}")]
+    #[error(transparent)]
     SessionManager(#[from] SessionManagerError),
-    #[error("Session store error: {0}")]
+    #[error(transparent)]
     SessionStore(#[from] SessionStoreError),
-    #[error("Workspace error: {0}")]
+    #[error(transparent)]
     Workspace(#[from] WorkspaceError),
-    #[error("Tool error: {0}")]
+    #[error(transparent)]
     Tool(#[from] conductor_tools::ToolError),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -53,7 +53,7 @@ pub enum WorkspaceError {
     ToolExecution(String),
     #[error("Invalid workspace path: {0}")]
     InvalidPath(String),
-    #[error("Git error: {0}")]
+    #[error(transparent)]
     Git(#[from] git2::Error),
     #[error("Remote workspace error: {0}")]
     Remote(String),

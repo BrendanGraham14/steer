@@ -6,37 +6,37 @@ pub enum ToolError {
     #[error("Unknown tool: {0}")]
     UnknownTool(String),
 
-    #[error("Invalid parameters for tool {0}: {1}")]
+    #[error("Invalid parameters for {0}: {1}")]
     InvalidParams(String, String), // Tool name, error message
 
-    #[error("Tool execution failed for {tool_name}: {message}")]
+    #[error("{tool_name} failed: {message}")]
     Execution { tool_name: String, message: String },
 
-    #[error("Tool execution cancelled: {0}")]
+    #[error("{0} was cancelled")]
     Cancelled(String), // Tool name or ID
 
-    #[error("Tool execution timed out: {0}")]
+    #[error("{0} timed out")]
     Timeout(String), // Tool name or ID
 
-    #[error("Tool execution denied by user: {0}")]
+    #[error("{0} requires approval to run")]
     DeniedByUser(String), // Tool name
 
-    #[error("Internal error during tool execution: {0}")]
+    #[error("Unexpected error: {0}")]
     InternalError(String), // Error message
 
-    #[error("I/O error during tool execution for {tool_name}: {message}")]
+    #[error("File operation failed in {tool_name}: {message}")]
     Io { tool_name: String, message: String },
 
-    #[error("Serialization error: {0}")]
+    #[error("Failed to process data: {0}")]
     Serialization(String),
 
-    #[error("HTTP error: {0}")]
+    #[error("Network request failed: {0}")]
     Http(String),
 
-    #[error("Regex error: {0}")]
+    #[error("Invalid pattern: {0}")]
     Regex(String),
 
-    #[error("MCP server connection failed for {server_name}: {message}")]
+    #[error("Cannot connect to {server_name}: {message}")]
     McpConnectionFailed {
         server_name: String,
         message: String,
