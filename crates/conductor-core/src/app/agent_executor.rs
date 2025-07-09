@@ -33,9 +33,9 @@ pub enum AgentEvent {
 
 #[derive(Error, Debug)]
 pub enum AgentExecutorError {
-    #[error("API error: {0}")]
+    #[error(transparent)]
     Api(#[from] ApiError),
-    #[error("Tool execution error: {0}")]
+    #[error(transparent)]
     Tool(#[from] ToolError),
     #[error("Event channel send error: {0}")]
     SendError(String),

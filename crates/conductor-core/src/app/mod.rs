@@ -1491,7 +1491,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     // Emit error event only if it wasn't a cancellation
                     if !matches!(e, AgentExecutorError::Cancelled) {
                         app.emit_event(AppEvent::Error {
-                            message: format!("Operation failed: {e}"),
+                            message: e.to_string(),
                         });
                     }
                 }
@@ -1529,7 +1529,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                 Err(e) => {
                     error!(target: "handle_task_outcome", "Dispatch agent failed: {}", e);
                     app.emit_event(AppEvent::Error {
-                        message: format!("Dispatch agent failed: {e}"),
+                        message: e.to_string(),
                     });
                 }
             }

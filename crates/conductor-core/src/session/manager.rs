@@ -31,7 +31,7 @@ pub enum SessionManagerError {
     #[error("Failed to create managed session: {message}")]
     CreationFailed { message: String },
 
-    #[error("Storage error: {0}")]
+    #[error(transparent)]
     Storage(#[from] SessionStoreError),
 }
 
