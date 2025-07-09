@@ -2,10 +2,6 @@
 
 Conductor is an AI-powered CLI assistant for software engineering tasks. It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
 
-> *AI guides your code*  
-> *Terminal wisdom flows free*  
-> *Tasks complete with ease*
-
 ---
 
 ## Installation
