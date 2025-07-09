@@ -107,3 +107,24 @@ code_file_path = { fg = "hue_6" }
 # Popup
 popup_border = { fg = "accent" }
 popup_selection = { fg = "mono_1", bg = "selection" }
+
+# Markdown
+markdown_h1 = { fg = "hue_2" }
+markdown_h2 = { fg = "hue_2" }
+markdown_h3 = { fg = "hue_2" }
+markdown_h4 = { fg = "hue_3" }
+markdown_h5 = { fg = "hue_3" }
+markdown_h6 = { fg = "mono_3" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "hue_6", bg = "selection" }
+markdown_code_block = { bg = "selection" }
+markdown_link = { fg = "hue_2" }
+markdown_blockquote = { fg = "mono_3" }
+markdown_list_bullet = { fg = "mono_2" }
+markdown_list_number = { fg = "hue_2" }
+markdown_table_border = { fg = "mono_3" }
+markdown_table_header = { fg = "hue_2", bold = true }
+markdown_table_cell = { fg = "mono_1" }

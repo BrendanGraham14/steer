@@ -132,3 +132,24 @@ code_file_path = { fg = "storm_magenta" }
 # Popup
 popup_border = { fg = "storm_dark5" }
 popup_selection = { fg = "storm_yellow", bg = "storm_bg_highlight" }
+
+# Markdown
+markdown_h1 = { fg = "storm_blue" }
+markdown_h2 = { fg = "storm_blue" }
+markdown_h3 = { fg = "storm_blue" }
+markdown_h4 = { fg = "storm_purple" }
+markdown_h5 = { fg = "storm_purple" }
+markdown_h6 = { fg = "storm_dark5" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "storm_orange", bg = "storm_bg_dark" }
+markdown_code_block = { bg = "storm_bg_dark" }
+markdown_link = { fg = "storm_blue" }
+markdown_blockquote = { fg = "storm_dark5" }
+markdown_list_bullet = { fg = "storm_terminal_black" }
+markdown_list_number = { fg = "storm_blue" }
+markdown_table_border = { fg = "storm_terminal_black" }
+markdown_table_header = { fg = "storm_cyan", bold = true }
+markdown_table_cell = { fg = "storm_fg" }

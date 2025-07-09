@@ -120,3 +120,24 @@ code_file_path = { fg = "orange" }
 # Popup
 popup_border = { fg = "fg1" }
 popup_selection = { fg = "bg0", bg = "bg2" }
+
+# Markdown
+markdown_h1 = { fg = "blue" }
+markdown_h2 = { fg = "blue" }
+markdown_h3 = { fg = "blue" }
+markdown_h4 = { fg = "aqua" }
+markdown_h5 = { fg = "aqua" }
+markdown_h6 = { fg = "fg3" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "orange", bg = "bg2" }
+markdown_code_block = { bg = "bg2" }
+markdown_link = { fg = "blue" }
+markdown_blockquote = { fg = "gray" }
+markdown_list_bullet = { fg = "gray" }
+markdown_list_number = { fg = "blue" }
+markdown_table_border = { fg = "gray" }
+markdown_table_header = { fg = "aqua", bold = true }
+markdown_table_cell = { fg = "fg1" }

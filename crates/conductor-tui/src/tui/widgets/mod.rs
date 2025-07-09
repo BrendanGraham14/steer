@@ -3,6 +3,7 @@ pub mod clipping;
 pub mod formatters;
 pub mod fuzzy_finder;
 pub mod input_panel;
+pub mod markdown;
 pub mod popup_list;
 pub mod status_bar;
 

@@ -113,3 +113,24 @@ code_file_path = { fg = "done_fg" }
 # Popup
 popup_border = { fg = "accent_fg" }
 popup_selection = { fg = "fg_default", bg = "bg_highlight" }
+
+# Markdown
+markdown_h1 = { fg = "accent_fg" }
+markdown_h2 = { fg = "accent_fg" }
+markdown_h3 = { fg = "accent_fg" }
+markdown_h4 = { fg = "done_fg" }
+markdown_h5 = { fg = "done_fg" }
+markdown_h6 = { fg = "fg_muted" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "syntax_constant", bg = "bg_highlight" }
+markdown_code_block = { bg = "bg_highlight" }
+markdown_link = { fg = "accent_fg" }
+markdown_blockquote = { fg = "fg_subtle" }
+markdown_list_bullet = { fg = "fg_muted" }
+markdown_list_number = { fg = "accent_fg" }
+markdown_table_border = { fg = "border_default" }
+markdown_table_header = { fg = "accent_fg", bold = true }
+markdown_table_cell = { fg = "fg_default" }

@@ -193,6 +193,29 @@ pub enum Component {
     // Popup
     PopupBorder,
     PopupSelection,
+
+    // Markdown elements
+    MarkdownH1,
+    MarkdownH2,
+    MarkdownH3,
+    MarkdownH4,
+    MarkdownH5,
+    MarkdownH6,
+    MarkdownParagraph,
+    MarkdownBold,
+    MarkdownItalic,
+    MarkdownStrikethrough,
+    MarkdownCode,
+    MarkdownCodeBlock,
+    MarkdownLink,
+    MarkdownBlockquote,
+    MarkdownListBullet,
+    MarkdownListNumber,
+
+    // Markdown table elements
+    MarkdownTableBorder,
+    MarkdownTableHeader,
+    MarkdownTableCell,
 }
 
 impl fmt::Display for Component {
@@ -488,6 +511,52 @@ fn create_default_theme() -> CompiledTheme {
         Component::PopupSelection,
         Style::default().fg(Color::Yellow).bg(Color::DarkGray),
     );
+
+    // Markdown styles
+    styles.insert(Component::MarkdownH1, Style::default().fg(Color::Cyan));
+    styles.insert(Component::MarkdownH2, Style::default().fg(Color::Cyan));
+    styles.insert(Component::MarkdownH3, Style::default().fg(Color::Cyan));
+    styles.insert(Component::MarkdownH4, Style::default().fg(Color::LightCyan));
+    styles.insert(Component::MarkdownH5, Style::default().fg(Color::LightCyan));
+    styles.insert(Component::MarkdownH6, Style::default().fg(Color::Gray));
+    styles.insert(Component::MarkdownParagraph, Style::default());
+    styles.insert(Component::MarkdownBold, Style::default());
+    styles.insert(Component::MarkdownItalic, Style::default());
+    styles.insert(Component::MarkdownStrikethrough, Style::default());
+    styles.insert(
+        Component::MarkdownCode,
+        Style::default().fg(Color::White).bg(Color::Black),
+    );
+    styles.insert(
+        Component::MarkdownCodeBlock,
+        Style::default().bg(Color::Black),
+    );
+    styles.insert(Component::MarkdownLink, Style::default().fg(Color::Blue));
+    styles.insert(
+        Component::MarkdownBlockquote,
+        Style::default().fg(Color::Green),
+    );
+    styles.insert(
+        Component::MarkdownListBullet,
+        Style::default().fg(Color::Gray),
+    );
+    styles.insert(
+        Component::MarkdownListNumber,
+        Style::default().fg(Color::LightBlue),
+    );
+
+    // Table styles
+    styles.insert(
+        Component::MarkdownTableBorder,
+        Style::default().fg(Color::DarkGray),
+    );
+    styles.insert(
+        Component::MarkdownTableHeader,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(Component::MarkdownTableCell, Style::default());
 
     CompiledTheme {
         name: "Default".to_string(),
