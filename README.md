@@ -275,8 +275,6 @@ You can still use traditional API keys by setting environment variables (optiona
 
 **Note**: If both OAuth tokens and API keys are available for Anthropic, the API key takes precedence.
 
-The `conductor init` command creates `~/.config/conductor/config.json` for preferences such as default model or history size, **not** for secrets.
-
 ---
 
 ## Tool approval system
