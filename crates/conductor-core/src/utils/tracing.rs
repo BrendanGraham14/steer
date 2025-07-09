@@ -20,8 +20,8 @@ pub fn init_tracing() -> io::Result<()> {
 
     // Configure the filter based on RUST_LOG env var, with sensible defaults
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        // Default: info for all crates, debug for conductor crate only, silence noisy crates
-        EnvFilter::new("info,conductor=debug,tui_markdown=warn")
+        // Default: warn for all crates
+        EnvFilter::new("info")
     });
 
     if let Some(home_dir) = dirs::home_dir() {
