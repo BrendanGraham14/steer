@@ -712,11 +712,12 @@ impl App {
         info!(target:"App.compact_conversation", "Compacting conversation...");
         let client = self.api_client.clone();
         let conversation_arc = self.conversation.clone();
+        let model = self.current_model;
 
         // Run directly but make it cancellable.
         let result = tokio::select! {
             biased;
-            res = async { conversation_arc.lock().await.compact(&client, token.clone()).await } => res.map_err(|e| Error::InvalidOperation(format!("Compact failed: {e}")))?,
+            res = async { conversation_arc.lock().await.compact(&client, model, token.clone()).await } => res.map_err(|e| Error::InvalidOperation(format!("Compact failed: {e}")))?,
             _ = token.cancelled() => {
                  info!(target:"App.compact_conversation", "Compaction cancelled.");
                  return Ok(CompactResult::Cancelled);
