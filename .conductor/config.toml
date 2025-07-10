@@ -17,11 +17,12 @@ args = ["-y", "mcp-remote", "https://mcp.linear.app/sse"]
 
 [tool_config.tools.bash]
 approved_patterns = [
-    "git status*",
-    "git log*",
-    "cargo build*",
-    "cargo check*",
-    "just build*",
-    "just check*",
-    "just test*",
+  "git status*",
+  "git log*",
+  "cargo build*",
+  "cargo check*",
+  "just build*",
+  "just check*",
+  "just test*",
+  "just clippy*",
 ]
