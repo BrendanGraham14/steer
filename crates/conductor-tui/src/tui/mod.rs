@@ -409,15 +409,22 @@ impl Tui {
                                         if self.input_mode == InputMode::Setup {
                                             // Handle paste in setup mode
                                             if let Some(setup_state) = &mut self.setup_state {
-                                                if setup_state.oauth_state.is_some() {
-                                                    // Pasting OAuth callback code
-                                                    setup_state.oauth_callback_input.push_str(&data);
-                                                } else if self.auth_controller.is_some() {
-                                                    // Pasting API key
-                                                    setup_state.api_key_input.push_str(&data);
+                                                match &setup_state.current_step {
+                                                    crate::tui::state::SetupStep::Authentication(_) => {
+                                                        if setup_state.oauth_state.is_some() {
+                                                            // Pasting OAuth callback code
+                                                            setup_state.oauth_callback_input.push_str(&data);
+                                                        } else {
+                                                            // Pasting API key
+                                                            setup_state.api_key_input.push_str(&data);
+                                                        }
+                                                        debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
+                                                        needs_redraw = true;
+                                                    }
+                                                    _ => {
+                                                        // Other setup steps don't accept paste
+                                                    }
                                                 }
-                                                debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
-                                                needs_redraw = true;
                                             }
                                         } else {
                                             let normalized_data =
