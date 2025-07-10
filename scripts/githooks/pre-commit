@@ -53,6 +53,10 @@ fi
 # Check if any of the staged files were modified by the fixes
 MODIFIED=false
 for file in $STAGED_FILES; do
+    # Skip files that were deleted
+    if [ ! -f "$file" ]; then
+        continue
+    fi
     if ! git diff --quiet "$file" 2>/dev/null; then
         MODIFIED=true
         break
@@ -64,6 +68,10 @@ if [ "$MODIFIED" = true ]; then
     echo "Please review the changes and commit them manually."
     echo "Modified staged files:"
     for file in $STAGED_FILES; do
+        # Skip files that were deleted
+        if [ ! -f "$file" ]; then
+            continue
+        fi
         if ! git diff --quiet "$file" 2>/dev/null; then
             echo "  - $file"
         fi
