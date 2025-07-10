@@ -127,7 +127,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "orange", bg = "base02" }
-markdown_code_block = { bg = "base02" }
+markdown_code_block = { }
 markdown_link = { fg = "blue" }
 markdown_blockquote = { fg = "base01" }
 markdown_list_bullet = { fg = "base01" }

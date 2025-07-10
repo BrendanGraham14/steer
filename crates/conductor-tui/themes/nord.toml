@@ -134,7 +134,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "nord13", bg = "nord1" }
-markdown_code_block = { bg = "nord1" }
+markdown_code_block = { }
 markdown_link = { fg = "nord8" }
 markdown_blockquote = { fg = "comment" }
 markdown_list_bullet = { fg = "nord3" }

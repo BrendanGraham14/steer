@@ -134,7 +134,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "bright_orange", bg = "bg1" }
-markdown_code_block = { bg = "bg1" }
+markdown_code_block = { }
 markdown_link = { fg = "bright_blue" }
 markdown_blockquote = { fg = "gray" }
 markdown_list_bullet = { fg = "gray" }

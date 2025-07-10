@@ -127,7 +127,7 @@ markdown_bold = { bold = true }
 markdown_italic = { italic = true }
 markdown_strikethrough = { crossed_out = true }
 markdown_code = { fg = "pink", bg = "surface0" }
-markdown_code_block = { fg = "text", bg = "surface0" }
+markdown_code_block = { }
 markdown_link = { fg = "sky", underlined = true }
 markdown_blockquote = { fg = "overlay2", italic = true }
 markdown_list_bullet = { fg = "overlay1" }

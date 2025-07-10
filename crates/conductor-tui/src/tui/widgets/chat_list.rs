@@ -435,6 +435,7 @@ impl<'a> ChatList<'a> {
                                 let markdown_text = super::markdown::from_str_with_width(
                                     text,
                                     &markdown_styles,
+                                    self.theme,
                                     Some(max_width as u16),
                                 );
 
@@ -655,6 +656,7 @@ impl<'a> ChatList<'a> {
                             let markdown_text = super::markdown::from_str_with_width(
                                 text,
                                 &markdown_styles,
+                                self.theme,
                                 Some(max_width.saturating_sub(3) as u16),
                             );
 
@@ -707,6 +709,7 @@ impl<'a> ChatList<'a> {
                             let markdown_text = super::markdown::from_str_with_width(
                                 &thought_text,
                                 &markdown_styles,
+                                self.theme,
                                 Some(max_width.saturating_sub(3) as u16),
                             );
 

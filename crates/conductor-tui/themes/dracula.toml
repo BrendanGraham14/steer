@@ -3,6 +3,10 @@
 
 name = "Dracula"
 
+# Syntax highlighting theme from syntect
+[syntax]
+syntect_theme = "base16-mocha.dark"
+
 # Color palette - Dracula colors
 [palette]
 background = "#282a36"
@@ -122,7 +126,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "orange", bg = "current_line" }
-markdown_code_block = { bg = "current_line" }
+markdown_code_block = { }
 markdown_link = { fg = "cyan" }
 markdown_blockquote = { fg = "comment" }
 markdown_list_bullet = { fg = "comment" }
