@@ -232,7 +232,7 @@ impl LlmConfigBuilder {
 }
 
 /// Loader for LlmConfig that handles async operations
-pub struct LlmConfigLoader {
+pub(crate) struct LlmConfigLoader {
     storage: Arc<dyn AuthStorage>,
 }
 
@@ -241,7 +241,7 @@ impl LlmConfigLoader {
         Self { storage }
     }
 
-    pub async fn from_env(&self) -> Result<LlmConfig> {
+    pub async fn load_from_env(&self) -> Result<LlmConfig> {
         // For Anthropic: Check OAuth tokens first, then env vars, then stored API key
         let anthropic_auth = if self
             .storage
@@ -322,8 +322,8 @@ impl LlmConfigLoader {
 
     /// Load configuration from environment, returning empty config if no credentials are found
     /// This is useful for tests that don't require actual API access
-    pub async fn from_env_allow_missing(&self) -> LlmConfig {
-        self.from_env().await.unwrap_or_else(|_| LlmConfig {
+    pub async fn load_from_env_allow_missing(&self) -> LlmConfig {
+        self.load_from_env().await.unwrap_or_else(|_| LlmConfig {
             anthropic_auth: None,
             openai_api_key: None,
             gemini_api_key: None,
@@ -380,7 +380,7 @@ impl LlmConfigProvider {
 
         // Cache miss or expired, load fresh config
         let loader = LlmConfigLoader::new(self.inner.storage.clone());
-        let config = loader.from_env().await?;
+        let config = loader.load_from_env().await?;
 
         // Update cache
         {

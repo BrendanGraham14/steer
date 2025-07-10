@@ -144,3 +144,23 @@ markdown_table_header = { fg = "nord8", bold = true }
 markdown_table_cell = { fg = "nord4" }
 markdown_task_checked = { fg = "nord14" }
 markdown_task_unchecked = { fg = "nord3" }
+# Setup UI
+setup_title = { fg = "nord8", bold = true }
+setup_border = { fg = "nord3" }
+setup_border_active = { fg = "nord8" }
+setup_header = { fg = "nord9", bold = true }
+setup_text = { fg = "nord4" }
+setup_highlight = { bg = "nord2", bold = true }
+setup_key_binding = { fg = "nord14", bold = true }
+setup_provider_name = { fg = "nord4" }
+setup_provider_selected = { bg = "nord2", bold = true }
+setup_status_active = { fg = "nord14" }
+setup_status_inactive = { fg = "nord11" }
+setup_status_in_progress = { fg = "nord13" }
+setup_success_icon = { fg = "nord14", bold = true }
+setup_error_message = { fg = "nord11" }
+setup_hint = { fg = "nord3" }
+setup_url = { fg = "nord8", underlined = true }
+setup_input_label = { fg = "nord4" }
+setup_input_value = { fg = "nord13" }
+setup_big_text = { fg = "nord8", bold = true }

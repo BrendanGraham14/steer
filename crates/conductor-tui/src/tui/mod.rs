@@ -3,6 +3,7 @@
 //! This module implements the terminal user interface using ratatui.
 
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,11 +35,13 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::tui::auth_controller::AuthController;
 use crate::tui::events::pipeline::EventPipeline;
 use crate::tui::events::processors::message::MessageEventProcessor;
 use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
 use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
+use crate::tui::state::SetupState;
 use crate::tui::state::view_model::MessageViewModel;
 
 use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
@@ -50,6 +53,7 @@ pub mod state;
 pub mod theme;
 pub mod widgets;
 
+mod auth_controller;
 mod events;
 mod handlers;
 
@@ -105,6 +109,8 @@ pub enum InputMode {
     EditMessageSelection,
     /// Fuzzy finder mode for file selection
     FuzzyFinder,
+    /// Setup mode - first run experience
+    Setup,
 }
 
 /// Main TUI application state
@@ -142,6 +148,10 @@ pub struct Tui {
     session_id: String,
     /// Current theme
     theme: Theme,
+    /// Setup state for first-run experience
+    setup_state: Option<SetupState>,
+    /// Authentication controller (if active)
+    auth_controller: Option<AuthController>,
 }
 
 impl Tui {
@@ -202,6 +212,8 @@ impl Tui {
             view_model: MessageViewModel::new(),
             session_id,
             theme: theme.unwrap_or_default(),
+            setup_state: None,
+            auth_controller: None,
         };
 
         // Restore messages using the public method
@@ -392,13 +404,28 @@ impl Tui {
                                     // Handle paste in modes that accept text input
                                     if matches!(
                                         self.input_mode,
-                                        InputMode::Insert | InputMode::BashCommand
+                                        InputMode::Insert | InputMode::BashCommand | InputMode::Setup
                                     ) {
-                                        let normalized_data =
-                                            data.replace("\r\n", "\n").replace('\r', "\n");
-                                        self.input_panel_state.insert_str(&normalized_data);
-                                        debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
-                                        needs_redraw = true;
+                                        if self.input_mode == InputMode::Setup {
+                                            // Handle paste in setup mode
+                                            if let Some(setup_state) = &mut self.setup_state {
+                                                if setup_state.oauth_state.is_some() {
+                                                    // Pasting OAuth callback code
+                                                    setup_state.oauth_callback_input.push_str(&data);
+                                                } else if self.auth_controller.is_some() {
+                                                    // Pasting API key
+                                                    setup_state.api_key_input.push_str(&data);
+                                                }
+                                                debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
+                                                needs_redraw = true;
+                                            }
+                                        } else {
+                                            let normalized_data =
+                                                data.replace("\r\n", "\n").replace('\r', "\n");
+                                            self.input_panel_state.insert_str(&normalized_data);
+                                            debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
+                                            needs_redraw = true;
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -471,6 +498,46 @@ impl Tui {
     /// Draw the UI
     fn draw(&mut self) -> Result<()> {
         self.terminal.draw(|f| {
+            // Check if we're in setup mode
+            if let Some(setup_state) = &self.setup_state {
+                use crate::tui::widgets::setup::{
+                    authentication::AuthenticationWidget, completion::CompletionWidget,
+                    provider_selection::ProviderSelectionWidget, welcome::WelcomeWidget,
+                };
+
+                match &setup_state.current_step {
+                    crate::tui::state::SetupStep::Welcome => {
+                        WelcomeWidget::render(f.area(), f.buffer_mut(), &self.theme);
+                    }
+                    crate::tui::state::SetupStep::ProviderSelection => {
+                        ProviderSelectionWidget::render(
+                            f.area(),
+                            f.buffer_mut(),
+                            setup_state,
+                            &self.theme,
+                        );
+                    }
+                    crate::tui::state::SetupStep::Authentication(provider) => {
+                        AuthenticationWidget::render(
+                            f.area(),
+                            f.buffer_mut(),
+                            setup_state,
+                            *provider,
+                            &self.theme,
+                        );
+                    }
+                    crate::tui::state::SetupStep::Completion => {
+                        CompletionWidget::render(
+                            f.area(),
+                            f.buffer_mut(),
+                            setup_state,
+                            &self.theme,
+                        );
+                    }
+                }
+                return;
+            }
+
             let input_mode = self.input_mode;
             let is_processing = self.is_processing;
             let spinner_state = self.spinner_state;
@@ -908,6 +975,53 @@ impl Tui {
                             self.view_model.chat_store.push(notice);
                         }
                     }
+                    TuiCommand::Auth => {
+                        // Launch auth setup
+                        // Initialize auth setup state
+                        let auth_storage = conductor_core::auth::DefaultAuthStorage::new()
+                            .map_err(|e| {
+                                crate::error::Error::Generic(format!(
+                                    "Failed to create auth storage: {e}"
+                                ))
+                            })?;
+                        let auth_providers =
+                            conductor_core::auth::inspect::get_authenticated_providers(
+                                &auth_storage,
+                            )
+                            .await
+                            .map_err(|e| {
+                                crate::error::Error::Generic(format!("Failed to check auth: {e}"))
+                            })?;
+
+                        let mut provider_status = std::collections::HashMap::new();
+                        for provider in [
+                            conductor_core::api::ProviderKind::Anthropic,
+                            conductor_core::api::ProviderKind::OpenAI,
+                            conductor_core::api::ProviderKind::Google,
+                            conductor_core::api::ProviderKind::Grok,
+                        ] {
+                            let status = if auth_providers.contains(&provider) {
+                                crate::tui::state::AuthStatus::ApiKeySet
+                            } else {
+                                crate::tui::state::AuthStatus::NotConfigured
+                            };
+                            provider_status.insert(provider, status);
+                        }
+
+                        // Enter setup mode, skipping welcome page
+                        self.setup_state = Some(
+                            crate::tui::state::SetupState::new_for_auth_command(provider_status),
+                        );
+                        self.input_mode = InputMode::Setup;
+
+                        let notice = ChatItem::SystemNotice {
+                            id: generate_row_id(),
+                            level: NoticeLevel::Info,
+                            text: "Entering authentication setup mode...".to_string(),
+                            ts: time::OffsetDateTime::now_utc(),
+                        };
+                        self.view_model.chat_store.push(notice);
+                    }
                 }
             }
             TuiAppCommand::Core(core_cmd) => {
@@ -1043,6 +1157,7 @@ pub async fn run_tui(
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
     theme_name: Option<String>,
+    force_setup: bool,
 ) -> Result<()> {
     use conductor_core::app::io::{AppCommandSink, AppEventSource};
     use conductor_core::session::{SessionConfig, SessionToolConfig};
@@ -1079,7 +1194,7 @@ pub async fn run_tui(
     };
 
     // If session_id is provided, resume that session
-    if let Some(session_id) = session_id {
+    let (session_id, messages) = if let Some(session_id) = session_id {
         // Activate the existing session
         let (messages, _approved_tools) = client
             .activate_session(session_id.clone())
@@ -1091,31 +1206,7 @@ pub async fn run_tui(
             messages.len()
         );
         println!("Session ID: {session_id}");
-
-        // Start streaming
-        client.start_streaming().await.map_err(Box::new)?;
-
-        // Get the event receiver
-        let event_rx = client.subscribe().await;
-
-        // Initialize TUI with restored conversation
-        let mut tui = Tui::new(
-            client.clone() as std::sync::Arc<dyn AppCommandSink>,
-            client.clone() as std::sync::Arc<dyn AppEventSource>,
-            model,
-            vec![model], // For now, just pass the single model
-            session_id,
-            theme.clone(),
-        )
-        .await?;
-
-        // Restore messages if we have any
-        if !messages.is_empty() {
-            tui.restore_messages(messages);
-        }
-
-        // Run the TUI
-        tui.run(event_rx).await?;
+        (session_id, messages)
     } else {
         // Create a new session
         let mut session_config = SessionConfig {
@@ -1134,41 +1225,96 @@ pub async fn run_tui(
             .metadata
             .insert("initial_model".to_string(), model.to_string());
 
-        // Set workspace directory if provided
-        if let Some(dir) = directory {
-            std::env::set_current_dir(dir)?;
-        }
-
-        // Create session on server
         let session_id = client
             .create_session(session_config)
             .await
             .map_err(Box::new)?;
-        info!("Created session: {}", session_id);
-        println!("Session ID: {session_id}");
+        (session_id, vec![])
+    };
 
-        // Start streaming
-        client.start_streaming().await.map_err(Box::new)?;
+    client.start_streaming().await.map_err(Box::new)?;
+    let event_rx = client.subscribe().await;
+    let mut tui = Tui::new(
+        client.clone() as std::sync::Arc<dyn AppCommandSink>,
+        client.clone() as std::sync::Arc<dyn AppEventSource>,
+        model,
+        vec![model], // For now, just pass the single model
+        session_id,
+        theme.clone(),
+    )
+    .await?;
 
-        // Get the event receiver
-        let event_rx = client.subscribe().await;
-
-        // Initialize TUI
-        let mut tui = Tui::new(
-            client.clone() as std::sync::Arc<dyn AppCommandSink>,
-            client.clone() as std::sync::Arc<dyn AppEventSource>,
-            model,
-            vec![model], // For now, just pass the single model
-            session_id,
-            theme,
-        )
-        .await?;
-
-        // Run the TUI
-        tui.run(event_rx).await?;
+    if !messages.is_empty() {
+        tui.restore_messages(messages);
     }
 
+    let should_run_setup = force_setup
+        || (!conductor_core::preferences::Preferences::config_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+            && conductor_core::auth::inspect::get_authenticated_providers(
+                &conductor_core::auth::DefaultAuthStorage::new()
+                    .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?,
+            )
+            .await
+            .unwrap_or_default()
+            .is_empty());
+
+    // Initialize setup state if first run or forced
+    if should_run_setup {
+        let auth_storage = conductor_core::auth::DefaultAuthStorage::new()
+            .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?;
+        let auth_providers =
+            conductor_core::auth::inspect::get_authenticated_providers(&auth_storage)
+                .await
+                .map_err(|e| Error::Generic(format!("Failed to check auth: {e}")))?;
+
+        let mut provider_status = std::collections::HashMap::new();
+        for provider in [
+            conductor_core::api::ProviderKind::Anthropic,
+            conductor_core::api::ProviderKind::OpenAI,
+            conductor_core::api::ProviderKind::Google,
+            conductor_core::api::ProviderKind::Grok,
+        ] {
+            let status = if auth_providers.contains(&provider) {
+                crate::tui::state::AuthStatus::ApiKeySet
+            } else {
+                crate::tui::state::AuthStatus::NotConfigured
+            };
+            provider_status.insert(provider, status);
+        }
+
+        tui.setup_state = Some(crate::tui::state::SetupState::new(provider_status));
+        tui.input_mode = InputMode::Setup;
+    }
+
+    // Run the TUI
+    tui.run(event_rx).await?;
+
     Ok(())
+}
+
+/// Run TUI in authentication setup mode
+/// This is now just a convenience function that launches regular TUI with setup mode forced
+pub async fn run_tui_auth_setup(
+    client: std::sync::Arc<conductor_grpc::GrpcClientAdapter>,
+    session_id: Option<String>,
+    model: Option<Model>,
+    session_db: Option<PathBuf>,
+    theme_name: Option<String>,
+) -> Result<()> {
+    // Just delegate to regular run_tui - it will check for auth providers
+    // and enter setup mode automatically if needed
+    run_tui(
+        client,
+        session_id,
+        model.unwrap_or_default(),
+        session_db,
+        None, // system_prompt
+        theme_name,
+        true, // force_setup = true for auth setup
+    )
+    .await
 }
 
 #[cfg(test)]

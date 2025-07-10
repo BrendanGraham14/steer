@@ -50,6 +50,8 @@ pub enum AppCommandType {
     Cancel,
     /// Show help information
     Help,
+    /// Manage authentication
+    Auth,
 }
 
 impl AppCommandType {
@@ -80,6 +82,7 @@ impl AppCommandType {
             "compact" => Ok(AppCommandType::Compact),
             "cancel" => Ok(AppCommandType::Cancel),
             "help" => Ok(AppCommandType::Help),
+            "auth" => Ok(AppCommandType::Auth),
             cmd => Err(SlashCommandError::UnknownCommand(cmd.to_string())),
         }
     }
@@ -98,6 +101,7 @@ impl AppCommandType {
             AppCommandType::Compact => "compact".to_string(),
             AppCommandType::Cancel => "cancel".to_string(),
             AppCommandType::Help => "help".to_string(),
+            AppCommandType::Auth => "auth".to_string(),
         }
     }
 }

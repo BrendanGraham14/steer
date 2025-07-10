@@ -71,7 +71,7 @@ pub fn test_llm_config_provider() -> LlmConfigProvider {
 pub async fn llm_config_from_env() -> Result<LlmConfig> {
     let storage = Arc::new(InMemoryAuthStorage::new());
     let loader = LlmConfigLoader::new(storage);
-    loader.from_env().await
+    loader.load_from_env().await
 }
 
 /// Create an empty LlmConfig with in-memory storage for tests
@@ -85,7 +85,7 @@ pub fn llm_config_empty() -> LlmConfig {
 pub async fn llm_config_from_env_or_empty() -> LlmConfig {
     let storage = Arc::new(InMemoryAuthStorage::new());
     let loader = LlmConfigLoader::new(storage);
-    loader.from_env_allow_missing().await
+    loader.load_from_env_allow_missing().await
 }
 
 /// Convenience to build an `AppConfig` for tests with a fresh provider

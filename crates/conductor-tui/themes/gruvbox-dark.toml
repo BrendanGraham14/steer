@@ -42,6 +42,7 @@ orange = "#fe8019"
 bright_orange = "#d65d0e"
 gray_245 = "#928374"
 gray_244 = "#928374"
+bright_aqua = "#8ec07c"
 
 # Component styles
 [components]
@@ -143,3 +144,23 @@ markdown_table_header = { fg = "bright_cyan", bold = true }
 markdown_table_cell = { fg = "fg1" }
 markdown_task_checked = { fg = "green" }
 markdown_task_unchecked = { fg = "gray" }
+# Setup UI
+setup_title = { fg = "bright_blue", bold = true }
+setup_border = { fg = "gray" }
+setup_border_active = { fg = "bright_blue" }
+setup_header = { fg = "bright_aqua", bold = true }
+setup_text = { fg = "fg1" }
+setup_highlight = { bg = "bg1", bold = true }
+setup_key_binding = { fg = "bright_green", bold = true }
+setup_provider_name = { fg = "fg1" }
+setup_provider_selected = { bg = "bg1", bold = true }
+setup_status_active = { fg = "bright_green" }
+setup_status_inactive = { fg = "bright_red" }
+setup_status_in_progress = { fg = "bright_yellow" }
+setup_success_icon = { fg = "bright_green", bold = true }
+setup_error_message = { fg = "bright_red" }
+setup_hint = { fg = "gray" }
+setup_url = { fg = "bright_aqua", underlined = true }
+setup_input_label = { fg = "fg1" }
+setup_input_value = { fg = "bright_yellow" }
+setup_big_text = { fg = "bright_blue", bold = true }

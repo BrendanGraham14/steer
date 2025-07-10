@@ -155,3 +155,23 @@ markdown_table_header = { fg = "storm_cyan", bold = true }
 markdown_table_cell = { fg = "storm_fg" }
 markdown_task_checked = { fg = "storm_green" }
 markdown_task_unchecked = { fg = "storm_fg_dark" }
+# Setup UI
+setup_title = { fg = "storm_purple", bold = true }
+setup_border = { fg = "storm_dark3" }
+setup_border_active = { fg = "storm_purple" }
+setup_header = { fg = "cyan", bold = true }
+setup_text = { fg = "foreground" }
+setup_highlight = { bg = "storm_bg_highlight", bold = true }
+setup_key_binding = { fg = "green", bold = true }
+setup_provider_name = { fg = "foreground" }
+setup_provider_selected = { bg = "storm_bg_highlight", bold = true }
+setup_status_active = { fg = "green" }
+setup_status_inactive = { fg = "red" }
+setup_status_in_progress = { fg = "yellow" }
+setup_success_icon = { fg = "green", bold = true }
+setup_error_message = { fg = "red" }
+setup_hint = { fg = "storm_dark3" }
+setup_url = { fg = "cyan", underlined = true }
+setup_input_label = { fg = "foreground" }
+setup_input_value = { fg = "yellow" }
+setup_big_text = { fg = "storm_purple", bold = true }

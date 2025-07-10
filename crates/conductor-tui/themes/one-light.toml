@@ -130,3 +130,23 @@ markdown_table_header = { fg = "hue_2", bold = true }
 markdown_table_cell = { fg = "mono_1" }
 markdown_task_checked = { fg = "hue_4" }
 markdown_task_unchecked = { fg = "mono_3" }
+# Setup UI
+setup_title = { fg = "hue_3", bold = true }
+setup_border = { fg = "mono_3" }
+setup_border_active = { fg = "hue_3" }
+setup_header = { fg = "hue_1", bold = true }
+setup_text = { fg = "foreground" }
+setup_highlight = { bg = "selection", bold = true }
+setup_key_binding = { fg = "hue_4", bold = true }
+setup_provider_name = { fg = "foreground" }
+setup_provider_selected = { bg = "selection", bold = true }
+setup_status_active = { fg = "hue_4" }
+setup_status_inactive = { fg = "hue_5" }
+setup_status_in_progress = { fg = "hue_6" }
+setup_success_icon = { fg = "hue_4", bold = true }
+setup_error_message = { fg = "hue_5" }
+setup_hint = { fg = "mono_3" }
+setup_url = { fg = "hue_2", underlined = true }
+setup_input_label = { fg = "foreground" }
+setup_input_value = { fg = "hue_6" }
+setup_big_text = { fg = "hue_3", bold = true }

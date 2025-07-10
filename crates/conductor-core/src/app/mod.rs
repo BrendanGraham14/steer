@@ -631,6 +631,11 @@ impl App {
             AppCommandType::Help => {
                 Ok(Some(conversation::CommandResponse::Text(build_help_text())))
             }
+            AppCommandType::Auth => Ok(Some(conversation::CommandResponse::Text(
+                "Authentication configuration is available through the TUI.\n\
+                    Exit this session and run 'conductor auth setup' to configure authentication."
+                    .to_string(),
+            ))),
             AppCommandType::Model { target } => {
                 if target.is_none() {
                     // If no model specified, list available models
@@ -1685,7 +1690,8 @@ fn build_help_text() -> String {
 /model [name]                - Show or set the current language model. Without args lists models.\n\
 /clear                       - Clear the current conversation history and tool approvals.\n\
 /compact                     - Summarize older messages to save context space.\n\
-/cancel                      - Cancel the current operation in progress.\n"
+/cancel                      - Cancel the current operation in progress.\n\
+/auth                        - Configure authentication for AI providers.\n"
         .to_string()
 }
 

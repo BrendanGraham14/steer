@@ -411,6 +411,7 @@ fn get_formatted_mode(mode: InputMode, theme: &Theme) -> Span<'static> {
         InputMode::ConfirmExit => "Confirm Exit",
         InputMode::EditMessageSelection => "Edit Selection",
         InputMode::FuzzyFinder => "Insert",
+        InputMode::Setup => "Setup",
     };
 
     let component = match mode {
@@ -503,6 +504,9 @@ impl<'a> InputPanel<'a> {
                     &[("↑↓", "navigate"), ("Enter", "select"), ("Esc", "cancel")],
                     self.theme,
                 ));
+            }
+            InputMode::Setup => {
+                // No keybinds shown during setup mode
             }
         }
 

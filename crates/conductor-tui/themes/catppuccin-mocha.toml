@@ -145,3 +145,24 @@ markdown_table_header = { fg = "blue", bold = true }
 markdown_table_cell = { fg = "foreground" }
 markdown_task_checked = { fg = "green" }
 markdown_task_unchecked = { fg = "overlay1" }
+
+# Setup UI
+setup_title = { fg = "lavender", bold = true }
+setup_border = { fg = "surface2" }
+setup_border_active = { fg = "lavender" }
+setup_header = { fg = "blue", bold = true }
+setup_text = { fg = "foreground" }
+setup_highlight = { bg = "surface1", bold = true }
+setup_key_binding = { fg = "green", bold = true }
+setup_provider_name = { fg = "foreground" }
+setup_provider_selected = { bg = "surface1", bold = true }
+setup_status_active = { fg = "green" }
+setup_status_inactive = { fg = "red" }
+setup_status_in_progress = { fg = "yellow" }
+setup_success_icon = { fg = "green", bold = true }
+setup_error_message = { fg = "red" }
+setup_hint = { fg = "overlay0" }
+setup_url = { fg = "sky", underlined = true }
+setup_input_label = { fg = "subtext1" }
+setup_input_value = { fg = "peach" }
+setup_big_text = { fg = "lavender", bold = true }

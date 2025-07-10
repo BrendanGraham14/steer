@@ -35,6 +35,8 @@ pub enum TuiCommand {
     ReloadFiles,
     /// Change or list themes
     Theme(Option<String>),
+    /// Launch authentication setup
+    Auth,
 }
 
 /// Unified command type that can represent either TUI or Core commands
@@ -56,6 +58,7 @@ impl TuiCommand {
                 let theme_name = parts.get(1).map(|s| s.to_string());
                 Ok(TuiCommand::Theme(theme_name))
             }
+            Some(&"auth") => Ok(TuiCommand::Auth),
             _ => Err(TuiCommandError::UnknownCommand(command.to_string())),
         }
     }
@@ -66,6 +69,7 @@ impl TuiCommand {
             TuiCommand::ReloadFiles => "reload-files".to_string(),
             TuiCommand::Theme(None) => "theme".to_string(),
             TuiCommand::Theme(Some(name)) => format!("theme {name}"),
+            TuiCommand::Auth => "auth".to_string(),
         }
     }
 }

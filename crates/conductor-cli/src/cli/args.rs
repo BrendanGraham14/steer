@@ -57,7 +57,7 @@ pub struct Cli {
     pub system_prompt: Option<String>,
 
     /// Path to the session database file (defaults to ~/.conductor/sessions.db)
-    #[arg(long, env = "CONDUCTOR_SESSION_DB")]
+    #[arg(long, env = "CONDUCTOR_SESSION_DB", hide = true)]
     pub session_db: Option<PathBuf>,
 
     /// Path to session configuration file (TOML format) for new sessions
@@ -67,6 +67,10 @@ pub struct Cli {
     /// Theme to use for the TUI (defaults to "default")
     #[arg(long)]
     pub theme: Option<String>,
+
+    /// Force the welcome/setup flow to run (for testing)
+    #[arg(long, hide = true)]
+    pub force_setup: bool,
 
     /// Subcommands
     #[command(subcommand)]
@@ -86,12 +90,14 @@ pub enum Commands {
         /// Theme to use for the TUI (overrides global)
         #[arg(long)]
         theme: Option<String>,
+        /// Force the welcome/setup flow to run (for testing)
+        #[arg(long, hide = true)]
+        force_setup: bool,
     },
-    /// Initialize a new config file
-    Init {
-        /// Force overwrite of existing config
-        #[arg(short, long)]
-        force: bool,
+    /// Manage user preferences
+    Preferences {
+        #[command(subcommand)]
+        action: PreferencesCommands,
     },
     /// Run in headless one-shot mode
     Headless {
@@ -134,12 +140,6 @@ pub enum Commands {
         #[command(subcommand)]
         session_command: SessionCommands,
     },
-    /// Authentication management commands
-    Auth {
-        #[command(subcommand)]
-        auth_command: crate::commands::auth::AuthCommands,
-    },
-
     /// Show a notification (internal use only)
     #[clap(hide = true)]
     Notify {
@@ -150,6 +150,16 @@ pub enum Commands {
         #[clap(long)]
         sound: Option<String>,
     },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum PreferencesCommands {
+    /// Show current preferences
+    Show,
+    /// Edit preferences file in default editor
+    Edit,
+    /// Reset preferences to defaults
+    Reset,
 }
 
 #[derive(Subcommand, Clone)]

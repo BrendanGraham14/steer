@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod commands;
+pub mod error;
 pub mod session_config;
 
 // Re-export modules from conductor-core

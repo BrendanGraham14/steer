@@ -28,9 +28,16 @@ impl Tui {
             // Send message
             let content = self.input_panel_state.content();
             if !content.trim().is_empty() {
+                // Store the current mode before sending
+                let mode_before = self.input_mode;
                 self.send_message(content).await?;
                 self.input_panel_state.clear(); // Clear after sending
-                self.input_mode = InputMode::Normal;
+
+                // Only return to Normal mode if we're still in Insert mode
+                // (i.e., the command didn't change the mode)
+                if self.input_mode == mode_before {
+                    self.input_mode = InputMode::Normal;
+                }
             }
             return Ok(false);
         }

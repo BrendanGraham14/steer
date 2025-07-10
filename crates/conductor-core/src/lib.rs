@@ -3,9 +3,11 @@
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod auth_utils;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod preferences;
 pub mod prompts;
 pub mod runners;
 pub mod session;

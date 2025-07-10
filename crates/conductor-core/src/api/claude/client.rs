@@ -11,8 +11,8 @@ use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
 use crate::auth::{
-    AuthStorage,
-    anthropic::{AnthropicOAuth, refresh_if_needed},
+    AuthFlowWrapper, AuthStorage, DynAuthenticationFlow, InteractiveAuth,
+    anthropic::{AnthropicOAuth, AnthropicOAuthFlow, refresh_if_needed},
 };
 use conductor_tools::ToolSchema;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -704,5 +704,16 @@ impl Provider for AnthropicClient {
         };
 
         Ok(completion)
+    }
+}
+
+impl InteractiveAuth for AnthropicClient {
+    fn create_auth_flow(
+        &self,
+        storage: Arc<dyn AuthStorage>,
+    ) -> Option<Box<dyn DynAuthenticationFlow>> {
+        Some(Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(
+            storage,
+        ))))
     }
 }

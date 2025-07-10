@@ -36,6 +36,17 @@ pub enum ProviderKind {
     Grok,
 }
 
+impl ProviderKind {
+    pub fn display_name(&self) -> String {
+        match self {
+            ProviderKind::Anthropic => "Anthropic".to_string(),
+            ProviderKind::OpenAI => "OpenAI".to_string(),
+            ProviderKind::Google => "Google".to_string(),
+            ProviderKind::Grok => "Grok".to_string(),
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -152,6 +163,12 @@ impl Model {
             Model::O4Mini20250416 => Some("models/o3.md"),
             _ => None,
         }
+    }
+
+    /// Get all available models
+    pub fn all() -> Vec<Model> {
+        use strum::IntoEnumIterator;
+        Model::iter().collect()
     }
 }
 
