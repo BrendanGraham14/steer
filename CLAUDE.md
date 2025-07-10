@@ -41,6 +41,11 @@ Follow the conventional commits format.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
 - The workspace Cargo.toml uses glob pattern `crates/*` to include all crates in the workspace.
 
+# UI Theming
+- **NEVER hardcode colors** in TUI code. Always use the theme system to fetch colors.
+- Use `theme.component_style(Component::...)` to get the appropriate style for UI components.
+- This ensures consistent theming and allows users to customize their color schemes.
+
 
 # Error Handling
 
