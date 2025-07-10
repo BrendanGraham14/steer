@@ -150,7 +150,7 @@ impl ManagedSession {
                 }
 
                 // Translate and persist
-                if let Some(stream_event) = translate_app_event(app_event, &session_id) {
+                if let Some(stream_event) = translate_app_event(app_event) {
                     // Persist event
                     if let Ok(sequence_num) =
                         store_clone.append_event(&session_id, &stream_event).await
@@ -169,8 +169,9 @@ impl ManagedSession {
                             session_id.clone(),
                             stream_event,
                         );
-                        if let Err(e) = global_event_tx_clone.try_send(event_with_metadata) {
-                            warn!(session_id = %session_id, error = %e, "Failed to broadcast event");
+                        if let Err(e) = global_event_tx_clone.try_send(event_with_metadata.clone())
+                        {
+                            warn!(session_id = %session_id, error = %e, "Failed to broadcast event {:?}", event_with_metadata);
                         }
                     }
                 }
@@ -790,7 +791,7 @@ impl SessionManager {
 }
 
 /// Convert AppEvent to StreamEvent, returning None for events that shouldn't be streamed
-fn translate_app_event(app_event: AppEvent, _session_id: &str) -> Option<StreamEvent> {
+fn translate_app_event(app_event: AppEvent) -> Option<StreamEvent> {
     match app_event {
         AppEvent::MessageAdded { message, model } => Some(StreamEvent::MessageComplete {
             message,
