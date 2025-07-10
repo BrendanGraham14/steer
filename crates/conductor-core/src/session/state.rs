@@ -266,6 +266,14 @@ impl Default for ToolVisibility {
     }
 }
 
+/// Tool-specific configuration for bash
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+pub struct BashToolConfig {
+    /// Command patterns that are pre-approved for execution
+    #[serde(default)]
+    pub approved_patterns: Vec<String>,
+}
+
 /// Tool approval policy configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -376,6 +384,17 @@ pub struct SessionToolConfig {
     pub approval_policy: ToolApprovalPolicy,
     /// Additional metadata for tool configuration
     pub metadata: HashMap<String, String>,
+    /// Tool-specific configurations
+    #[serde(default)]
+    pub tools: HashMap<String, ToolSpecificConfig>,
+}
+
+/// Tool-specific configurations
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ToolSpecificConfig {
+    /// Configuration for the bash tool
+    Bash(BashToolConfig),
 }
 
 impl Default for SessionToolConfig {
@@ -385,6 +404,7 @@ impl Default for SessionToolConfig {
             visibility: ToolVisibility::All,
             approval_policy: ToolApprovalPolicy::AlwaysAsk,
             metadata: HashMap::new(),
+            tools: HashMap::new(),
         }
     }
 }
@@ -397,6 +417,7 @@ impl SessionToolConfig {
             visibility: ToolVisibility::ReadOnly,
             approval_policy: ToolApprovalPolicy::AlwaysAsk,
             metadata: HashMap::new(),
+            tools: HashMap::new(),
         }
     }
 }
@@ -412,6 +433,10 @@ pub struct SessionState {
 
     /// Tools that have been approved for this session
     pub approved_tools: HashSet<String>,
+
+    /// Bash commands that have been approved for this session (dynamically added)
+    #[serde(default)]
+    pub approved_bash_patterns: HashSet<String>,
 
     /// Last processed event sequence number for replay
     pub last_event_sequence: u64,
@@ -821,6 +846,7 @@ mod tests {
             visibility: ToolVisibility::All,
             approval_policy: ToolApprovalPolicy::AlwaysAsk,
             metadata: HashMap::new(),
+            tools: HashMap::new(),
         };
 
         assert!(matches!(config.backends[0], BackendConfig::Local { .. }));

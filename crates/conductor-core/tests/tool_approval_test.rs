@@ -1,6 +1,8 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use conductor_core::api::Model;
-use conductor_core::app::{App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor};
+use conductor_core::app::{
+    App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor, command::ApprovalType,
+};
 use conductor_core::test_utils;
 use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::ToolCall;
@@ -212,8 +214,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     command_tx_to_actor
         .send(AppCommand::HandleToolResponse {
             id: tool_call_id_1.clone(),
-            approved: true,
-            always: true,
+            approval: ApprovalType::AlwaysTool,
         })
         .await?;
 

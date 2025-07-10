@@ -7,6 +7,7 @@ use sqlx::{
         SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
     },
 };
+use std::collections::HashSet;
 use std::path::Path;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -327,10 +328,20 @@ impl SessionStore for SqliteSessionStore {
                     SessionStoreError::database(format!("Failed to get last event sequence: {e}"))
                 })?;
 
+        // Extract approved bash patterns from session config
+        let approved_bash_patterns: HashSet<String> =
+            if let Some(bash_config) = config.tool_config.tools.get("bash") {
+                let crate::session::state::ToolSpecificConfig::Bash(bash) = bash_config;
+                bash.approved_patterns.iter().cloned().collect()
+            } else {
+                HashSet::new()
+            };
+
         let state = SessionState {
             messages,
             tool_calls,
             approved_tools: Default::default(), // TODO: Track approved tools separately if needed
+            approved_bash_patterns,
             last_event_sequence: last_sequence.unwrap_or(0) as u64,
             metadata: Default::default(),
         };

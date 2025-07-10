@@ -534,20 +534,40 @@ impl StatefulWidget for InputPanel<'_> {
                 Line::from(""),
             ];
             approval_text.extend(preview_lines);
+            let is_bash_command = tool_call.name == "bash";
 
-            let title = Line::from(vec![
-                Span::raw(" Tool Approval Required "),
-                Span::raw("─ "),
-                Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
-                Span::styled(" once", Style::default()),
-                Span::raw(" "),
-                Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
-                Span::styled("lways", Style::default()),
-                Span::raw(" "),
-                Span::styled("[N]", self.theme.style(Component::ToolError)),
-                Span::styled("o", Style::default()),
-                Span::raw(" "),
-            ]);
+            let title = if is_bash_command {
+                Line::from(vec![
+                    Span::raw(" Tool Approval Required "),
+                    Span::raw("─ "),
+                    Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
+                    Span::styled(" once", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                    Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
+                    Span::styled("lways (this command)", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                    Span::styled("[L]", self.theme.style(Component::ToolSuccess)),
+                    Span::styled(" Always", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                    Span::styled("[N]", self.theme.style(Component::ToolError)),
+                    Span::styled("o", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw(" Tool Approval Required "),
+                    Span::raw("─ "),
+                    Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
+                    Span::styled(" once", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                    Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
+                    Span::styled("lways", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                    Span::styled("[N]", self.theme.style(Component::ToolError)),
+                    Span::styled("o", self.theme.style(Component::DimText)),
+                    Span::raw(" "),
+                ])
+            };
 
             let approval_block = Paragraph::new(approval_text).block(
                 Block::default()
