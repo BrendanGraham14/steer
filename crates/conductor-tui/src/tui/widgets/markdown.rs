@@ -275,10 +275,28 @@ where
             Tag::TableHead => self.start_table_head(),
             Tag::TableRow => self.start_table_row(),
             Tag::TableCell => self.start_table_cell(),
-            Tag::Emphasis => self.push_inline_style(self.styles.emphasis),
-            Tag::Strong => self.push_inline_style(self.styles.strong),
-            Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
-            Tag::Link(_link_type, dest_url, _title) => self.push_link(dest_url),
+            Tag::Emphasis | Tag::Strong | Tag::Strikethrough => {
+                // If we're at the start of a list item, push the list marker before applying inline styles
+                if self.in_list_item_start {
+                    self.push_list_marker();
+                    self.in_list_item_start = false;
+                }
+
+                match tag {
+                    Tag::Emphasis => self.push_inline_style(self.styles.emphasis),
+                    Tag::Strong => self.push_inline_style(self.styles.strong),
+                    Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
+                    _ => unreachable!(),
+                }
+            }
+            Tag::Link(_link_type, dest_url, _title) => {
+                // If we're at the start of a list item, push the list marker before the link
+                if self.in_list_item_start {
+                    self.push_list_marker();
+                    self.in_list_item_start = false;
+                }
+                self.push_link(dest_url)
+            }
             Tag::Image(_link_type, _dest_url, _title) => warn!("Image not yet supported"),
         }
     }
@@ -457,6 +475,12 @@ where
     }
 
     fn code(&mut self, code: CowStr<'a>) {
+        // If we're at the start of a list item, push the list marker before the code
+        if self.in_list_item_start {
+            self.push_list_marker();
+            self.in_list_item_start = false;
+        }
+
         let span = Span::styled(code, self.styles.code);
         self.push_span(span);
     }
@@ -1326,6 +1350,73 @@ def hello():
         assert!(
             has_multiple_spans,
             "Should have lines with multiple colored spans when syntax highlighting is enabled"
+        );
+    }
+
+    #[test]
+    fn test_numbered_list_with_formatting() {
+        let markdown = r#"### TUI State Management: A Broader View
+
+The TUI's state architecture is a well-defined, multi-layered system that separates data, UI state, and asynchronous process management.
+
+1. **MessageViewModel**: This is the central nervous system of the TUI's state.
+2. **ChatStore**: This is the canonical data store for the conversation history.
+   - **Responsibility**: Holds the ground truth of what should be displayed
+   - **Key Feature**: Its prune_to_thread method is critical
+3. **ToolCallRegistry**: This is the asynchronous state machine.
+4. **ChatListState**: This is the pure UI view state.
+
+Also test with other inline formatting:
+1. *Emphasized text*: Should work with emphasis
+2. ~~Strikethrough text~~: Should work with strikethrough
+3. [Link text](https://example.com): Should work with links
+4. `Code text`: Should work with inline code"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles, &theme);
+
+        println!("\n=== Numbered List with Formatting Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        // Check that the numbered list items are formatted correctly
+        let has_correct_format = rendered.lines.iter().any(|line| {
+            let line_text: String = line
+                .line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            line_text.starts_with("1. ") && line_text.contains("MessageViewModel")
+        });
+
+        assert!(
+            has_correct_format,
+            "Numbered list with bold text should be formatted as '1. **MessageViewModel**:' not 'MessageViewModel1.'"
+        );
+
+        // Also check that we don't have the incorrect format
+        let has_incorrect_format = rendered.lines.iter().any(|line| {
+            let line_text: String = line
+                .line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            line_text.contains("MessageViewModel1.")
+        });
+
+        assert!(
+            !has_incorrect_format,
+            "Should not have 'MessageViewModel1.' in the output"
         );
     }
 }
