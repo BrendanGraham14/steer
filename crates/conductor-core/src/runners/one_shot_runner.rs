@@ -369,9 +369,7 @@ mod tests {
 
     async fn create_test_app_config() -> crate::app::AppConfig {
         dotenv().ok();
-        let _llm_config = test_utils::llm_config_from_env()
-            .await
-            .expect("API keys must be configured for tests");
+        // Tests will fail if API keys are not configured
         test_utils::test_app_config()
     }
 

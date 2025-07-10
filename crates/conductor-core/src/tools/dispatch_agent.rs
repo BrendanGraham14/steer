@@ -57,9 +57,7 @@ Usage notes:
     ) -> std::result::Result<conductor_tools::result::AgentResult, ToolError> {
         let token = context.cancellation_token.clone();
 
-        let llm_config = tool.llm_config_provider.get().await
-             .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to load LLM config: {e}")))?;
-        let api_client = Arc::new(crate::api::Client::new(&llm_config)); // Create ApiClient and wrap in Arc
+        let api_client = Arc::new(crate::api::Client::new_with_provider((*tool.llm_config_provider).clone())); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
         let mut backend_registry = crate::tools::BackendRegistry::new();

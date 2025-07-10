@@ -120,12 +120,7 @@ async fn process_web_page_content(
     prompt: String,
     token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ToolError> {
-    let config = tool
-        .llm_config_provider
-        .get()
-        .await
-        .map_err(|e| ToolError::execution("Fetch", e.to_string()))?;
-    let client = crate::api::Client::new(&config);
+    let client = crate::api::Client::new_with_provider((*tool.llm_config_provider).clone());
     let user_message = format!(
         r#"Web page content:
 ---

@@ -16,8 +16,8 @@ use uuid::Uuid;
 #[tokio::test]
 #[ignore]
 async fn test_api_basic() {
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
         Model::Claude3_5Haiku20241022,
@@ -121,8 +121,8 @@ async fn test_api_with_tools() {
     // Load environment variables from .env file
     dotenv().ok();
 
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config); // Arc<Client>
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider); // Arc<Client>
 
     let models_to_test = vec![
         Model::Claude3_5Haiku20241022,
@@ -276,8 +276,8 @@ async fn test_api_with_tools() {
 #[ignore]
 async fn test_api_with_tool_response() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
         Model::Claude3_5Haiku20241022,
@@ -410,8 +410,8 @@ async fn test_api_with_tool_response() {
 #[ignore]
 async fn test_gemini_system_instructions() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     let timestamp = Message::current_timestamp();
     let messages = vec![Message::User {
@@ -457,8 +457,8 @@ async fn test_gemini_system_instructions() {
 #[ignore]
 async fn test_gemini_api_tool_result_error() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     let ts1 = Message::current_timestamp();
     let ts2 = ts1 + 1;
@@ -531,8 +531,8 @@ async fn test_gemini_api_tool_result_error() {
 #[ignore]
 async fn test_gemini_api_complex_tool_schema() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     // Define a tool with a complex schema
     let complex_tool = Tool {
@@ -613,8 +613,8 @@ async fn test_gemini_api_complex_tool_schema() {
 #[ignore]
 async fn test_gemini_api_tool_result_json() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     // Define the JSON string to be used as the tool result content
     let json_result_string =
@@ -690,8 +690,8 @@ async fn test_gemini_api_tool_result_json() {
 #[ignore]
 async fn test_gemini_api_with_multiple_tool_responses() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     let ts1 = Message::current_timestamp();
     let ts2 = ts1 + 1;
@@ -809,8 +809,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 #[ignore]
 async fn test_api_with_cancelled_tool_execution() {
     dotenv().ok();
-    let config = test_utils::llm_config_from_env().await.unwrap();
-    let client = Client::new(&config);
+    let provider = test_utils::test_llm_config_provider();
+    let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
         Model::Claude3_5Haiku20241022,
