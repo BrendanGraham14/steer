@@ -285,6 +285,20 @@ Read-only tools run automatically ( `view`, `grep`, `ls`, `glob`, `fetch`, `todo
 
 Headless mode pre-approves every built-in tool for convenience.
 
+### Bash Command Approval
+
+You can pre-approve specific bash commands using glob patterns in your session configuration:
+
+```toml
+[tool_config.tools.bash]
+approved_patterns = [
+    "git status",
+    "git log*",
+    "npm run*",
+    "cargo build*"
+]
+```
+
 ---
 
 ## Development

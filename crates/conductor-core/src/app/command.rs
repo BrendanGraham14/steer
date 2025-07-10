@@ -5,6 +5,19 @@ use conductor_tools::ToolCall;
 use std::collections::HashSet;
 use tokio::sync::oneshot;
 
+/// Tool-specific approval payload for different types of tool approvals
+#[derive(Debug, Clone)]
+pub enum ApprovalType {
+    /// Denied approval for this specific tool call
+    Denied,
+    /// One-time approval for this specific tool call
+    Once,
+    /// Always approve this entire tool
+    AlwaysTool,
+    /// Always approve this specific bash command pattern
+    AlwaysBashPattern(String),
+}
+
 /// Defines messages the TUI can send *to* the `App` actor.
 #[derive(Debug)]
 pub enum AppCommand {
@@ -18,11 +31,7 @@ pub enum AppCommand {
         new_content: String,
     },
     /// Handle the user's decision on a tool approval request.
-    HandleToolResponse {
-        id: String,
-        approved: bool,
-        always: bool,
-    },
+    HandleToolResponse { id: String, approval: ApprovalType },
     /// Execute a slash command.
     ExecuteCommand(AppCommandType),
     /// Execute a bash command directly (bypassing AI)
@@ -40,6 +49,7 @@ pub enum AppCommand {
     RestoreConversation {
         messages: Vec<Message>,
         approved_tools: HashSet<String>,
+        approved_bash_patterns: HashSet<String>,
     },
     /// Request to send the current conversation state
     /// Used by TUI to populate display after session restoration

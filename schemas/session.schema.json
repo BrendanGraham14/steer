@@ -303,6 +303,20 @@
         }
       ]
     },
+    "PartialBashConfig": {
+      "type": "object",
+      "properties": {
+        "approved_patterns": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "PartialToolConfig": {
       "type": "object",
       "properties": {
@@ -325,6 +339,16 @@
             "$ref": "#/definitions/BackendConfig"
           }
         },
+        "tools": {
+          "default": null,
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "$ref": "#/definitions/PartialToolSpecificConfig"
+          }
+        },
         "visibility": {
           "anyOf": [
             {
@@ -337,6 +361,13 @@
         }
       },
       "additionalProperties": false
+    },
+    "PartialToolSpecificConfig": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PartialBashConfig"
+        }
+      ]
     },
     "PartialWorkspaceConfig": {
       "oneOf": [

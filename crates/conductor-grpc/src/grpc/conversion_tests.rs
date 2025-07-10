@@ -3,6 +3,7 @@
 
 use super::conversions::*;
 use conductor_core::api::ToolCall;
+use conductor_core::app::command::ApprovalType;
 use conductor_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, Message as ConversationMessage,
     ThoughtContent, UserContent,
@@ -258,6 +259,7 @@ prop_compose! {
             visibility: ToolVisibility::All,
             approval_policy: ToolApprovalPolicy::AlwaysAsk,
             metadata,
+            tools: HashMap::new(),
         }
     }
 }
@@ -299,7 +301,16 @@ prop_compose! {
             0 => AppCommand::ProcessUserInput(user_input),
             1 => AppCommand::ExecuteCommand(AppCommandType::parse(command).unwrap()),
             2 => AppCommand::ExecuteBashCommand { command: bash_command },
-            _ => AppCommand::HandleToolResponse { id: tool_id, approved, always },
+            _ => AppCommand::HandleToolResponse {
+                id: tool_id,
+                approval: if always {
+                    ApprovalType::AlwaysTool
+                } else if approved {
+                    ApprovalType::Once
+                } else {
+                    ApprovalType::Denied
+                }
+            },
         }
     }
 }
@@ -585,7 +596,7 @@ proptest! {
             ProcessUserInput(String),
             ExecuteCommand(String),
             ExecuteBashCommand(String),
-            HandleToolResponse { id: String, approved: bool, always: bool },
+            HandleToolResponse { id: String, approval: ApprovalType },
             NoMessage,
         }
 
@@ -593,11 +604,12 @@ proptest! {
             AppCommand::ProcessUserInput(text) => ExpectedResult::ProcessUserInput(text.clone()),
             AppCommand::ExecuteCommand(cmd) => ExpectedResult::ExecuteCommand(cmd.as_command_str()),
             AppCommand::ExecuteBashCommand { command } => ExpectedResult::ExecuteBashCommand(command.clone()),
-            AppCommand::HandleToolResponse { id, approved, always } => ExpectedResult::HandleToolResponse {
-                id: id.clone(),
-                approved: *approved,
-                always: *always,
-            },
+            AppCommand::HandleToolResponse { id, approval } => {
+                ExpectedResult::HandleToolResponse {
+                    id: id.clone(),
+                    approval: approval.clone(),
+                }
+            }
             _ => ExpectedResult::NoMessage,
         };
 
@@ -642,21 +654,34 @@ proptest! {
                     }
                 }
             }
-            ExpectedResult::HandleToolResponse { id, approved, always } => {
+            ExpectedResult::HandleToolResponse { id, approval } => {
                 prop_assert!(result.is_ok());
                 if let Ok(Some(client_msg)) = result {
                     prop_assert_eq!(client_msg.session_id, session_id);
                     if let Some(conductor_proto::agent::client_message::Message::ToolApproval(msg)) = client_msg.message {
                         prop_assert_eq!(msg.tool_call_id, id);
-                        // Verify decision conversion
-                        let expected_decision = if always {
-                            conductor_proto::agent::ApprovalDecision::AlwaysApprove as i32
-                        } else if approved {
-                            conductor_proto::agent::ApprovalDecision::Approve as i32
-                        } else {
-                            conductor_proto::agent::ApprovalDecision::Deny as i32
-                        };
-                        prop_assert_eq!(msg.decision, expected_decision);
+                        match approval {
+                            ApprovalType::Denied => {
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::Deny(true))
+                                }));
+                            }
+                            ApprovalType::Once => {
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::Once(true))
+                                }));
+                            }
+                            ApprovalType::AlwaysTool => {
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysTool(true))
+                                }));
+                            }
+                            ApprovalType::AlwaysBashPattern(pattern) => {
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysBashPattern(pattern.clone()))
+                                }));
+                            }
+                        }
                     } else {
                         prop_assert!(false, "Expected ToolApproval variant");
                     }

@@ -256,6 +256,15 @@ message ToolApprovalResponse {
   ApprovalDecision decision = 2;
 }
 
+message ApprovalDecision {
+  oneof decision_type {
+    bool deny = 1;
+    bool once = 2;  // One-time approval
+    bool always_tool = 3;  // Always approve this tool
+    string always_bash_pattern = 4;  // Always approve this bash pattern
+  }
+}
+
 message SubscribeRequest {
   repeated string event_types = 1;
   optional uint64 since_sequence = 2;
@@ -564,6 +573,19 @@ message SessionToolConfig {
   map<string, string> metadata = 2;
   ToolVisibility visibility = 3;
   ToolApprovalPolicy approval_policy = 4;
+  map<string, ToolSpecificConfig> tools = 5;
+}
+
+// Tool-specific configuration
+message ToolSpecificConfig {
+  oneof config {
+    BashToolConfig bash = 1;
+  }
+}
+
+// Bash tool configuration
+message BashToolConfig {
+  repeated string approved_patterns = 1;
 }
 
 message ToolVisibility {
@@ -703,13 +725,6 @@ enum ToolCallStatus {
   TOOL_CALL_STATUS_EXECUTING = 4;
   TOOL_CALL_STATUS_COMPLETED = 5;
   TOOL_CALL_STATUS_FAILED = 6;
-}
-
-enum ApprovalDecision {
-  APPROVAL_DECISION_UNSPECIFIED = 0;
-  APPROVAL_DECISION_APPROVE = 1;
-  APPROVAL_DECISION_DENY = 2;
-  APPROVAL_DECISION_ALWAYS_APPROVE = 3;
 }
 
 enum ContainerRuntime {

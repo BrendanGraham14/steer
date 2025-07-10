@@ -1,13 +1,14 @@
 use crate::grpc::error::ConversionError;
 use conductor_core::api::ToolCall;
+use conductor_core::app::command::ApprovalType;
 use conductor_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, CompactResult,
     Message as ConversationMessage, ThoughtContent, UserContent,
 };
 use conductor_core::app::{AppCommand, AppEvent};
 use conductor_core::session::state::{
-    BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
-    ToolApprovalPolicy, ToolFilter, ToolVisibility, WorkspaceConfig,
+    BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
+    ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
 use conductor_proto::agent as proto;
 
@@ -483,7 +484,11 @@ pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::Tool
     let policy_variant = match policy {
         ToolApprovalPolicy::AlwaysAsk => Policy::AlwaysAsk(AlwaysAskPolicy {
             timeout_ms: None,
-            default_decision: ApprovalDecision::Deny as i32,
+            default_decision: Some(ApprovalDecision {
+                decision_type: Some(
+                    conductor_proto::agent::approval_decision::DecisionType::Deny(true),
+                ),
+            }),
         }),
         ToolApprovalPolicy::PreApproved { tools } => Policy::PreApproved(PreApprovedPolicy {
             tools: tools.iter().cloned().collect(),
@@ -495,7 +500,11 @@ pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::Tool
             pre_approved_tools: pre_approved.iter().cloned().collect(),
             ask_for_others: *ask_for_others,
             timeout_ms: None,
-            default_decision: ApprovalDecision::Deny as i32,
+            default_decision: Some(ApprovalDecision {
+                decision_type: Some(
+                    conductor_proto::agent::approval_decision::DecisionType::Deny(true),
+                ),
+            }),
         }),
     };
 
@@ -658,6 +667,23 @@ pub fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto::Sessio
         metadata: config.metadata.clone(),
         visibility: Some(tool_visibility_to_proto(&config.visibility)),
         approval_policy: Some(tool_approval_policy_to_proto(&config.approval_policy)),
+        tools: config
+            .tools
+            .iter()
+            .map(|(name, config)| (name.clone(), tool_specific_config_to_proto(config)))
+            .collect(),
+    }
+}
+
+pub fn tool_specific_config_to_proto(config: &ToolSpecificConfig) -> proto::ToolSpecificConfig {
+    match config {
+        ToolSpecificConfig::Bash(bash_config) => proto::ToolSpecificConfig {
+            config: Some(proto::tool_specific_config::Config::Bash(
+                proto::BashToolConfig {
+                    approved_patterns: bash_config.approved_patterns.clone(),
+                },
+            )),
+        },
     }
 }
 
@@ -857,6 +883,25 @@ pub fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> SessionTo
         approval_policy: proto_to_tool_approval_policy(proto_config.approval_policy),
         visibility: proto_to_tool_visibility(proto_config.visibility),
         metadata: proto_config.metadata,
+        tools: proto_config
+            .tools
+            .into_iter()
+            .filter_map(|(name, config)| {
+                proto_to_tool_specific_config(config).map(|config| (name, config))
+            })
+            .collect(),
+    }
+}
+
+pub fn proto_to_tool_specific_config(
+    proto_config: proto::ToolSpecificConfig,
+) -> Option<ToolSpecificConfig> {
+    match proto_config.config? {
+        proto::tool_specific_config::Config::Bash(bash_config) => {
+            Some(ToolSpecificConfig::Bash(BashToolConfig {
+                approved_patterns: bash_config.approved_patterns,
+            }))
+        }
     }
 }
 
@@ -1478,23 +1523,28 @@ pub fn convert_app_command_to_client_message(
             new_content,
         })),
 
-        AppCommand::HandleToolResponse {
-            id,
-            approved,
-            always,
-        } => {
-            let decision = if always {
-                proto::ApprovalDecision::AlwaysApprove
-            } else if approved {
-                proto::ApprovalDecision::Approve
-            } else {
-                proto::ApprovalDecision::Deny
+        AppCommand::HandleToolResponse { id, approval } => {
+            let decision = match approval {
+                ApprovalType::Denied => proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::Deny(true)),
+                },
+                ApprovalType::Once => proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::Once(true)),
+                },
+                ApprovalType::AlwaysTool => proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::AlwaysTool(true)),
+                },
+                ApprovalType::AlwaysBashPattern(pattern) => proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::AlwaysBashPattern(
+                        pattern,
+                    )),
+                },
             };
 
             Some(ClientMessageType::ToolApproval(
                 proto::ToolApprovalResponse {
                     tool_call_id: id,
-                    decision: decision as i32,
+                    decision: Some(decision),
                 },
             ))
         }

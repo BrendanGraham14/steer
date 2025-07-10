@@ -1,10 +1,13 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
+use crate::app::command::ApprovalType;
 use crate::app::conversation::{
     AppCommandType, AssistantContent, CompactResult, ToolResult, UserContent,
 };
 use crate::config::LlmConfigProvider;
 use crate::error::{Error, Result};
 use conductor_tools::ToolError;
+use conductor_tools::tools::BASH_TOOL_NAME;
+use conductor_tools::tools::bash::BashParams;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -126,12 +129,27 @@ pub struct App {
     pub api_client: ApiClient,
     agent_executor: AgentExecutor,
     event_sender: mpsc::Sender<AppEvent>,
-    approved_tools: HashSet<String>, // Tracks tools approved with "Always" for the session
+    approved_tools: Arc<tokio::sync::RwLock<HashSet<String>>>, // Tracks tools approved with "Always" for the session
+    approved_bash_patterns: std::sync::Arc<tokio::sync::RwLock<HashSet<String>>>, // Tracks bash commands approved for the session
     current_op_context: Option<OpContext>,
     current_model: Model,
     session_config: Option<crate::session::state::SessionConfig>, // For tool visibility filtering
     workspace: Option<Arc<dyn crate::workspace::Workspace>>, // Workspace for environment and tool execution
     cached_system_prompt: Option<String>, // Cached system prompt to avoid recomputation
+}
+
+/// Check if a command matches any pattern in the given list
+fn matches_any_pattern(command: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        // Check exact match first
+        if pattern == command {
+            return true;
+        }
+        // Then check glob pattern
+        glob::Pattern::new(pattern)
+            .map(|p| p.matches(command))
+            .unwrap_or(false)
+    })
 }
 
 impl App {
@@ -148,6 +166,20 @@ impl App {
         let api_client = ApiClient::new(&llm_config);
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
 
+        // Initialize approved_bash_patterns from session config
+        let approved_bash_patterns = if let Some(ref sc) = session_config {
+            if let Some(bash_config) = sc.tool_config.tools.get("bash") {
+                let crate::session::state::ToolSpecificConfig::Bash(bash) = bash_config;
+                bash.approved_patterns.iter().cloned().collect()
+            } else {
+                HashSet::new()
+            }
+        } else {
+            HashSet::new()
+        };
+        let approved_bash_patterns =
+            std::sync::Arc::new(tokio::sync::RwLock::new(approved_bash_patterns));
+
         Ok(Self {
             config,
             conversation: Arc::new(Mutex::new(conversation)),
@@ -155,7 +187,8 @@ impl App {
             api_client,
             agent_executor,
             event_sender: event_tx,
-            approved_tools: HashSet::new(),
+            approved_tools: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
+            approved_bash_patterns,
             current_op_context: None,
             current_model: initial_model,
             session_config,
@@ -224,14 +257,6 @@ impl App {
 
     pub fn get_current_model(&self) -> Model {
         self.current_model
-    }
-
-    pub fn is_tool_approved(&self, tool_name: &str) -> bool {
-        self.approved_tools.contains(tool_name)
-    }
-
-    pub fn add_approved_tool(&mut self, tool_name: String) {
-        self.approved_tools.insert(tool_name);
     }
 
     /// Gets or creates the system prompt, using cache if available
@@ -397,6 +422,8 @@ impl App {
         let approved_tools_for_approval = self.approved_tools.clone();
         let tool_executor_for_approval = self.tool_executor.clone();
         let command_tx_for_approval = OpContext::command_tx().clone();
+        let approved_bash_patterns_clone = self.approved_bash_patterns.clone(); // Clone for capture
+        let session_config_clone = self.session_config.clone(); // Clone for capture
 
         let tool_approval_callback = move |tool_call: ToolCall| {
             let approved_tools = approved_tools_for_approval.clone();
@@ -404,10 +431,13 @@ impl App {
             let command_tx = command_tx_for_approval.clone();
             let tool_name = tool_call.name.clone();
             let tool_id = tool_call.id.clone();
+            let approved_bash_patterns = approved_bash_patterns_clone.clone();
+            let session_config = session_config_clone.clone();
 
             async move {
-                let requires_approval = match executor.requires_approval(&tool_name).await {
-                    Ok(req) => req,
+                match executor.requires_approval(&tool_name).await {
+                    Ok(false) => return Ok(ApprovalDecision::Approved),
+                    Ok(true) => {}
                     Err(e) => {
                         return Err(ToolError::InternalError(format!(
                             "Failed to check tool approval status for {tool_name}: {e}"
@@ -415,37 +445,86 @@ impl App {
                     }
                 };
 
-                if !requires_approval || approved_tools.contains(&tool_name) {
-                    // Skip approval for tools that don't need it or are already approved
-                    debug!(tool_id=%tool_id, tool_name=%tool_name, "Tool doesn\'t require approval or already in approved_tools set");
-                    Ok(ApprovalDecision::Approved)
-                } else {
-                    // Needs interactive approval - create oneshot channel for receiving the decision
-                    let (tx, rx) = oneshot::channel();
+                if approved_tools.read().await.contains(&tool_name) {
+                    return Ok(ApprovalDecision::Approved);
+                }
 
-                    // Send approval request to the actor loop via command channel
-                    if let Err(e) = command_tx
-                        .send(AppCommand::RequestToolApprovalInternal {
-                            tool_call,
-                            responder: tx,
-                        })
-                        .await
-                    {
-                        // If we can't send the request, treat as an error
-                        error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
-                        return Err(ToolError::InternalError(format!(
-                            "Failed to request tool approval: {e}"
-                        )));
+                // Check if this is a bash command that matches an approved pattern
+                if tool_name == BASH_TOOL_NAME {
+                    // Extract command from tool parameters
+                    let params: BashParams = match serde_json::from_value(
+                        tool_call.parameters.clone(),
+                    ) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            debug!(tool_id=%tool_id, tool_name=%tool_name, "Failed to parse BashParams from tool_call.parameters: {}", e);
+                            return Err(ToolError::invalid_params(
+                                "bash",
+                                format!("Failed to parse BashParams: {e}"),
+                            ));
+                        }
+                    };
+
+                    // Check against static patterns from session config
+                    let static_patterns = if let Some(ref session_config) = session_config {
+                        if let Some(bash_config) = session_config.tool_config.tools.get("bash") {
+                            let crate::session::state::ToolSpecificConfig::Bash(bash) = bash_config;
+                            &bash.approved_patterns
+                        } else {
+                            &Vec::new()
+                        }
+                    } else {
+                        &Vec::new()
+                    };
+
+                    if matches_any_pattern(params.command.as_str(), static_patterns) {
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Bash command {} matches static patterns: {:?}", params.command, static_patterns);
+                        return Ok(ApprovalDecision::Approved);
+                    } else {
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Bash command {} does not match static patterns: {:?}", params.command, static_patterns);
                     }
 
-                    // Wait for the decision
-                    match rx.await {
-                        Ok(d) => Ok(d), // User made a choice
-                        Err(_) => {
-                            // Responder was dropped (likely due to cancellation elsewhere or shutdown)
-                            warn!(tool_id=%tool_id, tool_name=%tool_name, "Approval decision channel closed for tool.");
-                            Ok(ApprovalDecision::Denied) // Treat as denied
-                        }
+                    // Check against dynamically approved patterns (convert HashSet to Vec)
+                    let dynamic_patterns: Vec<String> = {
+                        let patterns = approved_bash_patterns.read().await;
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Dynamic patterns: {:?}", patterns);
+                        patterns.iter().cloned().collect()
+                    };
+
+                    if matches_any_pattern(params.command.as_str(), &dynamic_patterns) {
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Bash command {} matches dynamic patterns: {:?}", params.command, dynamic_patterns);
+                        return Ok(ApprovalDecision::Approved);
+                    } else {
+                        debug!(tool_id=%tool_id, tool_name=%tool_name, "Bash command {} does not match dynamic patterns: {:?}", params.command, dynamic_patterns);
+                    }
+                }
+
+                // Needs interactive approval - create oneshot channel for receiving the decision
+                // Needs interactive approval - create oneshot channel for receiving the decision
+                let (tx, rx) = oneshot::channel();
+
+                // Send approval request to the actor loop via command channel
+                if let Err(e) = command_tx
+                    .send(AppCommand::RequestToolApprovalInternal {
+                        tool_call,
+                        responder: tx,
+                    })
+                    .await
+                {
+                    // If we can't send the request, treat as an error
+                    error!(tool_id=%tool_id, tool_name=%tool_name, "Failed to send tool approval request: {}", e);
+                    return Err(ToolError::InternalError(format!(
+                        "Failed to request tool approval: {e}"
+                    )));
+                }
+
+                // Wait for the decision
+                match rx.await {
+                    Ok(d) => Ok(d), // User made a choice
+                    Err(_) => {
+                        // Responder was dropped (likely due to cancellation elsewhere or shutdown)
+                        warn!(tool_id=%tool_id, tool_name=%tool_name, "Approval decision channel closed for tool.");
+                        Ok(ApprovalDecision::Denied) // Treat as denied
                     }
                 }
             }
@@ -453,7 +532,6 @@ impl App {
 
         // --- Tool Execution Callback ---
         let tool_executor_for_execution = self.tool_executor.clone();
-
         let tool_execution_callback =
             move |tool_call: ToolCall, callback_token: CancellationToken| {
                 let executor = tool_executor_for_execution.clone();
@@ -513,7 +591,7 @@ impl App {
         match command {
             AppCommandType::Clear => {
                 self.conversation.lock().await.clear();
-                self.approved_tools.clear(); // Also clear tool approvals
+                self.approved_tools.write().await.clear(); // Also clear tool approvals
                 self.cached_system_prompt = None; // Clear cached system prompt
                 Ok(Some(conversation::CommandResponse::Text(
                     "Conversation and tool approvals cleared.".to_string(),
@@ -989,7 +1067,7 @@ async fn process_next_approval_request(app: &mut App, queue: &mut ApprovalQueue)
     }
 
     while let Some((id, tool_call, responder)) = queue.queued.pop_front() {
-        if app.approved_tools.contains(&tool_call.name) {
+        if app.approved_tools.read().await.contains(&tool_call.name) {
             info!(target: "process_next_approval", "Auto-approving tool '{}' (ID: {})", tool_call.name, id);
             if responder.send(ApprovalDecision::Approved).is_err() {
                 warn!(target: "process_next_approval", "Failed to send auto-approval for tool ID '{}'", id);
@@ -1129,10 +1207,11 @@ async fn handle_app_command(
         AppCommand::RestoreConversation {
             messages,
             approved_tools,
+            approved_bash_patterns,
         } => {
             // Atomically restore entire conversation state
-            debug!(target:"handle_app_command", "Restoring conversation with {} messages and {} approved tools",
-                messages.len(), approved_tools.len());
+            debug!(target:"handle_app_command", "Restoring conversation with {} messages, {} approved tools, and {} approved bash patterns",
+                messages.len(), approved_tools.len(), approved_bash_patterns.len());
 
             // Restore messages
             let mut conversation_guard = app.conversation.lock().await;
@@ -1140,39 +1219,55 @@ async fn handle_app_command(
             drop(conversation_guard);
 
             // Restore approved tools
-            app.approved_tools = approved_tools;
+            *app.approved_tools.write().await = approved_tools;
+
+            // Restore approved bash patterns
+            *app.approved_bash_patterns.write().await = approved_bash_patterns;
 
             debug!(target:"handle_app_command", "Conversation restoration complete");
             Ok(false)
         }
 
-        AppCommand::HandleToolResponse {
-            id,
-            approved,
-            always,
-        } => {
+        AppCommand::HandleToolResponse { id, approval } => {
             if let Some((current_id, current_tool_call, responder)) = approval_queue.current.take()
             {
+                debug!(target: "handle_app_command", "Handling tool response for ID '{}', approval: {:?}", id, approval);
                 if current_id != id {
                     error!(target: "handle_app_command", "Mismatched tool ID. Expected '{}', got '{}'", current_id, id);
                     approval_queue
                         .queued
                         .push_front((current_id, current_tool_call, responder));
                 } else {
-                    let decision = if approved {
-                        ApprovalDecision::Approved
-                    } else {
-                        ApprovalDecision::Denied
+                    let decision = match approval {
+                        ApprovalType::Once => {
+                            debug!(target: "handle_app_command", "Approving tool call with ID '{}' once.", id);
+                            ApprovalDecision::Approved
+                        }
+                        ApprovalType::AlwaysTool => {
+                            debug!(target: "handle_app_command", "Approving tool call with ID '{}' always.", id);
+                            app.approved_tools
+                                .write()
+                                .await
+                                .insert(current_tool_call.name.clone());
+                            ApprovalDecision::Approved
+                        }
+                        ApprovalType::AlwaysBashPattern(pattern) => {
+                            debug!(target: "handle_app_command", "Approving bash command '{}' always.", pattern);
+                            app.approved_bash_patterns
+                                .write()
+                                .await
+                                .insert(pattern.clone());
+                            ApprovalDecision::Approved
+                        }
+                        ApprovalType::Denied => {
+                            debug!(target: "handle_app_command", "Denying tool call with ID '{}'.", id);
+                            ApprovalDecision::Denied
+                        }
                     };
 
-                    let approved_tool_name = current_tool_call.name.clone();
-                    if approved && always {
-                        app.approved_tools.insert(approved_tool_name.clone());
-                        debug!(target: "handle_app_command", "Added tool '{}' to always-approved list.", approved_tool_name);
-                    }
-
+                    debug!(target: "handle_app_command", "Sending approval decision for tool ID '{}': {:?}", id, decision);
                     if responder.send(decision).is_err() {
-                        warn!(target: "handle_app_command", "Failed to send approval decision for tool ID '{}'", id);
+                        error!(target: "handle_app_command", "Failed to send approval decision for tool ID '{}'", id);
                     }
                 }
             } else {
@@ -1642,5 +1737,91 @@ fn parse_bash_output(output: &str) -> (String, String, i32) {
     } else {
         // Success case - output is just stdout
         (output.to_string(), String::new(), 0)
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+
+    #[test]
+    fn test_matches_any_pattern_exact_match() {
+        let patterns = vec!["git status".to_string(), "git log".to_string()];
+
+        assert!(matches_any_pattern("git status", &patterns));
+        assert!(matches_any_pattern("git log", &patterns));
+        assert!(!matches_any_pattern("git push", &patterns));
+    }
+
+    #[test]
+    fn test_matches_any_pattern_glob_patterns() {
+        let patterns = vec![
+            "git *".to_string(),
+            "npm run*".to_string(),
+            "cargo test*".to_string(),
+        ];
+
+        // Test glob matching
+        assert!(matches_any_pattern("git status", &patterns));
+        assert!(matches_any_pattern("git log -10", &patterns));
+        assert!(matches_any_pattern("npm run test", &patterns));
+        assert!(matches_any_pattern("npm run build", &patterns));
+        assert!(matches_any_pattern("cargo test", &patterns));
+        assert!(matches_any_pattern("cargo test --all", &patterns));
+
+        // Test non-matches
+        assert!(!matches_any_pattern("npm install", &patterns));
+        assert!(!matches_any_pattern("cargo build", &patterns));
+        assert!(!matches_any_pattern("ls -la", &patterns));
+    }
+
+    #[test]
+    fn test_matches_any_pattern_complex_patterns() {
+        let patterns = vec![
+            "docker run*".to_string(),
+            "kubectl apply -f*".to_string(),
+            "terraform *".to_string(),
+        ];
+
+        // Test glob matches
+        assert!(matches_any_pattern("docker run nginx", &patterns));
+        assert!(matches_any_pattern("docker run -it ubuntu bash", &patterns));
+        assert!(matches_any_pattern(
+            "kubectl apply -f deployment.yaml",
+            &patterns
+        ));
+        assert!(matches_any_pattern("terraform plan", &patterns));
+        assert!(matches_any_pattern("terraform apply", &patterns));
+
+        // Test non-matches
+        assert!(!matches_any_pattern("docker ps", &patterns));
+        assert!(!matches_any_pattern("kubectl get pods", &patterns));
+        assert!(!matches_any_pattern("git status", &patterns));
+    }
+
+    #[test]
+    fn test_matches_any_pattern_empty_patterns() {
+        let patterns: Vec<String> = vec![];
+        assert!(!matches_any_pattern("git status", &patterns));
+    }
+
+    #[test]
+    fn test_matches_any_pattern_special_chars() {
+        let patterns = vec![
+            "echo \"hello world\"".to_string(),
+            "python -c 'print(\"test\")'".to_string(),
+            "ls | grep .txt".to_string(),
+        ];
+
+        // Test exact matches with special characters
+        assert!(matches_any_pattern("echo \"hello world\"", &patterns));
+        assert!(matches_any_pattern(
+            "python -c 'print(\"test\")'",
+            &patterns
+        ));
+        assert!(matches_any_pattern("ls | grep .txt", &patterns));
+
+        // Test non-matches
+        assert!(!matches_any_pattern("echo hello world", &patterns));
     }
 }

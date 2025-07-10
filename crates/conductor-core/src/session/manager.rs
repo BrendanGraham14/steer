@@ -487,6 +487,7 @@ impl SessionManager {
                 .send(AppCommand::RestoreConversation {
                     messages: session.state.messages.clone(),
                     approved_tools: session.state.approved_tools.clone(),
+                    approved_bash_patterns: session.state.approved_bash_patterns.clone(),
                 })
                 .await
                 .map_err(|_| SessionManagerError::CreationFailed {

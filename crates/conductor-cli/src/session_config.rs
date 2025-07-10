@@ -1,6 +1,6 @@
 use conductor_core::session::{
-    BackendConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
-    ToolApprovalPolicy, ToolVisibility, WorkspaceConfig,
+    BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
+    ToolApprovalPolicy, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
 use eyre::{Context, Result};
 use schemars::JsonSchema;
@@ -77,6 +77,19 @@ pub struct PartialToolConfig {
     pub backends: Option<Vec<BackendConfig>>,
     pub visibility: Option<ToolVisibilityConfig>,
     pub approval_policy: Option<ToolApprovalPolicyConfig>,
+    #[serde(default)]
+    pub tools: Option<HashMap<String, PartialToolSpecificConfig>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PartialToolSpecificConfig {
+    Bash(PartialBashConfig),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct PartialBashConfig {
+    pub approved_patterns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -208,11 +221,33 @@ impl SessionConfigLoader {
                 None => ToolApprovalPolicy::AlwaysAsk,
             };
 
+            // Process tool-specific configs
+            let mut tools = HashMap::new();
+            if let Some(partial_tools) = partial_tool_config.tools {
+                for (tool_name, tool_config) in partial_tools {
+                    match tool_config {
+                        PartialToolSpecificConfig::Bash(bash_config) => {
+                            if tool_name == "bash" {
+                                tools.insert(
+                                    "bash".to_string(),
+                                    ToolSpecificConfig::Bash(BashToolConfig {
+                                        approved_patterns: bash_config
+                                            .approved_patterns
+                                            .unwrap_or_default(),
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             SessionToolConfig {
                 backends,
                 visibility,
                 approval_policy,
                 metadata: HashMap::new(),
+                tools,
             }
         } else {
             SessionToolConfig::default()
@@ -690,6 +725,218 @@ auth = {{ Bearer = {{ token = "secret-token" }} }}
                 }
             }
             _ => unreachable!("Expected Remote workspace"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_config_with_approved_patterns() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[tool_config.tools.bash]
+approved_patterns = [
+    "git status",
+    "git log*",
+    "npm run*",
+    "cargo build*"
+]
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        // Check that bash tool config was parsed correctly
+        let bash_config = config.tool_config.tools.get("bash");
+        assert!(bash_config.is_some(), "Bash config should be present");
+
+        match bash_config.unwrap() {
+            ToolSpecificConfig::Bash(bash) => {
+                assert_eq!(bash.approved_patterns.len(), 4);
+                assert_eq!(bash.approved_patterns[0], "git status");
+                assert_eq!(bash.approved_patterns[1], "git log*");
+                assert_eq!(bash.approved_patterns[2], "npm run*");
+                assert_eq!(bash.approved_patterns[3], "cargo build*");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_config_empty_patterns() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[tool_config.tools.bash]
+approved_patterns = []
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        let bash_config = config.tool_config.tools.get("bash");
+        assert!(bash_config.is_some());
+
+        match bash_config.unwrap() {
+            ToolSpecificConfig::Bash(bash) => {
+                assert_eq!(bash.approved_patterns.len(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_config_with_other_tools() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[tool_config]
+visibility = "all"
+approval_policy = "always_ask"
+
+[tool_config.tools.bash]
+approved_patterns = ["ls -la", "pwd"]
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        // Check visibility and approval policy
+        assert!(matches!(config.tool_config.visibility, ToolVisibility::All));
+        assert!(matches!(
+            config.tool_config.approval_policy,
+            ToolApprovalPolicy::AlwaysAsk
+        ));
+
+        // Check bash config
+        let bash_config = config.tool_config.tools.get("bash");
+        assert!(bash_config.is_some());
+
+        match bash_config.unwrap() {
+            ToolSpecificConfig::Bash(bash) => {
+                assert_eq!(bash.approved_patterns.len(), 2);
+                assert_eq!(bash.approved_patterns[0], "ls -la");
+                assert_eq!(bash.approved_patterns[1], "pwd");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bash_tool_config_without_approved_patterns() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[tool_config.tools.bash]
+# No approved_patterns field
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        let bash_config = config.tool_config.tools.get("bash");
+        assert!(bash_config.is_some());
+
+        match bash_config.unwrap() {
+            ToolSpecificConfig::Bash(bash) => {
+                // Should default to empty vec when approved_patterns is None
+                assert_eq!(bash.approved_patterns.len(), 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_full_config_with_bash_patterns() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+system_prompt = "You are a helpful assistant"
+
+[workspace]
+type = "local"
+
+[tool_config]
+visibility = "all"
+approval_policy = {{ type = "pre_approved", tools = ["grep", "ls", "view"] }}
+backends = []
+
+[tool_config.tools.bash]
+approved_patterns = [
+    "git status",
+    "git diff",
+    "git log --oneline",
+    "npm test",
+    "cargo check"
+]
+
+[metadata]
+project = "test-project"
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        // Check all parts of the config
+        assert_eq!(
+            config.system_prompt,
+            Some("You are a helpful assistant".to_string())
+        );
+        assert!(matches!(config.workspace, WorkspaceConfig::Local { .. }));
+        assert_eq!(
+            config.metadata.get("project"),
+            Some(&"test-project".to_string())
+        );
+
+        // Check tool approval policy
+        match &config.tool_config.approval_policy {
+            ToolApprovalPolicy::PreApproved { tools } => {
+                assert_eq!(tools.len(), 3);
+                assert!(tools.contains("grep"));
+                assert!(tools.contains("ls"));
+                assert!(tools.contains("view"));
+            }
+            _ => unreachable!("Expected PreApproved policy"),
+        }
+
+        // Check bash config
+        let bash_config = config.tool_config.tools.get("bash");
+        assert!(bash_config.is_some());
+
+        match bash_config.unwrap() {
+            ToolSpecificConfig::Bash(bash) => {
+                assert_eq!(bash.approved_patterns.len(), 5);
+                assert_eq!(bash.approved_patterns[0], "git status");
+                assert_eq!(bash.approved_patterns[1], "git diff");
+                assert_eq!(bash.approved_patterns[2], "git log --oneline");
+                assert_eq!(bash.approved_patterns[3], "npm test");
+                assert_eq!(bash.approved_patterns[4], "cargo check");
+            }
         }
     }
 }

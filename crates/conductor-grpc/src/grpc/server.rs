@@ -440,21 +440,39 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     ) -> Result<Response<()>, Status> {
         let req = request.into_inner();
 
-        let (approved, always) = match req.decision() {
-            ApprovalDecision::Approve => (true, false),
-            ApprovalDecision::AlwaysApprove => (true, true),
-            ApprovalDecision::Deny => (false, false),
-            ApprovalDecision::Unspecified => {
+        let approval = match req.decision {
+            Some(decision) => {
+                match decision {
+                conductor_proto::agent::ApprovalDecision{decision_type: Some(
+                    conductor_proto::agent::approval_decision::DecisionType::Deny(true),
+                )} =>  conductor_core::app::command::ApprovalType::Denied,
+                conductor_proto::agent::ApprovalDecision{decision_type: Some(
+                    conductor_proto::agent::approval_decision::DecisionType::Once(true),
+                )} => conductor_core::app::command::ApprovalType::Once,
+                conductor_proto::agent::ApprovalDecision{decision_type: Some(
+                    conductor_proto::agent::approval_decision::DecisionType::AlwaysTool(true),
+                )} => conductor_core::app::command::ApprovalType::AlwaysTool,
+                conductor_proto::agent::ApprovalDecision{decision_type: Some(
+                    conductor_proto::agent::approval_decision::DecisionType::AlwaysBashPattern(
+                        pattern,
+                    ),
+                )} => conductor_core::app::command::ApprovalType::AlwaysBashPattern(pattern),
+                _ => {
+                    return Err(Status::invalid_argument(
+                        "Invalid approval decision enum value",
+                    ));
+                }
+            }}
+            None => {
                 return Err(Status::invalid_argument(
-                    "Invalid approval decision: Unspecified",
+                    "Missing approval decision",
                 ));
             }
         };
 
         let app_command = conductor_core::app::AppCommand::HandleToolResponse {
             id: req.tool_call_id,
-            approved,
-            always,
+            approval,
         };
 
         match self
@@ -687,19 +705,32 @@ async fn handle_client_message(
 
             client_message::Message::ToolApproval(approval) => {
                 // Convert approval decision using existing HandleToolResponse
-                let (approved, always) = match approval.decision() {
-                    ApprovalDecision::Approve => (true, false),
-                    ApprovalDecision::AlwaysApprove => (true, true),
-                    ApprovalDecision::Deny => (false, false),
-                    ApprovalDecision::Unspecified => {
-                        return Err("Invalid approval decision: Unspecified".into());
+                let approval_type = match approval.decision {
+                    Some(decision) => match decision.decision_type {
+                        Some(conductor_proto::agent::approval_decision::DecisionType::Deny(_)) => {
+                            conductor_core::app::command::ApprovalType::Denied
+                        }
+                        Some(conductor_proto::agent::approval_decision::DecisionType::Once(_)) => {
+                            conductor_core::app::command::ApprovalType::Once
+                        }
+                        Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysTool(_)) => {
+                            conductor_core::app::command::ApprovalType::AlwaysTool
+                        }
+                        Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysBashPattern(pattern)) => {
+                            conductor_core::app::command::ApprovalType::AlwaysBashPattern(pattern)
+                        }
+                        None => {
+                            return Err("Invalid approval decision: no decision type specified".into());
+                        }
+                    },
+                    None => {
+                        return Err("Invalid approval decision: no decision provided".into());
                     }
                 };
 
                 let app_command = conductor_core::app::AppCommand::HandleToolResponse {
                     id: approval.tool_call_id,
-                    approved,
-                    always,
+                    approval: approval_type,
                 };
 
                 session_manager
