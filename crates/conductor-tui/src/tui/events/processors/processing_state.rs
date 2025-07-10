@@ -78,7 +78,7 @@ impl EventProcessor for ProcessingStateProcessor {
 
                 ProcessingResult::Handled
             }
-            AppEvent::OperationCancelled { info } => {
+            AppEvent::OperationCancelled { .. } => {
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
                 *ctx.current_tool_approval = None;
@@ -87,7 +87,7 @@ impl EventProcessor for ProcessingStateProcessor {
                 let chat_item = crate::tui::model::ChatItem::SystemNotice {
                     id: crate::tui::model::generate_row_id(),
                     level: crate::tui::model::NoticeLevel::Info,
-                    text: format!("Operation cancelled: {info}"),
+                    text: "Operation cancelled".to_string(),
                     ts: time::OffsetDateTime::now_utc(),
                 };
                 ctx.chat_store.push(chat_item);
