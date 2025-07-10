@@ -431,29 +431,38 @@ impl<'a> ChatList<'a> {
                                 // Parse markdown
                                 let markdown_styles =
                                     super::markdown::MarkdownStyles::from_theme(self.theme);
-                                let markdown_text =
-                                    super::markdown::from_str(text, &markdown_styles);
+                                let markdown_text = super::markdown::from_str_with_width(
+                                    text,
+                                    &markdown_styles,
+                                    Some(max_width as u16),
+                                );
 
                                 // Process each line from markdown
-                                for (line_idx, line) in markdown_text.lines.into_iter().enumerate()
+                                for (line_idx, marked_line) in
+                                    markdown_text.lines.into_iter().enumerate()
                                 {
-                                    // Wrap the line while preserving styles
-                                    let wrapped_lines = style_wrap(line, max_width as u16);
+                                    // Check if this line should be wrapped
+                                    let lines_to_render = if marked_line.no_wrap {
+                                        // Don't wrap code block lines
+                                        vec![marked_line.line]
+                                    } else {
+                                        // Wrap the line while preserving styles
+                                        style_wrap(marked_line.line, max_width as u16)
+                                    };
 
-                                    for (wrap_idx, wrapped_line) in
-                                        wrapped_lines.into_iter().enumerate()
+                                    for (wrap_idx, line) in lines_to_render.into_iter().enumerate()
                                     {
                                         if idx == 0 && line_idx == 0 && wrap_idx == 0 {
                                             // First line gets the gutter
                                             let mut first_line =
                                                 self.render_gutter(row, is_hovered).spans;
                                             first_line.push(Span::raw(" "));
-                                            first_line.extend(wrapped_line.spans);
+                                            first_line.extend(line.spans);
                                             all_lines.push(Line::from(first_line));
                                         } else {
                                             // Continuation lines are indented
                                             let mut indented = vec![Span::raw("  ")];
-                                            indented.extend(wrapped_line.spans);
+                                            indented.extend(line.spans);
                                             all_lines.push(Line::from(indented));
                                         }
                                     }
@@ -639,28 +648,37 @@ impl<'a> ChatList<'a> {
                             // Parse markdown
                             let markdown_styles =
                                 super::markdown::MarkdownStyles::from_theme(self.theme);
-                            let markdown_text = super::markdown::from_str(text, &markdown_styles);
+                            let markdown_text = super::markdown::from_str_with_width(
+                                text,
+                                &markdown_styles,
+                                Some(max_width.saturating_sub(3) as u16),
+                            );
 
                             // Process each line
-                            for line in markdown_text.lines {
-                                // Wrap with reduced width for assistant indent (3 for indent)
-                                let wrapped_lines =
-                                    style_wrap(line, max_width.saturating_sub(3) as u16);
+                            for marked_line in markdown_text.lines {
+                                // Check if this line should be wrapped
+                                let lines_to_render = if marked_line.no_wrap {
+                                    // Don't wrap code block lines
+                                    vec![marked_line.line]
+                                } else {
+                                    // Wrap with reduced width for assistant indent (3 for indent)
+                                    style_wrap(marked_line.line, max_width.saturating_sub(3) as u16)
+                                };
 
-                                for wrapped_line in wrapped_lines {
+                                for line in lines_to_render {
                                     if !first_content_rendered {
                                         // First line gets indented gutter
                                         let mut first_line = vec![Span::raw("  ")]; // Indent
                                         first_line
                                             .extend(self.render_gutter(row, is_hovered).spans);
                                         first_line.push(Span::raw(" "));
-                                        first_line.extend(wrapped_line.spans);
+                                        first_line.extend(line.spans);
                                         all_lines.push(Line::from(first_line));
                                         first_content_rendered = true;
                                     } else {
                                         // Continuation lines with more indent
                                         let mut indented = vec![Span::raw("    ")]; // 4 spaces
-                                        indented.extend(wrapped_line.spans);
+                                        indented.extend(line.spans);
                                         all_lines.push(Line::from(indented));
                                     }
                                 }
@@ -682,20 +700,28 @@ impl<'a> ChatList<'a> {
                             // Parse markdown for the thought
                             let markdown_styles =
                                 super::markdown::MarkdownStyles::from_theme(self.theme);
-                            let markdown_text =
-                                super::markdown::from_str(&thought_text, &markdown_styles);
+                            let markdown_text = super::markdown::from_str_with_width(
+                                &thought_text,
+                                &markdown_styles,
+                                Some(max_width.saturating_sub(3) as u16),
+                            );
 
                             // Process each line
-                            for line in markdown_text.lines {
-                                // Wrap with reduced width for assistant indent (3 for indent)
-                                let wrapped_lines =
-                                    style_wrap(line, max_width.saturating_sub(3) as u16);
+                            for marked_line in markdown_text.lines {
+                                // Check if this line should be wrapped
+                                let lines_to_render = if marked_line.no_wrap {
+                                    // Don't wrap code block lines
+                                    vec![marked_line.line]
+                                } else {
+                                    // Wrap with reduced width for assistant indent (3 for indent)
+                                    style_wrap(marked_line.line, max_width.saturating_sub(3) as u16)
+                                };
 
-                                for wrapped_line in wrapped_lines {
+                                for line in lines_to_render {
                                     let mut styled_spans = Vec::new();
 
                                     // Apply italic style to all spans in the thought
-                                    for span in wrapped_line.spans {
+                                    for span in line.spans {
                                         styled_spans.push(Span::styled(
                                             span.content.into_owned(),
                                             self.theme.style(Component::ThoughtText),
