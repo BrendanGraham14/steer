@@ -265,6 +265,8 @@ impl SetupHandler {
                                 .insert(provider, AuthStatus::OAuthConfigured);
                             state.error_message =
                                 Some("OAuth authentication successful!".to_string());
+                            // Clear auth controller for next provider
+                            tui.auth_controller = None;
                             // Return to provider selection to allow authenticating with other providers
                             state.current_step = SetupStep::ProviderSelection;
                             state.selected_provider = None;
@@ -306,6 +308,8 @@ impl SetupHandler {
                             state.auth_providers.insert(provider, AuthStatus::ApiKeySet);
                             state.error_message =
                                 Some(format!("API key successfully imported for {provider}!"));
+                            // Clear auth controller for next provider
+                            tui.auth_controller = None;
                             // Return to provider selection to allow authenticating with other providers
                             state.current_step = SetupStep::ProviderSelection;
                             state.selected_provider = None;
