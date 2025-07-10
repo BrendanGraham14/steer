@@ -16,9 +16,9 @@ use conductor_tools::result::{
 use conductor_tools::{ToolError, ToolSchema, result::ToolResult};
 
 // Generated gRPC client from proto/remote_workspace.proto
-use conductor_proto::remote_workspace::{
-    ExecuteToolRequest, HealthStatus, ToolApprovalRequirementsRequest,
-    execute_tool_response::Result as ProtoResult,
+use conductor_proto::remote_workspace::v1::{
+    ExecuteToolRequest, GetToolApprovalRequirementsRequest, GetToolSchemasRequest, HealthRequest,
+    HealthStatus, execute_tool_response::Result as ProtoResult,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
 
@@ -131,7 +131,10 @@ impl RemoteBackend {
 
         // Fetch available tools from the remote agent
         let mut client_clone = client.clone();
-        let all_remote_tools = match client_clone.get_tool_schemas(Request::new(())).await {
+        let all_remote_tools = match client_clone
+            .get_tool_schemas(Request::new(GetToolSchemasRequest {}))
+            .await
+        {
             Ok(response) => response
                 .into_inner()
                 .tools
@@ -372,7 +375,7 @@ impl ToolBackend for RemoteBackend {
     async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
         // Query the remote agent for tool schemas
         let mut client = self.client.clone();
-        let request = Request::new(());
+        let request = Request::new(GetToolSchemasRequest {});
 
         match client.get_tool_schemas(request).await {
             Ok(response) => {
@@ -412,7 +415,7 @@ impl ToolBackend for RemoteBackend {
 
     async fn health_check(&self) -> bool {
         let mut client = self.client.clone();
-        let request = Request::new(());
+        let request = Request::new(HealthRequest {});
 
         match client.health(request).await {
             Ok(response) => {
@@ -428,7 +431,7 @@ impl ToolBackend for RemoteBackend {
         if self.supported_tools.iter().any(|s| s == tool_name) {
             // Make an async RPC call to get approval requirements
             let mut client = self.client.clone();
-            let request = Request::new(ToolApprovalRequirementsRequest {
+            let request = Request::new(GetToolApprovalRequirementsRequest {
                 tool_names: vec![tool_name.to_string()],
             });
 
@@ -458,8 +461,10 @@ impl ToolBackend for RemoteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conductor_proto::remote_workspace::{
-        ExecuteToolResponse, HealthResponse, ToolSchema as GrpcToolSchema, ToolSchemasResponse,
+    use conductor_proto::remote_workspace::v1::{
+        ExecuteToolResponse, GetAgentInfoRequest, GetAgentInfoResponse, GetEnvironmentInfoRequest,
+        GetEnvironmentInfoResponse, GetToolApprovalRequirementsResponse, GetToolSchemasResponse,
+        HealthResponse, ListFilesRequest, ListFilesResponse, ToolSchema as GrpcToolSchema,
         remote_workspace_service_server::{RemoteWorkspaceService, RemoteWorkspaceServiceServer},
     };
     use std::net::SocketAddr;
@@ -479,7 +484,7 @@ mod tests {
             Ok(tonic::Response::new(ExecuteToolResponse {
                 success: true,
                 result: Some(
-                    conductor_proto::remote_workspace::execute_tool_response::Result::StringResult(
+                    conductor_proto::remote_workspace::v1::execute_tool_response::Result::StringResult(
                         "mocked".to_string(),
                     ),
                 ),
@@ -489,22 +494,22 @@ mod tests {
 
         async fn get_agent_info(
             &self,
-            _request: Request<()>,
-        ) -> Result<tonic::Response<conductor_proto::remote_workspace::AgentInfo>, Status> {
+            _request: Request<GetAgentInfoRequest>,
+        ) -> Result<tonic::Response<GetAgentInfoResponse>, Status> {
             unimplemented!()
         }
 
         async fn health(
             &self,
-            _request: Request<()>,
+            _request: Request<HealthRequest>,
         ) -> Result<tonic::Response<HealthResponse>, Status> {
             unimplemented!()
         }
 
         async fn get_tool_schemas(
             &self,
-            _request: Request<()>,
-        ) -> Result<tonic::Response<ToolSchemasResponse>, Status> {
+            _request: Request<GetToolSchemasRequest>,
+        ) -> Result<tonic::Response<GetToolSchemasResponse>, Status> {
             let tools = self
                 .tool_names
                 .iter()
@@ -514,35 +519,28 @@ mod tests {
                     input_schema_json: "{}".to_string(),
                 })
                 .collect();
-            Ok(tonic::Response::new(ToolSchemasResponse { tools }))
+            Ok(tonic::Response::new(GetToolSchemasResponse { tools }))
         }
 
         async fn get_tool_approval_requirements(
             &self,
-            _request: Request<ToolApprovalRequirementsRequest>,
-        ) -> Result<
-            tonic::Response<conductor_proto::remote_workspace::ToolApprovalRequirementsResponse>,
-            Status,
-        > {
+            _request: Request<GetToolApprovalRequirementsRequest>,
+        ) -> Result<tonic::Response<GetToolApprovalRequirementsResponse>, Status> {
             unimplemented!()
         }
 
         async fn get_environment_info(
             &self,
-            _request: Request<conductor_proto::remote_workspace::GetEnvironmentInfoRequest>,
-        ) -> Result<
-            tonic::Response<conductor_proto::remote_workspace::GetEnvironmentInfoResponse>,
-            Status,
-        > {
+            _request: Request<GetEnvironmentInfoRequest>,
+        ) -> Result<tonic::Response<GetEnvironmentInfoResponse>, Status> {
             unimplemented!()
         }
 
-        type ListFilesStream =
-            tonic::codec::Streaming<conductor_proto::remote_workspace::ListFilesResponse>;
+        type ListFilesStream = tonic::codec::Streaming<ListFilesResponse>;
 
         async fn list_files(
             &self,
-            _request: Request<conductor_proto::remote_workspace::ListFilesRequest>,
+            _request: Request<ListFilesRequest>,
         ) -> Result<tonic::Response<Self::ListFilesStream>, Status> {
             unimplemented!()
         }

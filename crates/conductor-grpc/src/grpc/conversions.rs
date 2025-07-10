@@ -12,8 +12,9 @@ use conductor_core::session::state::{
     BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
-use conductor_proto::agent as proto;
 use std::time::Duration;
+use conductor_proto::agent::v1 as proto;
+use conductor_proto::common::v1 as common;
 
 /// Convert conductor_tools ToolResult to protobuf
 fn conductor_tools_result_to_proto(
@@ -23,28 +24,28 @@ fn conductor_tools_result_to_proto(
     use proto::tool_result::Result as ProtoResult;
 
     let proto_result = match result {
-        CoreResult::Search(r) => ProtoResult::Search(proto::SearchResult {
+        CoreResult::Search(r) => ProtoResult::Search(common::SearchResult {
             matches: r
                 .matches
                 .iter()
-                .map(|m| proto::SearchMatch {
+                .map(|m| common::SearchMatch {
                     file_path: m.file_path.clone(),
-                    line_number: m.line_number as u32,
+                    line_number: m.line_number as u64,
                     line_content: m.line_content.clone(),
-                    column_range: m.column_range.map(|(start, end)| proto::ColumnRange {
-                        start: start as u32,
-                        end: end as u32,
+                    column_range: m.column_range.map(|(start, end)| common::ColumnRange {
+                        start: start as u64,
+                        end: end as u64,
                     }),
                 })
                 .collect(),
-            total_files_searched: r.total_files_searched as u32,
+            total_files_searched: r.total_files_searched as u64,
             search_completed: r.search_completed,
         }),
-        CoreResult::FileList(r) => ProtoResult::FileList(proto::FileListResult {
+        CoreResult::FileList(r) => ProtoResult::FileList(common::FileListResult {
             entries: r
                 .entries
                 .iter()
-                .map(|e| proto::FileEntry {
+                .map(|e| common::FileEntry {
                     path: e.path.clone(),
                     is_directory: e.is_directory,
                     size: e.size,
@@ -53,34 +54,34 @@ fn conductor_tools_result_to_proto(
                 .collect(),
             base_path: r.base_path.clone(),
         }),
-        CoreResult::FileContent(r) => ProtoResult::FileContent(proto::FileContentResult {
+        CoreResult::FileContent(r) => ProtoResult::FileContent(common::FileContentResult {
             content: r.content.clone(),
             file_path: r.file_path.clone(),
-            line_count: r.line_count as u32,
+            line_count: r.line_count as u64,
             truncated: r.truncated,
         }),
-        CoreResult::Edit(r) => ProtoResult::Edit(proto::EditResult {
+        CoreResult::Edit(r) => ProtoResult::Edit(common::EditResult {
             file_path: r.file_path.clone(),
-            changes_made: r.changes_made as u32,
+            changes_made: r.changes_made as u64,
             file_created: r.file_created,
             old_content: r.old_content.clone(),
             new_content: r.new_content.clone(),
         }),
-        CoreResult::Bash(r) => ProtoResult::Bash(proto::BashResult {
+        CoreResult::Bash(r) => ProtoResult::Bash(common::BashResult {
             stdout: r.stdout.clone(),
             stderr: r.stderr.clone(),
             exit_code: r.exit_code,
             command: r.command.clone(),
         }),
-        CoreResult::Glob(r) => ProtoResult::Glob(proto::GlobResult {
+        CoreResult::Glob(r) => ProtoResult::Glob(common::GlobResult {
             matches: r.matches.clone(),
             pattern: r.pattern.clone(),
         }),
-        CoreResult::TodoRead(r) => ProtoResult::TodoRead(proto::TodoListResult {
+        CoreResult::TodoRead(r) => ProtoResult::TodoRead(common::TodoListResult {
             todos: r
                 .todos
                 .iter()
-                .map(|t| proto::TodoItem {
+                .map(|t| common::TodoItem {
                     id: t.id.clone(),
                     content: t.content.clone(),
                     status: t.status.clone(),
@@ -88,11 +89,11 @@ fn conductor_tools_result_to_proto(
                 })
                 .collect(),
         }),
-        CoreResult::TodoWrite(r) => ProtoResult::TodoWrite(proto::TodoWriteResult {
+        CoreResult::TodoWrite(r) => ProtoResult::TodoWrite(common::TodoWriteResult {
             todos: r
                 .todos
                 .iter()
-                .map(|t| proto::TodoItem {
+                .map(|t| common::TodoItem {
                     id: t.id.clone(),
                     content: t.content.clone(),
                     status: t.status.clone(),
@@ -489,9 +490,7 @@ pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::Tool
         ToolApprovalPolicy::AlwaysAsk => Policy::AlwaysAsk(AlwaysAskPolicy {
             timeout_ms: None,
             default_decision: Some(ApprovalDecision {
-                decision_type: Some(
-                    conductor_proto::agent::approval_decision::DecisionType::Deny(true),
-                ),
+                decision_type: Some(proto::approval_decision::DecisionType::Deny(true)),
             }),
         }),
         ToolApprovalPolicy::PreApproved { tools } => Policy::PreApproved(PreApprovedPolicy {
@@ -505,9 +504,7 @@ pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::Tool
             ask_for_others: *ask_for_others,
             timeout_ms: None,
             default_decision: Some(ApprovalDecision {
-                decision_type: Some(
-                    conductor_proto::agent::approval_decision::DecisionType::Deny(true),
-                ),
+                decision_type: Some(proto::approval_decision::DecisionType::Deny(true)),
             }),
         }),
     };
@@ -924,7 +921,7 @@ pub fn proto_tool_call_to_core(
 /// Convert protobuf Message to internal Message
 pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage, ConversionError> {
     use conductor_core::app::conversation::{AssistantContent, ThoughtContent, UserContent};
-    use conductor_proto::agent::{assistant_content, message, thought_content, user_content};
+    use conductor_proto::agent::v1::{assistant_content, message, thought_content, user_content};
 
     let message_variant = proto_msg
         .message
@@ -945,7 +942,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                                 CommandResponse as AppCmdResponse,
                                 CompactResult,
                             };
-                            use conductor_proto::agent::{app_command_type, command_response};
+                            use conductor_proto::agent::v1::{app_command_type, command_response};
 
                             let command = app_cmd.command.as_ref().and_then(|cmd| {
                                 cmd.command_type.as_ref().map(|ct| match ct {
@@ -972,13 +969,13 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                                             .result_type
                                             .as_ref()
                                             .map(|rt| match rt {
-                                                conductor_proto::agent::compact_result::ResultType::Success(summary) => {
+                                                proto::compact_result::ResultType::Success(summary) => {
                                                     CompactResult::Success(summary.clone())
                                                 }
-                                                conductor_proto::agent::compact_result::ResultType::Cancelled(_) => {
+                                                proto::compact_result::ResultType::Cancelled(_) => {
                                                     CompactResult::Cancelled
                                                 }
-                                                conductor_proto::agent::compact_result::ResultType::InsufficientMessages(_) => {
+                                                proto::compact_result::ResultType::InsufficientMessages(_) => {
                                                     CompactResult::InsufficientMessages
                                                 }
                                             })
@@ -1091,41 +1088,49 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
     }
 }
 
-/// Convert AppEvent to protobuf ServerEvent
+/// Convert AppEvent to protobuf StreamSessionResponse
 pub fn app_event_to_server_event(
     app_event: AppEvent,
     sequence_num: u64,
-) -> Result<proto::ServerEvent, ConversionError> {
+) -> Result<proto::StreamSessionResponse, ConversionError> {
     let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
 
     let event = match app_event {
         AppEvent::MessageAdded { message, model } => {
             let proto_message = message_to_proto(message);
-            Some(proto::server_event::Event::MessageAdded(
+            Some(proto::stream_session_response::Event::MessageAdded(
                 proto::MessageAddedEvent {
                     message: Some(proto_message?),
                     model: model.to_string(),
                 },
             ))
         }
-        AppEvent::MessageUpdated { id, content } => Some(
-            proto::server_event::Event::MessageUpdated(proto::MessageUpdatedEvent { id, content }),
-        ),
-        AppEvent::MessagePart { id, delta } => Some(proto::server_event::Event::MessagePart(
-            proto::MessagePartEvent { id, delta },
-        )),
-        AppEvent::ProcessingStarted => Some(proto::server_event::Event::ProcessingStarted(
-            proto::ProcessingStartedEvent {},
-        )),
-        AppEvent::ProcessingCompleted => Some(proto::server_event::Event::ProcessingCompleted(
-            proto::ProcessingCompletedEvent {},
-        )),
+        AppEvent::MessageUpdated { id, content } => {
+            Some(proto::stream_session_response::Event::MessageUpdated(
+                proto::MessageUpdatedEvent { id, content },
+            ))
+        }
+        AppEvent::MessagePart { id, delta } => {
+            Some(proto::stream_session_response::Event::MessagePart(
+                proto::MessagePartEvent { id, delta },
+            ))
+        }
+        AppEvent::ProcessingStarted => {
+            Some(proto::stream_session_response::Event::ProcessingStarted(
+                proto::ProcessingStartedEvent {},
+            ))
+        }
+        AppEvent::ProcessingCompleted => {
+            Some(proto::stream_session_response::Event::ProcessingCompleted(
+                proto::ProcessingCompletedEvent {},
+            ))
+        }
         AppEvent::ToolCallStarted {
             name,
             id,
             parameters,
             model,
-        } => Some(proto::server_event::Event::ToolCallStarted(
+        } => Some(proto::stream_session_response::Event::ToolCallStarted(
             proto::ToolCallStartedEvent {
                 name,
                 id,
@@ -1141,7 +1146,7 @@ pub fn app_event_to_server_event(
         } => {
             let proto_result = conductor_tools_result_to_proto(&result)
                 .map_err(|e| ConversionError::ToolResultConversion(e.to_string()))?;
-            Some(proto::server_event::Event::ToolCallCompleted(
+            Some(proto::stream_session_response::Event::ToolCallCompleted(
                 proto::ToolCallCompletedEvent {
                     name,
                     result: Some(proto_result),
@@ -1155,7 +1160,7 @@ pub fn app_event_to_server_event(
             error,
             id,
             model,
-        } => Some(proto::server_event::Event::ToolCallFailed(
+        } => Some(proto::stream_session_response::Event::ToolCallFailed(
             proto::ToolCallFailedEvent {
                 name,
                 error,
@@ -1167,7 +1172,7 @@ pub fn app_event_to_server_event(
             name,
             parameters,
             id,
-        } => Some(proto::server_event::Event::RequestToolApproval(
+        } => Some(proto::stream_session_response::Event::RequestToolApproval(
             proto::RequestToolApprovalEvent {
                 name,
                 parameters_json: serde_json::to_string(&parameters).unwrap_or_default(),
@@ -1232,7 +1237,7 @@ pub fn app_event_to_server_event(
                 },
             };
 
-            Some(proto::server_event::Event::CommandResponse(
+            Some(proto::stream_session_response::Event::CommandResponse(
                 proto::CommandResponseEvent {
                     content,
                     id,
@@ -1245,38 +1250,42 @@ pub fn app_event_to_server_event(
                 },
             ))
         }
-        AppEvent::ModelChanged { model } => Some(proto::server_event::Event::ModelChanged(
-            proto::ModelChangedEvent {
+        AppEvent::ModelChanged { model } => Some(
+            proto::stream_session_response::Event::ModelChanged(proto::ModelChangedEvent {
                 model: model.to_string(),
-            },
-        )),
-        AppEvent::Error { message } => Some(proto::server_event::Event::Error(proto::ErrorEvent {
-            message,
-        })),
-        AppEvent::OperationCancelled { op_id: _, info } => Some(
-            proto::server_event::Event::OperationCancelled(proto::OperationCancelledEvent {
-                info: Some(proto::CancellationInfo {
-                    api_call_in_progress: info.api_call_in_progress,
-                    active_tools: info
-                        .active_tools
-                        .into_iter()
-                        .map(|tool| proto::ActiveToolInfo {
-                            name: tool.name,
-                            id: tool.id,
-                        })
-                        .collect(),
-                    pending_tool_approvals: info.pending_tool_approvals,
-                }),
             }),
         ),
-        AppEvent::WorkspaceChanged => Some(proto::server_event::Event::WorkspaceChanged(
-            proto::WorkspaceChangedEvent {},
+        AppEvent::Error { message } => Some(proto::stream_session_response::Event::Error(
+            proto::ErrorEvent { message },
         )),
-        AppEvent::WorkspaceFiles { files } => Some(proto::server_event::Event::WorkspaceFiles(
-            proto::WorkspaceFilesEvent {
+        AppEvent::OperationCancelled { op_id: _, info } => {
+            Some(proto::stream_session_response::Event::OperationCancelled(
+                proto::OperationCancelledEvent {
+                    info: Some(proto::CancellationInfo {
+                        api_call_in_progress: info.api_call_in_progress,
+                        active_tools: info
+                            .active_tools
+                            .into_iter()
+                            .map(|tool| proto::ActiveToolInfo {
+                                name: tool.name,
+                                id: tool.id,
+                            })
+                            .collect(),
+                        pending_tool_approvals: info.pending_tool_approvals,
+                    }),
+                },
+            ))
+        }
+        AppEvent::WorkspaceChanged => {
+            Some(proto::stream_session_response::Event::WorkspaceChanged(
+                proto::WorkspaceChangedEvent {},
+            ))
+        }
+        AppEvent::WorkspaceFiles { files } => Some(
+            proto::stream_session_response::Event::WorkspaceFiles(proto::WorkspaceFilesEvent {
                 files: files.clone(),
-            },
-        )),
+            }),
+        ),
         AppEvent::Started { id, op } => {
             let proto_op = match op {
                 Operation::Bash { cmd } => {
@@ -1288,12 +1297,14 @@ pub fn app_event_to_server_event(
                     proto::started_operation::Operation::Compact(proto::CompactOperation {})
                 }
             };
-            Some(proto::server_event::Event::Started(proto::StartedEvent {
-                id: id.as_bytes().to_vec(),
-                op: Some(proto::StartedOperation {
-                    operation: Some(proto_op),
-                }),
-            }))
+            Some(proto::stream_session_response::Event::Started(
+                proto::StartedEvent {
+                    id: id.as_bytes().to_vec(),
+                    op: Some(proto::StartedOperation {
+                        operation: Some(proto_op),
+                    }),
+                },
+            ))
         }
         AppEvent::Finished { id, outcome } => {
             let proto_outcome = match outcome {
@@ -1317,16 +1328,18 @@ pub fn app_event_to_server_event(
                     })
                 }
             };
-            Some(proto::server_event::Event::Finished(proto::FinishedEvent {
-                id: id.as_bytes().to_vec(),
-                outcome: Some(proto::OperationOutcome {
-                    outcome: Some(proto_outcome),
-                }),
-            }))
+            Some(proto::stream_session_response::Event::Finished(
+                proto::FinishedEvent {
+                    id: id.as_bytes().to_vec(),
+                    outcome: Some(proto::OperationOutcome {
+                        outcome: Some(proto_outcome),
+                    }),
+                },
+            ))
         }
     };
 
-    Ok(proto::ServerEvent {
+    Ok(proto::StreamSessionResponse {
         sequence_num,
         timestamp,
         event,
@@ -1378,9 +1391,9 @@ fn proto_command_response_response_to_command_response(
     }
 }
 
-/// Convert protobuf ServerEvent to AppEvent
+/// Convert protobuf StreamSessionResponse to AppEvent
 pub fn server_event_to_app_event(
-    server_event: proto::ServerEvent,
+    server_event: proto::StreamSessionResponse,
 ) -> Result<AppEvent, ConversionError> {
     use conductor_core::app::cancellation::ActiveTool;
     let event = server_event
@@ -1390,7 +1403,7 @@ pub fn server_event_to_app_event(
         })?;
 
     match event {
-        proto::server_event::Event::MessageAdded(e) => {
+        proto::stream_session_response::Event::MessageAdded(e) => {
             let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {
                 field: "message_added_event.message".to_string(),
             })?;
@@ -1408,15 +1421,15 @@ pub fn server_event_to_app_event(
 
             Ok(AppEvent::MessageAdded { message, model })
         }
-        proto::server_event::Event::MessageUpdated(e) => Ok(AppEvent::MessageUpdated {
+        proto::stream_session_response::Event::MessageUpdated(e) => Ok(AppEvent::MessageUpdated {
             id: e.id,
             content: e.content,
         }),
-        proto::server_event::Event::MessagePart(e) => Ok(AppEvent::MessagePart {
+        proto::stream_session_response::Event::MessagePart(e) => Ok(AppEvent::MessagePart {
             id: e.id,
             delta: e.delta,
         }),
-        proto::server_event::Event::ToolCallStarted(e) => {
+        proto::stream_session_response::Event::ToolCallStarted(e) => {
             let model = {
                 use std::str::FromStr;
                 conductor_core::api::Model::from_str(&e.model).map_err(|_| {
@@ -1439,7 +1452,7 @@ pub fn server_event_to_app_event(
                 model,
             })
         }
-        proto::server_event::Event::ToolCallCompleted(e) => {
+        proto::stream_session_response::Event::ToolCallCompleted(e) => {
             let model = {
                 use std::str::FromStr;
                 conductor_core::api::Model::from_str(&e.model).map_err(|_| {
@@ -1460,7 +1473,7 @@ pub fn server_event_to_app_event(
                 model,
             })
         }
-        proto::server_event::Event::ToolCallFailed(e) => {
+        proto::stream_session_response::Event::ToolCallFailed(e) => {
             let model = {
                 use std::str::FromStr;
                 conductor_core::api::Model::from_str(&e.model).map_err(|_| {
@@ -1477,9 +1490,13 @@ pub fn server_event_to_app_event(
                 model,
             })
         }
-        proto::server_event::Event::ProcessingStarted(_) => Ok(AppEvent::ProcessingStarted),
-        proto::server_event::Event::ProcessingCompleted(_) => Ok(AppEvent::ProcessingCompleted),
-        proto::server_event::Event::RequestToolApproval(e) => {
+        proto::stream_session_response::Event::ProcessingStarted(_) => {
+            Ok(AppEvent::ProcessingStarted)
+        }
+        proto::stream_session_response::Event::ProcessingCompleted(_) => {
+            Ok(AppEvent::ProcessingCompleted)
+        }
+        proto::stream_session_response::Event::RequestToolApproval(e) => {
             let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
                 ConversionError::InvalidJson {
                     field: "parameters_json".to_string(),
@@ -1492,7 +1509,7 @@ pub fn server_event_to_app_event(
                 id: e.id,
             })
         }
-        proto::server_event::Event::OperationCancelled(e) => {
+        proto::stream_session_response::Event::OperationCancelled(e) => {
             let info = e.info.ok_or_else(|| ConversionError::MissingField {
                 field: "operation_cancelled.info".to_string(),
             })?;
@@ -1513,7 +1530,7 @@ pub fn server_event_to_app_event(
                 },
             })
         }
-        proto::server_event::Event::CommandResponse(e) => {
+        proto::stream_session_response::Event::CommandResponse(e) => {
             // Convert proto command to app command
             let command = e
                 .command
@@ -1546,7 +1563,7 @@ pub fn server_event_to_app_event(
                 id: e.id,
             })
         }
-        proto::server_event::Event::ModelChanged(e) => {
+        proto::stream_session_response::Event::ModelChanged(e) => {
             let model = {
                 use std::str::FromStr;
                 conductor_core::api::Model::from_str(&e.model).map_err(|_| {
@@ -1558,12 +1575,16 @@ pub fn server_event_to_app_event(
             };
             Ok(AppEvent::ModelChanged { model })
         }
-        proto::server_event::Event::Error(e) => Ok(AppEvent::Error { message: e.message }),
-        proto::server_event::Event::WorkspaceChanged(_) => Ok(AppEvent::WorkspaceChanged),
-        proto::server_event::Event::WorkspaceFiles(e) => Ok(AppEvent::WorkspaceFiles {
+        proto::stream_session_response::Event::Error(e) => {
+            Ok(AppEvent::Error { message: e.message })
+        }
+        proto::stream_session_response::Event::WorkspaceChanged(_) => {
+            Ok(AppEvent::WorkspaceChanged)
+        }
+        proto::stream_session_response::Event::WorkspaceFiles(e) => Ok(AppEvent::WorkspaceFiles {
             files: e.files.clone(),
         }),
-        proto::server_event::Event::Started(e) => {
+        proto::stream_session_response::Event::Started(e) => {
             let id = uuid::Uuid::from_slice(&e.id).map_err(|_| ConversionError::InvalidValue {
                 field: "started.id".to_string(),
                 value: format!("{:?}", e.id),
@@ -1587,7 +1608,7 @@ pub fn server_event_to_app_event(
 
             Ok(AppEvent::Started { id, op: operation })
         }
-        proto::server_event::Event::Finished(e) => {
+        proto::stream_session_response::Event::Finished(e) => {
             let id = uuid::Uuid::from_slice(&e.id).map_err(|_| ConversionError::InvalidValue {
                 field: "finished.id".to_string(),
                 value: format!("{:?}", e.id),
@@ -1640,30 +1661,32 @@ pub fn server_event_to_app_event(
     }
 }
 
-/// Convert TUI AppCommand to gRPC ClientMessage
+/// Convert TUI AppCommand to gRPC StreamSessionRequest
 pub fn convert_app_command_to_client_message(
     command: AppCommand,
     session_id: &str,
-) -> Result<Option<proto::ClientMessage>, ConversionError> {
-    use proto::client_message::Message as ClientMessageType;
+) -> Result<Option<proto::StreamSessionRequest>, ConversionError> {
+    use proto::stream_session_request::Message as StreamSessionRequestType;
 
     let message = match command {
-        AppCommand::ProcessUserInput(text) => {
-            Some(ClientMessageType::SendMessage(proto::SendMessageRequest {
+        AppCommand::ProcessUserInput(text) => Some(StreamSessionRequestType::SendMessage(
+            proto::SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: text,
                 attachments: vec![],
-            }))
-        }
+            },
+        )),
 
         AppCommand::EditMessage {
             message_id,
             new_content,
-        } => Some(ClientMessageType::EditMessage(proto::EditMessageRequest {
-            session_id: session_id.to_string(),
-            message_id,
-            new_content,
-        })),
+        } => Some(StreamSessionRequestType::EditMessage(
+            proto::EditMessageRequest {
+                session_id: session_id.to_string(),
+                message_id,
+                new_content,
+            },
+        )),
 
         AppCommand::HandleToolResponse { id, approval } => {
             let decision = match approval {
@@ -1683,7 +1706,7 @@ pub fn convert_app_command_to_client_message(
                 },
             };
 
-            Some(ClientMessageType::ToolApproval(
+            Some(StreamSessionRequestType::ToolApproval(
                 proto::ToolApprovalResponse {
                     tool_call_id: id,
                     decision: Some(decision),
@@ -1692,25 +1715,27 @@ pub fn convert_app_command_to_client_message(
         }
 
         AppCommand::CancelProcessing => {
-            Some(ClientMessageType::Cancel(proto::CancelOperationRequest {
-                session_id: session_id.to_string(),
-                operation_id: String::new(), // Server will cancel current operation
-            }))
+            Some(StreamSessionRequestType::Cancel(
+                proto::CancelOperationRequest {
+                    session_id: session_id.to_string(),
+                    operation_id: String::new(), // Server will cancel current operation
+                },
+            ))
         }
 
         // ExecuteCommand and ExecuteBashCommand map to specific gRPC messages
-        AppCommand::ExecuteCommand(command) => Some(ClientMessageType::ExecuteCommand(
+        AppCommand::ExecuteCommand(command) => Some(StreamSessionRequestType::ExecuteCommand(
             proto::ExecuteCommandRequest {
                 session_id: session_id.to_string(),
                 command: command.as_command_str(),
             },
         )),
-        AppCommand::ExecuteBashCommand { command } => Some(ClientMessageType::ExecuteBashCommand(
-            proto::ExecuteBashCommandRequest {
+        AppCommand::ExecuteBashCommand { command } => Some(
+            StreamSessionRequestType::ExecuteBashCommand(proto::ExecuteBashCommandRequest {
                 session_id: session_id.to_string(),
                 command,
-            },
-        )),
+            }),
+        ),
 
         // These commands don't map to gRPC messages
         AppCommand::Shutdown => None,
@@ -1720,7 +1745,7 @@ pub fn convert_app_command_to_client_message(
         AppCommand::RequestWorkspaceFiles => None,
     };
 
-    Ok(message.map(|msg| proto::ClientMessage {
+    Ok(message.map(|msg| proto::StreamSessionRequest {
         session_id: session_id.to_string(),
         message: Some(msg),
     }))

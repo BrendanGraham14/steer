@@ -406,7 +406,7 @@ proptest! {
 
     #[test]
     fn prop_tool_call_roundtrip(call in arb_tool_call()) {
-        let proto = conductor_proto::agent::ToolCall {
+        let proto = conductor_proto::agent::v1::ToolCall {
             id: call.id.clone(),
             name: call.name.clone(),
             parameters_json: call.parameters.to_string(),
@@ -665,7 +665,7 @@ proptest! {
                 prop_assert!(result.is_ok());
                 if let Ok(Some(client_msg)) = result {
                     prop_assert_eq!(client_msg.session_id, session_id);
-                    if let Some(conductor_proto::agent::client_message::Message::SendMessage(msg)) = client_msg.message {
+                    if let Some(conductor_proto::agent::v1::stream_session_request::Message::SendMessage(msg)) = client_msg.message {
                         prop_assert_eq!(msg.message, text);
                         prop_assert_eq!(msg.session_id, session_id);
                     } else {
@@ -677,7 +677,7 @@ proptest! {
                 prop_assert!(result.is_ok());
                 if let Ok(Some(client_msg)) = result {
                     prop_assert_eq!(client_msg.session_id, session_id);
-                    if let Some(conductor_proto::agent::client_message::Message::ExecuteCommand(msg)) = client_msg.message {
+                    if let Some(conductor_proto::agent::v1::stream_session_request::Message::ExecuteCommand(msg)) = client_msg.message {
                         prop_assert_eq!(msg.command, cmd);
                         prop_assert_eq!(msg.session_id, session_id);
                     } else {
@@ -689,7 +689,7 @@ proptest! {
                 prop_assert!(result.is_ok());
                 if let Ok(Some(client_msg)) = result {
                     prop_assert_eq!(client_msg.session_id, session_id);
-                    if let Some(conductor_proto::agent::client_message::Message::ExecuteBashCommand(msg)) = client_msg.message {
+                    if let Some(conductor_proto::agent::v1::stream_session_request::Message::ExecuteBashCommand(msg)) = client_msg.message {
                         prop_assert_eq!(msg.command, bash_cmd);
                         prop_assert_eq!(msg.session_id, session_id);
                     } else {
@@ -701,27 +701,27 @@ proptest! {
                 prop_assert!(result.is_ok());
                 if let Ok(Some(client_msg)) = result {
                     prop_assert_eq!(client_msg.session_id, session_id);
-                    if let Some(conductor_proto::agent::client_message::Message::ToolApproval(msg)) = client_msg.message {
+                    if let Some(conductor_proto::agent::v1::stream_session_request::Message::ToolApproval(msg)) = client_msg.message {
                         prop_assert_eq!(msg.tool_call_id, id);
                         match approval {
                             ApprovalType::Denied => {
-                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
-                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::Deny(true))
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::v1::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::v1::approval_decision::DecisionType::Deny(true))
                                 }));
                             }
                             ApprovalType::Once => {
-                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
-                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::Once(true))
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::v1::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::v1::approval_decision::DecisionType::Once(true))
                                 }));
                             }
                             ApprovalType::AlwaysTool => {
-                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
-                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysTool(true))
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::v1::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::v1::approval_decision::DecisionType::AlwaysTool(true))
                                 }));
                             }
                             ApprovalType::AlwaysBashPattern(pattern) => {
-                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::ApprovalDecision {
-                                    decision_type: Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysBashPattern(pattern.clone()))
+                                prop_assert_eq!(msg.decision, Some(conductor_proto::agent::v1::ApprovalDecision {
+                                    decision_type: Some(conductor_proto::agent::v1::approval_decision::DecisionType::AlwaysBashPattern(pattern.clone()))
                                 }));
                             }
                         }

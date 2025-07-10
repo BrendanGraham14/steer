@@ -11,7 +11,7 @@ use crate::session::state::{RemoteAuth, ToolFilter};
 use crate::tools::remote_backend::RemoteBackend;
 use crate::tools::{ExecutionContext, ToolBackend};
 use crate::workspace::{CachedEnvironment, Workspace, WorkspaceMetadata, WorkspaceType};
-use conductor_proto::remote_workspace::{
+use conductor_proto::remote_workspace::v1::{
     GetEnvironmentInfoRequest, GetEnvironmentInfoResponse, ListFilesRequest,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };

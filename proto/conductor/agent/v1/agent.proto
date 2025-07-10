@@ -2,23 +2,22 @@ syntax = "proto3";
 package conductor.agent.v1;
 
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/empty.proto";
-import "google/protobuf/struct.proto";
+import "conductor/common/v1/common.proto";
 
 service AgentService {
   // Bidirectional streaming for interactive sessions
-  rpc StreamSession(stream ClientMessage) returns (stream ServerEvent);
+  rpc StreamSession(stream StreamSessionRequest) returns (stream StreamSessionResponse);
 
   // Unary calls for session management
-  rpc CreateSession(CreateSessionRequest) returns (SessionInfo);
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
-  rpc GetSession(GetSessionRequest) returns (SessionState);
-  rpc DeleteSession(DeleteSessionRequest) returns (google.protobuf.Empty);
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
 
   // Unary calls for non-streaming operations
-  rpc SendMessage(SendMessageRequest) returns (Operation);
-  rpc ApproveTool(ApproveToolRequest) returns (google.protobuf.Empty);
-  rpc CancelOperation(CancelOperationRequest) returns (google.protobuf.Empty);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc ApproveTool(ApproveToolRequest) returns (ApproveToolResponse);
+  rpc CancelOperation(CancelOperationRequest) returns (CancelOperationResponse);
   rpc GetConversation(GetConversationRequest) returns (GetConversationResponse);
 
   // Explicitly activate (load) a dormant session into memory and return its state
@@ -29,7 +28,7 @@ service AgentService {
 }
 
 // Client to server messages in the bidirectional stream
-message ClientMessage {
+message StreamSessionRequest {
   string session_id = 1;
 
   oneof message {
@@ -45,7 +44,7 @@ message ClientMessage {
 }
 
 // Server to client events in the bidirectional stream
-message ServerEvent {
+message StreamSessionResponse {
   uint64 sequence_num = 1;
   google.protobuf.Timestamp timestamp = 2;
 
@@ -250,10 +249,18 @@ message CreateSessionRequest {
   optional string system_prompt = 5;
 }
 
+message CreateSessionResponse {
+  SessionInfo session = 1;
+}
+
 message SendMessageRequest {
   string session_id = 1;
   string message = 2;
   repeated Attachment attachments = 3;
+}
+
+message SendMessageResponse {
+  Operation operation = 1;
 }
 
 message ToolApprovalResponse {
@@ -292,6 +299,14 @@ message ApproveToolRequest {
   ApprovalDecision decision = 3;
 }
 
+message ApproveToolResponse {
+  // Empty response
+}
+
+message CancelOperationResponse {
+  // Empty response
+}
+
 message ListSessionsRequest {
   optional SessionFilter filter = 1;
   optional uint32 page_size = 2;
@@ -307,8 +322,16 @@ message GetSessionRequest {
   string session_id = 1;
 }
 
+message GetSessionResponse {
+  SessionState session = 1;
+}
+
 message DeleteSessionRequest {
   string session_id = 1;
+}
+
+message DeleteSessionResponse {
+  // Empty response
 }
 
 message GetConversationRequest {
@@ -400,92 +423,19 @@ message ToolCall {
 
 message ToolResult {
   oneof result {
-    SearchResult search = 1;
-    FileListResult file_list = 2;
-    FileContentResult file_content = 3;
-    EditResult edit = 4;
-    BashResult bash = 5;
-    GlobResult glob = 6;
-    TodoListResult todo_read = 7;
-    TodoWriteResult todo_write = 8;
+    conductor.common.v1.SearchResult search = 1;
+    conductor.common.v1.FileListResult file_list = 2;
+    conductor.common.v1.FileContentResult file_content = 3;
+    conductor.common.v1.EditResult edit = 4;
+    conductor.common.v1.BashResult bash = 5;
+    conductor.common.v1.GlobResult glob = 6;
+    conductor.common.v1.TodoListResult todo_read = 7;
+    conductor.common.v1.TodoWriteResult todo_write = 8;
     FetchResult fetch = 9;
     AgentResult agent = 10;
     ExternalResult external = 50;
     ToolError error = 99;
   }
-}
-
-message SearchResult {
-  repeated SearchMatch matches = 1;
-  uint32 total_files_searched = 2;
-  bool search_completed = 3;
-}
-
-message SearchMatch {
-  string file_path = 1;
-  uint32 line_number = 2;
-  string line_content = 3;
-  optional ColumnRange column_range = 4;
-}
-
-message ColumnRange {
-  uint32 start = 1;
-  uint32 end = 2;
-}
-
-message FileListResult {
-  repeated FileEntry entries = 1;
-  string base_path = 2;
-}
-
-message FileEntry {
-  string path = 1;
-  bool is_directory = 2;
-  optional uint64 size = 3;
-  optional string permissions = 4;
-}
-
-message FileContentResult {
-  string content = 1;
-  string file_path = 2;
-  uint32 line_count = 3;
-  bool truncated = 4;
-}
-
-message EditResult {
-  string file_path = 1;
-  uint32 changes_made = 2;
-  bool file_created = 3;
-  optional string old_content = 4;
-  optional string new_content = 5;
-}
-
-message BashResult {
-  string stdout = 1;
-  string stderr = 2;
-  int32 exit_code = 3;
-  string command = 4;
-}
-
-message GlobResult {
-  repeated string matches = 1;
-  string pattern = 2;
-}
-
-message TodoListResult {
-  repeated TodoItem todos = 1;
-}
-
-message TodoItem {
-  string id = 1;
-  string content = 2;
-  string status = 3;
-  string priority = 4;
-}
-
-message TodoWriteResult {
-  repeated TodoItem todos = 1;
-  string operation = 2;
 }
 
 message FetchResult {

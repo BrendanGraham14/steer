@@ -14,16 +14,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed={}", proto_dir.display());
 
-    let streaming_proto = proto_dir.join("streaming.proto");
-    let remote_workspace_proto = proto_dir.join("remote_workspace.proto");
+    let agent_proto = proto_dir.join("conductor/agent/v1/agent.proto");
+    let remote_workspace_proto =
+        proto_dir.join("conductor/remote_workspace/v1/remote_workspace.proto");
+    let common_proto = proto_dir.join("conductor/common/v1/common.proto");
 
+    // Compile common proto first since others depend on it
+    tonic_build::configure()
+        .build_server(false)
+        .build_client(false)
+        .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
+        .compile_protos(
+            &[common_proto.to_str().unwrap()],
+            &[proto_dir.to_str().unwrap()],
+        )?;
+
+    // Compile agent and remote_workspace protos
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
         .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
         .compile_protos(
             &[
-                streaming_proto.to_str().unwrap(),
+                agent_proto.to_str().unwrap(),
                 remote_workspace_proto.to_str().unwrap(),
             ],
             &[proto_dir.to_str().unwrap()],

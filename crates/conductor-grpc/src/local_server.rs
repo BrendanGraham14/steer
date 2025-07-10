@@ -3,7 +3,7 @@ use crate::grpc::server::AgentServiceImpl;
 type Result<T> = std::result::Result<T, GrpcError>;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
-use conductor_proto::agent::agent_service_server::AgentServiceServer;
+use conductor_proto::agent::v1::agent_service_server::AgentServiceServer;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tonic::transport::{Channel, Server};

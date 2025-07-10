@@ -969,6 +969,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "conductor-grpc",
+ "conductor-proto",
  "conductor-tools",
  "fuzzy-matcher",
  "gethostname",

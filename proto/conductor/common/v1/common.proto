@@ -1,0 +1,83 @@
+syntax = "proto3";
+package conductor.common.v1;
+
+// Search results (grep, astgrep)
+message SearchResult {
+  repeated SearchMatch matches = 1;
+  uint64 total_files_searched = 2;
+  bool search_completed = 3;
+}
+
+message SearchMatch {
+  string file_path = 1;
+  uint64 line_number = 2;
+  string line_content = 3;
+  optional ColumnRange column_range = 4;
+}
+
+message ColumnRange {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+// File listing result
+message FileListResult {
+  repeated FileEntry entries = 1;
+  string base_path = 2;
+}
+
+message FileEntry {
+  string path = 1;
+  bool is_directory = 2;
+  optional uint64 size = 3;
+  optional string permissions = 4;
+}
+
+// File content result
+message FileContentResult {
+  string content = 1;
+  string file_path = 2;
+  uint64 line_count = 3;
+  bool truncated = 4;
+}
+
+// Edit operation result
+message EditResult {
+  string file_path = 1;
+  uint64 changes_made = 2;
+  bool file_created = 3;
+  optional string old_content = 4;
+  optional string new_content = 5;
+}
+
+// Bash command result
+message BashResult {
+  string stdout = 1;
+  string stderr = 2;
+  int32 exit_code = 3;
+  string command = 4;
+}
+
+// Glob pattern matching result
+message GlobResult {
+  repeated string matches = 1;
+  string pattern = 2;
+}
+
+// Todo list result
+message TodoListResult {
+  repeated TodoItem todos = 1;
+}
+
+// Todo write result
+message TodoWriteResult {
+  repeated TodoItem todos = 1;
+  string operation = 2;  // e.g., "modified", "created"
+}
+
+message TodoItem {
+  string id = 1;
+  string content = 2;
+  string status = 3;  // "pending", "in_progress", "completed"
+  string priority = 4;  // "high", "medium", "low"
+}
