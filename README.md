@@ -271,7 +271,7 @@ You can still use traditional API keys by setting environment variables (optiona
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`
 * `GEMINI_API_KEY`
-* `GROK_API_KEY`
+* `XAI_API_KEY` or `GROK_API_KEY`
 
 **Note**: If both OAuth tokens and API keys are available for Anthropic, the API key takes precedence.
 

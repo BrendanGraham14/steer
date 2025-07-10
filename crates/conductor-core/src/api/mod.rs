@@ -95,10 +95,12 @@ pub enum Model {
     Gemini2_5ProPreview0506,
     #[strum(serialize = "gemini-2.5-pro-preview-06-05", serialize = "gemini")]
     Gemini2_5ProPreview0605,
-    #[strum(serialize = "grok-3", serialize = "grok")]
+    #[strum(serialize = "grok-3")]
     Grok3,
     #[strum(serialize = "grok-3-mini", serialize = "grok-mini")]
     Grok3Mini,
+    #[strum(serialize = "grok-4-0709", serialize = "grok")]
+    Grok4_0709,
 }
 
 impl Model {
@@ -122,7 +124,7 @@ impl Model {
             | Model::Gemini2_5ProPreview0506
             | Model::Gemini2_5ProPreview0605 => ProviderKind::Google,
 
-            Model::Grok3 | Model::Grok3Mini => ProviderKind::Grok,
+            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderKind::Grok,
         }
     }
 
@@ -134,8 +136,9 @@ impl Model {
             Model::O3Pro20250610 => vec!["o3-pro"],
             Model::O4Mini20250416 => vec!["o4-mini"],
             Model::Gemini2_5ProPreview0605 => vec!["gemini"],
-            Model::Grok3 => vec!["grok"],
+            Model::Grok3 => vec![],
             Model::Grok3Mini => vec!["grok-mini"],
+            Model::Grok4_0709 => vec!["grok"],
             _ => vec![],
         }
     }
@@ -153,6 +156,7 @@ impl Model {
                 | Model::Gemini2_5ProPreview0506
                 | Model::Gemini2_5ProPreview0605
                 | Model::Grok3Mini
+                | Model::Grok4_0709
         )
     }
 
@@ -357,7 +361,7 @@ mod tests {
             Model::from_str("gemini").unwrap(),
             Model::Gemini2_5ProPreview0605
         );
-        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok3);
+        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok4_0709);
         assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
 
         // Also test the full names work
@@ -375,7 +379,8 @@ mod tests {
             Model::O4Mini20250416
         );
         assert_eq!(Model::from_str("grok-3").unwrap(), Model::Grok3);
-        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok3);
+        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok4_0709);
+        assert_eq!(Model::from_str("grok-4-0709").unwrap(), Model::Grok4_0709);
         assert_eq!(Model::from_str("grok-3-mini").unwrap(), Model::Grok3Mini);
         assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
     }

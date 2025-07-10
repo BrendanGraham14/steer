@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::Model;
-use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
+use crate::api::{Model, error::ApiError};
 use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
 use conductor_tools::ToolSchema;
 
@@ -269,7 +268,6 @@ struct DebugOutput {
 impl GrokClient {
     pub fn new(api_key: String) -> Self {
         let mut headers = header::HeaderMap::new();
-        debug!("API key: {api_key}");
         headers.insert(
             header::AUTHORIZATION,
             header::HeaderValue::from_str(&format!("Bearer {api_key}"))
@@ -447,7 +445,8 @@ impl Provider for GrokClient {
         let grok_messages = self.convert_messages(messages, system);
         let grok_tools = tools.map(|t| self.convert_tools(t));
 
-        let reasoning_effort = if model.supports_thinking() {
+        // grok-4 supports thinking but not the reasoning_effort parameter
+        let reasoning_effort = if model.supports_thinking() && !matches!(model, Model::Grok4_0709) {
             Some(ReasoningEffort::High)
         } else {
             None
