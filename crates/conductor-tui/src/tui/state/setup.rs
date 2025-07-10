@@ -91,7 +91,7 @@ impl SetupState {
             ProviderKind::Anthropic => 0,
             ProviderKind::OpenAI => 1,
             ProviderKind::Google => 2,
-            ProviderKind::Grok => 3,
+            ProviderKind::XAI => 3,
         });
         providers
     }

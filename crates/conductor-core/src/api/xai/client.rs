@@ -13,14 +13,14 @@ use conductor_tools::ToolSchema;
 const API_URL: &str = "https://api.x.ai/v1/chat/completions";
 
 #[derive(Clone)]
-pub struct GrokClient {
+pub struct XAIClient {
     http_client: reqwest::Client,
 }
 
-// Grok-specific message format (similar to OpenAI but with some differences)
+// xAI-specific message format (similar to OpenAI but with some differences)
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
-enum GrokMessage {
+enum XAIMessage {
     System {
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,7 +35,7 @@ enum GrokMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        tool_calls: Option<Vec<GrokToolCall>>,
+        tool_calls: Option<Vec<XAIToolCall>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
@@ -47,33 +47,33 @@ enum GrokMessage {
     },
 }
 
-// Grok function calling format
+// xAI function calling format
 #[derive(Debug, Serialize, Deserialize)]
-struct GrokFunction {
+struct XAIFunction {
     name: String,
     description: String,
     parameters: serde_json::Value,
 }
 
-// Grok tool format
+// xAI tool format
 #[derive(Debug, Serialize, Deserialize)]
-struct GrokTool {
+struct XAITool {
     #[serde(rename = "type")]
     tool_type: String, // "function"
-    function: GrokFunction,
+    function: XAIFunction,
 }
 
-// Grok tool call
+// xAI tool call
 #[derive(Debug, Serialize, Deserialize)]
-struct GrokToolCall {
+struct XAIToolCall {
     id: String,
     #[serde(rename = "type")]
     tool_type: String,
-    function: GrokFunctionCall,
+    function: XAIFunctionCall,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GrokFunctionCall {
+struct XAIFunctionCall {
     name: String,
     arguments: String, // JSON string
 }
@@ -142,7 +142,7 @@ struct WebSearchOptions {
 #[derive(Debug, Serialize, Deserialize)]
 struct CompletionRequest {
     model: String,
-    messages: Vec<GrokMessage>,
+    messages: Vec<XAIMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deferred: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -180,7 +180,7 @@ struct CompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<ToolChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<GrokTool>>,
+    tools: Option<Vec<XAITool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_logprobs: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,14 +192,14 @@ struct CompletionRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GrokCompletionResponse {
+struct XAICompletionResponse {
     id: String,
     object: String,
     created: u64,
     model: String,
     choices: Vec<Choice>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    usage: Option<GrokUsage>,
+    usage: Option<XAIUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     system_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -219,7 +219,7 @@ struct Choice {
 struct AssistantMessage {
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<GrokToolCall>>,
+    tool_calls: Option<Vec<XAIToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<String>,
 }
@@ -241,7 +241,7 @@ struct CompletionTokensDetails {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GrokUsage {
+struct XAIUsage {
     prompt_tokens: usize,
     completion_tokens: usize,
     total_tokens: usize,
@@ -265,7 +265,7 @@ struct DebugOutput {
     responses: Vec<String>,
 }
 
-impl GrokClient {
+impl XAIClient {
     pub fn new(api_key: String) -> Self {
         let mut headers = header::HeaderMap::new();
         headers.insert(
@@ -289,18 +289,18 @@ impl GrokClient {
         &self,
         messages: Vec<AppMessage>,
         system: Option<String>,
-    ) -> Vec<GrokMessage> {
-        let mut grok_messages = Vec::new();
+    ) -> Vec<XAIMessage> {
+        let mut xai_messages = Vec::new();
 
         // Add system message if provided
         if let Some(system_content) = system {
-            grok_messages.push(GrokMessage::System {
+            xai_messages.push(XAIMessage::System {
                 content: system_content,
                 name: None,
             });
         }
 
-        // Convert our messages to Grok format
+        // Convert our messages to xAI format
         for message in messages {
             match message {
                 AppMessage::User { content, .. } => {
@@ -327,14 +327,14 @@ impl GrokClient {
 
                     // Only add the message if it has content after filtering
                     if !combined_text.trim().is_empty() {
-                        grok_messages.push(GrokMessage::User {
+                        xai_messages.push(XAIMessage::User {
                             content: combined_text,
                             name: None,
                         });
                     }
                 }
                 AppMessage::Assistant { content, .. } => {
-                    // Convert AssistantContent to Grok format
+                    // Convert AssistantContent to xAI format
                     let mut text_parts = Vec::new();
                     let mut tool_calls = Vec::new();
 
@@ -344,17 +344,17 @@ impl GrokClient {
                                 text_parts.push(text.clone());
                             }
                             AssistantContent::ToolCall { tool_call } => {
-                                tool_calls.push(GrokToolCall {
+                                tool_calls.push(XAIToolCall {
                                     id: tool_call.id.clone(),
                                     tool_type: "function".to_string(),
-                                    function: GrokFunctionCall {
+                                    function: XAIFunctionCall {
                                         name: tool_call.name.clone(),
                                         arguments: tool_call.parameters.to_string(),
                                     },
                                 });
                             }
                             AssistantContent::Thought { .. } => {
-                                // Grok doesn't support thinking blocks in requests, only in responses
+                                // xAI doesn't support thinking blocks in requests, only in responses
                                 continue;
                             }
                         }
@@ -373,7 +373,7 @@ impl GrokClient {
                         Some(tool_calls)
                     };
 
-                    grok_messages.push(GrokMessage::Assistant {
+                    xai_messages.push(XAIMessage::Assistant {
                         content,
                         tool_calls: tool_calls_opt,
                         name: None,
@@ -384,7 +384,7 @@ impl GrokClient {
                     result,
                     ..
                 } => {
-                    // Convert ToolResult to Grok format
+                    // Convert ToolResult to xAI format
                     let content_text = match result {
                         ToolResult::Error(e) => format!("Error: {e}"),
                         _ => {
@@ -397,7 +397,7 @@ impl GrokClient {
                         }
                     };
 
-                    grok_messages.push(GrokMessage::Tool {
+                    xai_messages.push(XAIMessage::Tool {
                         content: content_text,
                         tool_call_id: tool_use_id,
                         name: None,
@@ -406,15 +406,15 @@ impl GrokClient {
             }
         }
 
-        grok_messages
+        xai_messages
     }
 
-    fn convert_tools(&self, tools: Vec<ToolSchema>) -> Vec<GrokTool> {
+    fn convert_tools(&self, tools: Vec<ToolSchema>) -> Vec<XAITool> {
         tools
             .into_iter()
-            .map(|tool| GrokTool {
+            .map(|tool| XAITool {
                 tool_type: "function".to_string(),
-                function: GrokFunction {
+                function: XAIFunction {
                     name: tool.name,
                     description: tool.description,
                     parameters: serde_json::json!({
@@ -429,9 +429,9 @@ impl GrokClient {
 }
 
 #[async_trait]
-impl Provider for GrokClient {
+impl Provider for XAIClient {
     fn name(&self) -> &'static str {
-        "grok"
+        "xai"
     }
 
     async fn complete(
@@ -442,10 +442,10 @@ impl Provider for GrokClient {
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let grok_messages = self.convert_messages(messages, system);
-        let grok_tools = tools.map(|t| self.convert_tools(t));
+        let xai_messages = self.convert_messages(messages, system);
+        let xai_tools = tools.map(|t| self.convert_tools(t));
 
-        // grok-4 supports thinking but not the reasoning_effort parameter
+        // grok-4 supports thinking by default but not the reasoning_effort parameter
         let reasoning_effort = if model.supports_thinking() && !matches!(model, Model::Grok4_0709) {
             Some(ReasoningEffort::High)
         } else {
@@ -454,12 +454,12 @@ impl Provider for GrokClient {
 
         let request = CompletionRequest {
             model: model.as_ref().to_string(),
-            messages: grok_messages,
+            messages: xai_messages,
             deferred: None,
             frequency_penalty: None,
             logit_bias: None,
             logprobs: None,
-            max_completion_tokens: Some(8192), // Reasonable default
+            max_completion_tokens: Some(32768),
             max_tokens: None,
             n: None,
             parallel_tool_calls: None,
@@ -471,9 +471,9 @@ impl Provider for GrokClient {
             stop: None,
             stream: None,
             stream_options: None,
-            temperature: Some(0.0), // Grok defaults to 0
+            temperature: Some(1.0),
             tool_choice: None,
-            tools: grok_tools,
+            tools: xai_tools,
             top_logprobs: None,
             top_p: None,
             user: None,
@@ -530,10 +530,10 @@ impl Provider for GrokClient {
             }
         };
 
-        let grok_response: GrokCompletionResponse =
+        let xai_response: XAICompletionResponse =
             serde_json::from_str(&response_text).map_err(|e| {
                 error!(
-                    target: "grok::complete",
+                    target: "xai::complete",
                     "Failed to parse response: {}, Body: {}",
                     e,
                     response_text
@@ -544,8 +544,8 @@ impl Provider for GrokClient {
                 }
             })?;
 
-        // Convert Grok response to our CompletionResponse
-        if let Some(choice) = grok_response.choices.first() {
+        // Convert xAI response to our CompletionResponse
+        if let Some(choice) = xai_response.choices.first() {
             let mut content_blocks = Vec::new();
 
             // Add reasoning content (thinking) first if present

@@ -293,7 +293,7 @@ impl App {
                     ProviderKind::Anthropic => "Anthropic",
                     ProviderKind::OpenAI => "OpenAI",
                     ProviderKind::Google => "Google",
-                    ProviderKind::Grok => "Grok",
+                    ProviderKind::XAI => "xAI",
                 }
             )));
         }

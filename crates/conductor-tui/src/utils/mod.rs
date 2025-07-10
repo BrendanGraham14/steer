@@ -28,40 +28,40 @@ pub async fn select_default_model(
     if let Some(priority) = preferences.ui.provider_priority {
         for provider_str in priority {
             let provider = match provider_str.as_str() {
-                "anthropic" => ProviderKind::Anthropic,
+                "anthropic" | "claude" => ProviderKind::Anthropic,
                 "openai" => ProviderKind::OpenAI,
                 "google" | "gemini" => ProviderKind::Google,
-                "grok" => ProviderKind::Grok,
+                "xai" | "grok" => ProviderKind::XAI,
                 _ => continue, // Skip unknown providers
             };
 
             if authenticated_providers.contains(&provider) {
                 // Return first available model from this provider
                 match provider {
-                    ProviderKind::Anthropic => return Ok(Model::default()),
-                    ProviderKind::OpenAI => return Ok(Model::Gpt4_1_20250414),
+                    ProviderKind::Anthropic => return Ok(Model::ClaudeOpus4_20250514),
+                    ProviderKind::OpenAI => return Ok(Model::O3_20250416),
                     ProviderKind::Google => return Ok(Model::Gemini2_5ProPreview0605),
-                    ProviderKind::Grok => return Ok(Model::Grok3),
+                    ProviderKind::XAI => return Ok(Model::Grok4_0709),
                 }
             }
         }
     }
 
-    // Otherwise, use default priority order: Anthropic, OpenAI, Google, Grok
+    // Otherwise, use default priority order: Anthropic, OpenAI, Google, xAI
     if authenticated_providers.contains(&ProviderKind::Anthropic) {
-        return Ok(Model::default()); // Default is Claude Opus 4
+        return Ok(Model::ClaudeOpus4_20250514); // Default is Claude Opus 4
     }
 
     if authenticated_providers.contains(&ProviderKind::OpenAI) {
-        return Ok(Model::Gpt4_1_20250414);
+        return Ok(Model::O3_20250416);
     }
 
     if authenticated_providers.contains(&ProviderKind::Google) {
-        return Ok(Model::Gemini2_5ProPreview0605); // The one with "gemini" alias
+        return Ok(Model::Gemini2_5ProPreview0605);
     }
 
-    if authenticated_providers.contains(&ProviderKind::Grok) {
-        return Ok(Model::Grok3);
+    if authenticated_providers.contains(&ProviderKind::XAI) {
+        return Ok(Model::Grok4_0709);
     }
 
     // Default to Claude if no providers are authenticated

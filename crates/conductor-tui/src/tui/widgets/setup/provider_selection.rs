@@ -85,7 +85,7 @@ impl ProviderSelectionWidget {
                         };
                         (provider.display_name(), icon, style)
                     }
-                    ProviderKind::Grok => {
+                    ProviderKind::XAI => {
                         let (icon, style) = if matches!(
                             state.auth_providers.get(provider),
                             Some(AuthStatus::ApiKeySet)
