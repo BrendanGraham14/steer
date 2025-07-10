@@ -1163,9 +1163,9 @@ pub async fn run_tui(
     use conductor_core::session::{SessionConfig, SessionToolConfig};
     use std::collections::HashMap;
 
-    // Load theme if specified
+    // Load theme - use catppuccin-mocha as default if none specified
+    let loader = theme::ThemeLoader::new();
     let theme = if let Some(theme_name) = theme_name {
-        let loader = theme::ThemeLoader::new();
         // Check if theme_name is an absolute path
         let path = std::path::Path::new(&theme_name);
         let theme_result = if path.is_absolute() || path.exists() {
@@ -1186,11 +1186,25 @@ pub async fn run_tui(
                     "Failed to load theme '{}': {}. Using default theme.",
                     theme_name, e
                 );
-                None
+                // Fall back to catppuccin-mocha
+                loader.load_theme("catppuccin-mocha").ok()
             }
         }
     } else {
-        None
+        // No theme specified, use catppuccin-mocha as default
+        match loader.load_theme("catppuccin-mocha") {
+            Ok(theme) => {
+                info!("Loaded default theme: catppuccin-mocha");
+                Some(theme)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load default theme 'catppuccin-mocha': {}. Using hardcoded default.",
+                    e
+                );
+                None
+            }
+        }
     };
 
     // If session_id is provided, resume that session
