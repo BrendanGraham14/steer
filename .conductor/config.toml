@@ -1,0 +1,27 @@
+# Reference to JSON schema for editor support
+"$schema" = "../schemas/session.schema.json"
+
+[tool_config]
+visibility = "all"
+approval_policy = "always_ask"
+
+[[tool_config.backends]]
+type = "mcp"
+server_name = "linear"
+tool_filter = "all"
+
+[tool_config.backends.transport]
+type = "stdio"
+command = "npx"
+args = ["-y", "mcp-remote", "https://mcp.linear.app/sse"]
+
+[tool_config.tools.bash]
+approved_patterns = [
+    "git status*",
+    "git log*",
+    "cargo build*",
+    "cargo check*",
+    "just build*",
+    "just check*",
+    "just test*",
+]
