@@ -12,6 +12,49 @@ use tracing::debug;
 pub struct SetupHandler;
 
 impl SetupHandler {
+    /// Ensure an auth controller exists for the given provider and method
+    async fn ensure_controller(
+        tui: &mut Tui,
+        provider: ProviderKind,
+        method: AuthMethod,
+    ) -> Result<()> {
+        if tui.auth_controller.is_some() {
+            return Ok(());
+        }
+
+        let auth_storage = Arc::new(
+            DefaultAuthStorage::new().map_err(|e| crate::error::Error::Auth(e.to_string()))?,
+        );
+
+        if let Some(auth_flow) = ProviderRegistry::create_auth_flow(provider, auth_storage) {
+            match auth_flow.start_auth(method).await {
+                Ok(auth_state) => {
+                    tui.auth_controller = Some(AuthController {
+                        flow: Arc::from(auth_flow),
+                        state: auth_state,
+                    });
+                    // Mark authentication as in progress
+                    if let Some(setup_state) = &mut tui.setup_state {
+                        setup_state
+                            .auth_providers
+                            .insert(provider, AuthStatus::InProgress);
+                    }
+                }
+                Err(e) => {
+                    if let Some(setup_state) = &mut tui.setup_state {
+                        setup_state.error_message =
+                            Some(format!("Failed to initialize authentication: {e}"));
+                    }
+                    return Err(crate::error::Error::Auth(e.to_string()));
+                }
+            }
+        } else if let Some(setup_state) = &mut tui.setup_state {
+            setup_state.error_message = Some(format!("{provider} doesn't support authentication"));
+        }
+
+        Ok(())
+    }
+
     pub async fn handle_key_event(tui: &mut Tui, key: KeyEvent) -> Result<Option<InputMode>> {
         // Clone the current step to avoid borrow conflicts
         let current_step = tui.setup_state.as_ref().unwrap().current_step.clone();
@@ -116,35 +159,10 @@ impl SetupHandler {
         provider: ProviderKind,
         key: KeyEvent,
     ) -> Result<Option<InputMode>> {
-        let state = tui.setup_state.as_mut().unwrap();
-
-        // For non-Anthropic providers, automatically initialize API key auth if not already done
+        // For non-Anthropic providers, automatically initialize API key auth
         if provider != ProviderKind::Anthropic && tui.auth_controller.is_none() {
-            let auth_storage = Arc::new(
-                DefaultAuthStorage::new().map_err(|e| crate::error::Error::Auth(e.to_string()))?,
-            );
-
-            if let Some(auth_flow) = ProviderRegistry::create_auth_flow(provider, auth_storage) {
-                match auth_flow.start_auth(AuthMethod::ApiKey).await {
-                    Ok(auth_state) => {
-                        tui.auth_controller = Some(AuthController {
-                            flow: Arc::from(auth_flow),
-                            state: auth_state,
-                        });
-                        state.api_key_input.clear();
-                        // Mark authentication as in progress
-                        state
-                            .auth_providers
-                            .insert(provider, AuthStatus::InProgress);
-                    }
-                    Err(e) => {
-                        state.error_message =
-                            Some(format!("Failed to initialize authentication: {e}"));
-                        return Ok(None);
-                    }
-                }
-            } else {
-                state.error_message = Some(format!("{provider} doesn't support authentication"));
+            if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::ApiKey).await {
+                // Error message already set in ensure_controller
                 return Ok(None);
             }
         }
@@ -152,210 +170,192 @@ impl SetupHandler {
         match key.code {
             KeyCode::Char('1') if provider == ProviderKind::Anthropic => {
                 // Start OAuth flow
-                // Create auth flow using the registry
-                let auth_storage = Arc::new(
-                    DefaultAuthStorage::new()
-                        .map_err(|e| crate::error::Error::Auth(e.to_string()))?,
-                );
+                if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::OAuth).await {
+                    return Ok(None);
+                }
 
-                if let Some(auth_flow) = ProviderRegistry::create_auth_flow(provider, auth_storage)
-                {
-                    match auth_flow.start_auth(AuthMethod::OAuth).await {
-                        Ok(auth_state) => {
-                            // Get initial progress to extract auth URL
-                            match auth_flow
-                                .get_initial_progress(&auth_state, AuthMethod::OAuth)
-                                .await
-                            {
-                                Ok(AuthProgress::OAuthStarted { auth_url }) => {
-                                    state.oauth_state = Some(crate::tui::state::OAuthFlowState {
-                                        auth_url: auth_url.clone(),
-                                        state: String::new(),
-                                        waiting_for_callback: true,
-                                    });
-                                    state
-                                        .auth_providers
-                                        .insert(provider, AuthStatus::InProgress);
+                // Get the auth controller we just created
+                if let Some(ref auth_controller) = tui.auth_controller {
+                    // Get initial progress to extract auth URL
+                    match auth_controller
+                        .flow
+                        .get_initial_progress(&auth_controller.state, AuthMethod::OAuth)
+                        .await
+                    {
+                        Ok(AuthProgress::OAuthStarted { auth_url }) => {
+                            let state = tui.setup_state.as_mut().unwrap();
+                            state.oauth_state = Some(crate::tui::state::OAuthFlowState {
+                                auth_url: auth_url.clone(),
+                                state: String::new(),
+                                waiting_for_callback: true,
+                            });
 
-                                    // Create the controller with the actual state
-                                    tui.auth_controller = Some(AuthController {
-                                        flow: Arc::from(auth_flow),
-                                        state: auth_state,
-                                    });
-
-                                    // Try to open browser
-                                    if let Err(e) = open::that(&auth_url) {
-                                        state.error_message =
-                                            Some(format!("Failed to open browser: {e}"));
-                                    }
-                                }
-                                _ => {
-                                    state.error_message =
-                                        Some("Failed to get OAuth URL".to_string());
-                                }
+                            // Try to open browser
+                            if let Err(e) = open::that(&auth_url) {
+                                state.error_message = Some(format!("Failed to open browser: {e}"));
                             }
                         }
-                        Err(e) => {
-                            state.error_message = Some(format!("Failed to start OAuth: {e}"));
+                        _ => {
+                            let state = tui.setup_state.as_mut().unwrap();
+                            state.error_message = Some("Failed to get OAuth URL".to_string());
                         }
                     }
-                } else {
-                    state.error_message =
-                        Some(format!("{provider} doesn't support authentication"));
                 }
                 Ok(None)
             }
-            KeyCode::Char('2')
-                if provider == ProviderKind::Anthropic
-                    && state.api_key_input.is_empty()
-                    && state.oauth_state.is_none() =>
-            {
-                // API key input mode
-                // Create auth flow using the registry
-                debug!("Starting API key input mode");
+            KeyCode::Char('2') if provider == ProviderKind::Anthropic => {
+                // Check conditions before calling ensure_controller
+                let should_proceed = {
+                    let state = tui.setup_state.as_ref().unwrap();
+                    state.api_key_input.is_empty() && state.oauth_state.is_none()
+                };
 
-                let auth_storage = Arc::new(
-                    DefaultAuthStorage::new()
-                        .map_err(|e| crate::error::Error::Auth(e.to_string()))?,
-                );
+                if should_proceed {
+                    // API key input mode
+                    debug!("Starting API key input mode");
+                    let state = tui.setup_state.as_mut().unwrap();
+                    state.api_key_input.clear();
+                    if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::ApiKey).await
+                    {
+                        return Ok(None);
+                    }
+                }
+                Ok(None)
+            }
+            KeyCode::Enter => {
+                // Check what type of input we have
+                let has_oauth_callback = {
+                    let state = tui.setup_state.as_ref().unwrap();
+                    state.oauth_state.is_some() && !state.oauth_callback_input.is_empty()
+                };
 
-                if let Some(auth_flow) = ProviderRegistry::create_auth_flow(provider, auth_storage)
+                let has_api_key = {
+                    let state = tui.setup_state.as_ref().unwrap();
+                    !state.api_key_input.is_empty()
+                };
+
+                if has_oauth_callback {
+                    // Handle OAuth callback
+                    let state = tui.setup_state.as_mut().unwrap();
+                    if let Some(ref mut auth_controller) = tui.auth_controller {
+                        let input = state.oauth_callback_input.clone();
+
+                        match auth_controller
+                            .flow
+                            .handle_input(&mut auth_controller.state, &input)
+                            .await
+                        {
+                            Ok(AuthProgress::Complete) => {
+                                state.oauth_state = None;
+                                state.oauth_callback_input.clear();
+                                state
+                                    .auth_providers
+                                    .insert(provider, AuthStatus::OAuthConfigured);
+                                state.error_message =
+                                    Some("OAuth authentication successful!".to_string());
+                                // Clear auth controller for next provider
+                                tui.auth_controller = None;
+                                // Return to provider selection to allow authenticating with other providers
+                                state.current_step = SetupStep::ProviderSelection;
+                                state.selected_provider = None;
+                            }
+                            Ok(AuthProgress::NeedInput(prompt)) => {
+                                state.error_message = Some(prompt);
+                            }
+                            Ok(AuthProgress::InProgress(msg)) => {
+                                state.error_message = Some(msg);
+                            }
+                            Ok(AuthProgress::Error(err)) => {
+                                state.error_message = Some(err);
+                                state.oauth_callback_input.clear();
+                            }
+                            Ok(AuthProgress::OAuthStarted { .. }) => {
+                                // Shouldn't happen at this stage
+                                state.error_message = Some("Unexpected OAuth state".to_string());
+                            }
+                            Err(e) => {
+                                state.error_message =
+                                    Some(format!("OAuth authentication failed: {e}"));
+                                state.oauth_callback_input.clear();
+                            }
+                        }
+                    }
+                } else if has_api_key {
+                    // Ensure we have a controller for API key auth
+                    if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::ApiKey).await
+                    {
+                        return Ok(None);
+                    }
+
+                    // Handle API key input
+                    let state = tui.setup_state.as_mut().unwrap();
+                    if let Some(ref mut auth_controller) = tui.auth_controller {
+                        let api_key = state.api_key_input.clone();
+
+                        match auth_controller
+                            .flow
+                            .handle_input(&mut auth_controller.state, &api_key)
+                            .await
+                        {
+                            Ok(AuthProgress::Complete) => {
+                                state.api_key_input.clear();
+                                state.auth_providers.insert(provider, AuthStatus::ApiKeySet);
+                                state.error_message =
+                                    Some(format!("API key successfully imported for {provider}!"));
+                                // Clear auth controller for next provider
+                                tui.auth_controller = None;
+                                // Return to provider selection to allow authenticating with other providers
+                                state.current_step = SetupStep::ProviderSelection;
+                                state.selected_provider = None;
+                            }
+                            Ok(AuthProgress::Error(err)) => {
+                                state.error_message = Some(err);
+                                state.api_key_input.clear();
+                            }
+                            Err(e) => {
+                                state.error_message = Some(e.to_string());
+                                state.api_key_input.clear();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            KeyCode::Char(c) => {
+                let state = tui.setup_state.as_mut().unwrap();
+                if state.oauth_state.is_some() {
+                    // Typing OAuth callback
+                    state.oauth_callback_input.push(c);
+                    Ok(None)
+                } else if tui.auth_controller.is_some()
+                    && (provider != ProviderKind::Anthropic
+                        || (provider == ProviderKind::Anthropic && state.oauth_state.is_none()))
                 {
-                    match auth_flow.start_auth(AuthMethod::ApiKey).await {
-                        Ok(auth_state) => {
-                            // Create the controller with the actual state
-                            tui.auth_controller = Some(AuthController {
-                                flow: Arc::from(auth_flow),
-                                state: auth_state,
-                            });
-                            state.api_key_input.clear();
-                            // Mark authentication as in progress
-                            state
-                                .auth_providers
-                                .insert(provider, AuthStatus::InProgress);
-                        }
-                        Err(e) => {
-                            state.error_message =
-                                Some(format!("Failed to start API key input: {e}"));
-                        }
-                    }
+                    // Typing API key
+                    state.api_key_input.push(c);
+                    Ok(None)
                 } else {
-                    state.error_message =
-                        Some(format!("{provider} doesn't support authentication"));
+                    Ok(None)
                 }
-                Ok(None)
             }
-            KeyCode::Enter
-                if state.oauth_state.is_some() && !state.oauth_callback_input.is_empty() =>
-            {
-                // Handle OAuth callback
-                if let Some(ref mut auth_controller) = tui.auth_controller {
-                    let input = state.oauth_callback_input.clone();
-
-                    match auth_controller
-                        .flow
-                        .handle_input(&mut auth_controller.state, &input)
-                        .await
-                    {
-                        Ok(AuthProgress::Complete) => {
-                            state.oauth_state = None;
-                            state.oauth_callback_input.clear();
-                            state
-                                .auth_providers
-                                .insert(provider, AuthStatus::OAuthConfigured);
-                            state.error_message =
-                                Some("OAuth authentication successful!".to_string());
-                            // Clear auth controller for next provider
-                            tui.auth_controller = None;
-                            // Return to provider selection to allow authenticating with other providers
-                            state.current_step = SetupStep::ProviderSelection;
-                            state.selected_provider = None;
-                        }
-                        Ok(AuthProgress::NeedInput(prompt)) => {
-                            state.error_message = Some(prompt);
-                        }
-                        Ok(AuthProgress::InProgress(msg)) => {
-                            state.error_message = Some(msg);
-                        }
-                        Ok(AuthProgress::Error(err)) => {
-                            state.error_message = Some(err);
-                            state.oauth_callback_input.clear();
-                        }
-                        Ok(AuthProgress::OAuthStarted { .. }) => {
-                            // Shouldn't happen at this stage
-                            state.error_message = Some("Unexpected OAuth state".to_string());
-                        }
-                        Err(e) => {
-                            state.error_message = Some(format!("OAuth authentication failed: {e}"));
-                            state.oauth_callback_input.clear();
-                        }
-                    }
-                }
-                Ok(None)
-            }
-            KeyCode::Enter if !state.api_key_input.is_empty() => {
-                // Handle API key input
-                if let Some(ref mut auth_controller) = tui.auth_controller {
-                    let api_key = state.api_key_input.clone();
-
-                    match auth_controller
-                        .flow
-                        .handle_input(&mut auth_controller.state, &api_key)
-                        .await
-                    {
-                        Ok(AuthProgress::Complete) => {
-                            state.api_key_input.clear();
-                            state.auth_providers.insert(provider, AuthStatus::ApiKeySet);
-                            state.error_message =
-                                Some(format!("API key successfully imported for {provider}!"));
-                            // Clear auth controller for next provider
-                            tui.auth_controller = None;
-                            // Return to provider selection to allow authenticating with other providers
-                            state.current_step = SetupStep::ProviderSelection;
-                            state.selected_provider = None;
-                        }
-                        Ok(AuthProgress::Error(err)) => {
-                            state.error_message = Some(err);
-                            state.api_key_input.clear();
-                        }
-                        Err(e) => {
-                            state.error_message = Some(e.to_string());
-                            state.api_key_input.clear();
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(None)
-            }
-            KeyCode::Char(c) if state.oauth_state.is_some() => {
-                // Typing OAuth callback
-                state.oauth_callback_input.push(c);
-                Ok(None)
-            }
-            KeyCode::Backspace if state.oauth_state.is_some() => {
-                state.oauth_callback_input.pop();
-                Ok(None)
-            }
-            KeyCode::Char(c)
-                if tui.auth_controller.is_some()
+            KeyCode::Backspace => {
+                let state = tui.setup_state.as_mut().unwrap();
+                if state.oauth_state.is_some() {
+                    state.oauth_callback_input.pop();
+                    Ok(None)
+                } else if tui.auth_controller.is_some()
                     && (provider != ProviderKind::Anthropic
-                        || (provider == ProviderKind::Anthropic
-                            && state.oauth_state.is_none())) =>
-            {
-                // Typing API key
-                state.api_key_input.push(c);
-                Ok(None)
-            }
-            KeyCode::Backspace
-                if tui.auth_controller.is_some()
-                    && (provider != ProviderKind::Anthropic
-                        || (provider == ProviderKind::Anthropic
-                            && state.oauth_state.is_none())) =>
-            {
-                state.api_key_input.pop();
-                Ok(None)
+                        || (provider == ProviderKind::Anthropic && state.oauth_state.is_none()))
+                {
+                    state.api_key_input.pop();
+                    Ok(None)
+                } else {
+                    Ok(None)
+                }
             }
             KeyCode::Esc => {
+                let state = tui.setup_state.as_mut().unwrap();
                 state.oauth_state = None;
                 state.api_key_input.clear();
                 state.oauth_callback_input.clear();
