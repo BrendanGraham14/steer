@@ -44,7 +44,8 @@ pub async fn get_authenticated_providers(
     }
 
     // Check Grok
-    if std::env::var("GROK_API_KEY").is_ok()
+    if std::env::var("XAI_API_KEY").is_ok()
+        || std::env::var("GROK_API_KEY").is_ok()
         || auth_storage
             .get_credential("grok", CredentialType::ApiKey)
             .await?

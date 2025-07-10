@@ -298,8 +298,10 @@ impl LlmConfigLoader {
             None
         };
 
-        // For Grok: Check env var first, then stored API key
-        let grok_api_key = if let Ok(key) = std::env::var("GROK_API_KEY") {
+        // For Grok: Check env vars first (XAI_API_KEY or GROK_API_KEY), then stored API key
+        let grok_api_key = if let Ok(key) = std::env::var("XAI_API_KEY") {
+            Some(key)
+        } else if let Ok(key) = std::env::var("GROK_API_KEY") {
             Some(key)
         } else if let Some(crate::auth::Credential::ApiKey { value }) = self
             .storage
