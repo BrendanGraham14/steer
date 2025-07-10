@@ -11,7 +11,7 @@ use crate::grpc::server::AgentServiceImpl;
 use conductor_core::auth::storage::AuthStorage;
 use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig, SessionStore};
-use conductor_proto::agent::agent_service_server::AgentServiceServer;
+use conductor_proto::agent::v1::agent_service_server::AgentServiceServer;
 
 /// Configuration for the ServiceHost
 #[derive(Clone)]

@@ -10,16 +10,18 @@ use conductor_tools::traits::ExecutableTool;
 use conductor_tools::{ExecutionContext, ToolError};
 
 use crate::proto::{
-    AgentInfo, BashResult as ProtoBashResult, ColumnRange as ProtoColumnRange,
-    EditResult as ProtoEditResult, ExecuteToolRequest, ExecuteToolResponse,
-    FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
-    FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult, HealthResponse,
-    HealthStatus, ListFilesRequest, ListFilesResponse, SearchMatch as ProtoSearchMatch,
-    SearchResult as ProtoSearchResult, TodoItem as ProtoTodoItem,
-    TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
-    ToolSchema as GrpcToolSchema, ToolSchemasResponse,
-    execute_tool_response::Result as ProtoResult,
+    ExecuteToolRequest, ExecuteToolResponse, GetAgentInfoRequest, GetAgentInfoResponse,
+    GetToolApprovalRequirementsRequest, GetToolApprovalRequirementsResponse, GetToolSchemasRequest,
+    GetToolSchemasResponse, HealthRequest, HealthResponse, HealthStatus, ListFilesRequest,
+    ListFilesResponse, ToolSchema as GrpcToolSchema, execute_tool_response::Result as ProtoResult,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
+};
+use conductor_proto::common::v1::{
+    BashResult as ProtoBashResult, ColumnRange as ProtoColumnRange, EditResult as ProtoEditResult,
+    FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
+    FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult,
+    SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult, TodoItem as ProtoTodoItem,
+    TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
 };
 
 /// Agent service implementation that executes tools locally
@@ -393,8 +395,8 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
     /// Get tool schemas
     async fn get_tool_schemas(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<ToolSchemasResponse>, Status> {
+        _request: Request<GetToolSchemasRequest>,
+    ) -> Result<Response<GetToolSchemasResponse>, Status> {
         let mut schemas = Vec::new();
 
         for (name, tool) in self.tools.iter() {
@@ -409,7 +411,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             });
         }
 
-        Ok(Response::new(ToolSchemasResponse { tools: schemas }))
+        Ok(Response::new(GetToolSchemasResponse { tools: schemas }))
     }
 
     /// Execute a tool call on the agent
@@ -503,10 +505,13 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
     }
 
     /// Get information about the agent and available tools
-    async fn get_agent_info(&self, _request: Request<()>) -> Result<Response<AgentInfo>, Status> {
+    async fn get_agent_info(
+        &self,
+        _request: Request<GetAgentInfoRequest>,
+    ) -> Result<Response<GetAgentInfoResponse>, Status> {
         let supported_tools = self.get_supported_tools();
 
-        let info = AgentInfo {
+        let info = GetAgentInfoResponse {
             version: self.version.clone(),
             supported_tools,
             metadata: std::collections::HashMap::from([
@@ -527,7 +532,10 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
     }
 
     /// Health check
-    async fn health(&self, _request: Request<()>) -> Result<Response<HealthResponse>, Status> {
+    async fn health(
+        &self,
+        _request: Request<HealthRequest>,
+    ) -> Result<Response<HealthResponse>, Status> {
         // Simple health check - we could add more sophisticated checks here
         let response = HealthResponse {
             status: HealthStatus::Serving as i32,
@@ -544,8 +552,8 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
     /// Get tool approval requirements
     async fn get_tool_approval_requirements(
         &self,
-        request: Request<crate::proto::ToolApprovalRequirementsRequest>,
-    ) -> Result<Response<crate::proto::ToolApprovalRequirementsResponse>, Status> {
+        request: Request<GetToolApprovalRequirementsRequest>,
+    ) -> Result<Response<GetToolApprovalRequirementsResponse>, Status> {
         let req = request.into_inner();
         let mut approval_requirements = std::collections::HashMap::new();
 
@@ -558,11 +566,9 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             }
         }
 
-        Ok(Response::new(
-            crate::proto::ToolApprovalRequirementsResponse {
-                approval_requirements,
-            },
-        ))
+        Ok(Response::new(GetToolApprovalRequirementsResponse {
+            approval_requirements,
+        }))
     }
 
     /// Get environment information for the remote workspace

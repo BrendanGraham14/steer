@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use conductor_core::session::SessionManagerConfig;
 use conductor_grpc::{ServiceHost, ServiceHostConfig};
-use conductor_proto::agent::{
+use conductor_proto::agent::v1::{
     CreateSessionRequest, ListFilesRequest, SendMessageRequest, SubscribeRequest, WorkspaceConfig,
-    agent_service_client::AgentServiceClient, client_message,
+    agent_service_client::AgentServiceClient, stream_session_request,
 };
 use conductor_tui::error::Result;
 use tempfile::TempDir;
@@ -132,8 +132,8 @@ async fn test_tui_agent_service_file_listing() {
     // Test 1: Create a session with local workspace
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
-            config: Some(conductor_proto::agent::workspace_config::Config::Local(
-                conductor_proto::agent::LocalWorkspaceConfig {
+            config: Some(conductor_proto::agent::v1::workspace_config::Config::Local(
+                conductor_proto::agent::v1::LocalWorkspaceConfig {
                     path: workspace_path.to_string_lossy().to_string(),
                 },
             )),
@@ -145,8 +145,8 @@ async fn test_tui_agent_service_file_listing() {
     };
 
     let create_resp = grpc_client.create_session(create_req).await.unwrap();
-    let session_info = create_resp.into_inner();
-    let session_id = session_info.id.clone();
+    let session_response = create_resp.into_inner();
+    let session_id = session_response.session.unwrap().id.clone();
     info!("Created session: {}", session_id);
 
     // Test 2: List files in the workspace
@@ -282,8 +282,8 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     let mut grpc_client = AgentServiceClient::new(channel.clone());
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
-            config: Some(conductor_proto::agent::workspace_config::Config::Local(
-                conductor_proto::agent::LocalWorkspaceConfig {
+            config: Some(conductor_proto::agent::v1::workspace_config::Config::Local(
+                conductor_proto::agent::v1::LocalWorkspaceConfig {
                     path: workspace_path.to_string_lossy().to_string(),
                 },
             )),
@@ -296,6 +296,8 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
         .await
         .unwrap()
         .into_inner()
+        .session
+        .unwrap()
         .id;
 
     // Get files via gRPC
@@ -389,8 +391,8 @@ async fn test_workspace_changed_event_flow() {
     let mut grpc_client = AgentServiceClient::new(channel.clone());
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
-            config: Some(conductor_proto::agent::workspace_config::Config::Local(
-                conductor_proto::agent::LocalWorkspaceConfig {
+            config: Some(conductor_proto::agent::v1::workspace_config::Config::Local(
+                conductor_proto::agent::v1::LocalWorkspaceConfig {
                     path: workspace_path.to_string_lossy().to_string(),
                 },
             )),
@@ -403,18 +405,20 @@ async fn test_workspace_changed_event_flow() {
         .await
         .unwrap()
         .into_inner()
+        .session
+        .unwrap()
         .id;
 
     // Start streaming events
     let (tx, _rx) = tokio::sync::mpsc::channel(100);
 
     // Subscribe to events
-    let subscribe_msg = client_message::Message::Subscribe(SubscribeRequest {
+    let subscribe_msg = stream_session_request::Message::Subscribe(SubscribeRequest {
         event_types: vec![], // Empty means all events
         since_sequence: None,
     });
 
-    let msg = conductor_proto::agent::ClientMessage {
+    let msg = conductor_proto::agent::v1::StreamSessionRequest {
         session_id: session_id.clone(),
         message: Some(subscribe_msg),
     };
@@ -430,7 +434,7 @@ async fn test_workspace_changed_event_flow() {
             match event {
                 Ok(server_event) => {
                     debug!("Received event: {:?}", server_event);
-                    if let Some(conductor_proto::agent::server_event::Event::WorkspaceChanged(_)) =
+                    if let Some(conductor_proto::agent::v1::stream_session_response::Event::WorkspaceChanged(_)) =
                         server_event.event
                     {
                         let _ = tx.send(()).await;
@@ -450,7 +454,7 @@ async fn test_workspace_changed_event_flow() {
     // For this test, we'll just verify the event stream works
 
     // Send a message that would trigger tool execution
-    let _send_msg = client_message::Message::SendMessage(SendMessageRequest {
+    let _send_msg = stream_session_request::Message::SendMessage(SendMessageRequest {
         session_id: session_id.clone(),
         message: "Create a new file called test.txt with 'hello world' in it".to_string(),
         attachments: vec![],

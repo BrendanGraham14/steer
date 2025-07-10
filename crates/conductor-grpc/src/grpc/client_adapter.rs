@@ -19,17 +19,18 @@ use conductor_core::app::conversation::Message;
 use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::{AppCommand, AppEvent};
 use conductor_core::session::SessionConfig;
-use conductor_proto::agent::{
-    ClientMessage, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
-    GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState, SubscribeRequest,
-    agent_service_client::AgentServiceClient, client_message::Message as ClientMessageType,
+use conductor_proto::agent::v1::{
+    self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
+    GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState, StreamSessionRequest,
+    SubscribeRequest, agent_service_client::AgentServiceClient,
+    stream_session_request::Message as StreamSessionRequestType,
 };
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming
 pub struct GrpcClientAdapter {
     client: Mutex<AgentServiceClient<Channel>>,
     session_id: Mutex<Option<String>>,
-    command_tx: Mutex<Option<mpsc::Sender<ClientMessage>>>,
+    command_tx: Mutex<Option<mpsc::Sender<StreamSessionRequest>>>,
     event_rx: Mutex<Option<mpsc::Receiver<AppEvent>>>,
     stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -97,12 +98,15 @@ impl GrpcClientAdapter {
             .create_session(request)
             .await
             .map_err(Box::new)?;
-        let session_info = response.into_inner();
+        let response = response.into_inner();
+        let session = response
+            .session
+            .ok_or_else(|| Box::new(tonic::Status::internal("No session info in response")))?;
 
-        *self.session_id.lock().await = Some(session_info.id.clone());
+        *self.session_id.lock().await = Some(session.id.clone());
 
-        info!("Created session: {}", session_info.id);
-        Ok(session_info.id)
+        info!("Created session: {}", session.id);
+        Ok(session.id)
     }
 
     /// Activate (load) an existing dormant session and get its state
@@ -116,7 +120,7 @@ impl GrpcClientAdapter {
             .client
             .lock()
             .await
-            .activate_session(conductor_proto::agent::ActivateSessionRequest {
+            .activate_session(proto::ActivateSessionRequest {
                 session_id: session_id.clone(),
             })
             .await
@@ -153,7 +157,7 @@ impl GrpcClientAdapter {
         debug!("Starting bidirectional stream for session: {}", session_id);
 
         // Create channels for command and event communication
-        let (cmd_tx, cmd_rx) = mpsc::channel::<ClientMessage>(32);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StreamSessionRequest>(32);
         let (evt_tx, evt_rx) = mpsc::channel::<AppEvent>(100);
 
         // Create the bidirectional stream
@@ -170,9 +174,9 @@ impl GrpcClientAdapter {
         let mut inbound_stream = response.into_inner();
 
         // Send initial subscribe message
-        let subscribe_msg = ClientMessage {
+        let subscribe_msg = StreamSessionRequest {
             session_id: session_id.clone(),
-            message: Some(ClientMessageType::Subscribe(SubscribeRequest {
+            message: Some(StreamSessionRequestType::Subscribe(SubscribeRequest {
                 event_types: vec![], // Subscribe to all events
                 since_sequence: None,
             })),
@@ -308,8 +312,8 @@ impl GrpcClientAdapter {
 
         match self.client.lock().await.get_session(request).await {
             Ok(response) => {
-                let session_state = response.into_inner();
-                Ok(Some(session_state))
+                let get_session_response = response.into_inner();
+                Ok(get_session_response.session)
             }
             Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
             Err(e) => Err(GrpcError::CallFailed(Box::new(e))),
@@ -420,7 +424,7 @@ mod tests {
     use super::*;
     use crate::grpc::conversions::tool_approval_policy_to_proto;
     use conductor_core::session::ToolApprovalPolicy;
-    use conductor_proto::agent::tool_approval_policy::Policy;
+    use conductor_proto::agent::v1::tool_approval_policy::Policy;
 
     #[test]
     fn test_convert_tool_approval_policy() {

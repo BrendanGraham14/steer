@@ -1,0 +1,11 @@
+version: v1
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - STANDARD
+  ignore_only:
+    SERVICE_SUFFIX:
+      - conductor/agent/v1/agent.proto
+      - conductor/remote_workspace/v1/remote_workspace.proto

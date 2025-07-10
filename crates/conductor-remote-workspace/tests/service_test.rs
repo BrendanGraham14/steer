@@ -1,5 +1,5 @@
 use conductor_remote_workspace::proto::{
-    ExecuteToolRequest, HealthStatus,
+    ExecuteToolRequest, GetAgentInfoRequest, GetToolSchemasRequest, HealthRequest, HealthStatus,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceTrait,
 };
 use conductor_remote_workspace::remote_workspace_service::RemoteWorkspaceService;
@@ -25,7 +25,7 @@ async fn test_service_creation() {
 #[tokio::test]
 async fn test_health_check() {
     let service = RemoteWorkspaceService::new().unwrap();
-    let request = Request::new(());
+    let request = Request::new(HealthRequest {});
 
     let response = service.health(request).await;
     assert!(response.is_ok());
@@ -39,7 +39,7 @@ async fn test_health_check() {
 #[tokio::test]
 async fn test_get_tool_schemas() {
     let service = RemoteWorkspaceService::new().unwrap();
-    let request = Request::new(());
+    let request = Request::new(GetToolSchemasRequest {});
 
     let response = service.get_tool_schemas(request).await;
     assert!(response.is_ok());
@@ -159,7 +159,7 @@ async fn test_tool_cancellation() {
 #[tokio::test]
 async fn test_get_agent_info() {
     let service = RemoteWorkspaceService::new().unwrap();
-    let request = Request::new(());
+    let request = Request::new(GetAgentInfoRequest {});
 
     let response = service.get_agent_info(request).await;
     assert!(response.is_ok());

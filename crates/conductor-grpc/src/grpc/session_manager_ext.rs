@@ -3,7 +3,7 @@ use crate::grpc::conversions::{
 };
 use crate::grpc::error::GrpcError;
 use conductor_core::session::{SessionConfig, SessionManager};
-use conductor_proto::agent as proto;
+use conductor_proto::agent::v1 as proto;
 
 /// Extension trait for SessionManager that adds gRPC-specific functionality
 #[async_trait::async_trait]

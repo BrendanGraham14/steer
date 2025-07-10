@@ -1,7 +1,7 @@
 use crate::grpc::conversions::message_to_proto;
 use crate::grpc::session_manager_ext::SessionManagerExt;
 use conductor_core::session::manager::SessionManager;
-use conductor_proto::agent::*;
+use conductor_proto::agent::v1::{self as proto, *};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -27,12 +27,12 @@ impl AgentServiceImpl {
 
 #[tonic::async_trait]
 impl agent_service_server::AgentService for AgentServiceImpl {
-    type StreamSessionStream = ReceiverStream<Result<ServerEvent, Status>>;
+    type StreamSessionStream = ReceiverStream<Result<StreamSessionResponse, Status>>;
     type ListFilesStream = ReceiverStream<Result<ListFilesResponse, Status>>;
 
     async fn stream_session(
         &self,
-        request: Request<Streaming<ClientMessage>>,
+        request: Request<Streaming<StreamSessionRequest>>,
     ) -> Result<Response<Self::StreamSessionStream>, Status> {
         let mut client_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
@@ -245,7 +245,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn create_session(
         &self,
         request: Request<CreateSessionRequest>,
-    ) -> Result<Response<SessionInfo>, Status> {
+    ) -> Result<Response<CreateSessionResponse>, Status> {
         let req = request.into_inner();
 
         let app_config = conductor_core::app::AppConfig {
@@ -257,7 +257,9 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .create_session_grpc(req, app_config)
             .await
         {
-            Ok((_session_id, session_info)) => Ok(Response::new(session_info)),
+            Ok((_session_id, session_info)) => Ok(Response::new(CreateSessionResponse {
+                session: Some(session_info),
+            })),
             Err(e) => {
                 error!("Failed to create session: {}", e);
                 Err(e.into())
@@ -286,8 +288,8 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                         updated_at: Some(prost_types::Timestamp::from(
                             std::time::SystemTime::from(session.updated_at),
                         )),
-                        status: conductor_proto::agent::SessionStatus::Active as i32,
-                        metadata: Some(conductor_proto::agent::SessionMetadata {
+                        status: proto::SessionStatus::Active as i32,
+                        metadata: Some(proto::SessionMetadata {
                             labels: session.metadata,
                             annotations: std::collections::HashMap::new(),
                         }),
@@ -309,7 +311,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn get_session(
         &self,
         request: Request<GetSessionRequest>,
-    ) -> Result<Response<SessionState>, Status> {
+    ) -> Result<Response<GetSessionResponse>, Status> {
         let req = request.into_inner();
 
         match self
@@ -317,7 +319,9 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .get_session_proto(&req.session_id)
             .await
         {
-            Ok(Some(session_state)) => Ok(Response::new(session_state)),
+            Ok(Some(session_state)) => Ok(Response::new(GetSessionResponse {
+                session: Some(session_state),
+            })),
             Ok(None) => Err(Status::not_found(format!(
                 "Session not found: {}",
                 req.session_id
@@ -332,11 +336,11 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn delete_session(
         &self,
         request: Request<DeleteSessionRequest>,
-    ) -> Result<Response<()>, Status> {
+    ) -> Result<Response<DeleteSessionResponse>, Status> {
         let req = request.into_inner();
 
         match self.session_manager.delete_session(&req.session_id).await {
-            Ok(true) => Ok(Response::new(())),
+            Ok(true) => Ok(Response::new(DeleteSessionResponse {})),
             Ok(false) => Err(Status::not_found(format!(
                 "Session not found: {}",
                 req.session_id
@@ -404,7 +408,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn send_message(
         &self,
         request: Request<SendMessageRequest>,
-    ) -> Result<Response<Operation>, Status> {
+    ) -> Result<Response<SendMessageResponse>, Status> {
         let req = request.into_inner();
 
         let app_command = conductor_core::app::AppCommand::ProcessUserInput(req.message);
@@ -417,14 +421,18 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             Ok(()) => {
                 // Generate operation ID for tracking
                 let operation_id = format!("op_{}", uuid::Uuid::new_v4());
-                Ok(Response::new(Operation {
-                    id: operation_id,
-                    session_id: req.session_id,
-                    r#type: OperationType::SendMessage as i32,
-                    status: OperationStatus::Running as i32,
-                    created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
-                    completed_at: None,
-                    metadata: std::collections::HashMap::new(),
+                Ok(Response::new(SendMessageResponse {
+                    operation: Some(Operation {
+                        id: operation_id,
+                        session_id: req.session_id,
+                        r#type: OperationType::SendMessage as i32,
+                        status: OperationStatus::Running as i32,
+                        created_at: Some(
+                            prost_types::Timestamp::from(std::time::SystemTime::now()),
+                        ),
+                        completed_at: None,
+                        metadata: std::collections::HashMap::new(),
+                    }),
                 }))
             }
             Err(e) => {
@@ -437,36 +445,32 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn approve_tool(
         &self,
         request: Request<ApproveToolRequest>,
-    ) -> Result<Response<()>, Status> {
+    ) -> Result<Response<ApproveToolResponse>, Status> {
         let req = request.into_inner();
 
         let approval = match req.decision {
-            Some(decision) => {
-                match decision {
-                conductor_proto::agent::ApprovalDecision{decision_type: Some(
-                    conductor_proto::agent::approval_decision::DecisionType::Deny(true),
-                )} =>  conductor_core::app::command::ApprovalType::Denied,
-                conductor_proto::agent::ApprovalDecision{decision_type: Some(
-                    conductor_proto::agent::approval_decision::DecisionType::Once(true),
-                )} => conductor_core::app::command::ApprovalType::Once,
-                conductor_proto::agent::ApprovalDecision{decision_type: Some(
-                    conductor_proto::agent::approval_decision::DecisionType::AlwaysTool(true),
-                )} => conductor_core::app::command::ApprovalType::AlwaysTool,
-                conductor_proto::agent::ApprovalDecision{decision_type: Some(
-                    conductor_proto::agent::approval_decision::DecisionType::AlwaysBashPattern(
-                        pattern,
-                    ),
-                )} => conductor_core::app::command::ApprovalType::AlwaysBashPattern(pattern),
+            Some(decision) => match decision {
+                proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::Deny(true)),
+                } => conductor_core::app::command::ApprovalType::Denied,
+                proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::Once(true)),
+                } => conductor_core::app::command::ApprovalType::Once,
+                proto::ApprovalDecision {
+                    decision_type: Some(proto::approval_decision::DecisionType::AlwaysTool(true)),
+                } => conductor_core::app::command::ApprovalType::AlwaysTool,
+                proto::ApprovalDecision {
+                    decision_type:
+                        Some(proto::approval_decision::DecisionType::AlwaysBashPattern(pattern)),
+                } => conductor_core::app::command::ApprovalType::AlwaysBashPattern(pattern),
                 _ => {
                     return Err(Status::invalid_argument(
                         "Invalid approval decision enum value",
                     ));
                 }
-            }}
+            },
             None => {
-                return Err(Status::invalid_argument(
-                    "Missing approval decision",
-                ));
+                return Err(Status::invalid_argument("Missing approval decision"));
             }
         };
 
@@ -480,7 +484,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .send_command(&req.session_id, app_command)
             .await
         {
-            Ok(()) => Ok(Response::new(())),
+            Ok(()) => Ok(Response::new(ApproveToolResponse {})),
             Err(e) => {
                 error!("Failed to approve tool: {}", e);
                 Err(Status::internal(format!("Failed to approve tool: {e}")))
@@ -551,7 +555,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn cancel_operation(
         &self,
         request: Request<CancelOperationRequest>,
-    ) -> Result<Response<()>, Status> {
+    ) -> Result<Response<CancelOperationResponse>, Status> {
         let req = request.into_inner();
 
         let app_command = conductor_core::app::AppCommand::CancelProcessing;
@@ -561,7 +565,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .send_command(&req.session_id, app_command)
             .await
         {
-            Ok(()) => Ok(Response::new(())),
+            Ok(()) => Ok(Response::new(CancelOperationResponse {})),
             Err(e) => {
                 error!("Failed to cancel operation: {}", e);
                 Err(Status::internal(format!("Failed to cancel operation: {e}")))
@@ -682,7 +686,7 @@ async fn try_resume_session(
 
 async fn handle_client_message(
     session_manager: &SessionManager,
-    client_message: ClientMessage,
+    client_message: StreamSessionRequest,
     _llm_config_provider: conductor_core::config::LlmConfigProvider,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     debug!(
@@ -692,7 +696,7 @@ async fn handle_client_message(
 
     if let Some(message) = client_message.message {
         match message {
-            client_message::Message::SendMessage(send_msg) => {
+            stream_session_request::Message::SendMessage(send_msg) => {
                 // Convert to AppCommand - just process user input since that's what exists
                 let app_command =
                     conductor_core::app::AppCommand::ProcessUserInput(send_msg.message);
@@ -703,24 +707,28 @@ async fn handle_client_message(
                     .map_err(|e| format!("Failed to send message: {e}"))?;
             }
 
-            client_message::Message::ToolApproval(approval) => {
+            stream_session_request::Message::ToolApproval(approval) => {
                 // Convert approval decision using existing HandleToolResponse
                 let approval_type = match approval.decision {
                     Some(decision) => match decision.decision_type {
-                        Some(conductor_proto::agent::approval_decision::DecisionType::Deny(_)) => {
+                        Some(proto::approval_decision::DecisionType::Deny(_)) => {
                             conductor_core::app::command::ApprovalType::Denied
                         }
-                        Some(conductor_proto::agent::approval_decision::DecisionType::Once(_)) => {
+                        Some(proto::approval_decision::DecisionType::Once(_)) => {
                             conductor_core::app::command::ApprovalType::Once
                         }
-                        Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysTool(_)) => {
+                        Some(proto::approval_decision::DecisionType::AlwaysTool(_)) => {
                             conductor_core::app::command::ApprovalType::AlwaysTool
                         }
-                        Some(conductor_proto::agent::approval_decision::DecisionType::AlwaysBashPattern(pattern)) => {
+                        Some(proto::approval_decision::DecisionType::AlwaysBashPattern(
+                            pattern,
+                        )) => {
                             conductor_core::app::command::ApprovalType::AlwaysBashPattern(pattern)
                         }
                         None => {
-                            return Err("Invalid approval decision: no decision type specified".into());
+                            return Err(
+                                "Invalid approval decision: no decision type specified".into()
+                            );
                         }
                     },
                     None => {
@@ -739,7 +747,7 @@ async fn handle_client_message(
                     .map_err(|e| format!("Failed to approve tool: {e}"))?;
             }
 
-            client_message::Message::Cancel(_cancel) => {
+            stream_session_request::Message::Cancel(_cancel) => {
                 // Use existing CancelProcessing command
                 let app_command = conductor_core::app::AppCommand::CancelProcessing;
 
@@ -749,18 +757,18 @@ async fn handle_client_message(
                     .map_err(|e| format!("Failed to cancel operation: {e}"))?;
             }
 
-            client_message::Message::Subscribe(_subscribe_request) => {
+            stream_session_request::Message::Subscribe(_subscribe_request) => {
                 debug!("Subscribe message received - stream already established");
                 // No action needed - stream is already active
             }
 
-            client_message::Message::UpdateConfig(_update_config) => {
+            stream_session_request::Message::UpdateConfig(_update_config) => {
                 // UpdateConfig no longer supports changing the LLM provider
                 // Tool config updates are handled separately
                 debug!("UpdateConfig received but provider changes are no longer supported");
             }
 
-            client_message::Message::ExecuteCommand(execute_command) => {
+            stream_session_request::Message::ExecuteCommand(execute_command) => {
                 use conductor_core::app::conversation::AppCommandType;
                 let app_cmd_type = match AppCommandType::parse(&execute_command.command) {
                     Ok(cmd) => cmd,
@@ -775,7 +783,7 @@ async fn handle_client_message(
                     .map_err(|e| format!("Failed to execute command: {e}"))?;
             }
 
-            client_message::Message::ExecuteBashCommand(execute_bash_command) => {
+            stream_session_request::Message::ExecuteBashCommand(execute_bash_command) => {
                 let app_command = conductor_core::app::AppCommand::ExecuteBashCommand {
                     command: execute_bash_command.command,
                 };
@@ -785,7 +793,7 @@ async fn handle_client_message(
                     .map_err(|e| format!("Failed to execute bash command: {e}"))?;
             }
 
-            client_message::Message::EditMessage(edit_message) => {
+            stream_session_request::Message::EditMessage(edit_message) => {
                 let app_command = conductor_core::app::AppCommand::EditMessage {
                     message_id: edit_message.message_id,
                     new_content: edit_message.new_content,
@@ -809,8 +817,8 @@ mod tests {
     use conductor_core::session::state::WorkspaceConfig;
     use conductor_core::session::stores::sqlite::SqliteSessionStore;
     use conductor_core::session::{SessionConfig, SessionManagerConfig, SessionToolConfig};
-    use conductor_proto::agent::agent_service_client::AgentServiceClient;
-    use conductor_proto::agent::{SendMessageRequest, SubscribeRequest};
+    use conductor_proto::agent::v1::agent_service_client::AgentServiceClient;
+    use conductor_proto::agent::v1::{SendMessageRequest, SubscribeRequest};
     use std::collections::HashMap;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
@@ -1015,12 +1023,14 @@ mod tests {
             .unwrap();
 
         // Start streaming with subscribe message
-        let request_stream = tokio_stream::iter(vec![ClientMessage {
+        let request_stream = tokio_stream::iter(vec![StreamSessionRequest {
             session_id: session_id.clone(),
-            message: Some(client_message::Message::Subscribe(SubscribeRequest {
-                event_types: vec![],
-                since_sequence: None,
-            })),
+            message: Some(stream_session_request::Message::Subscribe(
+                SubscribeRequest {
+                    event_types: vec![],
+                    since_sequence: None,
+                },
+            )),
         }]);
 
         let response = client.stream_session(request_stream).await.unwrap();
@@ -1029,13 +1039,15 @@ mod tests {
         // Send a test message to verify session is working
         let (msg_tx, msg_rx) = mpsc::channel(10);
         msg_tx
-            .send(ClientMessage {
+            .send(StreamSessionRequest {
                 session_id: session_id.clone(),
-                message: Some(client_message::Message::SendMessage(SendMessageRequest {
-                    session_id: session_id.clone(),
-                    message: "Hello, test!".to_string(),
-                    attachments: vec![],
-                })),
+                message: Some(stream_session_request::Message::SendMessage(
+                    SendMessageRequest {
+                        session_id: session_id.clone(),
+                        message: "Hello, test!".to_string(),
+                        attachments: vec![],
+                    },
+                )),
             })
             .await
             .unwrap();
@@ -1110,12 +1122,14 @@ mod tests {
 
         // Send initial subscribe message
         msg_tx
-            .send(ClientMessage {
+            .send(StreamSessionRequest {
                 session_id: session_id.clone(),
-                message: Some(client_message::Message::Subscribe(SubscribeRequest {
-                    event_types: vec![],
-                    since_sequence: None,
-                })),
+                message: Some(stream_session_request::Message::Subscribe(
+                    SubscribeRequest {
+                        event_types: vec![],
+                        since_sequence: None,
+                    },
+                )),
             })
             .await
             .unwrap();
