@@ -4,15 +4,21 @@
 //! the appearance of the TUI without recompilation. Themes are loaded from TOML
 //! files and can be switched at runtime.
 
+use once_cell::sync::Lazy;
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use syntect::highlighting::ThemeSet;
 use thiserror::Error;
+use tracing::debug;
 
 mod loader;
 
 pub use loader::ThemeLoader;
+
+/// Load syntect theme sets lazily
+static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
 
 /// Errors that can occur during theme operations
 #[derive(Debug, Error)]
@@ -62,6 +68,14 @@ pub struct RawTheme {
     pub name: String,
     pub palette: HashMap<String, RgbColor>,
     pub components: HashMap<Component, ComponentStyle>,
+    pub syntax: Option<SyntaxConfig>,
+}
+
+/// Syntax highlighting configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct SyntaxConfig {
+    /// Name of a built-in syntect theme
+    pub syntect_theme: Option<String>,
 }
 
 /// Theme is now an alias for CompiledTheme for easier use
@@ -253,6 +267,7 @@ pub struct CompiledTheme {
     pub name: String,
     pub styles: HashMap<Component, Style>,
     pub background_color: Option<Color>,
+    pub syntax_theme: Option<syntect::highlighting::Theme>,
 }
 
 impl RawTheme {
@@ -262,6 +277,15 @@ impl RawTheme {
 
         // Extract background color from palette if it exists
         let background_color = self.palette.get("background").map(|&rgb| rgb.into());
+
+        // Load syntect theme if configured
+        let syntax_theme = if let Some(syntax_config) = &self.syntax {
+            debug!("Loading syntect theme from config: {:?}", syntax_config);
+            Some(load_syntect_theme(syntax_config)?)
+        } else {
+            debug!("No syntax config found in theme");
+            None
+        };
 
         // Build the style for each component
         for (component, style_def) in &self.components {
@@ -297,6 +321,7 @@ impl RawTheme {
             name: self.name,
             styles,
             background_color,
+            syntax_theme,
         })
     }
 
@@ -318,7 +343,23 @@ impl RawTheme {
     }
 }
 
-/// Parse a direct color string (hex or named)
+/// Load a syntect theme based on configuration
+fn load_syntect_theme(config: &SyntaxConfig) -> Result<syntect::highlighting::Theme, ThemeError> {
+    if let Some(theme_name) = &config.syntect_theme {
+        // Try to load from built-in themes
+        THEME_SET.themes.get(theme_name).cloned().ok_or_else(|| {
+            ThemeError::Validation(format!("Syntect theme '{theme_name}' not found"))
+        })
+    } else {
+        // Default to a reasonable theme
+        THEME_SET
+            .themes
+            .get("base16-ocean.dark")
+            .cloned()
+            .ok_or_else(|| ThemeError::Validation("Default syntect theme not found".to_string()))
+    }
+}
+
 fn parse_direct_color(color_str: &str) -> Result<Color, ThemeError> {
     // Try hex color first
     if let Some(hex) = color_str.strip_prefix('#') {
@@ -674,5 +715,6 @@ fn create_default_theme() -> CompiledTheme {
         name: "Default".to_string(),
         styles,
         background_color: None, // Default theme has no background color
+        syntax_theme: None,
     }
 }

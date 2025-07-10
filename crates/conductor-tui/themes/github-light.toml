@@ -1,6 +1,10 @@
 # GitHub Light Theme
 name = "GitHub Light"
 
+# Syntax highlighting theme from syntect
+[syntax]
+syntect_theme = "InspiredGitHub"
+
 # Color palette - GitHub Light colors
 [palette]
 # Essential colors
@@ -126,7 +130,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "syntax_constant", bg = "bg_highlight" }
-markdown_code_block = { bg = "bg_highlight" }
+markdown_code_block = { }
 markdown_link = { fg = "accent_fg" }
 markdown_blockquote = { fg = "fg_subtle" }
 markdown_list_bullet = { fg = "fg_muted" }

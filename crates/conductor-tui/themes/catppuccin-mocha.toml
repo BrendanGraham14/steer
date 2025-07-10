@@ -3,6 +3,10 @@
 
 name = "Catppuccin Mocha"
 
+# Syntax highlighting theme from syntect
+[syntax]
+syntect_theme = "base16-ocean.dark"
+
 # Color palette - Catppuccin Mocha colors
 [palette]
 background = "#1e1e2e"
@@ -135,7 +139,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "pink", bg = "surface0" }
-markdown_code_block = { bg = "surface0" }
+markdown_code_block = { }
 markdown_link = { fg = "sky" }
 markdown_blockquote = { fg = "overlay2" }
 markdown_list_bullet = { fg = "overlay1" }

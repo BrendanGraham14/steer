@@ -120,7 +120,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "hue_6", bg = "selection" }
-markdown_code_block = { bg = "selection" }
+markdown_code_block = { }
 markdown_link = { fg = "hue_2" }
 markdown_blockquote = { fg = "mono_3" }
 markdown_list_bullet = { fg = "mono_2" }

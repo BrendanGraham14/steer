@@ -4,13 +4,30 @@
 //! instead of using hardcoded ones.
 
 use itertools::{Itertools, Position};
+use once_cell::sync::Lazy;
 use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use syntect::easy::HighlightLines;
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 use tracing::{debug, instrument, warn};
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::theme::{Component, Theme};
+
+/// Lazy-loaded syntax set for highlighting
+static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
+
+/// Convert a syntect style to ratatui style
+fn syntect_style_to_ratatui(syntect_style: syntect::highlighting::Style) -> Style {
+    let fg = Color::Rgb(
+        syntect_style.foreground.r,
+        syntect_style.foreground.g,
+        syntect_style.foreground.b,
+    );
+    Style::default().fg(fg)
+}
 
 /// A line with metadata about how it should be rendered
 #[derive(Debug, Clone)]
@@ -123,13 +140,14 @@ impl MarkdownStyles {
     }
 }
 
-pub fn from_str(input: &str, styles: &MarkdownStyles) -> MarkedText {
-    from_str_with_width(input, styles, None)
+pub fn from_str(input: &str, styles: &MarkdownStyles, theme: &Theme) -> MarkedText {
+    from_str_with_width(input, styles, theme, None)
 }
 
 pub fn from_str_with_width(
     input: &str,
     styles: &MarkdownStyles,
+    theme: &Theme,
     terminal_width: Option<u16>,
 ) -> MarkedText {
     let mut options = Options::empty();
@@ -139,7 +157,7 @@ pub fn from_str_with_width(
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_SMART_PUNCTUATION);
     let parser = Parser::new_ext(input, options);
-    let mut writer = TextWriter::new(parser, styles);
+    let mut writer = TextWriter::new(parser, styles, theme);
     writer.terminal_width = terminal_width;
     writer.run();
     writer.marked_text
@@ -174,6 +192,9 @@ struct TextWriter<'a, I> {
     /// The markdown styles to use
     styles: &'a MarkdownStyles,
 
+    /// The theme for syntax highlighting
+    theme: &'a Theme,
+
     /// Table state
     table_alignments: Vec<pulldown_cmark::Alignment>,
     table_rows: Vec<Vec<Vec<Span<'a>>>>, // rows of cells, each cell is a vec of spans
@@ -185,6 +206,9 @@ struct TextWriter<'a, I> {
     /// Track if we're inside a code block to preserve formatting
     in_code_block: bool,
 
+    /// Current code block language (if any)
+    code_block_language: Option<String>,
+
     /// Terminal width for rendering full-width elements like horizontal rules
     terminal_width: Option<u16>,
 }
@@ -193,7 +217,7 @@ impl<'a, I> TextWriter<'a, I>
 where
     I: Iterator<Item = Event<'a>>,
 {
-    fn new(iter: I, styles: &'a MarkdownStyles) -> Self {
+    fn new(iter: I, styles: &'a MarkdownStyles, theme: &'a Theme) -> Self {
         Self {
             iter,
             marked_text: MarkedText::default(),
@@ -204,11 +228,13 @@ where
             needs_newline: false,
             link: None,
             styles,
+            theme,
             table_alignments: Vec::new(),
             table_rows: Vec::new(),
             in_table_header: false,
             in_list_item_start: false,
             in_code_block: false,
+            code_block_language: None,
             terminal_width: None,
         }
     }
@@ -350,28 +376,67 @@ where
             let span = Span::styled(text.to_string(), style);
             self.push_span(span);
         } else if self.in_code_block {
-            // Special handling for code blocks - preserve exact formatting
-            let style = self
+            // Special handling for code blocks with syntax highlighting
+            let base_style = self
                 .inline_styles
                 .last()
                 .copied()
                 .unwrap_or_default()
                 .patch(self.styles.code_block);
 
-            // Process each line, preserving all whitespace
-            let lines: Vec<&str> = text.as_ref().lines().collect();
-            for (idx, line) in lines.iter().enumerate() {
-                if idx > 0 || self.needs_newline {
-                    self.push_line(Line::default());
+            // Check if we have syntax highlighting available
+            let use_highlighting =
+                self.code_block_language.is_some() && self.theme.syntax_theme.is_some();
+
+            if use_highlighting {
+                let lang = self.code_block_language.as_ref().unwrap();
+                let syntax_theme = self.theme.syntax_theme.as_ref().unwrap();
+
+                // Find the syntax definition
+                let syntax = SYNTAX_SET
+                    .find_syntax_by_token(lang)
+                    .or_else(|| SYNTAX_SET.find_syntax_by_extension(lang))
+                    .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+
+                let mut highlighter = HighlightLines::new(syntax, syntax_theme);
+
+                // Process the text line by line
+                for (line_idx, line) in LinesWithEndings::from(text.as_ref()).enumerate() {
+                    if line_idx > 0 || self.needs_newline {
+                        self.push_line(Line::default());
+                    }
+
+                    // Highlight the line
+                    let highlighted = highlighter
+                        .highlight_line(line, &SYNTAX_SET)
+                        .unwrap_or_else(|_| vec![(syntect::highlighting::Style::default(), line)]);
+
+                    // Convert highlighted spans to ratatui spans
+                    for (style, text) in highlighted {
+                        let ratatui_style = syntect_style_to_ratatui(style).patch(base_style);
+                        let span = Span::styled(text.to_string(), ratatui_style);
+                        self.push_span(span);
+                    }
                 }
 
-                // Create a span with the exact line content, preserving all whitespace
-                let span = Span::styled(line.to_string(), style);
-                self.push_span(span);
-            }
+                // Handle case where text ends with a newline
+                self.needs_newline = text.ends_with('\n');
+            } else {
+                // Fallback to non-highlighted rendering
+                let lines: Vec<&str> = text.as_ref().lines().collect();
+                for (idx, line) in lines.iter().enumerate() {
+                    if idx > 0 || self.needs_newline {
+                        self.push_line(Line::default());
+                    }
 
-            // Handle case where text ends with a newline
-            self.needs_newline = text.ends_with('\n') && !lines.is_empty();
+                    // Create a span with the exact line content, preserving all whitespace
+                    let span = Span::styled(line.to_string(), base_style);
+                    self.push_span(span);
+                }
+
+                // Handle case where text ends with a newline
+                self.needs_newline = text.ends_with('\n') && !lines.is_empty();
+            }
         } else {
             // Original behavior for non-table, non-code-block text
             for (position, line) in text.lines().with_position() {
@@ -442,7 +507,7 @@ where
         }
     }
 
-    fn start_codeblock(&mut self, _kind: CodeBlockKind<'_>) {
+    fn start_codeblock(&mut self, kind: CodeBlockKind<'_>) {
         if !self.marked_text.lines.is_empty() {
             self.push_line(Line::default());
         }
@@ -450,13 +515,27 @@ where
         // Set flag to preserve formatting
         self.in_code_block = true;
 
+        // Capture the language for syntax highlighting
+        self.code_block_language = match kind {
+            CodeBlockKind::Fenced(lang) => {
+                let lang_str = lang.as_ref();
+                if !lang_str.is_empty() {
+                    Some(lang_str.to_string())
+                } else {
+                    None
+                }
+            }
+            CodeBlockKind::Indented => None,
+        };
+
         self.line_styles.push(self.styles.code_block);
         self.needs_newline = false;
     }
 
     fn end_codeblock(&mut self) {
-        // Clear the flag
+        // Clear the flag and language
         self.in_code_block = false;
+        self.code_block_language = None;
 
         self.needs_newline = true;
         self.line_styles.pop();
@@ -857,7 +936,7 @@ mod tests {
         // Create a dummy theme for testing
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Rendered Output ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -892,7 +971,7 @@ mod tests {
         // Now test rendering
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Rendered Table with Alignment ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -916,7 +995,7 @@ mod tests {
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Table with Edge Cases ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -945,7 +1024,7 @@ mod tests {
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Table with Star Emojis ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -976,7 +1055,7 @@ row."#;
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Line Breaks Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -1008,7 +1087,7 @@ Final section"#;
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Horizontal Rules Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -1051,7 +1130,7 @@ Mixed list:
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Task Lists Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -1097,7 +1176,7 @@ Empty numbered items:
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Empty List Items Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -1140,7 +1219,7 @@ Regular text
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-        let rendered = from_str(markdown, &styles);
+        let rendered = from_str(markdown, &styles, &theme);
 
         println!("\n=== Malformed Lists Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
@@ -1174,8 +1253,9 @@ Regular paragraph
 
         println!("\n=== State Tracking Debug ===");
 
-        let styles = MarkdownStyles::from_theme(&Theme::default());
-        let mut writer = TextWriter::new(parser, &styles);
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let mut writer = TextWriter::new(parser, &styles, &theme);
 
         // Manually process events to see state changes
         let parser = Parser::new_ext(markdown, options);
@@ -1199,6 +1279,53 @@ Regular paragraph
         assert!(
             !writer.in_list_item_start,
             "in_list_item_start should be false at end"
+        );
+    }
+
+    #[test]
+    fn test_syntax_highlighting() {
+        let markdown = r#"```rust
+fn main() {
+    let x = 42;
+    println!("Hello, world! {}", x);
+}
+```
+
+```python
+def hello():
+    print("Hello from Python")
+    return 42
+```"#;
+
+        // Create a theme with syntax highlighting support
+        use syntect::highlighting::ThemeSet;
+        let theme_set = ThemeSet::load_defaults();
+        let mut theme = Theme::default();
+        theme.syntax_theme = theme_set.themes.get("base16-ocean.dark").cloned();
+
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles, &theme);
+
+        println!("\n=== Syntax Highlighting Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            println!("Line {}: {} spans", idx, line.line.spans.len());
+            for (span_idx, span) in line.line.spans.iter().enumerate() {
+                println!(
+                    "  Span {}: '{}' (fg: {:?})",
+                    span_idx,
+                    span.content.as_ref(),
+                    span.style.fg
+                );
+            }
+        }
+
+        // With syntax highlighting enabled, code blocks should have multiple spans
+        // with different colors for different tokens
+        let has_multiple_spans = rendered.lines.iter().any(|line| line.line.spans.len() > 1);
+
+        assert!(
+            has_multiple_spans,
+            "Should have lines with multiple colored spans when syntax highlighting is enabled"
         );
     }
 }

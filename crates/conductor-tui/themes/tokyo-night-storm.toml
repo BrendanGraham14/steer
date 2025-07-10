@@ -145,7 +145,7 @@ markdown_bold = { }
 markdown_italic = { }
 markdown_strikethrough = { }
 markdown_code = { fg = "storm_orange", bg = "storm_bg_dark" }
-markdown_code_block = { bg = "storm_bg_dark" }
+markdown_code_block = { }
 markdown_link = { fg = "storm_blue" }
 markdown_blockquote = { fg = "storm_dark5" }
 markdown_list_bullet = { fg = "storm_terminal_black" }

@@ -1041,6 +1041,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar",
+ "syntect",
  "tempfile",
  "textwrap",
  "thiserror 2.0.12",
