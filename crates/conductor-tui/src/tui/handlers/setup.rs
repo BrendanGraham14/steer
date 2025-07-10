@@ -160,17 +160,23 @@ impl SetupHandler {
         key: KeyEvent,
     ) -> Result<Option<InputMode>> {
         // For non-Anthropic providers, automatically initialize API key auth
-        if provider != ProviderKind::Anthropic && tui.auth_controller.is_none() {
-            if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::ApiKey).await {
-                // Error message already set in ensure_controller
-                return Ok(None);
-            }
+        if provider != ProviderKind::Anthropic
+            && tui.auth_controller.is_none()
+            && Self::ensure_controller(tui, provider, AuthMethod::ApiKey)
+                .await
+                .is_err()
+        {
+            // Error message already set in ensure_controller
+            return Ok(None);
         }
 
         match key.code {
             KeyCode::Char('1') if provider == ProviderKind::Anthropic => {
                 // Start OAuth flow
-                if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::OAuth).await {
+                if Self::ensure_controller(tui, provider, AuthMethod::OAuth)
+                    .await
+                    .is_err()
+                {
                     return Ok(None);
                 }
 
@@ -215,7 +221,9 @@ impl SetupHandler {
                     debug!("Starting API key input mode");
                     let state = tui.setup_state.as_mut().unwrap();
                     state.api_key_input.clear();
-                    if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::ApiKey).await
+                    if Self::ensure_controller(tui, provider, AuthMethod::ApiKey)
+                        .await
+                        .is_err()
                     {
                         return Ok(None);
                     }
@@ -282,7 +290,9 @@ impl SetupHandler {
                     }
                 } else if has_api_key {
                     // Ensure we have a controller for API key auth
-                    if let Err(_) = Self::ensure_controller(tui, provider, AuthMethod::ApiKey).await
+                    if Self::ensure_controller(tui, provider, AuthMethod::ApiKey)
+                        .await
+                        .is_err()
                     {
                         return Ok(None);
                     }
