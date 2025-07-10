@@ -139,23 +139,12 @@
         {
           "type": "object",
           "required": [
-            "args",
-            "command",
             "server_name",
             "tool_filter",
             "transport",
             "type"
           ],
           "properties": {
-            "args": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "command": {
-              "type": "string"
-            },
             "server_name": {
               "type": "string"
             },
@@ -163,7 +152,7 @@
               "$ref": "#/definitions/ToolFilter"
             },
             "transport": {
-              "type": "string"
+              "$ref": "#/definitions/McpTransport"
             },
             "type": {
               "type": "string",
@@ -181,6 +170,137 @@
       "enum": [
         "Docker",
         "Podman"
+      ]
+    },
+    "McpTransport": {
+      "description": "MCP transport configuration",
+      "oneOf": [
+        {
+          "description": "Standard I/O transport (child process)",
+          "type": "object",
+          "required": [
+            "args",
+            "command",
+            "type"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "stdio"
+              ]
+            }
+          }
+        },
+        {
+          "description": "TCP transport",
+          "type": "object",
+          "required": [
+            "host",
+            "port",
+            "type"
+          ],
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "type": "integer",
+              "format": "uint16",
+              "minimum": 0.0
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "tcp"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Unix domain socket transport",
+          "type": "object",
+          "required": [
+            "path",
+            "type"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "unix"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Server-Sent Events transport",
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "headers": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "sse"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "HTTP streamable transport",
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "properties": {
+            "headers": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "http"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          }
+        }
       ]
     },
     "PartialToolConfig": {
@@ -226,6 +346,13 @@
             "type"
           ],
           "properties": {
+            "path": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "type": "string",
               "enum": [
