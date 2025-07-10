@@ -170,8 +170,8 @@ pub enum SessionCommands {
         #[arg(long)]
         active: bool,
         /// Limit number of sessions to show
-        #[arg(long)]
-        limit: Option<u32>,
+        #[arg(long, default_value = "20")]
+        limit: u32,
     },
     /// Create a new session
     Create {
