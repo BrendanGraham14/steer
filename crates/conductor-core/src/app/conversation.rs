@@ -559,6 +559,7 @@ impl Conversation {
     pub async fn compact(
         &mut self,
         api_client: &ApiClient,
+        model: Model,
         token: CancellationToken,
     ) -> crate::error::Result<CompactResult> {
         // Skip if we don't have enough messages to compact
@@ -580,7 +581,7 @@ impl Conversation {
         let summary = tokio::select! {
             biased;
             result = api_client.complete(
-                Model::Claude3_7Sonnet20250219,
+                model,
                 prompt_messages,
                 None,
                 None,
