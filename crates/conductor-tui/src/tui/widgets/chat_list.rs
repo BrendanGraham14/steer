@@ -8,7 +8,7 @@ use conductor_core::app::conversation::{AssistantContent, Message, ToolResult, U
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Modifier,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph, StatefulWidget, Widget, Wrap},
 };
@@ -153,6 +153,30 @@ impl<'a> ChatList<'a> {
         self
     }
 
+    /// Helper to wrap text and render lines with gutter
+    fn wrap_with_gutter(&self, text: &str, wrap_width: usize, style: Style) -> Vec<Line<'static>> {
+        let mut lines = vec![];
+        let wrapped = textwrap::wrap(text, wrap_width);
+
+        for (i, wrapped_line) in wrapped.into_iter().enumerate() {
+            let mut line_spans = vec![];
+
+            if i == 0 {
+                // First line gets the gutter
+                line_spans.extend(self.render_meta_gutter().spans);
+                line_spans.push(Span::raw(" "));
+            } else {
+                // Continuation lines get spacing to align
+                line_spans.push(Span::raw("  ")); // Two spaces to match gutter + space
+            }
+
+            line_spans.push(Span::styled(wrapped_line.to_string(), style));
+            lines.push(Line::from(line_spans));
+        }
+
+        lines
+    }
+
     fn render_gutter(&self, message: &MessageRow, is_hovered: bool) -> Line<'static> {
         let mut spans = vec![];
 
@@ -255,18 +279,11 @@ impl<'a> ChatList<'a> {
             }
 
             ChatItem::SlashInput { raw, .. } => {
-                let mut lines = vec![];
-
-                // Render gutter and slash command on same line
-                let mut first_line = vec![];
-                first_line.extend(self.render_meta_gutter().spans);
-                first_line.push(Span::raw(" "));
-                first_line.push(Span::styled(
-                    raw.clone(),
+                let lines = self.wrap_with_gutter(
+                    raw,
+                    max_width.saturating_sub(2),
                     self.theme.style(Component::CommandPrompt),
-                ));
-                lines.push(Line::from(first_line));
-
+                );
                 let height = lines.len() as u16;
                 (lines, height)
             }
@@ -375,8 +392,6 @@ impl<'a> ChatList<'a> {
             ChatItem::SystemNotice {
                 level, text, ts, ..
             } => {
-                let mut lines = vec![];
-
                 let (prefix, component) = match level {
                     NoticeLevel::Info => ("info: ", Component::NoticeInfo),
                     NoticeLevel::Warn => ("warn: ", Component::NoticeWarn),
@@ -388,19 +403,39 @@ impl<'a> ChatList<'a> {
                     .format(&Rfc3339)
                     .unwrap_or_else(|_| "unknown".to_string());
 
-                // Render gutter and notice on same line
-                let mut first_line = vec![];
-                first_line.extend(self.render_meta_gutter().spans);
-                first_line.push(Span::raw(" "));
-                first_line.push(Span::styled(prefix, self.theme.style(component)));
-                first_line.push(Span::raw(text.clone()));
-                first_line.push(Span::styled(
-                    format!(" ({time_str})"),
-                    self.theme
-                        .style(Component::DimText)
-                        .add_modifier(Modifier::DIM),
-                ));
-                lines.push(Line::from(first_line));
+                // Build the full notice text
+                let full_text = format!("{prefix}{text} ({time_str})");
+
+                // Calculate wrap width (account for gutter + space)
+                let wrap_width = max_width.saturating_sub(2);
+
+                // For system notices, we need special handling for prefix coloring
+                let mut lines = vec![];
+                let wrapped = textwrap::wrap(&full_text, wrap_width);
+
+                for (i, wrapped_line) in wrapped.into_iter().enumerate() {
+                    let mut line_spans = vec![];
+
+                    if i == 0 {
+                        // First line - add gutter
+                        line_spans.extend(self.render_meta_gutter().spans);
+                        line_spans.push(Span::raw(" "));
+
+                        // Add colored prefix
+                        if let Some(stripped) = wrapped_line.strip_prefix(prefix) {
+                            line_spans.push(Span::styled(prefix, self.theme.style(component)));
+                            line_spans.push(Span::raw(stripped.to_string()));
+                        } else {
+                            line_spans.push(Span::raw(wrapped_line.to_string()));
+                        }
+                    } else {
+                        // Continuation lines - just spacing, no gutter
+                        line_spans.push(Span::raw("  ")); // Two spaces to align with gutter + space
+                        line_spans.push(Span::raw(wrapped_line.to_string()));
+                    }
+
+                    lines.push(Line::from(line_spans));
+                }
 
                 let height = lines.len() as u16;
                 (lines, height)
