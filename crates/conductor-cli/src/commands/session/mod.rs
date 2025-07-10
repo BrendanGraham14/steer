@@ -28,7 +28,7 @@ impl Command for SessionCommand {
             SessionCommands::List { active, limit } => {
                 let cmd = ListSessionCommand {
                     active: *active,
-                    limit: *limit,
+                    limit: Some(*limit),
                     remote: self.remote.clone(),
                     session_db: self.session_db.clone(),
                 };
