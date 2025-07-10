@@ -1,4 +1,7 @@
+use crate::api::ProviderKind;
 use crate::auth::{AuthError, AuthStorage, AuthTokens, Credential, CredentialType, Result};
+use crate::auth::{AuthMethod, AuthProgress, AuthenticationFlow};
+use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -283,9 +286,178 @@ fn base64_url_encode(data: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(data)
 }
 
+/// State for the Anthropic authentication flow
+#[derive(Debug, Clone)]
+pub struct AnthropicAuthState {
+    pub kind: AnthropicAuthStateKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum AnthropicAuthStateKind {
+    /// Initial state - choosing auth method
+    Initial,
+    /// OAuth flow started, waiting for redirect URL
+    OAuthStarted { verifier: String, auth_url: String },
+    /// Waiting for API key input
+    AwaitingApiKey,
+}
+
+/// Anthropic-specific authentication flow implementation
+pub struct AnthropicOAuthFlow {
+    storage: Arc<dyn AuthStorage>,
+    oauth_client: AnthropicOAuth,
+}
+
+impl AnthropicOAuthFlow {
+    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
+        Self {
+            storage,
+            oauth_client: AnthropicOAuth::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl AuthenticationFlow for AnthropicOAuthFlow {
+    type State = AnthropicAuthState;
+
+    fn available_methods(&self) -> Vec<AuthMethod> {
+        vec![AuthMethod::OAuth, AuthMethod::ApiKey]
+    }
+
+    async fn start_auth(&self, method: AuthMethod) -> Result<Self::State> {
+        match method {
+            AuthMethod::OAuth => {
+                let pkce = AnthropicOAuth::generate_pkce();
+                let auth_url = self.oauth_client.build_auth_url(&pkce);
+
+                Ok(AnthropicAuthState {
+                    kind: AnthropicAuthStateKind::OAuthStarted {
+                        verifier: pkce.verifier,
+                        auth_url,
+                    },
+                })
+            }
+            AuthMethod::ApiKey => Ok(AnthropicAuthState {
+                kind: AnthropicAuthStateKind::AwaitingApiKey,
+            }),
+        }
+    }
+
+    async fn get_initial_progress(
+        &self,
+        state: &Self::State,
+        method: AuthMethod,
+    ) -> Result<AuthProgress> {
+        match method {
+            AuthMethod::OAuth => {
+                if let AnthropicAuthStateKind::OAuthStarted { auth_url, .. } = &state.kind {
+                    Ok(AuthProgress::OAuthStarted {
+                        auth_url: auth_url.clone(),
+                    })
+                } else {
+                    Err(AuthError::InvalidState(
+                        "Invalid state for OAuth".to_string(),
+                    ))
+                }
+            }
+            AuthMethod::ApiKey => Ok(AuthProgress::NeedInput("Enter your API key".to_string())),
+        }
+    }
+
+    async fn handle_input(&self, state: &mut Self::State, input: &str) -> Result<AuthProgress> {
+        match &mut state.kind {
+            AnthropicAuthStateKind::Initial => Err(AuthError::InvalidState(
+                "No input expected in initial state".to_string(),
+            )),
+            AnthropicAuthStateKind::OAuthStarted { verifier, .. } => {
+                // Check if the input contains a redirect URL
+                let (code, state_param) = if input.contains("code=") && input.contains("state=") {
+                    // User pasted the full redirect URL
+                    let url = reqwest::Url::parse(input).map_err(|_| {
+                        AuthError::InvalidCredential("Invalid redirect URL".to_string())
+                    })?;
+
+                    let params: std::collections::HashMap<_, _> = url.query_pairs().collect();
+                    let code = params
+                        .get("code")
+                        .ok_or_else(|| AuthError::MissingInput("code parameter".to_string()))?;
+                    let state = params
+                        .get("state")
+                        .ok_or_else(|| AuthError::MissingInput("state parameter".to_string()))?;
+
+                    (code.to_string(), state.to_string())
+                } else {
+                    // Legacy: try to parse as callback code
+                    AnthropicOAuth::parse_callback_code(input)?
+                };
+
+                // Exchange code for tokens
+                let tokens = self
+                    .oauth_client
+                    .exchange_code_for_tokens(&code, &state_param, verifier)
+                    .await?;
+
+                // Store the tokens
+                self.storage
+                    .set_credential("anthropic", Credential::AuthTokens(tokens))
+                    .await?;
+
+                Ok(AuthProgress::Complete)
+            }
+            AnthropicAuthStateKind::AwaitingApiKey => {
+                if input.trim().is_empty() {
+                    return Err(AuthError::InvalidCredential(
+                        "API key cannot be empty".to_string(),
+                    ));
+                }
+
+                // Store the API key
+                self.storage
+                    .set_credential(
+                        "anthropic",
+                        Credential::ApiKey {
+                            value: input.to_string(),
+                        },
+                    )
+                    .await?;
+
+                Ok(AuthProgress::Complete)
+            }
+        }
+    }
+
+    async fn is_authenticated(&self) -> Result<bool> {
+        // Check for OAuth tokens first
+        if let Some(Credential::AuthTokens(tokens)) = self
+            .storage
+            .get_credential("anthropic", CredentialType::AuthTokens)
+            .await?
+        {
+            // Check if tokens are still valid
+            return Ok(!tokens_need_refresh(&tokens));
+        }
+
+        // Check for API key
+        Ok(self
+            .storage
+            .get_credential("anthropic", CredentialType::ApiKey)
+            .await?
+            .is_some())
+    }
+
+    fn provider_name(&self) -> String {
+        ProviderKind::Anthropic.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{AuthStorage, Credential, CredentialType};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use tokio::sync::Mutex;
 
     #[test]
     fn test_pkce_generation() {
@@ -342,5 +514,97 @@ mod tests {
 
         // Invalid format - multiple hashes
         assert!(AnthropicOAuth::parse_callback_code("abc#123#xyz").is_err());
+    }
+
+    /// Mock implementation of AuthStorage for testing
+    struct MockAuthStorage {
+        credentials: Arc<Mutex<HashMap<String, Credential>>>,
+    }
+
+    impl MockAuthStorage {
+        fn new() -> Self {
+            Self {
+                credentials: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AuthStorage for MockAuthStorage {
+        async fn get_credential(
+            &self,
+            _provider: &str,
+            _credential_type: CredentialType,
+        ) -> Result<Option<Credential>> {
+            Ok(None)
+        }
+
+        async fn set_credential(&self, provider: &str, credential: Credential) -> Result<()> {
+            let mut creds = self.credentials.lock().await;
+            creds.insert(provider.to_string(), credential);
+            Ok(())
+        }
+
+        async fn remove_credential(
+            &self,
+            provider: &str,
+            _credential_type: CredentialType,
+        ) -> Result<()> {
+            let mut creds = self.credentials.lock().await;
+            creds.remove(provider);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auth_flow_api_key() {
+        let storage = Arc::new(MockAuthStorage::new());
+        let auth_flow = AnthropicOAuthFlow::new(storage.clone());
+
+        // Test available methods
+        let methods = auth_flow.available_methods();
+        assert_eq!(methods.len(), 2);
+        assert!(methods.contains(&AuthMethod::OAuth));
+        assert!(methods.contains(&AuthMethod::ApiKey));
+
+        // Start API key flow
+        let state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
+        assert!(matches!(state.kind, AnthropicAuthStateKind::AwaitingApiKey));
+
+        // Handle API key input
+        let mut state = state;
+        let progress = auth_flow
+            .handle_input(&mut state, "test-api-key")
+            .await
+            .unwrap();
+        assert!(matches!(progress, AuthProgress::Complete));
+
+        // Verify API key was stored
+        let creds = storage.credentials.lock().await;
+        assert!(creds.contains_key("anthropic"));
+        if let Some(Credential::ApiKey { value }) = creds.get("anthropic") {
+            assert_eq!(value, "test-api-key");
+        } else {
+            panic!("Expected API key credential");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auth_flow_oauth_start() {
+        let storage = Arc::new(MockAuthStorage::new());
+        let auth_flow = AnthropicOAuthFlow::new(storage);
+
+        // Start OAuth flow
+        let state = auth_flow.start_auth(AuthMethod::OAuth).await.unwrap();
+
+        if let AnthropicAuthStateKind::OAuthStarted { auth_url, verifier } = &state.kind {
+            // Verify auth URL contains required parameters
+            assert!(auth_url.contains(AUTHORIZE_URL));
+            assert!(auth_url.contains("client_id="));
+            assert!(auth_url.contains("code_challenge="));
+            assert!(!verifier.is_empty());
+        } else {
+            panic!("Expected OAuth started state");
+        }
     }
 }

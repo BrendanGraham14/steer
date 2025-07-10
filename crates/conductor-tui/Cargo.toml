@@ -52,6 +52,8 @@ toml = "0.8.23"
 dirs = "6.0.0"
 pulldown-cmark = "0.9"
 itertools = "0.12"
+open = "5.0"
+tui-big-text = "0.7.1"
 
 [dev-dependencies]
 conductor-proto = { path = "../conductor-proto" }

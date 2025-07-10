@@ -93,6 +93,7 @@ whoami = "1.6.0"
 hyper-util = { version = "0.1.14", features = ["server", "server-auto", "tokio"] }
 serde_urlencoded = "0.7.1"
 zeroize = "1.8.1"
+toml = "0.9.0"
 
 [build-dependencies]
 

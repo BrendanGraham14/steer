@@ -218,6 +218,27 @@ pub enum Component {
     MarkdownTableBorder,
     MarkdownTableHeader,
     MarkdownTableCell,
+
+    // Setup UI components
+    SetupTitle,
+    SetupBorder,
+    SetupBorderActive,
+    SetupHeader,
+    SetupText,
+    SetupHighlight,
+    SetupKeyBinding,
+    SetupProviderName,
+    SetupProviderSelected,
+    SetupStatusActive,
+    SetupStatusInactive,
+    SetupStatusInProgress,
+    SetupSuccessIcon,
+    SetupErrorMessage,
+    SetupHint,
+    SetupUrl,
+    SetupInputLabel,
+    SetupInputValue,
+    SetupBigText,
 }
 
 impl fmt::Display for Component {
@@ -559,6 +580,95 @@ fn create_default_theme() -> CompiledTheme {
             .add_modifier(Modifier::BOLD),
     );
     styles.insert(Component::MarkdownTableCell, Style::default());
+
+    // Task list styles
+    styles.insert(
+        Component::MarkdownTaskChecked,
+        Style::default().fg(Color::Green),
+    );
+    styles.insert(
+        Component::MarkdownTaskUnchecked,
+        Style::default().fg(Color::Gray),
+    );
+
+    // Setup UI styles
+    styles.insert(
+        Component::SetupTitle,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(Component::SetupBorder, Style::default().fg(Color::DarkGray));
+    styles.insert(
+        Component::SetupBorderActive,
+        Style::default().fg(Color::Yellow),
+    );
+    styles.insert(
+        Component::SetupHeader,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(Component::SetupText, Style::default());
+    styles.insert(
+        Component::SetupHighlight,
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(
+        Component::SetupKeyBinding,
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(Component::SetupProviderName, Style::default());
+    styles.insert(
+        Component::SetupProviderSelected,
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(
+        Component::SetupStatusActive,
+        Style::default().fg(Color::Green),
+    );
+    styles.insert(
+        Component::SetupStatusInactive,
+        Style::default().fg(Color::Red),
+    );
+    styles.insert(
+        Component::SetupStatusInProgress,
+        Style::default().fg(Color::Yellow),
+    );
+    styles.insert(
+        Component::SetupSuccessIcon,
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(
+        Component::SetupErrorMessage,
+        Style::default().fg(Color::Red),
+    );
+    styles.insert(Component::SetupHint, Style::default().fg(Color::DarkGray));
+    styles.insert(
+        Component::SetupUrl,
+        Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::UNDERLINED),
+    );
+    styles.insert(Component::SetupInputLabel, Style::default());
+    styles.insert(
+        Component::SetupInputValue,
+        Style::default().fg(Color::Yellow),
+    );
+    styles.insert(
+        Component::SetupBigText,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
 
     CompiledTheme {
         name: "Default".to_string(),

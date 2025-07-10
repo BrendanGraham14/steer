@@ -137,3 +137,23 @@ markdown_table_header = { fg = "cyan", bold = true }
 markdown_table_cell = { fg = "base0" }
 markdown_task_checked = { fg = "green" }
 markdown_task_unchecked = { fg = "base01" }
+# Setup UI
+setup_title = { fg = "violet", bold = true }
+setup_border = { fg = "base01" }
+setup_border_active = { fg = "violet" }
+setup_header = { fg = "cyan", bold = true }
+setup_text = { fg = "base0" }
+setup_highlight = { bg = "base02", bold = true }
+setup_key_binding = { fg = "green", bold = true }
+setup_provider_name = { fg = "base0" }
+setup_provider_selected = { bg = "base02", bold = true }
+setup_status_active = { fg = "green" }
+setup_status_inactive = { fg = "red" }
+setup_status_in_progress = { fg = "yellow" }
+setup_success_icon = { fg = "green", bold = true }
+setup_error_message = { fg = "red" }
+setup_hint = { fg = "base01" }
+setup_url = { fg = "cyan", underlined = true }
+setup_input_label = { fg = "base0" }
+setup_input_value = { fg = "yellow" }
+setup_big_text = { fg = "violet", bold = true }

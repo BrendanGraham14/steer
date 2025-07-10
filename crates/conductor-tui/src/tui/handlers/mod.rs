@@ -6,6 +6,9 @@ pub mod fuzzy_finder;
 pub mod insert;
 pub mod model_selection;
 pub mod normal;
+pub mod setup;
+
+mod setup_impl;
 
 use crate::error::Result;
 use crate::tui::{InputMode, Tui};
@@ -21,6 +24,7 @@ impl Tui {
             InputMode::ConfirmExit => self.handle_confirm_exit_mode(key).await,
             InputMode::EditMessageSelection => self.handle_edit_selection_mode(key).await,
             InputMode::FuzzyFinder => self.handle_fuzzy_finder_mode(key).await,
+            InputMode::Setup => self.handle_setup_mode(key).await,
         }
     }
 }

@@ -136,3 +136,23 @@ markdown_table_header = { fg = "accent_fg", bold = true }
 markdown_table_cell = { fg = "fg_default" }
 markdown_task_checked = { fg = "success_fg" }
 markdown_task_unchecked = { fg = "fg_muted" }
+# Setup UI
+setup_title = { fg = "accent_fg", bold = true }
+setup_border = { fg = "border_default" }
+setup_border_active = { fg = "accent_fg" }
+setup_header = { fg = "accent_fg", bold = true }
+setup_text = { fg = "fg_default" }
+setup_highlight = { bg = "bg_highlight", bold = true }
+setup_key_binding = { fg = "success_fg", bold = true }
+setup_provider_name = { fg = "fg_default" }
+setup_provider_selected = { bg = "bg_highlight", bold = true }
+setup_status_active = { fg = "success_fg" }
+setup_status_inactive = { fg = "danger_fg" }
+setup_status_in_progress = { fg = "warning_fg" }
+setup_success_icon = { fg = "success_fg", bold = true }
+setup_error_message = { fg = "danger_fg" }
+setup_hint = { fg = "fg_subtle" }
+setup_url = { fg = "accent_fg", underlined = true }
+setup_input_label = { fg = "fg_default" }
+setup_input_value = { fg = "warning_fg" }
+setup_big_text = { fg = "accent_fg", bold = true }

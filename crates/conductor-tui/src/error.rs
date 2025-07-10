@@ -49,6 +49,18 @@ pub enum Error {
     #[error("Core error: {0}")]
     Core(#[from] conductor_core::error::Error),
 
+    /// Generic errors
+    #[error("{0}")]
+    Generic(String),
+
+    /// Configuration errors
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    /// Authentication errors
+    #[error("Authentication error: {0}")]
+    Auth(String),
+
     /// gRPC errors from conductor-grpc
     #[error("gRPC error: {0}")]
     Grpc(#[from] Box<conductor_grpc::GrpcError>),

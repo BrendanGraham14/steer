@@ -293,6 +293,7 @@ impl<'a> ChatList<'a> {
                         "/cancel".to_string()
                     }
                     conductor_core::app::conversation::AppCommandType::Help => "/help".to_string(),
+                    conductor_core::app::conversation::AppCommandType::Auth => "/auth".to_string(),
                 };
 
                 // Get the full response text
@@ -576,6 +577,9 @@ impl<'a> ChatList<'a> {
                                     }
                                     conductor_core::app::conversation::AppCommandType::Help => {
                                         "/help".to_string()
+                                    }
+                                    conductor_core::app::conversation::AppCommandType::Auth => {
+                                        "/auth".to_string()
                                     }
                                 };
 

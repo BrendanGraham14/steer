@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::error::ApiError;
 use crate::app::conversation::{AssistantContent, Message};
+use crate::auth::{AuthStorage, DynAuthenticationFlow};
 use conductor_tools::{ToolCall, ToolSchema};
 
 use super::Model;
@@ -66,5 +68,14 @@ pub trait Provider: Send + Sync + 'static {
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,
-    ) -> Result<CompletionResponse, ApiError>; // <-- Use ApiError here
+    ) -> Result<CompletionResponse, ApiError>;
+
+    /// Create an authentication flow for this provider
+    /// Returns None if the provider doesn't support authentication
+    fn create_auth_flow(
+        &self,
+        _storage: Arc<dyn AuthStorage>,
+    ) -> Option<Box<dyn DynAuthenticationFlow>> {
+        None
+    }
 }

@@ -5,6 +5,7 @@ pub mod fuzzy_finder;
 pub mod input_panel;
 pub mod markdown;
 pub mod popup_list;
+pub mod setup;
 pub mod status_bar;
 
 pub use chat_list::{ChatList, ChatListState, ViewMode};
