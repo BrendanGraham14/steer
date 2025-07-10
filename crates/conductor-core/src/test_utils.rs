@@ -5,8 +5,7 @@
 
 use crate::app::AppConfig;
 use crate::auth::{AuthStorage, CredentialType};
-use crate::config::{LlmConfig, LlmConfigLoader, LlmConfigProvider};
-use crate::error::Result;
+use crate::config::LlmConfigProvider;
 use std::sync::Arc;
 
 /// In-memory storage for testing - doesn't use keyring or filesystem
@@ -65,27 +64,6 @@ impl AuthStorage for InMemoryAuthStorage {
 pub fn test_llm_config_provider() -> LlmConfigProvider {
     let storage = Arc::new(InMemoryAuthStorage::new());
     LlmConfigProvider::new(storage)
-}
-
-/// Create an LlmConfig from environment variables using in-memory storage for tests
-pub async fn llm_config_from_env() -> Result<LlmConfig> {
-    let storage = Arc::new(InMemoryAuthStorage::new());
-    let loader = LlmConfigLoader::new(storage);
-    loader.load_from_env().await
-}
-
-/// Create an empty LlmConfig with in-memory storage for tests
-pub fn llm_config_empty() -> LlmConfig {
-    LlmConfig::builder()
-        .with_auth_storage(Arc::new(InMemoryAuthStorage::new()))
-        .build()
-}
-
-/// Create an LlmConfig from environment, returning empty config if no credentials
-pub async fn llm_config_from_env_or_empty() -> LlmConfig {
-    let storage = Arc::new(InMemoryAuthStorage::new());
-    let loader = LlmConfigLoader::new(storage);
-    loader.load_from_env_allow_missing().await
 }
 
 /// Convenience to build an `AppConfig` for tests with a fresh provider

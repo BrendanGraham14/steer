@@ -6,8 +6,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-const CACHE_DURATION: u64 = 600;
-
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
     pub model: Option<String>,
@@ -110,235 +108,10 @@ pub enum ApiAuth {
     OAuth,
 }
 
-#[derive(Clone, Default)]
-pub struct LlmConfig {
-    pub anthropic_auth: Option<ApiAuth>,
-    pub openai_api_key: Option<String>,
-    pub gemini_api_key: Option<String>,
-    pub grok_api_key: Option<String>,
-    pub auth_storage: Option<Arc<dyn AuthStorage>>,
-}
-
-impl std::fmt::Debug for LlmConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LlmConfig")
-            .field("anthropic_auth", &self.anthropic_auth)
-            .field(
-                "openai_api_key",
-                &self.openai_api_key.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "gemini_api_key",
-                &self.gemini_api_key.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "grok_api_key",
-                &self.grok_api_key.as_ref().map(|_| "<redacted>"),
-            )
-            .field("auth_storage", &self.auth_storage.is_some())
-            .finish()
-    }
-}
-
-impl LlmConfig {
-    /// Create a new builder for LlmConfig
-    pub fn builder() -> LlmConfigBuilder {
-        LlmConfigBuilder::default()
-    }
-
-    pub fn auth_for(&self, provider: ProviderKind) -> Option<ApiAuth> {
-        match provider {
-            ProviderKind::Anthropic => self.anthropic_auth.clone(),
-            ProviderKind::OpenAI => self
-                .openai_api_key
-                .as_ref()
-                .map(|k| ApiAuth::Key(k.clone())),
-            ProviderKind::Google => self
-                .gemini_api_key
-                .as_ref()
-                .map(|k| ApiAuth::Key(k.clone())),
-            ProviderKind::Grok => self.grok_api_key.as_ref().map(|k| ApiAuth::Key(k.clone())),
-        }
-    }
-
-    pub fn auth_storage(&self) -> Option<&Arc<dyn AuthStorage>> {
-        self.auth_storage.as_ref()
-    }
-
-    /// Return list of providers that have authentication configured
-    pub fn available_providers(&self) -> Vec<ProviderKind> {
-        let mut providers = Vec::new();
-        if self.anthropic_auth.is_some() {
-            providers.push(ProviderKind::Anthropic);
-        }
-        if self.openai_api_key.is_some() {
-            providers.push(ProviderKind::OpenAI);
-        }
-        if self.gemini_api_key.is_some() {
-            providers.push(ProviderKind::Google);
-        }
-        if self.grok_api_key.is_some() {
-            providers.push(ProviderKind::Grok);
-        }
-        providers
-    }
-}
-
-/// Builder for LlmConfig
-#[derive(Default)]
-pub struct LlmConfigBuilder {
-    anthropic_auth: Option<ApiAuth>,
-    openai_api_key: Option<String>,
-    gemini_api_key: Option<String>,
-    grok_api_key: Option<String>,
-    auth_storage: Option<Arc<dyn AuthStorage>>,
-}
-
-impl LlmConfigBuilder {
-    pub fn with_anthropic_auth(mut self, auth: ApiAuth) -> Self {
-        self.anthropic_auth = Some(auth);
-        self
-    }
-
-    pub fn with_openai_api_key(mut self, key: String) -> Self {
-        self.openai_api_key = Some(key);
-        self
-    }
-
-    pub fn with_gemini_api_key(mut self, key: String) -> Self {
-        self.gemini_api_key = Some(key);
-        self
-    }
-
-    pub fn with_grok_api_key(mut self, api_key: String) -> Self {
-        self.grok_api_key = Some(api_key);
-        self
-    }
-
-    pub fn with_auth_storage(mut self, storage: Arc<dyn AuthStorage>) -> Self {
-        self.auth_storage = Some(storage);
-        self
-    }
-
-    pub fn build(self) -> LlmConfig {
-        LlmConfig {
-            anthropic_auth: self.anthropic_auth,
-            openai_api_key: self.openai_api_key,
-            gemini_api_key: self.gemini_api_key,
-            grok_api_key: self.grok_api_key,
-            auth_storage: self.auth_storage,
-        }
-    }
-}
-
-/// Loader for LlmConfig that handles async operations
-pub(crate) struct LlmConfigLoader {
-    storage: Arc<dyn AuthStorage>,
-}
-
-impl LlmConfigLoader {
-    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
-        Self { storage }
-    }
-
-    pub async fn load_from_env(&self) -> Result<LlmConfig> {
-        // For Anthropic: Check OAuth tokens first, then env vars, then stored API key
-        let anthropic_auth = if self
-            .storage
-            .get_credential("anthropic", crate::auth::CredentialType::AuthTokens)
-            .await?
-            .is_some()
-        {
-            Some(ApiAuth::OAuth)
-        } else {
-            // Check environment variables first (takes precedence over stored keys)
-            let anthropic_key = std::env::var("CLAUDE_API_KEY")
-                .ok()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-
-            if let Some(key) = anthropic_key {
-                Some(ApiAuth::Key(key))
-            } else {
-                // Fall back to stored API key in keyring
-                if let Some(crate::auth::Credential::ApiKey { value }) = self
-                    .storage
-                    .get_credential("anthropic", crate::auth::CredentialType::ApiKey)
-                    .await?
-                {
-                    Some(ApiAuth::Key(value))
-                } else {
-                    None
-                }
-            }
-        };
-
-        // For OpenAI: Check env var first, then stored API key
-        let openai_api_key = if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            Some(key)
-        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-            .storage
-            .get_credential("openai", crate::auth::CredentialType::ApiKey)
-            .await?
-        {
-            Some(value)
-        } else {
-            None
-        };
-
-        // For Google/Gemini: Check env var first, then stored API key
-        let gemini_api_key = if let Ok(key) = std::env::var("GEMINI_API_KEY") {
-            Some(key)
-        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-            .storage
-            .get_credential("google", crate::auth::CredentialType::ApiKey)
-            .await?
-        {
-            Some(value)
-        } else {
-            None
-        };
-
-        // For Grok: Check env vars first (XAI_API_KEY or GROK_API_KEY), then stored API key
-        let grok_api_key = if let Ok(key) = std::env::var("XAI_API_KEY") {
-            Some(key)
-        } else if let Ok(key) = std::env::var("GROK_API_KEY") {
-            Some(key)
-        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-            .storage
-            .get_credential("grok", crate::auth::CredentialType::ApiKey)
-            .await?
-        {
-            Some(value)
-        } else {
-            None
-        };
-
-        Ok(LlmConfig {
-            anthropic_auth,
-            openai_api_key,
-            gemini_api_key,
-            grok_api_key,
-            auth_storage: Some(self.storage.clone()),
-        })
-    }
-
-    /// Load configuration from environment, returning empty config if no credentials are found
-    /// This is useful for tests that don't require actual API access
-    pub async fn load_from_env_allow_missing(&self) -> LlmConfig {
-        self.load_from_env().await.unwrap_or_else(|_| LlmConfig {
-            anthropic_auth: None,
-            openai_api_key: None,
-            gemini_api_key: None,
-            grok_api_key: None,
-            auth_storage: Some(self.storage.clone()),
-        })
-    }
-}
-
-/// Provider for LlmConfig with caching and thread-safe access
+/// Provider for authentication credentials
 #[derive(Clone)]
 pub struct LlmConfigProvider {
-    inner: Arc<Inner>,
+    storage: Arc<dyn AuthStorage>,
 }
 
 impl std::fmt::Debug for LlmConfigProvider {
@@ -347,61 +120,132 @@ impl std::fmt::Debug for LlmConfigProvider {
     }
 }
 
-struct Inner {
-    storage: Arc<dyn AuthStorage>,
-    cache: tokio::sync::RwLock<Option<(std::time::SystemTime, LlmConfig)>>,
-}
-
 impl LlmConfigProvider {
     /// Create a new LlmConfigProvider with the given auth storage
     pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                storage,
-                cache: tokio::sync::RwLock::new(None),
-            }),
-        }
+        Self { storage }
     }
 
-    /// Get the current LlmConfig, using cache if valid
-    pub async fn get(&self) -> Result<LlmConfig> {
-        // Check cache first
-        {
-            let cache = self.inner.cache.read().await;
-            if let Some((timestamp, config)) = cache.as_ref() {
-                let elapsed = std::time::SystemTime::now()
-                    .duration_since(*timestamp)
-                    .unwrap_or(std::time::Duration::MAX);
+    /// Get authentication for a specific provider
+    pub async fn get_auth_for_provider(&self, provider: ProviderKind) -> Result<Option<ApiAuth>> {
+        // For Anthropic: Check OAuth tokens first, then env vars, then stored API key
+        match provider {
+            ProviderKind::Anthropic => {
+                if self
+                    .storage
+                    .get_credential("anthropic", crate::auth::CredentialType::AuthTokens)
+                    .await?
+                    .is_some()
+                {
+                    Ok(Some(ApiAuth::OAuth))
+                } else {
+                    // Check environment variables first (takes precedence over stored keys)
+                    let anthropic_key = std::env::var("CLAUDE_API_KEY")
+                        .ok()
+                        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
 
-                // Cache is valid for 10 minutes
-                if elapsed.as_secs() < CACHE_DURATION {
-                    return Ok(config.clone());
+                    if let Some(key) = anthropic_key {
+                        Ok(Some(ApiAuth::Key(key)))
+                    } else {
+                        // Fall back to stored API key in keyring
+                        if let Some(crate::auth::Credential::ApiKey { value }) = self
+                            .storage
+                            .get_credential("anthropic", crate::auth::CredentialType::ApiKey)
+                            .await?
+                        {
+                            Ok(Some(ApiAuth::Key(value)))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                }
+            }
+            ProviderKind::OpenAI => {
+                // For OpenAI: Check env var first, then stored API key
+                if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+                    Ok(Some(ApiAuth::Key(key)))
+                } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                    .storage
+                    .get_credential("openai", crate::auth::CredentialType::ApiKey)
+                    .await?
+                {
+                    Ok(Some(ApiAuth::Key(value)))
+                } else {
+                    Ok(None)
+                }
+            }
+            ProviderKind::Google => {
+                // For Google/Gemini: Check env var first, then stored API key
+                if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+                    Ok(Some(ApiAuth::Key(key)))
+                } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                    .storage
+                    .get_credential("google", crate::auth::CredentialType::ApiKey)
+                    .await?
+                {
+                    Ok(Some(ApiAuth::Key(value)))
+                } else {
+                    Ok(None)
+                }
+            }
+            ProviderKind::Grok => {
+                // For Grok: Check env vars first (XAI_API_KEY or GROK_API_KEY), then stored API key
+                if let Ok(key) = std::env::var("XAI_API_KEY") {
+                    Ok(Some(ApiAuth::Key(key)))
+                } else if let Ok(key) = std::env::var("GROK_API_KEY") {
+                    Ok(Some(ApiAuth::Key(key)))
+                } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                    .storage
+                    .get_credential("grok", crate::auth::CredentialType::ApiKey)
+                    .await?
+                {
+                    Ok(Some(ApiAuth::Key(value)))
+                } else {
+                    Ok(None)
                 }
             }
         }
-
-        // Cache miss or expired, load fresh config
-        let loader = LlmConfigLoader::new(self.inner.storage.clone());
-        let config = loader.load_from_env().await?;
-
-        // Update cache
-        {
-            let mut cache = self.inner.cache.write().await;
-            *cache = Some((std::time::SystemTime::now(), config.clone()));
-        }
-
-        Ok(config)
     }
 
-    /// Get the current LlmConfig, returning empty config if no credentials are found
-    /// This is useful for tests that don't require actual API access
-    pub async fn get_allow_missing(&self) -> LlmConfig {
-        self.get().await.unwrap_or_else(|_| LlmConfig {
-            anthropic_auth: None,
-            openai_api_key: None,
-            gemini_api_key: None,
-            grok_api_key: None,
-            auth_storage: Some(self.inner.storage.clone()),
-        })
+    /// Get the auth storage
+    pub fn auth_storage(&self) -> &Arc<dyn AuthStorage> {
+        &self.storage
+    }
+
+    /// Return list of providers that have authentication configured
+    pub async fn available_providers(&self) -> Result<Vec<ProviderKind>> {
+        let mut providers = Vec::new();
+        if self
+            .get_auth_for_provider(ProviderKind::Anthropic)
+            .await?
+            .is_some()
+        {
+            providers.push(ProviderKind::Anthropic);
+        }
+        if self
+            .get_auth_for_provider(ProviderKind::OpenAI)
+            .await?
+            .is_some()
+        {
+            providers.push(ProviderKind::OpenAI);
+        }
+        if self
+            .get_auth_for_provider(ProviderKind::Google)
+            .await?
+            .is_some()
+        {
+            providers.push(ProviderKind::Google);
+        }
+        if self
+            .get_auth_for_provider(ProviderKind::Grok)
+            .await?
+            .is_some()
+        {
+            providers.push(ProviderKind::Grok);
+        }
+        Ok(providers)
     }
 }
+
+#[cfg(test)]
+mod tests;

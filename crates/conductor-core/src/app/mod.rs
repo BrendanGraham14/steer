@@ -162,8 +162,7 @@ impl App {
         session_config: Option<crate::session::state::SessionConfig>,
         conversation: Conversation,
     ) -> Result<Self> {
-        let llm_config = config.llm_config_provider.get().await?;
-        let api_client = ApiClient::new(&llm_config);
+        let api_client = ApiClient::new_with_provider(config.llm_config_provider.clone());
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
 
         // Initialize approved_bash_patterns from session config
@@ -281,8 +280,12 @@ impl App {
     pub async fn set_model(&mut self, model: Model) -> Result<()> {
         // Check if the provider is available (has API key or OAuth)
         let provider = model.provider();
-        let llm_config = self.config.llm_config_provider.get().await?;
-        if llm_config.auth_for(provider).is_none() {
+        let auth = self
+            .config
+            .llm_config_provider
+            .get_auth_for_provider(provider)
+            .await?;
+        if auth.is_none() {
             return Err(crate::error::Error::Configuration(format!(
                 "Cannot set model to {}: missing authentication for {} provider",
                 model.as_ref(),

@@ -87,11 +87,8 @@ pub async fn get_command_prefix(
     llm_config_provider: &LlmConfigProvider,
     token: CancellationToken,
 ) -> Result<String> {
-    // Use the provided LLM config provider instead of constructing a new one
-    let config = llm_config_provider.get().await.map_err(|e| {
-        crate::error::Error::Configuration(format!("Failed to get LLM config: {e}"))
-    })?;
-    let client = crate::api::Client::new(&config);
+    // Use the provided LLM config provider directly
+    let client = crate::api::Client::new_with_provider(llm_config_provider.clone());
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
     // Create a user message with the new structure

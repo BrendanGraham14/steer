@@ -5,7 +5,7 @@ pub mod grok;
 pub mod openai;
 pub mod provider;
 
-use crate::config::{ApiAuth, LlmConfig};
+use crate::config::{ApiAuth, LlmConfigProvider};
 use crate::error::Result;
 pub use claude::AnthropicClient;
 pub use conductor_tools::{InputSchema, ToolCall, ToolSchema};
@@ -179,40 +179,46 @@ impl Model {
 #[derive(Clone)]
 pub struct Client {
     provider_map: Arc<RwLock<HashMap<Model, Arc<dyn Provider>>>>,
-    config: LlmConfig,
+    config_provider: LlmConfigProvider,
 }
 
 impl Client {
-    pub fn new(cfg: &LlmConfig) -> Self {
+    pub fn new_with_provider(provider: LlmConfigProvider) -> Self {
         Self {
             provider_map: Arc::new(RwLock::new(HashMap::new())),
-            config: cfg.clone(),
+            config_provider: provider,
         }
     }
 
-    fn get_or_create_provider(&self, model: Model) -> Result<Arc<dyn Provider>> {
-        // Try read lock first
-        if let Some(provider) = self.provider_map.read().unwrap().get(&model) {
-            return Ok(provider.clone());
+    async fn get_or_create_provider(&self, model: Model) -> Result<Arc<dyn Provider>> {
+        // First check without holding the lock across await
+        {
+            let map = self.provider_map.read().unwrap();
+            if let Some(provider) = map.get(&model) {
+                return Ok(provider.clone());
+            }
         }
 
-        // If not found, acquire write lock
+        // Get provider kind and auth before acquiring write lock
+        let provider_kind = model.provider();
+        let auth = self
+            .config_provider
+            .get_auth_for_provider(provider_kind)
+            .await?;
+
+        // Now acquire write lock and create provider
         let mut map = self.provider_map.write().unwrap();
+
         // Check again in case another thread added it
         if let Some(provider) = map.get(&model) {
             return Ok(provider.clone());
         }
 
-        // If still not found, create and insert
-        let provider_kind = model.provider();
-        let provider_instance: Arc<dyn Provider> = match self.config.auth_for(provider_kind) {
+        // Create and insert the provider
+        let provider_instance: Arc<dyn Provider> = match auth {
             Some(ApiAuth::OAuth) => {
                 if provider_kind == ProviderKind::Anthropic {
-                    let storage = self.config.auth_storage().ok_or_else(|| {
-                        crate::error::Error::Api(ApiError::Configuration(
-                            "OAuth configured but no auth storage available".to_string(),
-                        ))
-                    })?;
+                    let storage = self.config_provider.auth_storage();
                     Arc::new(AnthropicClient::with_oauth(storage.clone()))
                 } else {
                     return Err(crate::error::Error::Api(ApiError::Configuration(format!(
@@ -245,7 +251,10 @@ impl Client {
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,
     ) -> std::result::Result<CompletionResponse, ApiError> {
-        let provider = self.get_or_create_provider(model).map_err(ApiError::from)?;
+        let provider = self
+            .get_or_create_provider(model)
+            .await
+            .map_err(ApiError::from)?;
 
         if token.is_cancelled() {
             return Err(ApiError::Cancelled {
