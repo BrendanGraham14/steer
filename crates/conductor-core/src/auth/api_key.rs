@@ -50,7 +50,7 @@ impl ApiKeyAuthFlow {
                     ));
                 }
             }
-            ProviderKind::Grok => {
+            ProviderKind::XAI => {
                 // Grok doesn't have a specific format requirement yet
                 if trimmed.len() < 10 {
                     return Err(AuthError::InvalidCredential(
@@ -208,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_key_flow() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage.clone(), ProviderKind::Grok);
+        let auth_flow = ApiKeyAuthFlow::new(storage.clone(), ProviderKind::XAI);
 
         // Test available methods
         let methods = auth_flow.available_methods();
@@ -225,7 +225,7 @@ mod tests {
             .await
             .unwrap();
         match progress {
-            AuthProgress::NeedInput(msg) => assert_eq!(msg, "Enter your grok API key"),
+            AuthProgress::NeedInput(msg) => assert_eq!(msg, "Enter your xai API key"),
             _ => panic!("Expected NeedInput progress"),
         }
 
@@ -240,7 +240,7 @@ mod tests {
 
         // Verify API key was stored
         let cred = storage
-            .get_credential(&ProviderKind::Grok.to_string(), CredentialType::ApiKey)
+            .get_credential(&ProviderKind::XAI.to_string(), CredentialType::ApiKey)
             .await
             .unwrap();
         assert!(cred.is_some());
@@ -257,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_api_key() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::Grok);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::XAI);
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 
@@ -275,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_method() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::Grok);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::XAI);
 
         // Test with OAuth method
         let result = auth_flow.start_auth(AuthMethod::OAuth).await;
@@ -283,7 +283,7 @@ mod tests {
         match result.unwrap_err() {
             AuthError::UnsupportedMethod { method, provider } => {
                 assert_eq!(method, "OAuth");
-                assert_eq!(provider, ProviderKind::Grok);
+                assert_eq!(provider, ProviderKind::XAI);
             }
             _ => panic!("Expected UnsupportedMethod error"),
         }
@@ -316,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_key_with_spaces() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::Grok);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::XAI);
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 

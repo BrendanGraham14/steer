@@ -17,7 +17,7 @@ impl ProviderRegistry {
                     storage,
                 ))))
             }
-            ProviderKind::OpenAI | ProviderKind::Google | ProviderKind::Grok => {
+            ProviderKind::OpenAI | ProviderKind::Google | ProviderKind::XAI => {
                 use crate::auth::api_key::ApiKeyAuthFlow;
                 Some(Box::new(AuthFlowWrapper::new(ApiKeyAuthFlow::new(
                     storage, provider,

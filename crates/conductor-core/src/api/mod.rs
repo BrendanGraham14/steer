@@ -1,9 +1,9 @@
 pub mod claude;
 pub mod error;
 pub mod gemini;
-pub mod grok;
 pub mod openai;
 pub mod provider;
+pub mod xai;
 
 use crate::config::{ApiAuth, LlmConfigProvider};
 use crate::error::Result;
@@ -11,7 +11,6 @@ pub use claude::AnthropicClient;
 pub use conductor_tools::{InputSchema, ToolCall, ToolSchema};
 pub use error::ApiError;
 pub use gemini::GeminiClient;
-pub use grok::GrokClient;
 pub use openai::OpenAIClient;
 pub use provider::{CompletionResponse, Provider};
 use std::collections::HashMap;
@@ -24,6 +23,7 @@ use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
+pub use xai::XAIClient;
 
 use crate::app::conversation::Message;
 
@@ -33,7 +33,8 @@ pub enum ProviderKind {
     Anthropic,
     OpenAI,
     Google,
-    Grok,
+    #[strum(serialize = "xai")]
+    XAI,
 }
 
 impl ProviderKind {
@@ -42,7 +43,7 @@ impl ProviderKind {
             ProviderKind::Anthropic => "Anthropic".to_string(),
             ProviderKind::OpenAI => "OpenAI".to_string(),
             ProviderKind::Google => "Google".to_string(),
-            ProviderKind::Grok => "Grok".to_string(),
+            ProviderKind::XAI => "xAI".to_string(),
         }
     }
 }
@@ -124,7 +125,7 @@ impl Model {
             | Model::Gemini2_5ProPreview0506
             | Model::Gemini2_5ProPreview0605 => ProviderKind::Google,
 
-            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderKind::Grok,
+            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderKind::XAI,
         }
     }
 
@@ -230,7 +231,7 @@ impl Client {
                 ProviderKind::Anthropic => Arc::new(AnthropicClient::with_api_key(&key)),
                 ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key)),
                 ProviderKind::Google => Arc::new(GeminiClient::new(&key)),
-                ProviderKind::Grok => Arc::new(GrokClient::new(key)),
+                ProviderKind::XAI => Arc::new(XAIClient::new(key)),
             },
 
             None => {

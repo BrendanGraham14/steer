@@ -188,15 +188,15 @@ impl LlmConfigProvider {
                     Ok(None)
                 }
             }
-            ProviderKind::Grok => {
-                // For Grok: Check env vars first (XAI_API_KEY or GROK_API_KEY), then stored API key
+            ProviderKind::XAI => {
+                // For xAI: Check env vars first (XAI_API_KEY or GROK_API_KEY), then stored API key
                 if let Ok(key) = std::env::var("XAI_API_KEY") {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Ok(key) = std::env::var("GROK_API_KEY") {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                     .storage
-                    .get_credential("grok", crate::auth::CredentialType::ApiKey)
+                    .get_credential("xai", crate::auth::CredentialType::ApiKey)
                     .await?
                 {
                     Ok(Some(ApiAuth::Key(value)))
@@ -237,11 +237,11 @@ impl LlmConfigProvider {
             providers.push(ProviderKind::Google);
         }
         if self
-            .get_auth_for_provider(ProviderKind::Grok)
+            .get_auth_for_provider(ProviderKind::XAI)
             .await?
             .is_some()
         {
-            providers.push(ProviderKind::Grok);
+            providers.push(ProviderKind::XAI);
         }
         Ok(providers)
     }

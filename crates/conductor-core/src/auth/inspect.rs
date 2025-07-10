@@ -12,11 +12,14 @@ pub async fn get_authenticated_providers(
     if std::env::var("ANTHROPIC_API_KEY").is_ok()
         || std::env::var("CLAUDE_API_KEY").is_ok()
         || auth_storage
-            .get_credential("anthropic", CredentialType::AuthTokens)
+            .get_credential(
+                &ProviderKind::Anthropic.to_string(),
+                CredentialType::AuthTokens,
+            )
             .await?
             .is_some()
         || auth_storage
-            .get_credential("anthropic", CredentialType::ApiKey)
+            .get_credential(&ProviderKind::Anthropic.to_string(), CredentialType::ApiKey)
             .await?
             .is_some()
     {
@@ -26,7 +29,7 @@ pub async fn get_authenticated_providers(
     // Check OpenAI
     if std::env::var("OPENAI_API_KEY").is_ok()
         || auth_storage
-            .get_credential("openai", CredentialType::ApiKey)
+            .get_credential(&ProviderKind::OpenAI.to_string(), CredentialType::ApiKey)
             .await?
             .is_some()
     {
@@ -36,22 +39,22 @@ pub async fn get_authenticated_providers(
     // Check Gemini/Google
     if std::env::var("GEMINI_API_KEY").is_ok()
         || auth_storage
-            .get_credential("google", CredentialType::ApiKey)
+            .get_credential(&ProviderKind::Google.to_string(), CredentialType::ApiKey)
             .await?
             .is_some()
     {
         providers.insert(ProviderKind::Google);
     }
 
-    // Check Grok
+    // Check xAI
     if std::env::var("XAI_API_KEY").is_ok()
         || std::env::var("GROK_API_KEY").is_ok()
         || auth_storage
-            .get_credential("grok", CredentialType::ApiKey)
+            .get_credential(&ProviderKind::XAI.to_string(), CredentialType::ApiKey)
             .await?
             .is_some()
     {
-        providers.insert(ProviderKind::Grok);
+        providers.insert(ProviderKind::XAI);
     }
 
     Ok(providers)

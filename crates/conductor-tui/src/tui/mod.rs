@@ -1005,7 +1005,7 @@ impl Tui {
                             conductor_core::api::ProviderKind::Anthropic,
                             conductor_core::api::ProviderKind::OpenAI,
                             conductor_core::api::ProviderKind::Google,
-                            conductor_core::api::ProviderKind::Grok,
+                            conductor_core::api::ProviderKind::XAI,
                         ] {
                             let status = if auth_providers.contains(&provider) {
                                 crate::tui::state::AuthStatus::ApiKeySet
@@ -1295,7 +1295,7 @@ pub async fn run_tui(
             conductor_core::api::ProviderKind::Anthropic,
             conductor_core::api::ProviderKind::OpenAI,
             conductor_core::api::ProviderKind::Google,
-            conductor_core::api::ProviderKind::Grok,
+            conductor_core::api::ProviderKind::XAI,
         ] {
             let status = if auth_providers.contains(&provider) {
                 crate::tui::state::AuthStatus::ApiKeySet
