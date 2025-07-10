@@ -6,11 +6,46 @@
 use itertools::{Itertools, Position};
 use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Span};
 use tracing::{debug, instrument, warn};
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::theme::{Component, Theme};
+
+/// A line with metadata about how it should be rendered
+#[derive(Debug, Clone)]
+pub struct MarkedLine {
+    pub line: Line<'static>,
+    pub no_wrap: bool, // If true, this line should not be wrapped
+}
+
+impl MarkedLine {
+    pub fn new(line: Line<'static>) -> Self {
+        Self {
+            line,
+            no_wrap: false,
+        }
+    }
+
+    pub fn new_no_wrap(line: Line<'static>) -> Self {
+        Self {
+            line,
+            no_wrap: true,
+        }
+    }
+}
+
+/// Markdown text with metadata
+#[derive(Debug, Default)]
+pub struct MarkedText {
+    pub lines: Vec<MarkedLine>,
+}
+
+impl MarkedText {
+    pub fn height(&self) -> usize {
+        self.lines.len()
+    }
+}
 
 /// Markdown styles that can be customized via the theme
 #[derive(Debug, Clone)]
@@ -88,7 +123,15 @@ impl MarkdownStyles {
     }
 }
 
-pub fn from_str<'a>(input: &'a str, styles: &'a MarkdownStyles) -> Text<'a> {
+pub fn from_str(input: &str, styles: &MarkdownStyles) -> MarkedText {
+    from_str_with_width(input, styles, None)
+}
+
+pub fn from_str_with_width(
+    input: &str,
+    styles: &MarkdownStyles,
+    terminal_width: Option<u16>,
+) -> MarkedText {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
@@ -97,8 +140,9 @@ pub fn from_str<'a>(input: &'a str, styles: &'a MarkdownStyles) -> Text<'a> {
     options.insert(Options::ENABLE_SMART_PUNCTUATION);
     let parser = Parser::new_ext(input, options);
     let mut writer = TextWriter::new(parser, styles);
+    writer.terminal_width = terminal_width;
     writer.run();
-    writer.text
+    writer.marked_text
 }
 
 struct TextWriter<'a, I> {
@@ -106,7 +150,7 @@ struct TextWriter<'a, I> {
     iter: I,
 
     /// Text to write to.
-    text: Text<'a>,
+    marked_text: MarkedText,
 
     /// Current style.
     ///
@@ -137,6 +181,12 @@ struct TextWriter<'a, I> {
 
     /// Track if we just started a list item (for task list markers)
     in_list_item_start: bool,
+
+    /// Track if we're inside a code block to preserve formatting
+    in_code_block: bool,
+
+    /// Terminal width for rendering full-width elements like horizontal rules
+    terminal_width: Option<u16>,
 }
 
 impl<'a, I> TextWriter<'a, I>
@@ -146,7 +196,7 @@ where
     fn new(iter: I, styles: &'a MarkdownStyles) -> Self {
         Self {
             iter,
-            text: Text::default(),
+            marked_text: MarkedText::default(),
             inline_styles: vec![],
             line_styles: vec![],
             line_prefixes: vec![],
@@ -158,6 +208,8 @@ where
             table_rows: Vec::new(),
             in_table_header: false,
             in_list_item_start: false,
+            in_code_block: false,
+            terminal_width: None,
         }
     }
 
@@ -297,8 +349,31 @@ where
             let style = self.inline_styles.last().copied().unwrap_or_default();
             let span = Span::styled(text.to_string(), style);
             self.push_span(span);
+        } else if self.in_code_block {
+            // Special handling for code blocks - preserve exact formatting
+            let style = self
+                .inline_styles
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .patch(self.styles.code_block);
+
+            // Process each line, preserving all whitespace
+            let lines: Vec<&str> = text.as_ref().lines().collect();
+            for (idx, line) in lines.iter().enumerate() {
+                if idx > 0 || self.needs_newline {
+                    self.push_line(Line::default());
+                }
+
+                // Create a span with the exact line content, preserving all whitespace
+                let span = Span::styled(line.to_string(), style);
+                self.push_span(span);
+            }
+
+            // Handle case where text ends with a newline
+            self.needs_newline = text.ends_with('\n') && !lines.is_empty();
         } else {
-            // Original behavior for non-table text
+            // Original behavior for non-table, non-code-block text
             for (position, line) in text.lines().with_position() {
                 if self.needs_newline {
                     self.push_line(Line::default());
@@ -359,35 +434,31 @@ where
     fn soft_break(&mut self) {
         // Soft break: In markdown, this is typically rendered as a space
         // unless it's at the end of a line
-        if let Some(line) = self.text.lines.last() {
-            if !line.spans.is_empty() {
+        if let Some(line) = self.marked_text.lines.last() {
+            if !line.line.spans.is_empty() {
                 // Add a space if there's content on the current line
                 self.push_span(" ".into());
             }
         }
     }
 
-    fn start_codeblock(&mut self, kind: CodeBlockKind<'_>) {
-        if !self.text.lines.is_empty() {
+    fn start_codeblock(&mut self, _kind: CodeBlockKind<'_>) {
+        if !self.marked_text.lines.is_empty() {
             self.push_line(Line::default());
         }
-        let lang = match kind {
-            CodeBlockKind::Fenced(ref lang) => lang.as_ref(),
-            CodeBlockKind::Indented => "",
-        };
+
+        // Set flag to preserve formatting
+        self.in_code_block = true;
 
         self.line_styles.push(self.styles.code_block);
-
-        let span = Span::from(format!("```{lang}"));
-        self.push_line(span.into());
-        self.needs_newline = true;
+        self.needs_newline = false;
     }
 
     fn end_codeblock(&mut self) {
-        let span = Span::from("```");
-        self.push_line(span.into());
-        self.needs_newline = true;
+        // Clear the flag
+        self.in_code_block = false;
 
+        self.needs_newline = true;
         self.line_styles.pop();
     }
 
@@ -419,7 +490,23 @@ where
         for prefix in line_prefixes.iter().rev().cloned() {
             line.spans.insert(0, prefix);
         }
-        self.text.lines.push(line);
+
+        // Convert line to 'static lifetime by converting all spans to owned
+        let static_spans: Vec<Span<'static>> = line
+            .spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect();
+        let static_line = Line::from(static_spans);
+
+        // Create marked line based on current state
+        let marked_line = if self.in_code_block {
+            MarkedLine::new_no_wrap(static_line)
+        } else {
+            MarkedLine::new(static_line)
+        };
+
+        self.marked_text.lines.push(marked_line);
     }
 
     #[instrument(level = "trace", skip(self))]
@@ -433,8 +520,10 @@ where
             let current_row = self.table_rows.last_mut().unwrap();
             let current_cell = current_row.last_mut().unwrap();
             current_cell.push(span);
-        } else if let Some(line) = self.text.lines.last_mut() {
-            line.push_span(span);
+        } else if let Some(marked_line) = self.marked_text.lines.last_mut() {
+            // Convert to owned span for 'static lifetime
+            let static_span = Span::styled(span.content.into_owned(), span.style);
+            marked_line.line.push_span(static_span);
         } else {
             self.push_line(Line::from(vec![span]));
         }
@@ -642,9 +731,9 @@ where
 
         // Create a horizontal rule using box-drawing characters
         // We'll use a solid line of dashes or unicode box characters
-        let terminal_width = 80; // Default width, could be made configurable
+        let terminal_width = self.terminal_width.unwrap_or(80) as usize;
         let rule_char = "─"; // Unicode box drawing character
-        let rule_content = rule_char.repeat(terminal_width.min(120)); // Cap at 120 chars
+        let rule_content = rule_char.repeat(terminal_width);
 
         // Use the blockquote style for rules (or we could add a dedicated rule style)
         let rule_style = self.styles.blockquote;
@@ -768,12 +857,12 @@ mod tests {
         // Create a dummy theme for testing
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
-
         let rendered = from_str(markdown, &styles);
 
         println!("\n=== Rendered Output ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -808,6 +897,7 @@ mod tests {
         println!("\n=== Rendered Table with Alignment ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -831,6 +921,7 @@ mod tests {
         println!("\n=== Table with Edge Cases ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -859,6 +950,7 @@ mod tests {
         println!("\n=== Table with Star Emojis ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -889,6 +981,7 @@ row."#;
         println!("\n=== Line Breaks Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -920,6 +1013,7 @@ Final section"#;
         println!("\n=== Horizontal Rules Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -928,10 +1022,12 @@ Final section"#;
         }
 
         // Check that rules are present
-        let has_rule = rendered
-            .lines
-            .iter()
-            .any(|line| line.spans.iter().any(|span| span.content.contains("─")));
+        let has_rule = rendered.lines.iter().any(|line| {
+            line.line
+                .spans
+                .iter()
+                .any(|span| span.content.contains("─"))
+        });
         assert!(has_rule, "Should contain horizontal rules");
     }
 
@@ -960,6 +1056,7 @@ Mixed list:
         println!("\n=== Task Lists Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -968,14 +1065,18 @@ Mixed list:
         }
 
         // Check that checkboxes are present
-        let has_checked = rendered
-            .lines
-            .iter()
-            .any(|line| line.spans.iter().any(|span| span.content.contains("[✓]")));
-        let has_unchecked = rendered
-            .lines
-            .iter()
-            .any(|line| line.spans.iter().any(|span| span.content.contains("[ ]")));
+        let has_checked = rendered.lines.iter().any(|line| {
+            line.line
+                .spans
+                .iter()
+                .any(|span| span.content.contains("[✓]"))
+        });
+        let has_unchecked = rendered.lines.iter().any(|line| {
+            line.line
+                .spans
+                .iter()
+                .any(|span| span.content.contains("[ ]"))
+        });
         assert!(has_checked, "Should contain checked checkboxes");
         assert!(has_unchecked, "Should contain unchecked checkboxes");
     }
@@ -1001,6 +1102,7 @@ Empty numbered items:
         println!("\n=== Empty List Items Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -1043,6 +1145,7 @@ Regular text
         println!("\n=== Malformed Lists Test ===");
         for (idx, line) in rendered.lines.iter().enumerate() {
             let line_text: String = line
+                .line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -1070,11 +1173,6 @@ Regular paragraph
         let parser = Parser::new_ext(markdown, options);
 
         println!("\n=== State Tracking Debug ===");
-
-        // Create a custom writer to track state
-        struct DebugTextWriter<'a, I> {
-            inner: TextWriter<'a, I>,
-        }
 
         let styles = MarkdownStyles::from_theme(&Theme::default());
         let mut writer = TextWriter::new(parser, &styles);
