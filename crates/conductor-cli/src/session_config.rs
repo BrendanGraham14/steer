@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use thiserror::Error;
 use tokio::fs;
+use tracing::debug;
 
 /// Session configuration validation errors
 #[derive(Debug, Error)]
@@ -128,6 +129,7 @@ pub struct SessionConfigLoader {
 
 impl SessionConfigLoader {
     pub fn new(config_path: Option<PathBuf>) -> Self {
+        debug!("Loading session config from: {:?}", config_path);
         Self {
             config_path,
             overrides: SessionConfigOverrides::default(),
@@ -252,6 +254,8 @@ impl SessionConfigLoader {
         } else {
             SessionToolConfig::default()
         };
+
+        debug!("Loaded tool config: {:?}", tool_config);
 
         Ok(SessionConfig {
             workspace,
