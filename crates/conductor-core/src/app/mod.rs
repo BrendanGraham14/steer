@@ -1401,9 +1401,6 @@ async fn handle_app_command(
             // Cancel any existing operations first
             app.cancel_current_processing().await;
 
-            // Emit ProcessingStarted to enable cancellation UI
-            app.emit_event(AppEvent::ProcessingStarted);
-
             // Create unique operation ID
             let op_id = uuid::Uuid::new_v4();
             let start_time = Instant::now();
@@ -1423,10 +1420,12 @@ async fn handle_app_command(
             // Create a tool call for the bash command
             let tool_call = ToolCall {
                 id: format!("bash_{}", uuid::Uuid::new_v4()),
-                name: "bash".to_string(),
-                parameters: serde_json::json!({
-                    "command": command,
-                }),
+                name: BASH_TOOL_NAME.to_string(),
+                parameters: serde_json::to_value(BashParams {
+                    command: command.clone(),
+                    timeout: None,
+                })
+                .map_err(|e| ToolError::Serialization(e.to_string()))?,
             };
 
             // Clone necessary values for the spawned task
@@ -1513,7 +1512,6 @@ async fn handle_slash_command(app: &mut App, command: AppCommandType) {
             app.emit_event(AppEvent::Error {
                 message: format!("Command failed: {e}"),
             });
-            app.emit_event(AppEvent::ProcessingCompleted);
         }
     }
 }
@@ -1653,6 +1651,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             // Clear the context
             debug!(target: "handle_task_outcome", "Clearing OpContext for completed standard operation.");
             app.current_op_context = None;
+            app.emit_event(AppEvent::ProcessingCompleted);
         }
         TaskOutcome::DispatchAgentResult { result } => {
             info!(target: "handle_task_outcome", "Dispatch agent operation task completed.");
@@ -1806,10 +1805,8 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                 }
             }
 
-            // Clear context and signal completion
             debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ProcessingCompleted for bash operation.");
             app.current_op_context = None;
-            app.emit_event(AppEvent::ProcessingCompleted);
         }
     }
 }

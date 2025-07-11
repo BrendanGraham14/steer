@@ -60,11 +60,9 @@ impl Tui {
             }
             KeyCode::Esc => {
                 // Cancel current processing if any
-                if self.is_processing {
-                    self.command_sink
-                        .send_command(AppCommand::CancelProcessing)
-                        .await?;
-                }
+                self.command_sink
+                    .send_command(AppCommand::CancelProcessing)
+                    .await?;
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_processing {

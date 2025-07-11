@@ -87,7 +87,7 @@ impl EventProcessor for ProcessingStateProcessor {
                     notify_with_sound(
                         &self.notification_config,
                         NotificationSound::Error,
-                        "An error occurred during processing",
+                        "An error occurred",
                     )
                     .await;
                 }
