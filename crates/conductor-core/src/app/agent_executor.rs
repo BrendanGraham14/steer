@@ -23,6 +23,7 @@ pub enum AgentEvent {
     ExecutingTool {
         tool_call_id: String,
         name: String,
+        parameters: serde_json::Value,
     },
     ToolResultReceived {
         tool_call_id: String,
@@ -257,6 +258,7 @@ impl AgentExecutor {
                                         .send(AgentEvent::ExecutingTool {
                                             tool_call_id: call_id.clone(),
                                             name: tool_name.clone(),
+                                            parameters: call.parameters.clone(),
                                         })
                                         .await
                                     {

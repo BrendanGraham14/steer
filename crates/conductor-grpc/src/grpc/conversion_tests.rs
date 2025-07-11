@@ -315,6 +315,49 @@ prop_compose! {
     }
 }
 
+prop_compose! {
+    fn arb_operation()(
+        variant in 0..2usize,
+        cmd in "[a-z ]+",
+    ) -> conductor_core::app::Operation {
+        match variant {
+            0 => conductor_core::app::Operation::Bash { cmd },
+            _ => conductor_core::app::Operation::Compact,
+        }
+    }
+}
+
+prop_compose! {
+    fn arb_operation_outcome()(
+        variant in 0..2usize,
+        elapsed_ms in 1u64..10000,
+        exit_code in 0i32..255,
+        stderr in ".*",
+        compact_msg in ".*",
+        result_is_ok in prop::bool::ANY,
+    ) -> conductor_core::app::OperationOutcome {
+        let elapsed = std::time::Duration::from_millis(elapsed_ms);
+        match variant {
+            0 => conductor_core::app::OperationOutcome::Bash {
+                elapsed,
+                result: if result_is_ok {
+                    Ok(())
+                } else {
+                    Err(conductor_core::app::BashError { exit_code, stderr })
+                },
+            },
+            _ => conductor_core::app::OperationOutcome::Compact {
+                elapsed,
+                result: if result_is_ok {
+                    Ok(())
+                } else {
+                    Err(conductor_core::app::CompactError { message: compact_msg })
+                },
+            },
+        }
+    }
+}
+
 // Property tests
 proptest! {
     #[test]
@@ -564,7 +607,7 @@ proptest! {
 
     #[test]
     fn prop_operation_cancelled_roundtrip(info in arb_cancellation_info()) {
-        let app_event = AppEvent::OperationCancelled { info: info.clone() };
+        let app_event = AppEvent::OperationCancelled { op_id: None, info: info.clone() };
 
         // Convert to proto
         let proto_event = app_event_to_server_event(app_event, 42).unwrap();
@@ -572,7 +615,7 @@ proptest! {
         // Convert back
         let roundtrip = server_event_to_app_event(proto_event).unwrap();
 
-        if let AppEvent::OperationCancelled { info: roundtrip_info } = roundtrip {
+        if let AppEvent::OperationCancelled { op_id: _, info: roundtrip_info } = roundtrip {
             prop_assert_eq!(info.api_call_in_progress, roundtrip_info.api_call_in_progress);
             prop_assert_eq!(info.pending_tool_approvals, roundtrip_info.pending_tool_approvals);
 
@@ -691,6 +734,81 @@ proptest! {
                 prop_assert!(result.is_ok());
                 prop_assert!(result.unwrap().is_none());
             }
+        }
+    }
+
+    #[test]
+    fn prop_started_event_roundtrip(op in arb_operation()) {
+        let id = uuid::Uuid::new_v4();
+        let app_event = AppEvent::Started { id, op: op.clone() };
+
+        // Convert to proto
+        let proto_event = app_event_to_server_event(app_event, 42).unwrap();
+
+        // Convert back
+        let roundtrip = server_event_to_app_event(proto_event).unwrap();
+
+        if let AppEvent::Started { id: roundtrip_id, op: roundtrip_op } = roundtrip {
+            prop_assert_eq!(id, roundtrip_id);
+
+            // Compare the Operation variants
+            match (&op, &roundtrip_op) {
+                (conductor_core::app::Operation::Bash { cmd: c1 },
+                 conductor_core::app::Operation::Bash { cmd: c2 }) => {
+                    prop_assert_eq!(c1, c2);
+                }
+                (conductor_core::app::Operation::Compact,
+                 conductor_core::app::Operation::Compact) => {},
+                _ => prop_assert!(false, "Operation variant mismatch"),
+            }
+        } else {
+            prop_assert!(false, "Expected Started event");
+        }
+    }
+
+    #[test]
+    fn prop_finished_event_roundtrip(outcome in arb_operation_outcome()) {
+        let id = uuid::Uuid::new_v4();
+        let app_event = AppEvent::Finished { id, outcome: outcome.clone() };
+
+        // Convert to proto
+        let proto_event = app_event_to_server_event(app_event, 42).unwrap();
+
+        // Convert back
+        let roundtrip = server_event_to_app_event(proto_event).unwrap();
+
+        if let AppEvent::Finished { id: roundtrip_id, outcome: roundtrip_outcome } = roundtrip {
+            prop_assert_eq!(id, roundtrip_id);
+
+            // Compare the OperationOutcome variants
+            match (&outcome, &roundtrip_outcome) {
+                (conductor_core::app::OperationOutcome::Bash { elapsed: e1, result: r1 },
+                 conductor_core::app::OperationOutcome::Bash { elapsed: e2, result: r2 }) => {
+                    prop_assert_eq!(e1, e2);
+                    match (r1, r2) {
+                        (Ok(()), Ok(())) => {},
+                        (Err(err1), Err(err2)) => {
+                            prop_assert_eq!(err1.exit_code, err2.exit_code);
+                            prop_assert_eq!(&err1.stderr, &err2.stderr);
+                        }
+                        _ => prop_assert!(false, "Bash result mismatch"),
+                    }
+                }
+                (conductor_core::app::OperationOutcome::Compact { elapsed: e1, result: r1 },
+                 conductor_core::app::OperationOutcome::Compact { elapsed: e2, result: r2 }) => {
+                    prop_assert_eq!(e1, e2);
+                    match (r1, r2) {
+                        (Ok(()), Ok(())) => {},
+                        (Err(err1), Err(err2)) => {
+                            prop_assert_eq!(&err1.message, &err2.message);
+                        }
+                        _ => prop_assert!(false, "Compact result mismatch"),
+                    }
+                }
+                _ => prop_assert!(false, "OperationOutcome variant mismatch"),
+            }
+        } else {
+            prop_assert!(false, "Expected Finished event");
         }
     }
 }

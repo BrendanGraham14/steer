@@ -54,6 +54,8 @@ pub struct ProcessingContext<'a> {
     pub messages_updated: &'a mut bool,
     /// Current thread ID (None until first message)
     pub current_thread: Option<uuid::Uuid>,
+    /// Track in-flight operations (operation_id -> row_index)
+    pub in_flight_operations: &'a mut std::collections::HashMap<uuid::Uuid, usize>,
 }
 
 #[async_trait]

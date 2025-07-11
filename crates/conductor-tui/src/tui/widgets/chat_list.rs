@@ -131,6 +131,7 @@ pub struct ChatList<'a> {
     block: Option<Block<'a>>,
     hovered_message_id: Option<&'a str>,
     theme: &'a Theme,
+    spinner_state: usize,
 }
 
 impl<'a> ChatList<'a> {
@@ -140,6 +141,7 @@ impl<'a> ChatList<'a> {
             block: None,
             hovered_message_id: None,
             theme,
+            spinner_state: 0,
         }
     }
 
@@ -175,6 +177,11 @@ impl<'a> ChatList<'a> {
         }
 
         lines
+    }
+
+    pub fn spinner_state(mut self, state: usize) -> Self {
+        self.spinner_state = state;
+        self
     }
 
     fn render_gutter(&self, message: &MessageRow, is_hovered: bool) -> Line<'static> {
@@ -224,6 +231,13 @@ impl<'a> ChatList<'a> {
         view_mode: ViewMode,
         cache: Option<&mut HashMap<CacheKey, RenderCache>>,
     ) -> (Vec<Line<'static>>, u16) {
+        // Skip caching for dynamic items that animate each frame
+        if matches!(
+            item,
+            ChatItem::InFlightOperation { .. } | ChatItem::PendingToolCall { .. }
+        ) {
+            return self.render_item_uncached(item, width, view_mode);
+        }
         // Try cache first if available
         if let Some(cache_map) = cache {
             let key = Self::get_item_cache_key(item, width, view_mode);
@@ -253,26 +267,49 @@ impl<'a> ChatList<'a> {
             }
 
             ChatItem::PendingToolCall { tool_call, .. } => {
-                let mut lines = vec![];
+                // Get spinner frame based on current state
+                let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let frame_idx = self.spinner_state % spinner_frames.len();
+                let spinner = spinner_frames[frame_idx];
 
-                // Render the pending tool call
+                // Render the pending tool call with spinner
                 let first_line = vec![
                     Span::raw("  "), // Indent
-                    Span::styled("⚙", self.theme.style(Component::ToolCall)),
+                    Span::styled(
+                        spinner,
+                        self.theme
+                            .style(Component::ToolCall)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(" "),
                     Span::styled(
                         tool_call.name.clone(),
                         self.theme.style(Component::ToolCallHeader),
                     ),
                     Span::styled(" ⋯ ", self.theme.style(Component::DimText)),
-                    Span::styled(
-                        "Pending...",
-                        self.theme
-                            .style(Component::DimText)
-                            .add_modifier(Modifier::ITALIC),
-                    ),
                 ];
-                lines.push(Line::from(first_line));
+
+                let formatter = formatters::get_formatter(&tool_call.name);
+                let params = tool_call.parameters.clone();
+                let result = None;
+                let formatted_params_lines =
+                    formatter.compact(&params, &result, max_width, self.theme);
+
+                let mut lines = Vec::new();
+                if let Some((first, rest)) = formatted_params_lines.split_first() {
+                    // Compose the first line by joining the header and the first formatted param line
+                    let mut first_line = first_line.clone();
+                    // If the first formatted param line has any spans, append them
+                    first_line.extend(first.spans.clone());
+                    lines.push(Line::from(first_line));
+                    // Add the rest of the formatted param lines as-is
+                    for l in rest {
+                        lines.push(l.clone());
+                    }
+                } else {
+                    // No formatted params, just use the header line
+                    lines.push(Line::from(first_line));
+                }
 
                 let height = lines.len() as u16;
                 (lines, height)
@@ -321,7 +358,7 @@ impl<'a> ChatList<'a> {
                     conductor_core::app::conversation::CommandResponse::Compact(result) => {
                         match result {
                             conductor_core::app::conversation::CompactResult::Success(summary) => {
-                                format!("Compact completed.\n\n{summary}")
+                                summary.clone()
                             }
                             conductor_core::app::conversation::CompactResult::Cancelled => {
                                 "Compact cancelled.".to_string()
@@ -436,6 +473,35 @@ impl<'a> ChatList<'a> {
 
                     lines.push(Line::from(line_spans));
                 }
+
+                let height = lines.len() as u16;
+                (lines, height)
+            }
+
+            ChatItem::InFlightOperation { label, .. } => {
+                let mut lines = vec![];
+
+                // Get spinner frame based on current state
+                let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let frame_idx = self.spinner_state % spinner_frames.len();
+                let spinner = spinner_frames[frame_idx];
+
+                // Render gutter and spinner with label
+                let mut first_line = vec![];
+                first_line.extend(self.render_meta_gutter().spans);
+                first_line.push(Span::raw(" "));
+                first_line.push(Span::styled(
+                    spinner,
+                    self.theme
+                        .style(Component::TodoInProgress)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                first_line.push(Span::raw(" "));
+                first_line.push(Span::styled(
+                    label.clone(),
+                    self.theme.style(Component::TodoInProgress),
+                ));
+                lines.push(Line::from(first_line));
 
                 let height = lines.len() as u16;
                 (lines, height)
@@ -1088,8 +1154,6 @@ impl StatefulWidget for ChatList<'_> {
                     state.view_mode,
                     Some(&mut state.line_cache),
                 );
-
-                // Calculate where to start rendering this item
                 if item_y < visible_start {
                     // Item starts above visible area, skip some lines
                     let skip_lines = (visible_start - item_y) as usize;

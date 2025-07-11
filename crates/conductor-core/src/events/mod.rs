@@ -1,9 +1,9 @@
 use crate::api::Model;
-use crate::app::Message;
+use crate::app::conversation::ToolResult;
+use crate::app::{Message, Operation, OperationOutcome};
 use crate::session::SessionInfo;
 use chrono::{DateTime, Utc};
 use conductor_tools::ToolCall;
-use conductor_tools::result::ToolResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -75,13 +75,15 @@ pub enum StreamEvent {
 
     // Operation events
     OperationStarted {
-        operation_id: String,
+        operation_id: uuid::Uuid,
+        operation: Operation,
     },
     OperationCompleted {
-        operation_id: String,
+        operation_id: uuid::Uuid,
+        outcome: OperationOutcome,
     },
     OperationCancelled {
-        operation_id: String,
+        operation_id: uuid::Uuid,
         reason: String,
     },
 
@@ -174,10 +176,10 @@ impl StreamEvent {
     }
 
     /// Get the operation ID if this event relates to an operation
-    pub fn operation_id(&self) -> Option<&str> {
+    pub fn operation_id(&self) -> Option<&uuid::Uuid> {
         match self {
-            StreamEvent::OperationStarted { operation_id }
-            | StreamEvent::OperationCompleted { operation_id }
+            StreamEvent::OperationStarted { operation_id, .. }
+            | StreamEvent::OperationCompleted { operation_id, .. }
             | StreamEvent::OperationCancelled { operation_id, .. } => Some(operation_id),
             _ => None,
         }
@@ -348,12 +350,9 @@ mod tests {
 
     #[test]
     fn test_stream_event_serialization() {
-        let event = StreamEvent::ToolCallStarted {
-            tool_call: ToolCall {
-                id: "tool_123".to_string(),
-                name: "edit_file".to_string(),
-                parameters: serde_json::json!({"path": "/test.txt"}),
-            },
+        let event = StreamEvent::ToolCallFailed {
+            tool_call_id: "tool_123".to_string(),
+            error: "Failed to execute".to_string(),
             metadata: HashMap::new(),
             model: crate::api::Model::ClaudeSonnet4_20250514,
         };
@@ -361,11 +360,15 @@ mod tests {
         let serialized = serde_json::to_string(&event).unwrap();
         let deserialized: StreamEvent = serde_json::from_str(&serialized).unwrap();
 
-        assert!(matches!(deserialized, StreamEvent::ToolCallStarted { .. }));
+        assert!(matches!(deserialized, StreamEvent::ToolCallFailed { .. }));
         match deserialized {
-            StreamEvent::ToolCallStarted { tool_call, .. } => {
-                assert_eq!(tool_call.name, "edit_file");
-                assert_eq!(tool_call.id, "tool_123");
+            StreamEvent::ToolCallFailed {
+                tool_call_id,
+                error,
+                ..
+            } => {
+                assert_eq!(tool_call_id, "tool_123");
+                assert_eq!(error, "Failed to execute");
             }
             _ => unreachable!(),
         }
@@ -400,26 +403,23 @@ mod tests {
         };
         assert!(tool_failed.is_error());
 
-        let tool_started = StreamEvent::ToolCallStarted {
+        let tool_approval = StreamEvent::ToolApprovalRequired {
             tool_call: ToolCall {
                 id: "tool_123".to_string(),
                 name: "edit_file".to_string(),
                 parameters: serde_json::json!({}),
             },
+            timeout_ms: None,
             metadata: HashMap::new(),
-            model: crate::api::Model::ClaudeSonnet4_20250514,
         };
-        assert!(!tool_started.is_error());
+        assert!(!tool_approval.is_error());
     }
 
     #[test]
     fn test_event_id_extraction() {
-        let tool_event = StreamEvent::ToolCallStarted {
-            tool_call: ToolCall {
-                id: "tool_123".to_string(),
-                name: "edit_file".to_string(),
-                parameters: serde_json::json!({}),
-            },
+        let tool_event = StreamEvent::ToolCallFailed {
+            tool_call_id: "tool_123".to_string(),
+            error: "Failed".to_string(),
             metadata: HashMap::new(),
             model: crate::api::Model::ClaudeSonnet4_20250514,
         };
@@ -431,10 +431,14 @@ mod tests {
         };
         assert_eq!(message_event.message_id(), Some("msg_123"));
 
+        let op_id = uuid::Uuid::new_v4();
         let operation_event = StreamEvent::OperationStarted {
-            operation_id: "op_123".to_string(),
+            operation_id: op_id,
+            operation: crate::app::Operation::Bash {
+                cmd: "echo hello".to_string(),
+            },
         };
-        assert_eq!(operation_event.operation_id(), Some("op_123"));
+        assert_eq!(operation_event.operation_id(), Some(&op_id));
 
         let session_event = StreamEvent::SessionCreated {
             session_id: "session_123".to_string(),
@@ -449,12 +453,9 @@ mod tests {
 
     #[test]
     fn test_event_filter() {
-        let event = StreamEvent::ToolCallStarted {
-            tool_call: ToolCall {
-                id: "tool_123".to_string(),
-                name: "edit_file".to_string(),
-                parameters: serde_json::json!({}),
-            },
+        let event = StreamEvent::ToolCallFailed {
+            tool_call_id: "tool_123".to_string(),
+            error: "Failed".to_string(),
             metadata: HashMap::new(),
             model: crate::api::Model::ClaudeSonnet4_20250514,
         };
@@ -475,7 +476,7 @@ mod tests {
         assert!(!wrong_session_filter.matches(&event_with_metadata));
 
         // Test type filter
-        let type_filter = EventFilter::for_types(vec!["tool_call_started".to_string()]);
+        let type_filter = EventFilter::for_types(vec!["tool_call_failed".to_string()]);
         assert!(type_filter.matches(&event_with_metadata));
 
         let wrong_type_filter = EventFilter::for_types(vec!["message_part".to_string()]);

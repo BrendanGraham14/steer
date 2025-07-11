@@ -11,26 +11,16 @@ use crate::session::state::WorkspaceConfig;
 #[cfg(not(test))]
 use crate::auth::DefaultAuthStorage;
 
-/// Record of a tool execution for audit purposes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResultRecord {
-    pub tool_call_id: String,
-    pub output: String,
-    pub is_error: bool,
-}
 use crate::session::{
     manager::SessionManager,
     state::{SessionConfig, SessionToolConfig, ToolApprovalPolicy},
 };
 
-/// Contains the result of a single agent run, including the final assistant message
-/// and all tool results produced during the run.
+/// Contains the result of a single agent run
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOnceResult {
     /// The final assistant message after all tools have been executed
     pub final_msg: Message,
-    /// All tool results produced during the run (for audit logging)
-    pub tool_results: Vec<ToolResultRecord>,
 }
 
 /// Orchestrates single non-interactive agent loop executions using the session system.
@@ -229,13 +219,8 @@ impl OneShotRunner {
     ) -> Result<RunOnceResult> {
         use crate::app::AppEvent;
 
-        let mut tool_results = Vec::new();
         let mut assistant_message: Option<Message> = None;
         let mut _current_assistant_id: Option<String> = None;
-
-        // Track tool calls that have been started but not completed
-        let mut pending_tool_calls: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
 
         info!(session_id = %session_id, "Starting event processing loop");
 
@@ -257,41 +242,10 @@ impl OneShotRunner {
                     // We'll get the final message in MessageAdded, so we can ignore updates
                 }
 
-                AppEvent::ToolCallStarted { name, id, .. } => {
-                    info!(session_id = %session_id, name = %name, id = %id, "ToolCallStarted event");
-                    pending_tool_calls.insert(id.clone(), name);
-                }
-
-                AppEvent::ToolCallCompleted {
-                    name, result, id, ..
-                } => {
-                    info!(session_id = %session_id, name = %name, id = %id, "ToolCallCompleted event");
-                    pending_tool_calls.remove(&id);
-
-                    tool_results.push(ToolResultRecord {
-                        tool_call_id: id.clone(),
-                        output: result.llm_format(),
-                        is_error: false,
-                    });
-                }
-
-                AppEvent::ToolCallFailed {
-                    name, error, id, ..
-                } => {
-                    error!(session_id = %session_id, name = %name, id = %id, error = %error, "ToolCallFailed event");
-                    pending_tool_calls.remove(&id);
-
-                    tool_results.push(ToolResultRecord {
-                        tool_call_id: id.clone(),
-                        output: error,
-                        is_error: true,
-                    });
-                }
-
-                AppEvent::ThinkingCompleted => {
-                    info!(session_id = %session_id, "ThinkingCompleted event received");
-                    // Check if we have an assistant message and no pending tool calls
-                    if assistant_message.is_some() && pending_tool_calls.is_empty() {
+                AppEvent::ProcessingCompleted => {
+                    info!(session_id = %session_id, "ProcessingCompleted event received");
+                    // Check if we have an assistant message
+                    if assistant_message.is_some() {
                         info!(session_id = %session_id, "Assistant response complete, exiting event loop");
                         break;
                     }
@@ -310,7 +264,7 @@ impl OneShotRunner {
                 }
 
                 _ => {
-                    // Ignore other events like ThinkingStarted, ModelChanged, etc.
+                    // Ignore other events like ProcessingStarted, ModelChanged, etc.
                 }
             }
         }
@@ -320,13 +274,9 @@ impl OneShotRunner {
             Some(final_msg) => {
                 info!(
                     session_id = %session_id,
-                    tool_results_count = tool_results.len(),
                     "Returning final result"
                 );
-                Ok(RunOnceResult {
-                    final_msg,
-                    tool_results,
-                })
+                Ok(RunOnceResult { final_msg })
             }
             None => Err(Error::InvalidOperation(
                 "No assistant response received".to_string(),
@@ -915,9 +865,6 @@ mod tests {
             _ => false,
         };
         assert!(has_content, "Response should have some content");
-
-        // Should have some tool results since we asked to list files
-        println!("Tool results: {:?}", result.tool_results);
     }
 
     #[tokio::test]

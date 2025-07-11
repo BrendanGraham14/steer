@@ -2,6 +2,7 @@
 //!
 //! This module implements the terminal user interface using ratatui.
 
+use std::collections::HashMap;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -152,6 +153,8 @@ pub struct Tui {
     setup_state: Option<SetupState>,
     /// Authentication controller (if active)
     auth_controller: Option<AuthController>,
+    /// Track in-flight operations (operation_id -> chat_store_index)
+    in_flight_operations: HashMap<uuid::Uuid, usize>,
 }
 
 impl Tui {
@@ -214,6 +217,7 @@ impl Tui {
             theme: theme.unwrap_or_default(),
             setup_state: None,
             auth_controller: None,
+            in_flight_operations: HashMap::new(),
         };
 
         // Restore messages using the public method
@@ -449,7 +453,13 @@ impl Tui {
                     needs_redraw = true;
                 }
                 _ = tick.tick() => {
-                    if self.is_processing {
+                    // Check if we should animate the spinner
+                    let has_pending_tools = !self.view_model.tool_registry.pending_calls().is_empty()
+                        || !self.view_model.tool_registry.active_calls().is_empty()
+                        || self.view_model.chat_store.has_pending_tools();
+                    let has_in_flight_operations = !self.in_flight_operations.is_empty();
+
+                    if self.is_processing || has_pending_tools || has_in_flight_operations {
                         self.spinner_state = self.spinner_state.wrapping_add(1);
                         let ch = get_spinner_char(self.spinner_state);
                         if ch != last_spinner_char {
@@ -719,6 +729,7 @@ impl Tui {
             current_model: &mut self.current_model,
             messages_updated: &mut messages_updated,
             current_thread: self.view_model.current_thread,
+            in_flight_operations: &mut self.in_flight_operations,
         };
 
         // Process the event through the pipeline
@@ -828,8 +839,9 @@ impl Tui {
             .style(theme.style(theme::Component::ChatListBorder));
 
         // Use the ChatList widget as a stateful widget
-        let chat_list =
-            ChatList::new(chat_items, theme).hovered_message_id(edit_selection_hovered_id);
+        let chat_list = ChatList::new(chat_items, theme)
+            .hovered_message_id(edit_selection_hovered_id)
+            .spinner_state(spinner_state);
         f.render_stateful_widget(chat_list, chunks[0], chat_list_state);
 
         // Render input panel using stateful widget
