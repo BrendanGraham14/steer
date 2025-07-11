@@ -278,7 +278,18 @@ impl Client {
         max_attempts: usize,
     ) -> std::result::Result<CompletionResponse, ApiError> {
         let mut attempts = 0;
-        debug!(target: "api::complete", "model: {:?} messages: {:?}", model, messages);
+        debug!(
+            target: "api::complete",
+            model =% model,
+            "system: {:?}",
+            system_prompt
+        );
+        debug!(
+            target: "api::complete",
+            model =% model,
+            "messages: {:?}",
+            messages
+        );
         loop {
             match self
                 .complete(
