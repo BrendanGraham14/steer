@@ -529,49 +529,84 @@ impl StatefulWidget for InputPanel<'_> {
                 self.theme,
             );
 
-            let mut approval_text = vec![
-                Line::from(vec![
-                    Span::styled("Tool ", Style::default()),
-                    Span::styled(&tool_call.name, self.theme.style(Component::ToolCallHeader)),
-                    Span::styled(" requests approval:", Style::default()),
-                ]),
-                Line::from(""),
-            ];
-            approval_text.extend(preview_lines);
             let is_bash_command = tool_call.name == "bash";
 
-            let title = if is_bash_command {
-                Line::from(vec![
-                    Span::raw(" Tool Approval Required "),
-                    Span::raw("─ "),
-                    Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
-                    Span::styled(" once", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                    Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
-                    Span::styled("lways (this command)", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                    Span::styled("[L]", self.theme.style(Component::ToolSuccess)),
-                    Span::styled(" Always", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                    Span::styled("[N]", self.theme.style(Component::ToolError)),
-                    Span::styled("o", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                ])
+            let mut approval_text = if is_bash_command {
+                vec![
+                    Line::from(vec![
+                        Span::styled("Tool ", Style::default()),
+                        Span::styled(&tool_call.name, self.theme.style(Component::ToolCallHeader)),
+                        Span::styled(" wants to run this shell command", Style::default()),
+                    ]),
+                    Line::from(""),
+                ]
             } else {
-                Line::from(vec![
-                    Span::raw(" Tool Approval Required "),
-                    Span::raw("─ "),
-                    Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
-                    Span::styled(" once", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                    Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
-                    Span::styled("lways", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                    Span::styled("[N]", self.theme.style(Component::ToolError)),
-                    Span::styled("o", self.theme.style(Component::DimText)),
-                    Span::raw(" "),
-                ])
+                vec![
+                    Line::from(vec![
+                        Span::styled("Tool ", Style::default()),
+                        Span::styled(&tool_call.name, self.theme.style(Component::ToolCallHeader)),
+                        Span::styled(" needs your approval", Style::default()),
+                    ]),
+                    Line::from(""),
+                ]
             };
+            approval_text.extend(preview_lines);
+
+            let approval_keybinds = if is_bash_command {
+                vec![
+                    (
+                        Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
+                        Span::styled("Yes (once)", self.theme.style(Component::DimText)),
+                    ),
+                    (
+                        Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
+                        Span::styled(
+                            "Always (this command)",
+                            self.theme.style(Component::DimText),
+                        ),
+                    ),
+                    (
+                        Span::styled("[L]", self.theme.style(Component::ToolSuccess)),
+                        Span::styled(
+                            "Always (all Bash commands)",
+                            self.theme.style(Component::DimText),
+                        ),
+                    ),
+                    (
+                        Span::styled("[N]", self.theme.style(Component::ToolError)),
+                        Span::styled("No", self.theme.style(Component::DimText)),
+                    ),
+                ]
+            } else {
+                vec![
+                    (
+                        Span::styled("[Y]", self.theme.style(Component::ToolSuccess)),
+                        Span::styled("Yes (once)", self.theme.style(Component::DimText)),
+                    ),
+                    (
+                        Span::styled("[A]", self.theme.style(Component::ToolSuccess)),
+                        Span::styled("Always", self.theme.style(Component::DimText)),
+                    ),
+                    (
+                        Span::styled("[N]", self.theme.style(Component::ToolError)),
+                        Span::styled("No", self.theme.style(Component::DimText)),
+                    ),
+                ]
+            };
+
+            let mut title_spans = vec![Span::raw(" Approval Required "), Span::raw("─ ")];
+
+            for (i, (key, desc)) in approval_keybinds.iter().enumerate() {
+                if i > 0 {
+                    title_spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
+                }
+                title_spans.push(key.clone());
+                title_spans.push(Span::raw(" "));
+                title_spans.push(desc.clone());
+            }
+            title_spans.push(Span::raw(" "));
+
+            let title = Line::from(title_spans);
 
             let approval_block = Paragraph::new(approval_text).block(
                 Block::default()
