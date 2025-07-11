@@ -1,6 +1,7 @@
 use crate::auth::error::{AuthError, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use strum::Display;
@@ -33,6 +34,13 @@ pub enum CredentialType {
     AuthTokens,
     ApiKey,
 }
+
+/// Collection of all credentials kept in the keyring. The first key is the
+/// provider id (e.g. `"anthropic"`), the second key is the credential type
+/// (`"AuthTokens"` / `"ApiKey"`). Each leaf holds the raw `Credential` value
+/// for that pair.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct CredentialStore(HashMap<String, HashMap<CredentialType, Credential>>);
 
 #[async_trait]
 pub trait AuthStorage: Send + Sync {
@@ -70,10 +78,6 @@ impl KeyringStorage {
     fn get_username() -> String {
         whoami::username()
     }
-
-    fn get_target(provider: &str, credential_type: CredentialType) -> String {
-        format!("{provider}-{credential_type}")
-    }
 }
 
 #[async_trait]
@@ -83,44 +87,58 @@ impl AuthStorage for KeyringStorage {
         provider: &str,
         credential_type: CredentialType,
     ) -> Result<Option<Credential>> {
-        let service = self.service_name.clone();
+        let provider = provider.to_string();
         let username = Self::get_username();
-        let target = Self::get_target(provider, credential_type);
+        let service = self.service_name.clone();
 
-        // Run blocking keyring operation in a spawn_blocking task
-        let result = tokio::task::spawn_blocking(
+        // Load, parse and query the credential store
+        tokio::task::spawn_blocking(
             move || -> std::result::Result<Option<Credential>, keyring::Error> {
-                let entry = keyring::Entry::new_with_target(&target, &service, &username)?;
-                let password = match entry.get_password() {
+                let entry = keyring::Entry::new(&service, &username)?;
+                let store_json = match entry.get_password() {
                     Ok(pwd) => pwd,
                     Err(keyring::Error::NoEntry) => return Ok(None),
                     Err(e) => return Err(e),
                 };
 
-                let credential: Credential = match serde_json::from_str(&password) {
-                    Ok(credential) => credential,
-                    Err(_) => return Err(keyring::Error::NoEntry), // Use NoEntry as a generic error
-                };
-                Ok(Some(credential))
+                let store: CredentialStore = serde_json::from_str(&store_json).unwrap_or_default();
+                let cred = store
+                    .0
+                    .get(&provider)
+                    .and_then(|m| m.get(&credential_type))
+                    .cloned();
+                Ok(cred)
             },
         )
         .await
-        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?;
-
-        result.map_err(AuthError::from)
+        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?
+        .map_err(AuthError::from)
     }
 
     async fn set_credential(&self, provider: &str, credential: Credential) -> Result<()> {
         let service = self.service_name.clone();
         let username = Self::get_username();
-        let target = Self::get_target(provider, credential.credential_type());
-        let password = serde_json::to_string(&credential)
-            .map_err(|e| AuthError::Storage(format!("Failed to serialize credential: {e}")))?;
+        let provider = provider.to_string();
+        let cred_type = credential.credential_type();
 
-        // Run blocking keyring operation in a spawn_blocking task
         tokio::task::spawn_blocking(move || -> std::result::Result<(), keyring::Error> {
-            let entry = keyring::Entry::new_with_target(&target, &service, &username)?;
-            entry.set_password(&password)?;
+            let entry = keyring::Entry::new(&service, &username)?;
+            // Load existing store (if any)
+            let mut store: CredentialStore = match entry.get_password() {
+                Ok(pwd) => serde_json::from_str(&pwd).unwrap_or_default(),
+                Err(keyring::Error::NoEntry) => CredentialStore::default(),
+                Err(e) => return Err(e),
+            };
+
+            // Update
+            store
+                .0
+                .entry(provider)
+                .or_default()
+                .insert(cred_type, credential);
+
+            let data = serde_json::to_string(&store).expect("serialize credential store");
+            entry.set_password(&data)?;
             Ok(())
         })
         .await
@@ -135,16 +153,35 @@ impl AuthStorage for KeyringStorage {
     ) -> Result<()> {
         let service = self.service_name.clone();
         let username = Self::get_username();
-        let target = Self::get_target(provider, credential_type);
+        let provider = provider.to_string();
 
-        // Run blocking keyring operation in a spawn_blocking task
         tokio::task::spawn_blocking(move || -> std::result::Result<(), keyring::Error> {
-            let entry = keyring::Entry::new_with_target(&target, &service, &username)?;
-            match entry.delete_credential() {
-                Ok(()) => Ok(()),
-                Err(keyring::Error::NoEntry) => Ok(()), // Already removed
-                Err(e) => Err(e),
+            let entry = keyring::Entry::new(&service, &username)?;
+
+            // Load existing store, return Ok if none
+            let store_json = match entry.get_password() {
+                Ok(pwd) => pwd,
+                Err(keyring::Error::NoEntry) => return Ok(()),
+                Err(e) => return Err(e),
+            };
+
+            let mut store: CredentialStore = serde_json::from_str(&store_json).unwrap_or_default();
+
+            if let Some(map) = store.0.get_mut(&provider) {
+                map.remove(&credential_type);
+                if map.is_empty() {
+                    store.0.remove(&provider);
+                }
             }
+
+            if store.0.is_empty() {
+                // No credentials left – remove the keyring entry entirely.
+                let _ = entry.delete_credential();
+            } else {
+                let data = serde_json::to_string(&store).expect("serialize credential store");
+                entry.set_password(&data)?;
+            }
+            Ok(())
         })
         .await
         .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?
@@ -152,218 +189,27 @@ impl AuthStorage for KeyringStorage {
     }
 }
 
-/// Fallback storage using encrypted file
-pub struct EncryptedFileStorage {
-    file_path: std::path::PathBuf,
-}
-
-impl EncryptedFileStorage {
-    pub fn new() -> Result<Self> {
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| AuthError::Storage("Unable to find config directory".to_string()))?;
-        let conductor_dir = config_dir.join("conductor");
-        std::fs::create_dir_all(&conductor_dir)?;
-
-        Ok(Self {
-            file_path: conductor_dir.join("credentials.json.enc"),
-        })
-    }
-
-    fn get_encryption_key() -> Result<[u8; 32]> {
-        use hkdf::Hkdf;
-        use sha2::Sha256;
-
-        let username = whoami::username();
-        let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let salt = format!("{username}-{hostname}");
-
-        let mut key = [0u8; 32];
-        let hkdf = Hkdf::<Sha256>::new(Some(salt.as_bytes()), b"conductor-oauth");
-        hkdf.expand(b"encryption-key", &mut key)
-            .map_err(|e| AuthError::Encryption(format!("Key derivation failed: {e}")))?;
-
-        Ok(key)
-    }
-
-    async fn read_encrypted_data(&self) -> Result<Vec<u8>> {
-        match tokio::fs::read(&self.file_path).await {
-            Ok(data) => Ok(data),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    async fn write_encrypted_data(&self, data: &[u8]) -> Result<()> {
-        tokio::fs::write(&self.file_path, data).await?;
-        Ok(())
-    }
-
-    fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        use aes_gcm::{
-            Aes256Gcm, Nonce,
-            aead::{Aead, KeyInit, OsRng},
-        };
-        use rand::Rng;
-
-        let key = Self::get_encryption_key()?;
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| AuthError::Encryption(format!("Failed to create cipher: {e}")))?;
-
-        let mut nonce_bytes = [0u8; 12];
-        OsRng.fill(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let ciphertext = cipher
-            .encrypt(nonce, plaintext)
-            .map_err(|e| AuthError::Encryption(format!("Encryption failed: {e}")))?;
-
-        // Prepend nonce to ciphertext
-        let mut result = nonce_bytes.to_vec();
-        result.extend_from_slice(&ciphertext);
-
-        Ok(result)
-    }
-
-    fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        use aes_gcm::{
-            Aes256Gcm, Nonce,
-            aead::{Aead, KeyInit},
-        };
-
-        if data.len() < 12 {
-            return Err(AuthError::Encryption("Invalid encrypted data".to_string()));
-        }
-
-        let (nonce_bytes, ciphertext) = data.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
-
-        let key = Self::get_encryption_key()?;
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| AuthError::Encryption(format!("Failed to create cipher: {e}")))?;
-
-        cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| AuthError::Encryption(format!("Decryption failed: {e}")))
-    }
-
-    fn make_key(provider: &str, credential_type: CredentialType) -> String {
-        format!("{provider}-{credential_type}")
-    }
-}
-
-#[async_trait]
-impl AuthStorage for EncryptedFileStorage {
-    async fn get_credential(
-        &self,
-        provider: &str,
-        credential_type: CredentialType,
-    ) -> Result<Option<Credential>> {
-        let encrypted_data = self.read_encrypted_data().await?;
-        if encrypted_data.is_empty() {
-            return Ok(None);
-        }
-
-        let decrypted = self.decrypt(&encrypted_data)?;
-        let all_credentials: std::collections::HashMap<String, Credential> =
-            serde_json::from_slice(&decrypted)
-                .map_err(|e| AuthError::Storage(format!("Failed to parse credentials: {e}")))?;
-
-        let key = Self::make_key(provider, credential_type);
-        Ok(all_credentials.get(&key).cloned())
-    }
-
-    async fn set_credential(&self, provider: &str, credential: Credential) -> Result<()> {
-        // Read existing credentials
-        let mut all_credentials: std::collections::HashMap<String, Credential> = if let Ok(data) =
-            self.read_encrypted_data().await
-        {
-            if data.is_empty() {
-                std::collections::HashMap::new()
-            } else {
-                let decrypted = self.decrypt(&data)?;
-                serde_json::from_slice(&decrypted)
-                    .map_err(|e| AuthError::Storage(format!("Failed to parse credentials: {e}")))?
-            }
-        } else {
-            std::collections::HashMap::new()
-        };
-
-        // Update credentials for this provider and type
-        let key = Self::make_key(provider, credential.credential_type());
-        all_credentials.insert(key, credential);
-
-        // Serialize and encrypt
-        let serialized = serde_json::to_vec(&all_credentials)
-            .map_err(|e| AuthError::Storage(format!("Failed to serialize credentials: {e}")))?;
-        let encrypted = self.encrypt(&serialized)?;
-
-        // Write to file
-        self.write_encrypted_data(&encrypted).await?;
-        Ok(())
-    }
-
-    async fn remove_credential(
-        &self,
-        provider: &str,
-        credential_type: CredentialType,
-    ) -> Result<()> {
-        // Read existing credentials
-        let encrypted_data = self.read_encrypted_data().await?;
-        if encrypted_data.is_empty() {
-            return Ok(()); // Nothing to remove
-        }
-
-        let decrypted = self.decrypt(&encrypted_data)?;
-        let mut all_credentials: std::collections::HashMap<String, Credential> =
-            serde_json::from_slice(&decrypted)
-                .map_err(|e| AuthError::Storage(format!("Failed to parse credentials: {e}")))?;
-
-        // Remove credentials for this provider and type
-        let key = Self::make_key(provider, credential_type);
-        all_credentials.remove(&key);
-
-        if all_credentials.is_empty() {
-            // Delete the file if no credentials remain
-            if let Err(e) = tokio::fs::remove_file(&self.file_path).await {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(e.into());
-                }
-            }
-        } else {
-            // Re-encrypt and write remaining credentials
-            let serialized = serde_json::to_vec(&all_credentials)
-                .map_err(|e| AuthError::Storage(format!("Failed to serialize credentials: {e}")))?;
-            let encrypted = self.encrypt(&serialized)?;
-            self.write_encrypted_data(&encrypted).await?;
-        }
-
-        Ok(())
-    }
-}
-
 /// Default storage implementation that tries keyring first, then falls back to encrypted file
 pub struct DefaultAuthStorage {
-    keyring: Option<Arc<dyn AuthStorage>>,
-    file: Arc<dyn AuthStorage>,
+    keyring: Arc<dyn AuthStorage>,
 }
 
 impl DefaultAuthStorage {
     pub fn new() -> Result<Self> {
         // Try to create keyring storage
-        let keyring = if cfg!(any(
+        if !cfg!(any(
             target_os = "macos",
             target_os = "windows",
             target_os = "linux"
         )) {
-            Some(Arc::new(KeyringStorage::new("conductor")) as Arc<dyn AuthStorage>)
-        } else {
-            None
-        };
+            return Err(AuthError::Storage(
+                "Keyring not supported on this platform".to_string(),
+            ));
+        }
 
-        // Always create file storage as fallback
-        let file = Arc::new(EncryptedFileStorage::new()?) as Arc<dyn AuthStorage>;
+        let keyring = Arc::new(KeyringStorage::new("conductor")) as Arc<dyn AuthStorage>;
 
-        Ok(Self { keyring, file })
+        Ok(Self { keyring })
     }
 
     // Convenience methods for working with specific credential types
@@ -415,35 +261,13 @@ impl AuthStorage for DefaultAuthStorage {
         provider: &str,
         credential_type: CredentialType,
     ) -> Result<Option<Credential>> {
-        // Try keyring first
-        if let Some(keyring) = &self.keyring {
-            match keyring.get_credential(provider, credential_type).await {
-                Ok(credential) => return Ok(credential),
-                Err(AuthError::Keyring(_)) => {
-                    // Keyring failed, fall back to file
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        // Fall back to file storage
-        self.file.get_credential(provider, credential_type).await
+        self.keyring.get_credential(provider, credential_type).await
     }
 
     async fn set_credential(&self, provider: &str, credential: Credential) -> Result<()> {
-        // Try keyring first
-        if let Some(keyring) = &self.keyring {
-            match keyring.set_credential(provider, credential.clone()).await {
-                Ok(()) => return Ok(()),
-                Err(AuthError::Keyring(_)) => {
-                    // Keyring failed, fall back to file
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        // Fall back to file storage
-        self.file.set_credential(provider, credential).await
+        self.keyring
+            .set_credential(provider, credential.clone())
+            .await
     }
 
     async fn remove_credential(
@@ -451,23 +275,8 @@ impl AuthStorage for DefaultAuthStorage {
         provider: &str,
         credential_type: CredentialType,
     ) -> Result<()> {
-        let mut any_error = None;
-
-        // Try to remove from both storages
-        if let Some(keyring) = &self.keyring {
-            if let Err(e) = keyring.remove_credential(provider, credential_type).await {
-                any_error = Some(e);
-            }
-        }
-
-        if let Err(e) = self.file.remove_credential(provider, credential_type).await {
-            any_error = Some(e);
-        }
-
-        if let Some(e) = any_error {
-            Err(e)
-        } else {
-            Ok(())
-        }
+        self.keyring
+            .remove_credential(provider, credential_type)
+            .await
     }
 }
