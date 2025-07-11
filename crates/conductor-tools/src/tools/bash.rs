@@ -4,6 +4,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -75,7 +76,8 @@ async fn run_command(command: &str, context: &ExecutionContext) -> Result<BashRe
         .arg(command)
         .current_dir(&context.working_directory)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true); // This ensures the child is killed when dropped
 
     // Set environment variables
     // TODO: Do we want to do this?
@@ -83,23 +85,73 @@ async fn run_command(command: &str, context: &ExecutionContext) -> Result<BashRe
         cmd.env(key, value);
     }
 
-    let output = cmd
+    let mut child = cmd
         .spawn()
-        .map_err(|e| ToolError::io(BASH_TOOL_NAME, e.to_string()))?
-        .wait_with_output()
-        .await
         .map_err(|e| ToolError::io(BASH_TOOL_NAME, e.to_string()))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-1);
+    // Take the stdout and stderr handles
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ToolError::io(BASH_TOOL_NAME, "Failed to capture stdout".to_string()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ToolError::io(BASH_TOOL_NAME, "Failed to capture stderr".to_string()))?;
 
-    Ok(BashResult {
-        stdout,
-        stderr,
-        exit_code,
-        command: command.to_string(),
-    })
+    // Read stdout and stderr concurrently with the process execution
+    let stdout_handle = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await.map(|_| buf)
+    });
+
+    let stderr_handle = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await.map(|_| buf)
+    });
+
+    // Wait for the process to complete, with cancellation support
+    let result = tokio::select! {
+        _ = context.cancellation_token.cancelled() => {
+            // The child will be killed automatically when dropped due to kill_on_drop(true)
+            // But we can also explicitly kill it to be sure
+            let _ = child.kill().await;
+            // Also abort the read tasks
+            stdout_handle.abort();
+            stderr_handle.abort();
+            return Err(ToolError::Cancelled(BASH_TOOL_NAME.to_string()));
+        }
+        status = child.wait() => {
+            match status {
+                Ok(status) => {
+                    // Now collect the output that was already being read concurrently
+                    let (stdout_result, stderr_result) = tokio::try_join!(stdout_handle, stderr_handle)
+                        .map_err(|e| ToolError::io(BASH_TOOL_NAME, format!("Failed to join read tasks: {e}")))?;
+
+                    let stdout_bytes = stdout_result.map_err(|e|
+                        ToolError::io(BASH_TOOL_NAME, format!("Failed to read stdout: {e}"))
+                    )?;
+                    let stderr_bytes = stderr_result.map_err(|e|
+                        ToolError::io(BASH_TOOL_NAME, format!("Failed to read stderr: {e}"))
+                    )?;
+
+                    let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+                    let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+                    let exit_code = status.code().unwrap_or(-1);
+
+                    Ok(BashResult {
+                        stdout,
+                        stderr,
+                        exit_code,
+                        command: command.to_string(),
+                    })
+                }
+                Err(e) => Err(ToolError::io(BASH_TOOL_NAME, e.to_string()))
+            }
+        }
+    };
+
+    result
 }
 
 static BANNED_COMMAND_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {
