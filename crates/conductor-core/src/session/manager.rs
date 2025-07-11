@@ -3,7 +3,7 @@ use crate::app::{
     App, AppCommand, AppConfig, AppEvent, Conversation, Message as ConversationMessage,
 };
 use crate::error::{Error, Result};
-use crate::events::{StreamEvent, StreamEventWithMetadata};
+use crate::events::StreamEvent;
 use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate,
@@ -69,7 +69,6 @@ impl ManagedSession {
         session: Session,
         app_config: AppConfig,
         store: Arc<dyn SessionStore>,
-        global_event_tx: mpsc::Sender<StreamEventWithMetadata>,
         default_model: Model,
         conversation: Option<Conversation>,
     ) -> Result<Self> {
@@ -136,7 +135,6 @@ impl ManagedSession {
         // Spawn the event translation/duplication task
         let session_id = session.id.clone();
         let store_clone = store.clone();
-        let global_event_tx_clone = global_event_tx.clone();
 
         let event_task_handle = tokio::spawn(async move {
             while let Some(app_event) = app_event_rx.recv().await {
@@ -148,7 +146,7 @@ impl ManagedSession {
                 // Translate and persist
                 if let Some(stream_event) = translate_app_event(app_event) {
                     // Persist event
-                    if let Ok(sequence_num) =
+                    if let Ok(_sequence_num) =
                         store_clone.append_event(&session_id, &stream_event).await
                     {
                         // Update session state in store
@@ -157,17 +155,6 @@ impl ManagedSession {
                                 .await
                         {
                             error!(session_id = %session_id, error = %e, "Failed to update session state");
-                        }
-
-                        // Broadcast
-                        let event_with_metadata = StreamEventWithMetadata::new(
-                            sequence_num,
-                            session_id.clone(),
-                            stream_event,
-                        );
-                        if let Err(e) = global_event_tx_clone.try_send(event_with_metadata.clone())
-                        {
-                            warn!(session_id = %session_id, error = %e, "Failed to broadcast event {:?}", event_with_metadata);
                         }
                     }
                 }
@@ -220,22 +207,15 @@ pub struct SessionManager {
     store: Arc<dyn SessionStore>,
     /// Configuration
     config: SessionManagerConfig,
-    /// Event broadcast channel
-    event_tx: mpsc::Sender<StreamEventWithMetadata>,
 }
 
 impl SessionManager {
     /// Create a new SessionManager
-    pub fn new(
-        store: Arc<dyn SessionStore>,
-        config: SessionManagerConfig,
-        event_tx: mpsc::Sender<StreamEventWithMetadata>,
-    ) -> Self {
+    pub fn new(store: Arc<dyn SessionStore>, config: SessionManagerConfig) -> Self {
         Self {
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
             store,
             config,
-            event_tx,
         }
     }
 
@@ -276,7 +256,6 @@ impl SessionManager {
             session.clone(),
             app_config,
             self.store.clone(),
-            self.event_tx.clone(),
             self.config.default_model,
             None,
         )
@@ -450,7 +429,6 @@ impl SessionManager {
             session.clone(),
             app_config,
             self.store.clone(),
-            self.event_tx.clone(),
             self.config.default_model,
             Some(conversation),
         )
@@ -630,15 +608,6 @@ impl SessionManager {
             .await
         {
             error!(session_id = %session_id, error = %e, "Failed to update session sequence number");
-        }
-
-        // Create event with metadata
-        let event_with_metadata =
-            StreamEventWithMetadata::new(sequence_num, session_id.clone(), event);
-
-        // Broadcast to subscribers
-        if let Err(e) = self.event_tx.try_send(event_with_metadata) {
-            warn!(error = %e, "Failed to broadcast event");
         }
     }
 
@@ -974,20 +943,18 @@ mod tests {
     use crate::app::conversation::{AssistantContent, Role, UserContent};
     use crate::session::stores::sqlite::SqliteSessionStore;
     use tempfile::TempDir;
-    use tokio::sync::mpsc;
 
     async fn create_test_manager() -> (SessionManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let store = Arc::new(SqliteSessionStore::new(&db_path).await.unwrap());
 
-        let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
             default_model: Model::default(),
             auto_persist: true,
         };
-        let manager = SessionManager::new(store, config, event_tx);
+        let manager = SessionManager::new(store, config);
 
         (manager, temp_dir)
     }
@@ -1072,13 +1039,12 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let store = Arc::new(SqliteSessionStore::new(&db_path).await.unwrap());
 
-        let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 1, // Set to 1 for testing
             default_model: Model::default(),
             auto_persist: true,
         };
-        let manager = SessionManager::new(store, config, event_tx);
+        let manager = SessionManager::new(store, config);
         let app_config = create_test_app_config();
 
         // Create first session - should succeed

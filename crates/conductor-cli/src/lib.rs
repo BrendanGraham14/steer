@@ -73,19 +73,17 @@ pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> Result<RunOnceRe
 /// when you want to reuse it across multiple calls.
 pub async fn create_session_manager() -> Result<SessionManager> {
     use conductor_core::session::SessionManagerConfig;
-    use tokio::sync::mpsc;
 
     // Use the same session store as normal operation (~/.conductor/sessions.db)
     let store = conductor_core::utils::session::create_session_store()
         .await
         .map_err(|e| eyre::eyre!("Failed to create session store: {}", e))?;
 
-    let (event_tx, _event_rx) = mpsc::channel(100);
     let config = SessionManagerConfig {
         max_concurrent_sessions: 10,
         default_model: Model::default(),
         auto_persist: true,
     };
 
-    Ok(SessionManager::new(store, config, event_tx))
+    Ok(SessionManager::new(store, config))
 }
