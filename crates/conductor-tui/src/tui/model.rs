@@ -75,6 +75,14 @@ pub enum ChatItem {
         text: String,
         ts: OffsetDateTime,
     },
+
+    /// In-flight operation with spinner
+    InFlightOperation {
+        id: RowId,
+        operation_id: uuid::Uuid,
+        label: String,
+        ts: OffsetDateTime,
+    },
 }
 
 impl ChatItem {
@@ -86,6 +94,7 @@ impl ChatItem {
             ChatItem::SlashInput { id, .. } => id,
             ChatItem::CmdResponse { id, .. } => id,
             ChatItem::SystemNotice { id, .. } => id,
+            ChatItem::InFlightOperation { id, .. } => id,
         }
     }
 
@@ -102,6 +111,7 @@ impl ChatItem {
             ChatItem::SlashInput { ts, .. } => *ts,
             ChatItem::CmdResponse { ts, .. } => *ts,
             ChatItem::SystemNotice { ts, .. } => *ts,
+            ChatItem::InFlightOperation { ts, .. } => *ts,
         }
     }
 

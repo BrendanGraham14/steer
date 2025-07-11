@@ -5,12 +5,15 @@ use conductor_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, CompactResult,
     Message as ConversationMessage, ThoughtContent, UserContent,
 };
-use conductor_core::app::{AppCommand, AppEvent};
+use conductor_core::app::{
+    AppCommand, AppEvent, BashError, CompactError, Operation, OperationOutcome,
+};
 use conductor_core::session::state::{
     BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
 use conductor_proto::agent as proto;
+use std::time::Duration;
 
 /// Convert conductor_tools ToolResult to protobuf
 fn conductor_tools_result_to_proto(
@@ -1111,19 +1114,25 @@ pub fn app_event_to_server_event(
         AppEvent::MessagePart { id, delta } => Some(proto::server_event::Event::MessagePart(
             proto::MessagePartEvent { id, delta },
         )),
-        AppEvent::ThinkingStarted => Some(proto::server_event::Event::ThinkingStarted(
-            proto::ThinkingStartedEvent {},
+        AppEvent::ProcessingStarted => Some(proto::server_event::Event::ProcessingStarted(
+            proto::ProcessingStartedEvent {},
         )),
-        AppEvent::ThinkingCompleted => Some(proto::server_event::Event::ThinkingCompleted(
-            proto::ThinkingCompletedEvent {},
+        AppEvent::ProcessingCompleted => Some(proto::server_event::Event::ProcessingCompleted(
+            proto::ProcessingCompletedEvent {},
         )),
-        AppEvent::ToolCallStarted { name, id, model } => Some(
-            proto::server_event::Event::ToolCallStarted(proto::ToolCallStartedEvent {
+        AppEvent::ToolCallStarted {
+            name,
+            id,
+            parameters,
+            model,
+        } => Some(proto::server_event::Event::ToolCallStarted(
+            proto::ToolCallStartedEvent {
                 name,
                 id,
                 model: model.to_string(),
-            }),
-        ),
+                parameters_json: serde_json::to_string(&parameters).unwrap_or_default(),
+            },
+        )),
         AppEvent::ToolCallCompleted {
             name,
             result,
@@ -1244,7 +1253,7 @@ pub fn app_event_to_server_event(
         AppEvent::Error { message } => Some(proto::server_event::Event::Error(proto::ErrorEvent {
             message,
         })),
-        AppEvent::OperationCancelled { info } => Some(
+        AppEvent::OperationCancelled { op_id: _, info } => Some(
             proto::server_event::Event::OperationCancelled(proto::OperationCancelledEvent {
                 info: Some(proto::CancellationInfo {
                     api_call_in_progress: info.api_call_in_progress,
@@ -1268,6 +1277,53 @@ pub fn app_event_to_server_event(
                 files: files.clone(),
             },
         )),
+        AppEvent::Started { id, op } => {
+            let proto_op = match op {
+                Operation::Bash { cmd } => {
+                    proto::started_operation::Operation::Bash(proto::BashOperation {
+                        cmd: cmd.clone(),
+                    })
+                }
+                Operation::Compact => {
+                    proto::started_operation::Operation::Compact(proto::CompactOperation {})
+                }
+            };
+            Some(proto::server_event::Event::Started(proto::StartedEvent {
+                id: id.as_bytes().to_vec(),
+                op: Some(proto::StartedOperation {
+                    operation: Some(proto_op),
+                }),
+            }))
+        }
+        AppEvent::Finished { id, outcome } => {
+            let proto_outcome = match outcome {
+                OperationOutcome::Bash { elapsed, result } => {
+                    let error = result.as_ref().err().map(|e| proto::BashError {
+                        exit_code: e.exit_code,
+                        stderr: e.stderr.clone(),
+                    });
+                    proto::operation_outcome::Outcome::Bash(proto::BashOutcome {
+                        elapsed_ms: elapsed.as_millis() as u64,
+                        error,
+                    })
+                }
+                OperationOutcome::Compact { elapsed, result } => {
+                    let error = result.as_ref().err().map(|e| proto::CompactError {
+                        message: e.message.clone(),
+                    });
+                    proto::operation_outcome::Outcome::Compact(proto::CompactOutcome {
+                        elapsed_ms: elapsed.as_millis() as u64,
+                        error,
+                    })
+                }
+            };
+            Some(proto::server_event::Event::Finished(proto::FinishedEvent {
+                id: id.as_bytes().to_vec(),
+                outcome: Some(proto::OperationOutcome {
+                    outcome: Some(proto_outcome),
+                }),
+            }))
+        }
     };
 
     Ok(proto::ServerEvent {
@@ -1370,9 +1426,16 @@ pub fn server_event_to_app_event(
                     }
                 })?
             };
+            let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
+                ConversionError::InvalidJson {
+                    field: "parameters_json".to_string(),
+                    error: err.to_string(),
+                }
+            })?;
             Ok(AppEvent::ToolCallStarted {
                 name: e.name,
                 id: e.id,
+                parameters,
                 model,
             })
         }
@@ -1414,8 +1477,8 @@ pub fn server_event_to_app_event(
                 model,
             })
         }
-        proto::server_event::Event::ThinkingStarted(_) => Ok(AppEvent::ThinkingStarted),
-        proto::server_event::Event::ThinkingCompleted(_) => Ok(AppEvent::ThinkingCompleted),
+        proto::server_event::Event::ProcessingStarted(_) => Ok(AppEvent::ProcessingStarted),
+        proto::server_event::Event::ProcessingCompleted(_) => Ok(AppEvent::ProcessingCompleted),
         proto::server_event::Event::RequestToolApproval(e) => {
             let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
                 ConversionError::InvalidJson {
@@ -1435,6 +1498,7 @@ pub fn server_event_to_app_event(
             })?;
 
             Ok(AppEvent::OperationCancelled {
+                op_id: None, // Operation ID not available in old proto format
                 info: conductor_core::app::cancellation::CancellationInfo {
                     api_call_in_progress: info.api_call_in_progress,
                     active_tools: info
@@ -1499,6 +1563,80 @@ pub fn server_event_to_app_event(
         proto::server_event::Event::WorkspaceFiles(e) => Ok(AppEvent::WorkspaceFiles {
             files: e.files.clone(),
         }),
+        proto::server_event::Event::Started(e) => {
+            let id = uuid::Uuid::from_slice(&e.id).map_err(|_| ConversionError::InvalidValue {
+                field: "started.id".to_string(),
+                value: format!("{:?}", e.id),
+            })?;
+
+            let op = e.op.as_ref().ok_or_else(|| ConversionError::MissingField {
+                field: "started.op".to_string(),
+            })?;
+
+            let operation = match &op.operation {
+                Some(proto::started_operation::Operation::Bash(b)) => {
+                    Operation::Bash { cmd: b.cmd.clone() }
+                }
+                Some(proto::started_operation::Operation::Compact(_)) => Operation::Compact,
+                None => {
+                    return Err(ConversionError::MissingField {
+                        field: "started.op.operation".to_string(),
+                    });
+                }
+            };
+
+            Ok(AppEvent::Started { id, op: operation })
+        }
+        proto::server_event::Event::Finished(e) => {
+            let id = uuid::Uuid::from_slice(&e.id).map_err(|_| ConversionError::InvalidValue {
+                field: "finished.id".to_string(),
+                value: format!("{:?}", e.id),
+            })?;
+
+            let outcome_proto =
+                e.outcome
+                    .as_ref()
+                    .ok_or_else(|| ConversionError::MissingField {
+                        field: "finished.outcome".to_string(),
+                    })?;
+
+            let outcome = match &outcome_proto.outcome {
+                Some(proto::operation_outcome::Outcome::Bash(b)) => {
+                    let result = if let Some(error) = &b.error {
+                        Err(BashError {
+                            exit_code: error.exit_code,
+                            stderr: error.stderr.clone(),
+                        })
+                    } else {
+                        Ok(())
+                    };
+                    OperationOutcome::Bash {
+                        elapsed: Duration::from_millis(b.elapsed_ms),
+                        result,
+                    }
+                }
+                Some(proto::operation_outcome::Outcome::Compact(c)) => {
+                    let result = if let Some(error) = &c.error {
+                        Err(CompactError {
+                            message: error.message.clone(),
+                        })
+                    } else {
+                        Ok(())
+                    };
+                    OperationOutcome::Compact {
+                        elapsed: Duration::from_millis(c.elapsed_ms),
+                        result,
+                    }
+                }
+                None => {
+                    return Err(ConversionError::MissingField {
+                        field: "finished.outcome.outcome".to_string(),
+                    });
+                }
+            };
+
+            Ok(AppEvent::Finished { id, outcome })
+        }
     }
 }
 

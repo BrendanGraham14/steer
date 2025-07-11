@@ -1,4 +1,5 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
+use crate::app::cancellation::ActiveTool;
 use crate::app::command::ApprovalType;
 use crate::app::conversation::{
     AppCommandType, AssistantContent, CompactResult, ToolResult, UserContent,
@@ -8,8 +9,10 @@ use crate::error::{Error, Result};
 use conductor_tools::ToolError;
 use conductor_tools::tools::BASH_TOOL_NAME;
 use conductor_tools::tools::bash::BashParams;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -64,6 +67,7 @@ pub enum AppEvent {
     ToolCallStarted {
         name: String,
         id: String,
+        parameters: serde_json::Value,
         model: Model,
     },
     ToolCallCompleted {
@@ -78,8 +82,8 @@ pub enum AppEvent {
         id: String,
         model: Model,
     },
-    ThinkingStarted,
-    ThinkingCompleted,
+    ProcessingStarted,
+    ProcessingCompleted,
     CommandResponse {
         command: conversation::AppCommandType,
         response: conversation::CommandResponse,
@@ -91,6 +95,7 @@ pub enum AppEvent {
         id: String,
     },
     OperationCancelled {
+        op_id: Option<uuid::Uuid>, // Operation ID if available
         info: CancellationInfo,
     },
     ModelChanged {
@@ -103,6 +108,43 @@ pub enum AppEvent {
     WorkspaceFiles {
         files: Vec<String>,
     },
+    Started {
+        id: uuid::Uuid,
+        op: Operation,
+    },
+    Finished {
+        id: uuid::Uuid,
+        outcome: OperationOutcome,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Operation {
+    Bash { cmd: String },
+    Compact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum OperationOutcome {
+    Bash {
+        elapsed: Duration,
+        result: std::result::Result<(), BashError>,
+    },
+    Compact {
+        elapsed: Duration,
+        result: std::result::Result<(), CompactError>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BashError {
+    pub exit_code: i32,
+    pub stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactError {
+    pub message: String,
 }
 
 #[derive(Clone)]
@@ -333,9 +375,6 @@ impl App {
         // Cancel any existing operations first
         self.cancel_current_processing().await;
 
-        // Check for incomplete tool calls and inject cancelled tool results
-        self.inject_cancelled_tool_results().await;
-
         // Create a new operation context
         let op_context = OpContext::new();
         self.current_op_context = Some(op_context);
@@ -361,7 +400,7 @@ impl App {
         .await;
 
         // Start thinking and spawn agent operation
-        self.emit_event(AppEvent::ThinkingStarted);
+        self.emit_event(AppEvent::ProcessingStarted);
         match self.spawn_agent_operation().await {
             Ok(maybe_receiver) => Ok(maybe_receiver), // Return the receiver
             Err(e) => {
@@ -369,7 +408,7 @@ impl App {
                     "App.start_standard_operation",
                     "Error spawning agent operation task: {}", e,
                 );
-                self.emit_event(AppEvent::ThinkingCompleted); // Stop thinking on spawn error
+                self.emit_event(AppEvent::ProcessingCompleted); // Stop thinking on spawn error
                 self.emit_event(AppEvent::Error {
                     message: format!("Failed to start agent operation: {e}"),
                 });
@@ -503,7 +542,6 @@ impl App {
                 }
 
                 // Needs interactive approval - create oneshot channel for receiving the decision
-                // Needs interactive approval - create oneshot channel for receiving the decision
                 let (tx, rx) = oneshot::channel();
 
                 // Send approval request to the actor loop via command channel
@@ -601,8 +639,18 @@ impl App {
                 )))
             }
             AppCommandType::Compact => {
+                // Create unique operation ID
+                let op_id = uuid::Uuid::new_v4();
+                let start_time = Instant::now();
+
+                // Emit Started event
+                self.emit_event(AppEvent::Started {
+                    id: op_id,
+                    op: Operation::Compact,
+                });
+
                 // Create OpContext for cancellable command
-                let op_context = OpContext::new();
+                let op_context = OpContext::new_with_id(op_id);
                 self.current_op_context = Some(op_context);
                 let token = self
                     .current_op_context
@@ -619,12 +667,34 @@ impl App {
                     "Compact command task spawning needs TaskOutcome handling in actor loop.",
                 );
                 let result = match self.compact_conversation(token).await {
-                    Ok(result) => Ok(Some(conversation::CommandResponse::Compact(result))),
+                    Ok(result) => {
+                        let elapsed = start_time.elapsed();
+                        // Emit Finished event on success
+                        self.emit_event(AppEvent::Finished {
+                            id: op_id,
+                            outcome: OperationOutcome::Compact {
+                                elapsed,
+                                result: Ok(()),
+                            },
+                        });
+                        Ok(Some(conversation::CommandResponse::Compact(result)))
+                    }
                     Err(e) => {
+                        let elapsed = start_time.elapsed();
                         error!(target:
                             "App.handle_command",
                             "Error during compact: {}", e,
                         );
+                        // Emit Finished event with error
+                        self.emit_event(AppEvent::Finished {
+                            id: op_id,
+                            outcome: OperationOutcome::Compact {
+                                elapsed,
+                                result: Err(CompactError {
+                                    message: e.to_string(),
+                                }),
+                            },
+                        });
                         Err(e) // Propagate actual errors
                     }
                 }?;
@@ -737,7 +807,14 @@ impl App {
             );
 
             // Capture the current state for the cancellation info
-            let active_tools = op_context.active_tools.values().cloned().collect();
+            let active_tools = op_context
+                .active_tools
+                .values()
+                .map(|(_, _, name)| ActiveTool {
+                    id: name.clone(), // Using name as ID for cancellation info
+                    name: name.clone(),
+                })
+                .collect();
             // TODO: Get accurate pending approval status from the actor loop's ApprovalState
             let cancellation_info = CancellationInfo {
                 api_call_in_progress: false, // Handled by AgentExecutor now
@@ -745,11 +822,21 @@ impl App {
                 pending_tool_approvals: false, // TODO: Update this based on actor state
             };
 
+            // Get the operation ID before canceling
+            let op_id = op_context.operation_id;
+
             op_context.cancel_and_shutdown().await;
 
             self.emit_event(AppEvent::OperationCancelled {
+                op_id,
                 info: cancellation_info,
             });
+
+            // Inject cancelled tool results after cancelling
+            self.inject_cancelled_tool_results().await;
+
+            // Emit ProcessingCompleted only when we actually cancelled something
+            self.emit_event(AppEvent::ProcessingCompleted);
             // Don't return here, actor loop needs to clear receiver if present
         } else {
             warn!(target:
@@ -761,7 +848,7 @@ impl App {
     }
 
     /// Inject cancelled tool results for any incomplete tool calls in the conversation.
-    /// This ensures that the Anthropic API receives proper tool_result blocks for every tool_use block.
+    /// This ensures that LLM APIs receive proper tool_result blocks for every tool_use block.
     pub async fn inject_cancelled_tool_results(&mut self) {
         let incomplete_tool_calls = {
             let conversation_guard = self.conversation.lock().await;
@@ -792,7 +879,16 @@ impl App {
                 };
 
                 // Add the message using the standard add_message method to ensure proper event emission
-                self.add_message(cancelled_result).await;
+                self.add_message(cancelled_result.clone()).await;
+
+                // Emit ToolCallFailed event so UI can render cancellation result
+                self.emit_event(AppEvent::ToolCallFailed {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    error: "Cancelled".to_string(),
+                    model: self.current_model,
+                });
+
                 debug!(target: "App.inject_cancelled_tool_results",
                        "Injected cancellation result for tool call: {} ({})",
                        tool_call.name, tool_call.id);
@@ -1006,10 +1102,10 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                                 agent_task_completed = true;
                             }
 
-                            // Check if we should signal ThinkingCompleted now
+                            // Check if we should signal ProcessingCompleted now
                             if agent_task_completed && active_agent_event_rx.is_none() {
-                                debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (Task done, receiver drained).");
-                                app.emit_event(AppEvent::ThinkingCompleted);
+                                debug!(target: "app_actor_loop", "Signaling ProcessingCompleted (Task done, receiver drained).");
+                                app.emit_event(AppEvent::ProcessingCompleted);
                                 agent_task_completed = false;
                             }
                         }
@@ -1018,7 +1114,7 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                             app.current_op_context = None;
                             active_agent_event_rx = None;
                             agent_task_completed = false;
-                            app.emit_event(AppEvent::ThinkingCompleted);
+                            app.emit_event(AppEvent::ProcessingCompleted);
                             app.emit_event(AppEvent::Error {
                                 message: format!("A task failed unexpectedly: {join_err}")
                             });
@@ -1031,8 +1127,8 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                         agent_task_completed = true;
 
                         if agent_task_completed && active_agent_event_rx.is_none() {
-                            debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (JoinSet empty, receiver drained).");
-                            app.emit_event(AppEvent::ThinkingCompleted);
+                            debug!(target: "app_actor_loop", "Signaling ProcessingCompleted (JoinSet empty, receiver drained).");
+                            app.emit_event(AppEvent::ProcessingCompleted);
                             agent_task_completed = false;
                         }
                     }
@@ -1053,8 +1149,8 @@ pub async fn app_actor_loop(mut app: App, mut command_rx: mpsc::Receiver<AppComm
                         active_agent_event_rx = None;
 
                         if agent_task_completed {
-                            debug!(target: "app_actor_loop", "Signaling ThinkingCompleted (Receiver closed, task completed).");
-                            app.emit_event(AppEvent::ThinkingCompleted);
+                            debug!(target: "app_actor_loop", "Signaling ProcessingCompleted (Receiver closed, task completed).");
+                            app.emit_event(AppEvent::ProcessingCompleted);
                             agent_task_completed = false;
                         }
                     }
@@ -1194,9 +1290,8 @@ async fn handle_app_command(
                 // This message is now the latest in the conversation.
                 // We can now start a new agent operation.
                 // This logic is adapted from `process_user_message`, but without adding a new message.
-                app.inject_cancelled_tool_results().await;
                 app.current_op_context = Some(OpContext::new());
-                app.emit_event(AppEvent::ThinkingStarted);
+                app.emit_event(AppEvent::ProcessingStarted);
 
                 match app.spawn_agent_operation().await {
                     Ok(maybe_receiver) => {
@@ -1205,7 +1300,7 @@ async fn handle_app_command(
                     Err(e) => {
                         error!(target: "handle_app_command", "Error processing edited message: {}", e);
                         app.current_op_context = None;
-                        app.emit_event(AppEvent::ThinkingCompleted);
+                        app.emit_event(AppEvent::ProcessingCompleted);
                     }
                 }
             } else {
@@ -1296,12 +1391,34 @@ async fn handle_app_command(
                 debug!(target: "handle_app_command", "Clearing active agent event receiver due to cancellation.");
                 *active_agent_event_rx = None;
             }
-            app.emit_event(AppEvent::ThinkingCompleted);
+            app.emit_event(AppEvent::ProcessingCompleted);
             Ok(false)
         }
 
         AppCommand::ExecuteBashCommand { command } => {
             debug!(target: "handle_app_command", "Executing bash command: {}", command);
+
+            // Cancel any existing operations first
+            app.cancel_current_processing().await;
+
+            // Emit ProcessingStarted to enable cancellation UI
+            app.emit_event(AppEvent::ProcessingStarted);
+
+            // Create unique operation ID
+            let op_id = uuid::Uuid::new_v4();
+            let start_time = Instant::now();
+
+            // Emit Started event
+            app.emit_event(AppEvent::Started {
+                id: op_id,
+                op: Operation::Bash {
+                    cmd: command.clone(),
+                },
+            });
+
+            // Create OpContext for cancellable operation
+            let mut op_context = OpContext::new_with_id(op_id);
+            let token = op_context.cancel_token.clone();
 
             // Create a tool call for the bash command
             let tool_call = ToolCall {
@@ -1312,81 +1429,25 @@ async fn handle_app_command(
                 }),
             };
 
-            // Create a cancellation token for the execution
-            let token = CancellationToken::new();
+            // Clone necessary values for the spawned task
+            let tool_executor = app.tool_executor.clone();
+            let command_clone = command.clone();
 
-            // Execute the bash tool directly (bypassing validation)
-            match app
-                .tool_executor
-                .execute_tool_direct(&tool_call, token)
-                .await
-            {
-                Ok(output) => {
-                    // Get the formatted output from the typed result
-                    let output_str = output.llm_format();
+            // Spawn the bash execution task
+            op_context.tasks.spawn(async move {
+                let result = tool_executor.execute_tool_direct(&tool_call, token).await;
 
-                    // Parse the output to extract stdout/stderr/exit code
-                    // The bash tool returns output in a specific format
-                    let (stdout, stderr, exit_code) = parse_bash_output(&output_str);
-
-                    // Add the command execution as a message
-                    let (thread_id, parent_id) = {
-                        let conv = app.conversation.lock().await;
-                        (
-                            conv.current_thread_id,
-                            conv.messages.last().map(|m| m.id().to_string()),
-                        )
-                    };
-
-                    let message = Message::User {
-                        content: vec![UserContent::CommandExecution {
-                            command,
-                            stdout,
-                            stderr,
-                            exit_code,
-                        }],
-                        timestamp: Message::current_timestamp(),
-                        id: Message::generate_id("user", Message::current_timestamp()),
-                        thread_id,
-                        parent_message_id: parent_id,
-                    };
-                    app.add_message(message).await;
-
-                    // A bash command can mutate the workspace; notify listeners.
-                    app.emit_event(AppEvent::WorkspaceChanged);
-                    app.emit_workspace_files().await;
+                TaskOutcome::BashCommandComplete {
+                    op_id,
+                    command: command_clone,
+                    start_time,
+                    result,
                 }
-                Err(e) => {
-                    error!(target: "handle_app_command", "Failed to execute bash command: {}", e);
+            });
 
-                    // Add error as a command execution with error output
-                    let (thread_id, parent_id) = {
-                        let conv = app.conversation.lock().await;
-                        (
-                            conv.current_thread_id,
-                            conv.messages.last().map(|m| m.id().to_string()),
-                        )
-                    };
+            // Store the operation context
+            app.current_op_context = Some(op_context);
 
-                    let message = Message::User {
-                        content: vec![UserContent::CommandExecution {
-                            command,
-                            stdout: String::new(),
-                            stderr: format!("Error executing command: {e}"),
-                            exit_code: -1,
-                        }],
-                        timestamp: Message::current_timestamp(),
-                        id: Message::generate_id("user", Message::current_timestamp()),
-                        thread_id,
-                        parent_message_id: parent_id,
-                    };
-                    app.add_message(message).await;
-
-                    // A bash command can mutate the workspace; notify listeners.
-                    app.emit_event(AppEvent::WorkspaceChanged);
-                    app.emit_workspace_files().await;
-                }
-            }
             Ok(false)
         }
         AppCommand::Shutdown => {
@@ -1452,7 +1513,7 @@ async fn handle_slash_command(app: &mut App, command: AppCommandType) {
             app.emit_event(AppEvent::Error {
                 message: format!("Command failed: {e}"),
             });
-            app.emit_event(AppEvent::ThinkingCompleted);
+            app.emit_event(AppEvent::ProcessingCompleted);
         }
     }
 }
@@ -1506,10 +1567,15 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 debug!(target: "handle_agent_event", "Added new final message ID {}.", msg_id);
             }
         }
-        AgentEvent::ExecutingTool { tool_call_id, name } => {
+        AgentEvent::ExecutingTool {
+            tool_call_id,
+            name,
+            parameters,
+        } => {
             app.emit_event(AppEvent::ToolCallStarted {
                 id: tool_call_id,
                 name,
+                parameters,
                 model: app.current_model,
             });
         }
@@ -1556,7 +1622,6 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 let mutating_tools = ["edit", "replace", "bash", "write_file", "multi_edit_file"];
                 if mutating_tools.contains(&tool_name.as_str()) {
                     app.emit_event(AppEvent::WorkspaceChanged);
-                    // Also emit the updated file list
                     app.emit_workspace_files().await;
                 }
             }
@@ -1623,9 +1688,128 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             }
 
             // Clear context and stop thinking immediately for dispatch operations
-            debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ThinkingCompleted for dispatch operation.");
+            debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ProcessingCompleted for dispatch operation.");
             app.current_op_context = None;
-            app.emit_event(AppEvent::ThinkingCompleted);
+            app.emit_event(AppEvent::ProcessingCompleted);
+        }
+        TaskOutcome::BashCommandComplete {
+            op_id,
+            command,
+            start_time,
+            result,
+        } => {
+            info!(target: "handle_task_outcome", "Bash command task completed.");
+
+            let elapsed = start_time.elapsed();
+
+            match result {
+                Ok(output) => {
+                    // Get the formatted output from the typed result
+                    let output_str = output.llm_format();
+
+                    // Parse the output to extract stdout/stderr/exit code
+                    let (stdout, stderr, exit_code) = parse_bash_output(&output_str);
+
+                    // Add the command execution as a message
+                    let (thread_id, parent_id) = {
+                        let conv = app.conversation.lock().await;
+                        (
+                            conv.current_thread_id,
+                            conv.messages.last().map(|m| m.id().to_string()),
+                        )
+                    };
+
+                    let message = Message::User {
+                        content: vec![UserContent::CommandExecution {
+                            command: command.clone(),
+                            stdout,
+                            stderr,
+                            exit_code,
+                        }],
+                        timestamp: Message::current_timestamp(),
+                        id: Message::generate_id("user", Message::current_timestamp()),
+                        thread_id,
+                        parent_message_id: parent_id,
+                    };
+                    app.add_message(message).await;
+
+                    // Emit Finished event
+                    app.emit_event(AppEvent::Finished {
+                        id: op_id,
+                        outcome: OperationOutcome::Bash {
+                            elapsed,
+                            result: Ok(()),
+                        },
+                    });
+
+                    // A bash command can mutate the workspace; notify listeners.
+                    app.emit_event(AppEvent::WorkspaceChanged);
+                    app.emit_workspace_files().await;
+                }
+                Err(e) => {
+                    error!(target: "handle_task_outcome", "Failed to execute bash command: {}", e);
+
+                    // Handle cancellation specially - no error message
+                    if matches!(e, conductor_tools::ToolError::Cancelled(_)) {
+                        // Emit Finished event with cancellation
+                        app.emit_event(AppEvent::Finished {
+                            id: op_id,
+                            outcome: OperationOutcome::Bash {
+                                elapsed,
+                                result: Err(BashError {
+                                    exit_code: -130, // Traditional exit code for SIGINT
+                                    stderr: "Cancelled".to_string(),
+                                }),
+                            },
+                        });
+                    } else {
+                        // Add error as a command execution with error output
+                        let (thread_id, parent_id) = {
+                            let conv = app.conversation.lock().await;
+                            (
+                                conv.current_thread_id,
+                                conv.messages.last().map(|m| m.id().to_string()),
+                            )
+                        };
+
+                        let error_message = format!("Error executing command: {e}");
+                        let message = Message::User {
+                            content: vec![UserContent::CommandExecution {
+                                command: command.clone(),
+                                stdout: String::new(),
+                                stderr: error_message.clone(),
+                                exit_code: -1,
+                            }],
+                            timestamp: Message::current_timestamp(),
+                            id: Message::generate_id("user", Message::current_timestamp()),
+                            thread_id,
+                            parent_message_id: parent_id,
+                        };
+                        app.add_message(message).await;
+
+                        // Emit Finished event with error
+                        app.emit_event(AppEvent::Finished {
+                            id: op_id,
+                            outcome: OperationOutcome::Bash {
+                                elapsed,
+                                result: Err(BashError {
+                                    exit_code: -1,
+                                    stderr: error_message,
+                                }),
+                            },
+                        });
+
+                        // A bash command can mutate the workspace; notify listeners.
+                        app.emit_event(AppEvent::WorkspaceChanged);
+                        app.emit_workspace_files().await;
+                    }
+                }
+            }
+
+            // Clear context and signal completion
+            debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ProcessingCompleted for bash operation.");
+            app.current_op_context = None;
+            app.emit_event(AppEvent::ProcessingCompleted);
         }
     }
 }

@@ -3,6 +3,7 @@ package conductor.agent.v1;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
 
 service AgentService {
   // Bidirectional streaming for interactive sessions
@@ -55,8 +56,8 @@ message ServerEvent {
     ToolCallStartedEvent tool_call_started = 6;
     ToolCallCompletedEvent tool_call_completed = 7;
     ToolCallFailedEvent tool_call_failed = 8;
-    ThinkingStartedEvent thinking_started = 9;
-    ThinkingCompletedEvent thinking_completed = 10;
+    ProcessingStartedEvent processing_started = 9;
+    ProcessingCompletedEvent processing_completed = 10;
     CommandResponseEvent command_response = 11;
     RequestToolApprovalEvent request_tool_approval = 12;
     OperationCancelledEvent operation_cancelled = 13;
@@ -64,6 +65,8 @@ message ServerEvent {
     ErrorEvent error = 15;
     WorkspaceChangedEvent workspace_changed = 16;
     WorkspaceFilesEvent workspace_files = 17;
+    StartedEvent started = 18;
+    FinishedEvent finished = 19;
   }
 }
 
@@ -188,6 +191,7 @@ message ToolCallStartedEvent {
   string name = 1;
   string id = 2;
   string model = 3;
+  string parameters_json = 4;  // JSON-encoded serde_json::Value
 }
 
 message ToolCallCompletedEvent {
@@ -210,11 +214,11 @@ message RequestToolApprovalEvent {
   string id = 3;
 }
 
-message ThinkingStartedEvent {
+message ProcessingStartedEvent {
   // No fields needed
 }
 
-message ThinkingCompletedEvent {
+message ProcessingCompletedEvent {
   // No fields needed
 }
 
@@ -796,4 +800,55 @@ message WorkspaceChangedEvent {
 
 message WorkspaceFilesEvent {
   repeated string files = 1;
+}
+
+message StartedEvent {
+  bytes id = 1;  // UUID stored as bytes
+  StartedOperation op = 2;
+}
+
+message FinishedEvent {
+  bytes id = 1;  // UUID stored as bytes
+  OperationOutcome outcome = 2;
+}
+
+message StartedOperation {
+  oneof operation {
+    BashOperation bash = 1;
+    CompactOperation compact = 2;
+  }
+}
+
+message BashOperation {
+  string cmd = 1;
+}
+
+message CompactOperation {
+  // No fields needed
+}
+
+message OperationOutcome {
+  oneof outcome {
+    BashOutcome bash = 1;
+    CompactOutcome compact = 2;
+  }
+}
+
+message BashOutcome {
+  uint64 elapsed_ms = 1;
+  optional BashError error = 2;
+}
+
+message CompactOutcome {
+  uint64 elapsed_ms = 1;
+  optional CompactError error = 2;
+}
+
+message BashError {
+  int32 exit_code = 1;
+  string stderr = 2;
+}
+
+message CompactError {
+  string message = 1;
 }

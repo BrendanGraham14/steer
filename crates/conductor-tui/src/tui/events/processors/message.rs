@@ -303,6 +303,7 @@ mod tests {
         };
 
         let current_thread = uuid::Uuid::new_v4();
+        let mut in_flight_operations = std::collections::HashMap::new();
         let mut ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
@@ -315,6 +316,7 @@ mod tests {
             current_model: &mut ctx.current_model,
             messages_updated: &mut ctx.messages_updated,
             current_thread: Some(current_thread),
+            in_flight_operations: &mut in_flight_operations,
         };
 
         // Process the Assistant message

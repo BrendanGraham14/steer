@@ -230,6 +230,7 @@ mod tests {
                 AgentEvent::ExecutingTool {
                     tool_call_id: _,
                     name,
+                    parameters: _,
                 } => {
                     if name == "get_capital" {
                         saw_executing = true;

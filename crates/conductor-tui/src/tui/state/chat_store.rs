@@ -217,6 +217,13 @@ impl ChatStore {
             .collect()
     }
 
+    /// Check if there are any pending tool calls
+    pub fn has_pending_tools(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, ChatItem::PendingToolCall { .. }))
+    }
+
     /// Get user messages for edit history
     pub fn user_messages(&self) -> Vec<(usize, &MessageRow)> {
         self.items

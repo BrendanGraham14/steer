@@ -41,11 +41,16 @@ impl EventProcessor for ToolEventProcessor {
 
     async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
-            AppEvent::ToolCallStarted { name, id, .. } => {
+            AppEvent::ToolCallStarted {
+                name,
+                id,
+                parameters,
+                ..
+            } => {
                 tracing::debug!(
                     target: "tui.tool_event",
-                    "ToolCallStarted: id={}, name={}",
-                    id, name
+                    "ToolCallStarted: id={}, name={}, parameters={:?}",
+                    id, name, parameters
                 );
 
                 // Debug: dump registry state
@@ -54,17 +59,15 @@ impl EventProcessor for ToolEventProcessor {
                 *ctx.spinner_state = 0;
                 *ctx.progress_message = Some(format!("Executing tool: {name}"));
 
-                // Get the tool call from the registry
-                let tool_call = if let Some(call) = ctx.tool_registry.get_tool_call(&id) {
-                    call.clone()
-                } else {
-                    // Create a placeholder tool call if not found
-                    conductor_tools::schema::ToolCall {
-                        id: id.clone(),
-                        name: name.clone(),
-                        parameters: serde_json::Value::Null,
-                    }
+                // Create a ToolCall struct with the parameters
+                let tool_call = conductor_tools::schema::ToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    parameters: parameters.clone(),
                 };
+
+                // Store the tool call in the registry with full parameters
+                ctx.tool_registry.register_call(tool_call.clone());
 
                 // Add a pending tool call item
                 let pending = ChatItem::PendingToolCall {
@@ -198,6 +201,7 @@ mod tests {
     use conductor_core::error::Result;
     use conductor_tools::schema::ToolCall;
     use serde_json::json;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     // Mock command sink for tests
@@ -221,6 +225,7 @@ mod tests {
         current_tool_approval: Option<ToolCall>,
         current_model: conductor_core::api::Model,
         messages_updated: bool,
+        in_flight_operations: HashMap<uuid::Uuid, usize>,
     }
     fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
@@ -233,7 +238,7 @@ mod tests {
         let current_tool_approval = None;
         let current_model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let messages_updated = false;
-
+        let in_flight_operations = HashMap::new();
         TestContext {
             chat_store,
             chat_list_state,
@@ -245,6 +250,7 @@ mod tests {
             current_tool_approval,
             current_model,
             messages_updated,
+            in_flight_operations,
         }
     }
 
@@ -287,6 +293,7 @@ mod tests {
                 current_model: &mut ctx.current_model,
                 messages_updated: &mut ctx.messages_updated,
                 current_thread: None,
+                in_flight_operations: &mut ctx.in_flight_operations,
             };
             let _ = msg_proc
                 .process(
@@ -313,12 +320,14 @@ mod tests {
                 current_model: &mut ctx.current_model,
                 messages_updated: &mut ctx.messages_updated,
                 current_thread: None,
+                in_flight_operations: &mut ctx.in_flight_operations,
             };
             let _ = tool_proc
                 .process(
                     conductor_core::app::AppEvent::ToolCallStarted {
                         name: "view".to_string(),
                         id: "id123".to_string(),
+                        parameters: serde_json::Value::Null,
                         model,
                     },
                     &mut ctx,

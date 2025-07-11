@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::time::Instant;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use uuid;
 
 use crate::app::agent_executor::AgentExecutorError;
-use crate::app::cancellation::ActiveTool;
 use crate::app::command::AppCommand;
 use crate::app::conversation::Message;
 use once_cell::sync::OnceCell;
@@ -21,6 +22,12 @@ pub enum TaskOutcome {
     DispatchAgentResult {
         result: std::result::Result<String, conductor_tools::ToolError>,
     },
+    BashCommandComplete {
+        op_id: uuid::Uuid,
+        command: String,
+        start_time: Instant,
+        result: std::result::Result<conductor_tools::ToolResult, conductor_tools::ToolError>,
+    },
 }
 
 // Holds the state for a single, cancellable user-initiated operation
@@ -28,8 +35,10 @@ pub struct OpContext {
     pub cancel_token: CancellationToken,
     // Tasks now return TaskOutcome
     pub tasks: JoinSet<TaskOutcome>,
-    // Track active tools by ID -> tool info (Kept for cancellation info)
-    pub active_tools: HashMap<String, ActiveTool>,
+    // Track active tools by tool_call_id -> (op_id, start_time, tool_name)
+    pub active_tools: HashMap<String, (uuid::Uuid, Instant, String)>,
+    // Track the main operation ID if this context is for a Started/Finished operation
+    pub operation_id: Option<uuid::Uuid>,
     // Removed: agent_event_receiver
     // Removed: pending_tool_calls, expected_tool_results, api_call_in_progress
 }
@@ -46,18 +55,27 @@ impl OpContext {
             cancel_token: CancellationToken::new(),
             tasks: JoinSet::new(),
             active_tools: HashMap::new(),
+            operation_id: None,
             // Removed: agent_event_receiver: None,
+        }
+    }
+
+    pub fn new_with_id(op_id: uuid::Uuid) -> Self {
+        Self {
+            cancel_token: CancellationToken::new(),
+            tasks: JoinSet::new(),
+            active_tools: HashMap::new(),
+            operation_id: Some(op_id),
         }
     }
 
     // Removed: start_api_call, complete_api_call
 
-    pub fn add_active_tool(&mut self, id: String, name: String) {
-        self.active_tools
-            .insert(id.clone(), ActiveTool { id, name });
+    pub fn add_active_tool(&mut self, id: String, op_id: uuid::Uuid, name: String) {
+        self.active_tools.insert(id, (op_id, Instant::now(), name));
     }
 
-    pub fn remove_active_tool(&mut self, id: &str) -> Option<ActiveTool> {
+    pub fn remove_active_tool(&mut self, id: &str) -> Option<(uuid::Uuid, Instant, String)> {
         self.active_tools.remove(id)
     }
 

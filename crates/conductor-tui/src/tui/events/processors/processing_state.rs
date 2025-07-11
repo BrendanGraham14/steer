@@ -30,21 +30,37 @@ impl EventProcessor for ProcessingStateProcessor {
     fn can_handle(&self, event: &AppEvent) -> bool {
         matches!(
             event,
-            AppEvent::ThinkingStarted
-                | AppEvent::ThinkingCompleted
+            AppEvent::ProcessingStarted
+                | AppEvent::ProcessingCompleted
                 | AppEvent::Error { .. }
                 | AppEvent::OperationCancelled { .. }
+                | AppEvent::Started {
+                    op: conductor_core::app::Operation::Bash { .. },
+                    ..
+                }
+                | AppEvent::Started {
+                    op: conductor_core::app::Operation::Compact,
+                    ..
+                }
+                | AppEvent::Finished {
+                    outcome: conductor_core::app::OperationOutcome::Bash { .. },
+                    ..
+                }
+                | AppEvent::Finished {
+                    outcome: conductor_core::app::OperationOutcome::Compact { .. },
+                    ..
+                }
         )
     }
 
     async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
         match event {
-            AppEvent::ThinkingStarted => {
+            AppEvent::ProcessingStarted => {
                 *ctx.is_processing = true;
                 *ctx.spinner_state = 0;
                 ProcessingResult::Handled
             }
-            AppEvent::ThinkingCompleted => {
+            AppEvent::ProcessingCompleted => {
                 let was_processing = *ctx.is_processing;
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
@@ -78,7 +94,7 @@ impl EventProcessor for ProcessingStateProcessor {
 
                 ProcessingResult::Handled
             }
-            AppEvent::OperationCancelled { .. } => {
+            AppEvent::OperationCancelled { op_id: _, info } => {
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
                 *ctx.current_tool_approval = None;
@@ -92,6 +108,49 @@ impl EventProcessor for ProcessingStateProcessor {
                 };
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
+
+                // Remove any in-flight operation rows (stops spinners)
+                for (_, idx) in ctx.in_flight_operations.drain() {
+                    ctx.chat_store.remove(idx);
+                    *ctx.messages_updated = true;
+                }
+
+                ProcessingResult::Handled
+            }
+            AppEvent::Started { id, op } => {
+                // Only handle non-tool operations
+                let label = match op {
+                    conductor_core::app::Operation::Bash { cmd } => {
+                        format!("Running command: {cmd}")
+                    }
+                    conductor_core::app::Operation::Compact => {
+                        "Compressing conversation...".to_string()
+                    }
+                };
+
+                // Add in-flight operation row
+                let row_id = crate::tui::model::generate_row_id();
+                let chat_item = crate::tui::model::ChatItem::InFlightOperation {
+                    id: row_id.clone(),
+                    operation_id: id,
+                    label,
+                    ts: time::OffsetDateTime::now_utc(),
+                };
+                let item_idx = ctx.chat_store.push(chat_item);
+                *ctx.messages_updated = true;
+
+                // Store the mapping from operation ID to chat item index
+                ctx.in_flight_operations.insert(id, item_idx);
+
+                ProcessingResult::Handled
+            }
+            AppEvent::Finished { id, outcome: _ } => {
+                // Remove the in-flight operation if it exists
+                if let Some(item_idx) = ctx.in_flight_operations.remove(&id) {
+                    // Remove the in-flight item from chat store
+                    ctx.chat_store.remove(item_idx);
+                    *ctx.messages_updated = true;
+                }
 
                 ProcessingResult::Handled
             }
