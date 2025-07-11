@@ -83,17 +83,15 @@ pub async fn run_once(
 /// when you want to reuse it across multiple calls.
 pub async fn create_session_manager() -> crate::error::Result<SessionManager> {
     use session::SessionManagerConfig;
-    use tokio::sync::mpsc;
 
     // Use the same session store as normal operation (~/.conductor/sessions.db)
     let store = crate::utils::session::create_session_store().await?;
 
-    let (event_tx, _event_rx) = mpsc::channel(100);
     let config = SessionManagerConfig {
         max_concurrent_sessions: 10,
         default_model: Model::default(),
         auto_persist: true,
     };
 
-    Ok(SessionManager::new(store, config, event_tx))
+    Ok(SessionManager::new(store, config))
 }

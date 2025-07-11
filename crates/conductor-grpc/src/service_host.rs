@@ -2,14 +2,13 @@ use crate::grpc::error::GrpcError;
 type Result<T> = std::result::Result<T, GrpcError>;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tonic::transport::Server;
 use tracing::{error, info};
 
 use crate::grpc::server::AgentServiceImpl;
 use conductor_core::auth::storage::AuthStorage;
-use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig, SessionStore};
 use conductor_proto::agent::v1::agent_service_server::AgentServiceServer;
 
@@ -74,14 +73,10 @@ impl ServiceHost {
         // Initialize session store
         let store = create_session_store(&config.db_path).await?;
 
-        // Create event broadcast channel
-        let (event_tx, _event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
-
         // Create session manager
         let session_manager = Arc::new(SessionManager::new(
             store,
             config.session_manager_config.clone(),
-            event_tx,
         ));
 
         info!(

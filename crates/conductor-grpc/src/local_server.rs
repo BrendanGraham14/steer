@@ -1,11 +1,10 @@
 use crate::grpc::error::GrpcError;
 use crate::grpc::server::AgentServiceImpl;
 type Result<T> = std::result::Result<T, GrpcError>;
-use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
 use conductor_proto::agent::v1::agent_service_server::AgentServiceServer;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 
 /// Creates a localhost gRPC server and client channel
@@ -76,19 +75,13 @@ pub async fn setup_local_grpc(
         conductor_core::utils::session::create_session_store_with_config(store_config).await?;
 
     // Create global event channel (not used in local mode but required)
-    let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
-
     let session_manager_config = SessionManagerConfig {
         max_concurrent_sessions: 10,
         default_model,
         auto_persist: true,
     };
 
-    let session_manager = Arc::new(SessionManager::new(
-        session_store,
-        session_manager_config,
-        global_event_tx,
-    ));
+    let session_manager = Arc::new(SessionManager::new(session_store, session_manager_config));
 
     // Create localhost channel
     let (channel, handle) = create_local_channel(session_manager).await?;

@@ -299,20 +299,18 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
-    use tokio::sync::mpsc;
 
     async fn create_test_session_manager() -> (SessionManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let store = Arc::new(SqliteSessionStore::new(&db_path).await.unwrap());
 
-        let (event_tx, _event_rx) = mpsc::channel(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 10,
             default_model: Model::default(),
             auto_persist: true,
         };
-        let manager = SessionManager::new(store, config, event_tx);
+        let manager = SessionManager::new(store, config);
 
         (manager, temp_dir)
     }

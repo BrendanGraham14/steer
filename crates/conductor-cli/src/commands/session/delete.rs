@@ -1,11 +1,9 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
 use std::io::{self, Write};
-use tokio::sync::mpsc;
 
 use super::super::Command;
 use conductor_core::api::Model;
-use conductor_core::events::StreamEventWithMetadata;
 use conductor_core::session::{SessionManager, SessionManagerConfig};
 use conductor_core::utils::session::{
     create_session_store_with_config, resolve_session_store_config,
@@ -45,16 +43,13 @@ impl Command for DeleteSessionCommand {
 
         let store_config = resolve_session_store_config(self.session_db.clone())?;
         let session_store = create_session_store_with_config(store_config).await?;
-        let (global_event_tx, _global_event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
-
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
             default_model: Model::default(),
             auto_persist: true,
         };
 
-        let session_manager =
-            SessionManager::new(session_store, session_manager_config, global_event_tx);
+        let session_manager = SessionManager::new(session_store, session_manager_config);
 
         let deleted = session_manager
             .delete_session(&self.session_id)

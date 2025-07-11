@@ -813,7 +813,7 @@ async fn handle_client_message(
 mod tests {
     use super::*;
     use conductor_core::api::Model;
-    use conductor_core::events::StreamEventWithMetadata;
+
     use conductor_core::session::state::WorkspaceConfig;
     use conductor_core::session::stores::sqlite::SqliteSessionStore;
     use conductor_core::session::{SessionConfig, SessionManagerConfig, SessionToolConfig};
@@ -833,13 +833,12 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
         let store = Arc::new(SqliteSessionStore::new(&db_path).await.unwrap());
 
-        let (event_tx, _event_rx) = mpsc::channel::<StreamEventWithMetadata>(100);
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
             default_model: Model::ClaudeSonnet4_20250514,
             auto_persist: true,
         };
-        let session_manager = Arc::new(SessionManager::new(store, config, event_tx));
+        let session_manager = Arc::new(SessionManager::new(store, config));
 
         (session_manager, temp_dir)
     }
