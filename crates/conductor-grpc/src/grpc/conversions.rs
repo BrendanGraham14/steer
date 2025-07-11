@@ -12,9 +12,9 @@ use conductor_core::session::state::{
     BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
-use std::time::Duration;
 use conductor_proto::agent::v1 as proto;
 use conductor_proto::common::v1 as common;
+use std::time::Duration;
 
 /// Convert conductor_tools ToolResult to protobuf
 fn conductor_tools_result_to_proto(
