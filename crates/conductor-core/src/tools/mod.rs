@@ -18,7 +18,7 @@ pub mod command_filter;
 pub mod dispatch_agent;
 pub mod fetch;
 
-pub use dispatch_agent::DispatchAgentTool;
+pub use dispatch_agent::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentTool};
 pub use fetch::FetchTool;
 
 #[cfg(test)]

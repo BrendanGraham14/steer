@@ -14,6 +14,7 @@ use crate::{
 
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};
 use conductor_macros::tool_external as tool;
+use conductor_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 use conductor_tools::{ToolCall, ToolError, ToolSchema};
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +24,17 @@ pub struct DispatchAgentParams {
     pub prompt: String,
 }
 
+const DISPATCH_AGENT_TOOLS: [&str; 4] =
+    [GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME];
+
+fn format_dispatch_agent_tools() -> String {
+    DISPATCH_AGENT_TOOLS
+        .iter()
+        .map(|tool| tool.to_string())
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
 tool! {
     pub struct DispatchAgentTool {
         pub llm_config_provider: Arc<LlmConfigProvider>,
@@ -30,22 +42,22 @@ tool! {
         params: DispatchAgentParams,
         output: conductor_tools::result::AgentResult,
         variant: Agent,
-        description: r#"Launch a new agent that has access to the following tools: glob, grep, ls, view. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
+        description: &format!(r#"Launch a new agent that has access to the following tools: {}. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
 
 When to use the Agent tool:
 - If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended
 
 When NOT to use the Agent tool:
-- If you want to read a specific file path, use the read_file or glob tool instead of the Agent tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the grep tool instead, to find the match more quickly
-- If you are searching for code within a specific file or set of 2-3 files, use the grep tool instead, to find the match more quickly
+- If you want to read a specific file path, use the {VIEW_TOOL_NAME} or {GLOB_TOOL_NAME} tool instead of the Agent tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the {GREP_TOOL_NAME} tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the {GREP_TOOL_NAME} tool instead, to find the match more quickly
 
 Usage notes:
 1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
 4. The agent's outputs should generally be trusted
-5. IMPORTANT: The agent can not modify files. If you want to modify files, do it directly instead of going through the agent."#,
+5. IMPORTANT: The agent can not modify files. If you want to modify files, do it directly instead of going through the agent."#, format_dispatch_agent_tools()),
         name: "dispatch_agent",
         require_approval: false
     }
