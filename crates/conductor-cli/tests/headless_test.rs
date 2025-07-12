@@ -16,7 +16,6 @@ async fn test_headless_mode_integration() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
-        thread_id: uuid::Uuid::now_v7(),
         parent_message_id: None,
     }];
 

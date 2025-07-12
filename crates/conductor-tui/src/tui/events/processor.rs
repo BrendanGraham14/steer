@@ -52,8 +52,6 @@ pub struct ProcessingContext<'a> {
     pub current_model: &'a mut Model,
     /// Flag to indicate if messages were updated (for auto-scroll)
     pub messages_updated: &'a mut bool,
-    /// Current thread ID (None until first message)
-    pub current_thread: Option<uuid::Uuid>,
     /// Track in-flight operations
     pub in_flight_operations: &'a mut std::collections::HashSet<uuid::Uuid>,
 }

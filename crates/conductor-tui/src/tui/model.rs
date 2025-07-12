@@ -7,7 +7,6 @@
 use conductor_core::app::conversation::{AppCommandType, CommandResponse, Message};
 use conductor_tools::ToolCall;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 /// Unique, sortable row identifier (monotonic ULID string)
 pub type RowId = String;
@@ -33,10 +32,6 @@ impl MessageRow {
 
     pub fn id(&self) -> &str {
         self.inner.id()
-    }
-
-    pub fn thread_id(&self) -> &Uuid {
-        self.inner.thread_id()
     }
 }
 

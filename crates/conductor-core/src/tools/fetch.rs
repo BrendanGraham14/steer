@@ -140,7 +140,6 @@ Provide a concise response based only on the content above.
             "user",
             crate::app::conversation::Message::current_timestamp(),
         ),
-        thread_id: uuid::Uuid::now_v7(),
         parent_message_id: None,
     }];
 

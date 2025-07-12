@@ -416,12 +416,6 @@ impl SessionManager {
                 .get_path()
                 .unwrap_or_default()
                 .into(),
-            current_thread_id: session
-                .state
-                .messages
-                .last()
-                .map(|m| *m.thread_id())
-                .unwrap_or_else(Conversation::generate_thread_id),
         };
 
         // Create managed session with event translation
@@ -873,14 +867,9 @@ async fn update_session_state_for_event(
             store.update_tool_call(tool_call_id, update).await?;
 
             // Also add a Tool message with the result
-            // Get thread info from the latest message in the session
+            // Get parent info from the latest message in the session
             let messages = store.get_messages(session_id, None).await?;
-            let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                (*last_msg.thread_id(), Some(last_msg.id().to_string()))
-            } else {
-                // Fallback for empty session
-                (uuid::Uuid::now_v7(), None)
-            };
+            let parent_id = messages.last().map(|m| m.id().to_string());
 
             let tool_message = ConversationMessage::Tool {
                 tool_use_id: tool_call_id.clone(),
@@ -890,7 +879,6 @@ async fn update_session_state_for_event(
                     .expect("Time went backwards")
                     .as_secs(),
                 id: format!("tool_result_{tool_call_id}"),
-                thread_id,
                 parent_message_id: parent_id,
             };
             store.append_message(session_id, &tool_message).await?;
@@ -904,14 +892,9 @@ async fn update_session_state_for_event(
             store.update_tool_call(tool_call_id, update).await?;
 
             // Also add a Tool message with the error
-            // Get thread info from the latest message in the session
+            // Get parent info from the latest message in the session
             let messages = store.get_messages(session_id, None).await?;
-            let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                (*last_msg.thread_id(), Some(last_msg.id().to_string()))
-            } else {
-                // Fallback for empty session
-                (uuid::Uuid::now_v7(), None)
-            };
+            let parent_id = messages.last().map(|m| m.id().to_string());
 
             let tool_error = conductor_tools::error::ToolError::Execution {
                 tool_name: "unknown".to_string(), // We don't have the tool name here
@@ -925,7 +908,6 @@ async fn update_session_state_for_event(
                     .expect("Time went backwards")
                     .as_secs(),
                 id: format!("tool_result_{tool_call_id}"),
-                thread_id,
                 parent_message_id: parent_id,
             };
             store.append_message(session_id, &tool_message).await?;
@@ -1110,14 +1092,12 @@ mod tests {
 
         // Simulate adding messages including tool calls and results
         // First, add a user message
-        let thread_id = uuid::Uuid::now_v7();
         let user_message = ConversationMessage::User {
             content: vec![UserContent::Text {
                 text: "Read the file test.txt".to_string(),
             }],
             timestamp: 123456789,
             id: "user_1".to_string(),
-            thread_id,
             parent_message_id: None,
         };
         manager
@@ -1142,7 +1122,6 @@ mod tests {
             ],
             timestamp: 123456790,
             id: "assistant_1".to_string(),
-            thread_id,
             parent_message_id: Some("user_1".to_string()),
         };
         manager
@@ -1195,7 +1174,6 @@ mod tests {
             ),
             timestamp: 123456790,
             id: "tool_result_tool_call_1".to_string(),
-            thread_id,
             parent_message_id: Some("assistant_1".to_string()),
         };
         manager
@@ -1211,7 +1189,6 @@ mod tests {
             }],
             timestamp: 123456791,
             id: "assistant_2".to_string(),
-            thread_id,
             parent_message_id: Some("assistant_1".to_string()),
         };
         manager

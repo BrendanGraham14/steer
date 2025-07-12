@@ -114,8 +114,9 @@ impl MessageEventProcessor {
         message: conductor_core::app::Message,
         ctx: &mut ProcessingContext,
     ) {
-        let old_thread_id = ctx.chat_store.current_thread();
-        let new_message_thread_id = *message.thread_id();
+        // Store message ID and parent for later branch detection
+        let message_id = message.id().to_string();
+        let parent_id = message.parent_message_id().map(|s| s.to_string());
 
         // First, extract tool calls from Assistant messages to register them
         if let conductor_core::app::Message::Assistant {
@@ -147,15 +148,38 @@ impl MessageEventProcessor {
         ctx.chat_store.add_message(message);
         *ctx.messages_updated = true;
 
-        // After adding, check if a thread switch occurred, and prune if so.
-        if let Some(old_id) = old_thread_id {
-            if old_id != new_message_thread_id {
+        // After adding the message, check if we need to prune for branch edits
+        // This happens when:
+        // 1. This is a User message (edits create new User messages)
+        // 2. The parent has other User message children (indicating a branch)
+        if let Some(ref parent_id) = parent_id {
+            let siblings = ctx.chat_store.find_by_parent(parent_id);
+            let user_siblings = siblings.iter().filter(|item| {
+                matches!(item, ChatItem::Message(row) if matches!(row.inner, conductor_core::app::Message::User { .. }))
+            }).count();
+
+            // If there are multiple user messages with the same parent, we have a branch
+            if user_siblings > 1 {
                 tracing::debug!(
                     target: "tui.message_event",
-                    "Thread switch detected from {} to {}. Pruning message store.",
-                    old_id, new_message_thread_id
+                    "Branch detected: multiple user messages share parent {}. Pruning to lineage of {}",
+                    parent_id, message_id
                 );
-                ctx.chat_store.prune_to_thread(new_message_thread_id);
+                ctx.chat_store.prune_to_message_lineage(&message_id);
+            }
+        } else {
+            // Check for root-level branches (multiple messages with no parent)
+            let root_messages = ctx.chat_store.iter().filter(|item| {
+                matches!(item, ChatItem::Message(row) if row.inner.parent_message_id().is_none() && matches!(row.inner, conductor_core::app::Message::User { .. }))
+            }).count();
+
+            if root_messages > 1 {
+                tracing::debug!(
+                    target: "tui.message_event",
+                    "Root branch detected: multiple user messages with no parent. Pruning to lineage of {}",
+                    message_id
+                );
+                ctx.chat_store.prune_to_message_lineage(&message_id);
             }
         }
     }
@@ -175,7 +199,7 @@ mod tests {
     use crate::tui::widgets::chat_list::ChatListState;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
     use conductor_core::app::io::AppCommandSink;
     use conductor_core::error::Result;
     use conductor_tools::schema::ToolCall;
@@ -255,7 +279,6 @@ mod tests {
                 },
             ),
             timestamp: chrono::Utc::now().timestamp() as u64,
-            thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
         ctx.chat_store.add_message(placeholder_msg);
@@ -281,11 +304,9 @@ mod tests {
             id: "msg_123".to_string(),
             content: vec![AssistantContent::ToolCall { tool_call }],
             timestamp: 1234567890,
-            thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
 
-        let current_thread = uuid::Uuid::new_v4();
         let mut in_flight_operations = std::collections::HashSet::new();
         let mut ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
@@ -298,7 +319,6 @@ mod tests {
             current_tool_approval: &mut ctx.current_tool_approval,
             current_model: &mut ctx.current_model,
             messages_updated: &mut ctx.messages_updated,
-            current_thread: Some(current_thread),
             in_flight_operations: &mut in_flight_operations,
         };
 
@@ -323,5 +343,117 @@ mod tests {
         assert_eq!(stored_call.parameters, real_params);
         assert_eq!(stored_call.name, "view");
         assert_eq!(stored_call.id, tool_id);
+    }
+
+    #[tokio::test]
+    async fn test_branch_detection_and_pruning() {
+        let mut processor = MessageEventProcessor::new();
+        let mut ctx = create_test_context();
+
+        // Simulate a real conversation flow with an edit
+        // 1. User says hello
+        let msg1 = Message::User {
+            id: "user_1".to_string(),
+            content: vec![UserContent::Text {
+                text: "Hello".to_string(),
+            }],
+            timestamp: 1,
+            parent_message_id: None,
+        };
+        ctx.chat_store.add_message(msg1);
+
+        // 2. Assistant responds
+        let msg2 = Message::Assistant {
+            id: "assistant_1".to_string(),
+            content: vec![AssistantContent::Text {
+                text: "Hi there!".to_string(),
+            }],
+            timestamp: 2,
+            parent_message_id: Some("user_1".to_string()),
+        };
+        ctx.chat_store.add_message(msg2);
+
+        // 3. User continues conversation
+        let msg3 = Message::User {
+            id: "user_2".to_string(),
+            content: vec![UserContent::Text {
+                text: "How are you?".to_string(),
+            }],
+            timestamp: 3,
+            parent_message_id: Some("assistant_1".to_string()),
+        };
+        ctx.chat_store.add_message(msg3);
+
+        // 4. Assistant responds again
+        let msg4 = Message::Assistant {
+            id: "assistant_2".to_string(),
+            content: vec![AssistantContent::Text {
+                text: "I'm doing well!".to_string(),
+            }],
+            timestamp: 4,
+            parent_message_id: Some("user_2".to_string()),
+        };
+        ctx.chat_store.add_message(msg4);
+
+        assert_eq!(ctx.chat_store.len(), 4);
+
+        // 5. Now user edits their first message
+        // This creates a new user message with the same parent as user_1 (None)
+        let edited_msg = Message::User {
+            id: "user_1_edited".to_string(),
+            content: vec![UserContent::Text {
+                text: "Hi there!".to_string(),
+            }],
+            timestamp: 5,
+            parent_message_id: None, // Same parent as original user_1
+        };
+
+        let mut in_flight_operations = std::collections::HashSet::new();
+        let mut ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            command_sink: &ctx.command_sink,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut in_flight_operations,
+        };
+
+        // Process the edited message
+        let result = processor
+            .process(
+                conductor_core::app::AppEvent::MessageAdded {
+                    message: edited_msg,
+                    model: conductor_core::api::Model::Claude3_5Sonnet20241022,
+                },
+                &mut ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+
+        // Should have pruned to only the edited message (since it has no parent)
+        assert_eq!(ctx.chat_store.len(), 1);
+        assert!(
+            ctx.chat_store
+                .get_by_id(&"user_1_edited".to_string())
+                .is_some()
+        );
+        assert!(ctx.chat_store.get_by_id(&"user_1".to_string()).is_none());
+        assert!(
+            ctx.chat_store
+                .get_by_id(&"assistant_1".to_string())
+                .is_none()
+        );
+        assert!(ctx.chat_store.get_by_id(&"user_2".to_string()).is_none());
+        assert!(
+            ctx.chat_store
+                .get_by_id(&"assistant_2".to_string())
+                .is_none()
+        );
     }
 }

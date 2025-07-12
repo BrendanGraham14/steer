@@ -314,7 +314,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
             content,
             timestamp,
             id: _,
-            thread_id,
             parent_message_id,
         } => {
             let user_msg = proto::UserMessage {
@@ -378,7 +377,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                     }
                 }).collect(),
                 timestamp: *timestamp,
-                thread_id: thread_id.as_bytes().to_vec(),
                 parent_message_id: parent_message_id.clone(),
             };
             (proto::message::Message::User(user_msg), *timestamp)
@@ -387,7 +385,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
             content,
             timestamp,
             id: _,
-            thread_id,
             parent_message_id,
         } => {
             let assistant_msg = proto::AssistantMessage {
@@ -438,7 +435,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                     })
                     .collect(),
                 timestamp: *timestamp,
-                thread_id: thread_id.as_bytes().to_vec(),
                 parent_message_id: parent_message_id.clone(),
             };
             (
@@ -451,7 +447,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
             result,
             timestamp,
             id: _,
-            thread_id,
             parent_message_id,
         } => {
             let proto_result = conductor_tools_result_to_proto(result)?;
@@ -459,7 +454,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                 tool_use_id: tool_use_id.clone(),
                 result: Some(proto_result),
                 timestamp: *timestamp,
-                thread_id: thread_id.as_bytes().to_vec(),
                 parent_message_id: parent_message_id.clone(),
             };
             (proto::message::Message::Tool(tool_msg), *timestamp)
@@ -996,11 +990,6 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                 content,
                 timestamp: user_msg.timestamp,
                 id: proto_msg.id,
-                thread_id: uuid::Uuid::from_slice(&user_msg.thread_id).map_err(|e| {
-                    ConversionError::InvalidData {
-                        message: format!("Invalid thread_id UUID: {e}"),
-                    }
-                })?,
                 parent_message_id: user_msg.parent_message_id,
             })
         }
@@ -1050,11 +1039,6 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                 content,
                 timestamp: assistant_msg.timestamp,
                 id: proto_msg.id,
-                thread_id: uuid::Uuid::from_slice(&assistant_msg.thread_id).map_err(|e| {
-                    ConversionError::InvalidData {
-                        message: format!("Invalid thread_id UUID: {e}"),
-                    }
-                })?,
                 parent_message_id: assistant_msg.parent_message_id,
             })
         }
@@ -1066,11 +1050,6 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                     result: tool_result,
                     timestamp: tool_msg.timestamp,
                     id: proto_msg.id,
-                    thread_id: uuid::Uuid::from_slice(&tool_msg.thread_id).map_err(|e| {
-                        ConversionError::InvalidData {
-                            message: format!("Invalid thread_id UUID: {e}"),
-                        }
-                    })?,
                     parent_message_id: tool_msg.parent_message_id,
                 })
             } else {

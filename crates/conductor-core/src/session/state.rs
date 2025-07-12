@@ -790,7 +790,6 @@ mod tests {
             }],
             timestamp: 123456789,
             id: "msg1".to_string(),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         };
         state.add_message(message);

@@ -913,14 +913,12 @@ mod tests {
                     text: "First user message".to_string(),
                 }],
                 timestamp: 123,
-                thread_id: uuid::Uuid::new_v4(),
                 parent_message_id: None,
             })),
             ChatItem::Message(MessageRow::new(Message::Assistant {
                 id: "assistant1".to_string(),
                 content: vec![],
                 timestamp: 124,
-                thread_id: uuid::Uuid::new_v4(),
                 parent_message_id: None,
             })),
             ChatItem::Message(MessageRow::new(Message::User {
@@ -929,7 +927,6 @@ mod tests {
                     text: "Second user message".to_string(),
                 }],
                 timestamp: 125,
-                thread_id: uuid::Uuid::new_v4(),
                 parent_message_id: None,
             })),
         ];
