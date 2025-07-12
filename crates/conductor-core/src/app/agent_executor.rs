@@ -115,9 +115,9 @@ impl AgentExecutor {
                 .await?;
             let tool_calls = completion_response.extract_tool_calls();
 
-            // Get thread info from the last message
-            let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                (*last_msg.thread_id(), last_msg.id().to_string())
+            // Get parent info from the last message
+            let parent_id = if let Some(last_msg) = messages.last() {
+                last_msg.id().to_string()
             } else {
                 // This shouldn't happen
                 return Err(AgentExecutorError::Internal(
@@ -132,7 +132,6 @@ impl AgentExecutor {
                     .unwrap()
                     .as_secs(),
                 id: Uuid::new_v4().to_string(),
-                thread_id,
                 parent_message_id: Some(parent_id),
             };
 
@@ -174,9 +173,9 @@ impl AgentExecutor {
 
                 // Add tool results to messages - one message per tool result
                 for (i, (tool_result, message_id)) in tool_results_with_ids.iter().enumerate() {
-                    // Get thread info from the last message
-                    let (thread_id, parent_id) = if let Some(last_msg) = messages.last() {
-                        (*last_msg.thread_id(), last_msg.id().to_string())
+                    // Get parent info from the last message
+                    let parent_id = if let Some(last_msg) = messages.last() {
+                        last_msg.id().to_string()
                     } else {
                         return Err(AgentExecutorError::Internal(
                             "No messages in conversation when adding tool results".to_string(),
@@ -191,7 +190,6 @@ impl AgentExecutor {
                             .unwrap()
                             .as_secs(),
                         id: message_id.clone(),
-                        thread_id,
                         parent_message_id: Some(parent_id),
                     });
                 }

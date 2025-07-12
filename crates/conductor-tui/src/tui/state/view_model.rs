@@ -5,7 +5,6 @@
 
 use super::chat_store::ChatStore;
 use super::tool_registry::ToolCallRegistry;
-use crate::tui::model::MessageRow;
 use crate::tui::widgets::chat_list::ChatListState;
 use conductor_core::app::conversation::{AssistantContent, Message};
 
@@ -17,8 +16,6 @@ pub struct MessageViewModel {
     pub chat_list_state: ChatListState,
     /// Centralized tool call lifecycle tracking
     pub tool_registry: ToolCallRegistry,
-    /// Currently active thread ID (None until first message)
-    pub current_thread: Option<uuid::Uuid>,
 }
 
 impl Default for MessageViewModel {
@@ -33,17 +30,11 @@ impl MessageViewModel {
             chat_store: ChatStore::new(),
             chat_list_state: ChatListState::new(),
             tool_registry: ToolCallRegistry::new(),
-            current_thread: None, // No thread until first message
         }
     }
 
     /// Add a message to the view model, handling tool registry coordination automatically
     pub fn add_message(&mut self, message: Message) {
-        // If this is the first message with a real thread, update current thread
-        if self.current_thread.is_none() {
-            self.current_thread = Some(*message.thread_id());
-        }
-
         // Handle tool call registration for assistant messages
         if let Message::Assistant { content, .. } = &message {
             for block in content {
@@ -75,12 +66,6 @@ impl MessageViewModel {
     /// Add multiple messages efficiently (for restored conversations)
     pub fn add_messages(&mut self, messages: Vec<Message>) {
         let count = messages.len();
-
-        // If we have messages and no current thread set, use the thread from the first message
-        if !messages.is_empty() && self.current_thread.is_none() {
-            let thread_id = *messages[0].thread_id();
-            self.current_thread = Some(thread_id);
-        }
 
         for message in messages {
             // Handle tool call registration for assistant messages
@@ -114,20 +99,5 @@ impl MessageViewModel {
         if count > 0 {
             tracing::debug!(target: "view_model", "Loaded {} messages.", count);
         }
-    }
-
-    /// Set the current thread ID
-    pub fn set_thread(&mut self, thread_id: uuid::Uuid) {
-        self.current_thread = Some(thread_id);
-    }
-
-    /// Get messages for the current thread only
-    pub fn get_current_thread_messages(&self) -> Vec<&MessageRow> {
-        self.chat_store.messages()
-    }
-
-    /// Get user messages in the current thread (for edit history)
-    pub fn get_user_messages_in_thread(&self) -> Vec<(usize, &MessageRow)> {
-        self.chat_store.user_messages()
     }
 }

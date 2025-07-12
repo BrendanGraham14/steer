@@ -235,15 +235,6 @@ impl Tui {
         let message_count = messages.len();
         info!("Starting to restore {} messages to TUI", message_count);
 
-        // If we have messages, use the thread ID from the most recent one
-        if let Some(last_msg) = messages.last() {
-            self.view_model.current_thread = Some(*last_msg.thread_id());
-            info!(
-                "Setting current thread to: {:?}",
-                self.view_model.current_thread
-            );
-        }
-
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
             if let conductor_core::app::Message::Tool { tool_use_id, .. } = message {
@@ -592,7 +583,6 @@ impl Tui {
                 input_mode,
                 &current_model_owned,
                 current_tool_approval,
-                self.view_model.current_thread,
                 is_processing,
                 spinner_state,
                 hovered_id.as_deref(),
@@ -765,7 +755,6 @@ impl Tui {
             current_tool_approval: &mut self.current_tool_approval,
             current_model: &mut self.current_model,
             messages_updated: &mut messages_updated,
-            current_thread: self.view_model.current_thread,
             in_flight_operations: &mut self.in_flight_operations,
         };
 
@@ -774,22 +763,7 @@ impl Tui {
             tracing::error!(target: "tui.handle_app_event", "Event processing failed: {}", e);
         }
 
-        // Sync thread if we don't have one and messages were added
-        if self.view_model.current_thread.is_none() && !self.view_model.chat_store.is_empty() {
-            // Find first message with a real thread ID
-            let thread_id = self
-                .view_model
-                .chat_store
-                .messages()
-                .into_iter()
-                .next()
-                .map(|row| *row.inner.thread_id());
-
-            if let Some(thread_id) = thread_id {
-                // Set as active thread
-                self.view_model.set_thread(thread_id);
-            }
-        }
+        // Sync doesn't need to happen anymore since we don't track threads
 
         // Handle special input mode changes for tool approval
         if self.current_tool_approval.is_some() && self.input_mode != InputMode::AwaitingApproval {
@@ -826,7 +800,6 @@ impl Tui {
         input_mode: InputMode,
         current_model: &Model,
         current_approval: Option<&ToolCall>,
-        _current_thread: Option<uuid::Uuid>,
         is_processing: bool,
         spinner_state: usize,
         edit_selection_hovered_id: Option<&str>,
@@ -1503,7 +1476,6 @@ mod tests {
                 tool_call: tool_call.clone(),
             }],
             timestamp: 1234567890,
-            thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
 
@@ -1519,7 +1491,6 @@ mod tests {
                 },
             ),
             timestamp: 1234567891,
-            thread_id: *assistant_msg.thread_id(),
             parent_message_id: Some("msg_assistant".to_string()),
         };
 
@@ -1576,7 +1547,6 @@ mod tests {
                 },
             ),
             timestamp: 1234567890,
-            thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
 
@@ -1586,7 +1556,6 @@ mod tests {
                 tool_call: tool_call.clone(),
             }],
             timestamp: 1234567891,
-            thread_id: *tool_msg.thread_id(),
             parent_message_id: None,
         };
 

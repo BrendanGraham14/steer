@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::debug;
-use uuid::Uuid;
 
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
@@ -206,8 +205,6 @@ pub enum Message {
         content: Vec<UserContent>,
         timestamp: u64,
         id: String,
-        /// Identifies which conversation branch/thread this message belongs to
-        thread_id: Uuid,
         /// Links to the previous message in this branch (None for root messages)
         parent_message_id: Option<String>,
     },
@@ -215,7 +212,6 @@ pub enum Message {
         content: Vec<AssistantContent>,
         timestamp: u64,
         id: String,
-        thread_id: Uuid,
         parent_message_id: Option<String>,
     },
     Tool {
@@ -223,7 +219,6 @@ pub enum Message {
         result: ToolResult,
         timestamp: u64,
         id: String,
-        thread_id: Uuid,
         parent_message_id: Option<String>,
     },
 }
@@ -250,14 +245,6 @@ impl Message {
             Message::User { timestamp, .. } => *timestamp,
             Message::Assistant { timestamp, .. } => *timestamp,
             Message::Tool { timestamp, .. } => *timestamp,
-        }
-    }
-
-    pub fn thread_id(&self) -> &Uuid {
-        match self {
-            Message::User { thread_id, .. } => thread_id,
-            Message::Assistant { thread_id, .. } => thread_id,
-            Message::Tool { thread_id, .. } => thread_id,
         }
     }
 
@@ -482,8 +469,6 @@ When you are using compact - please focus on test output and code changes. Inclu
 pub struct Conversation {
     pub messages: Vec<Message>,
     pub working_directory: PathBuf,
-    /// The currently active thread ID
-    pub current_thread_id: Uuid,
 }
 
 impl Default for Conversation {
@@ -497,13 +482,7 @@ impl Conversation {
         Self {
             messages: Vec::new(),
             working_directory: PathBuf::new(),
-            current_thread_id: Self::generate_thread_id(),
         }
-    }
-
-    /// Generate a new thread ID using UUID v7 (timestamp-based)
-    pub fn generate_thread_id() -> Uuid {
-        Uuid::now_v7()
     }
 
     pub fn add_message(&mut self, message: Message) {
@@ -522,7 +501,6 @@ impl Conversation {
             result,
             timestamp: Message::current_timestamp(),
             id: message_id,
-            thread_id: self.current_thread_id,
             parent_message_id: parent_id,
         });
     }
@@ -562,7 +540,6 @@ impl Conversation {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            thread_id: self.current_thread_id,
             parent_message_id: last_msg_id,
         });
 
@@ -595,7 +572,6 @@ impl Conversation {
             }],
             timestamp,
             id: Message::generate_id("user", timestamp),
-            thread_id: self.current_thread_id,
             parent_message_id: None, // New root message after compaction
         });
 
@@ -604,11 +580,7 @@ impl Conversation {
 
     /// Edit a message, which removes the old message and all its children,
     /// then creates a new branch.
-    pub fn edit_message(
-        &mut self,
-        message_id: &str,
-        new_content: Vec<UserContent>,
-    ) -> Option<Uuid> {
+    pub fn edit_message(&mut self, message_id: &str, new_content: Vec<UserContent>) -> Option<()> {
         // Find the message to edit
         let message_to_edit = self.messages.iter().find(|m| m.id() == message_id)?.clone();
 
@@ -641,35 +613,28 @@ impl Conversation {
         // Remove the old message and all its descendants
         self.messages.retain(|m| !to_remove.contains(m.id()));
 
-        // Create a new thread ID for this branch
-        let new_thread_id = Self::generate_thread_id();
-
-        // Create the edited message with a new ID and the new thread ID
+        // Create the edited message with a new ID
         let edited_message = Message::User {
             content: new_content,
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            thread_id: new_thread_id,
             parent_message_id: parent_id,
         };
 
         // Add the edited message
         self.messages.push(edited_message);
 
-        // Update current thread to the new branch
-        self.current_thread_id = new_thread_id;
-
-        Some(new_thread_id)
+        Some(())
     }
 
-    /// Get messages in the current thread by following parent links
+    /// Get messages in the current active branch by following parent links from the last message
     pub fn get_thread_messages(&self) -> Vec<&Message> {
+        if self.messages.is_empty() {
+            return Vec::new();
+        }
+
         let mut result = Vec::new();
-        let mut current_msg = self
-            .messages
-            .iter()
-            .filter(|m| m.thread_id() == &self.current_thread_id)
-            .max_by_key(|m| m.timestamp());
+        let mut current_msg = self.messages.last();
 
         let id_map: HashMap<&str, &Message> = self.messages.iter().map(|m| (m.id(), m)).collect();
 
@@ -692,19 +657,12 @@ impl Conversation {
 #[cfg(test)]
 mod tests {
     use crate::app::conversation::{AssistantContent, Conversation, Message, UserContent};
-    use uuid::Uuid;
 
     /// Helper function to create a user message for testing
-    fn create_user_message(
-        id: &str,
-        parent_id: Option<&str>,
-        thread_id: Uuid,
-        content: &str,
-    ) -> Message {
+    fn create_user_message(id: &str, parent_id: Option<&str>, content: &str) -> Message {
         Message::User {
             id: id.to_string(),
             parent_message_id: parent_id.map(String::from),
-            thread_id,
             content: vec![UserContent::Text {
                 text: content.to_string(),
             }],
@@ -713,16 +671,10 @@ mod tests {
     }
 
     /// Helper function to create an assistant message for testing
-    fn create_assistant_message(
-        id: &str,
-        parent_id: Option<&str>,
-        thread_id: Uuid,
-        content: &str,
-    ) -> Message {
+    fn create_assistant_message(id: &str, parent_id: Option<&str>, content: &str) -> Message {
         Message::Assistant {
             id: id.to_string(),
             parent_message_id: parent_id.map(String::from),
-            thread_id,
             content: vec![AssistantContent::Text {
                 text: content.to_string(),
             }],
@@ -733,33 +685,23 @@ mod tests {
     #[test]
     fn test_editing_message_in_the_middle_of_conversation() {
         let mut conversation = Conversation::new();
-        let initial_thread_id = conversation.current_thread_id;
 
         // 1. Build an initial conversation
-        let msg1 = create_user_message("msg1", None, initial_thread_id, "What is Rust?");
+        let msg1 = create_user_message("msg1", None, "What is Rust?");
         conversation.add_message(msg1.clone());
 
-        let msg2 = create_assistant_message(
-            "msg2",
-            Some("msg1"),
-            initial_thread_id,
-            "A systems programming language.",
-        );
+        let msg2 =
+            create_assistant_message("msg2", Some("msg1"), "A systems programming language.");
         conversation.add_message(msg2.clone());
 
-        let msg3 = create_user_message("msg3", Some("msg2"), initial_thread_id, "Is it fast?");
+        let msg3 = create_user_message("msg3", Some("msg2"), "Is it fast?");
         conversation.add_message(msg3.clone());
 
-        let msg4 = create_assistant_message(
-            "msg4",
-            Some("msg3"),
-            initial_thread_id,
-            "Yes, it is very fast.",
-        );
+        let msg4 = create_assistant_message("msg4", Some("msg3"), "Yes, it is very fast.");
         conversation.add_message(msg4.clone());
 
         // 2. Edit the *first* user message
-        let new_thread_id = conversation
+        conversation
             .edit_message(
                 "msg1",
                 vec![UserContent::Text {
@@ -792,7 +734,6 @@ mod tests {
         let msg5 = create_assistant_message(
             "msg5",
             Some(&edited_msg_id),
-            new_thread_id,
             "A systems programming language from Google.",
         );
         conversation.add_message(msg5.clone());
@@ -813,22 +754,20 @@ mod tests {
     #[test]
     fn test_get_thread_messages_after_edit() {
         let mut conversation = Conversation::new();
-        let initial_thread_id = conversation.current_thread_id;
 
         // 1. Initial conversation
-        let msg1 = create_user_message("msg1", None, initial_thread_id, "hello");
+        let msg1 = create_user_message("msg1", None, "hello");
         conversation.add_message(msg1.clone());
 
-        let msg2 = create_assistant_message("msg2", Some("msg1"), initial_thread_id, "world");
+        let msg2 = create_assistant_message("msg2", Some("msg1"), "world");
         conversation.add_message(msg2.clone());
 
         // This is the message that will be "edited out"
-        let msg3_original =
-            create_user_message("msg3_original", Some("msg2"), initial_thread_id, "thanks");
+        let msg3_original = create_user_message("msg3_original", Some("msg2"), "thanks");
         conversation.add_message(msg3_original.clone());
 
         // 2. Edit the last user message ("thanks")
-        let new_thread_id = conversation
+        conversation
             .edit_message(
                 "msg3_original",
                 vec![UserContent::Text {
@@ -840,8 +779,7 @@ mod tests {
         let edited_msg_id = conversation.messages.last().unwrap().id().to_string();
 
         // 3. Add a new assistant message to the new branch
-        let msg4 =
-            create_assistant_message("msg4", Some(&edited_msg_id), new_thread_id, "I am fine");
+        let msg4 = create_assistant_message("msg4", Some(&edited_msg_id), "I am fine");
         conversation.add_message(msg4.clone());
 
         // 4. Get messages for the current thread
@@ -874,35 +812,24 @@ mod tests {
     #[test]
     fn test_get_thread_messages_filters_other_branches() {
         let mut conversation = Conversation::new();
-        let initial_thread_id = conversation.current_thread_id;
 
         // 1. Initial conversation: "hi"
-        let msg1 = create_user_message("msg1", None, initial_thread_id, "hi");
+        let msg1 = create_user_message("msg1", None, "hi");
         conversation.add_message(msg1.clone());
 
-        let msg2 = create_assistant_message(
-            "msg2",
-            Some("msg1"),
-            initial_thread_id,
-            "Hello! How can I help?",
-        );
+        let msg2 = create_assistant_message("msg2", Some("msg1"), "Hello! How can I help?");
         conversation.add_message(msg2.clone());
 
         // 2. User says "thanks" (this will be edited out)
-        let msg3_original =
-            create_user_message("msg3_original", Some("msg2"), initial_thread_id, "thanks");
+        let msg3_original = create_user_message("msg3_original", Some("msg2"), "thanks");
         conversation.add_message(msg3_original.clone());
 
-        let msg4_original = create_assistant_message(
-            "msg4_original",
-            Some("msg3_original"),
-            initial_thread_id,
-            "You're welcome!",
-        );
+        let msg4_original =
+            create_assistant_message("msg4_original", Some("msg3_original"), "You're welcome!");
         conversation.add_message(msg4_original.clone());
 
         // 3. Edit the "thanks" message to "how are you"
-        let new_thread_id = conversation
+        conversation
             .edit_message(
                 "msg3_original",
                 vec![UserContent::Text {
@@ -913,22 +840,16 @@ mod tests {
 
         let edited_msg_id = conversation.messages.last().unwrap().id().to_string();
 
-        // 4. Add assistant response in the new thread
+        // 4. Add assistant response in the new branch
         let msg4_new = create_assistant_message(
             "msg4_new",
             Some(&edited_msg_id),
-            new_thread_id,
             "I'm doing well, thanks for asking! Ready to help with any software engineering tasks you have.",
         );
         conversation.add_message(msg4_new.clone());
 
         // 5. User asks "what messages have I sent you?"
-        let msg5 = create_user_message(
-            "msg5",
-            Some("msg4_new"),
-            new_thread_id,
-            "what messages have I sent you?",
-        );
+        let msg5 = create_user_message("msg5", Some("msg4_new"), "what messages have I sent you?");
         conversation.add_message(msg5.clone());
 
         // 6. Get messages for the current thread - this should NOT include "thanks"

@@ -342,7 +342,6 @@ mod tests {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         }];
         let future = OneShotRunner::run_ephemeral(
@@ -547,7 +546,6 @@ mod tests {
             }),
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         }];
 
@@ -633,7 +631,6 @@ mod tests {
     async fn test_run_ephemeral_with_multi_turn_conversation() {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let thread_id = uuid::Uuid::now_v7();
         let messages = vec![
             Message::User {
                 content: vec![UserContent::Text {
@@ -641,7 +638,6 @@ mod tests {
                 }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
-                thread_id,
                 parent_message_id: None,
             },
             Message::Assistant {
@@ -650,7 +646,6 @@ mod tests {
                 }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("assistant", Message::current_timestamp()),
-                thread_id,
                 parent_message_id: Some("user_0".to_string()),
             },
             Message::User {
@@ -659,7 +654,6 @@ mod tests {
                 }],
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
-                thread_id,
                 parent_message_id: Some("assistant_0".to_string()),
             },
         ];
@@ -834,7 +828,6 @@ mod tests {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         }];
 

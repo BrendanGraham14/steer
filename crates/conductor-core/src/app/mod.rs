@@ -380,12 +380,9 @@ impl App {
         self.current_op_context = Some(op_context);
 
         // Add user message
-        let (thread_id, parent_id) = {
+        let parent_id = {
             let conv = self.conversation.lock().await;
-            (
-                conv.current_thread_id,
-                conv.messages.last().map(|m| m.id().to_string()),
-            )
+            conv.messages.last().map(|m| m.id().to_string())
         };
 
         self.add_message(Message::User {
@@ -394,7 +391,6 @@ impl App {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            thread_id,
             parent_message_id: parent_id,
         })
         .await;
@@ -845,12 +841,9 @@ impl App {
                   incomplete_tool_calls.len());
 
             for tool_call in incomplete_tool_calls {
-                let (thread_id, parent_id) = {
+                let parent_id = {
                     let conv = self.conversation.lock().await;
-                    (
-                        conv.current_thread_id,
-                        conv.messages.last().map(|m| m.id().to_string()),
-                    )
+                    conv.messages.last().map(|m| m.id().to_string())
                 };
 
                 let cancelled_result = Message::Tool {
@@ -858,7 +851,6 @@ impl App {
                     result: ToolResult::Error(ToolError::Cancelled(tool_call.name.clone())),
                     timestamp: Message::current_timestamp(),
                     id: Message::generate_id("tool", Message::current_timestamp()),
-                    thread_id,
                     parent_message_id: parent_id,
                 };
 
@@ -924,7 +916,6 @@ impl App {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            thread_id: conversation_guard.current_thread_id,
             parent_message_id: parent_id,
         };
         conversation_guard.add_message(message);
@@ -946,7 +937,6 @@ impl App {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
-            thread_id: conversation_guard.current_thread_id,
             parent_message_id: parent_id,
         };
         conversation_guard.add_message(message);
@@ -964,21 +954,17 @@ impl App {
     }
 
     #[cfg(test)]
-    pub async fn edit_message(
-        &mut self,
-        message_id: &str,
-        new_content: &str,
-    ) -> Result<Option<uuid::Uuid>> {
+    pub async fn edit_message(&mut self, message_id: &str, new_content: &str) -> Result<()> {
         use crate::app::conversation::UserContent;
         let conversation = self.conversation.clone();
         let mut conversation_guard = conversation.lock().await;
-        let new_thread_id = conversation_guard.edit_message(
+        conversation_guard.edit_message(
             message_id,
             vec![UserContent::Text {
                 text: new_content.to_string(),
             }],
         );
-        Ok(new_thread_id)
+        Ok(())
     }
 }
 
@@ -1238,26 +1224,28 @@ async fn handle_app_command(
             }
 
             // Edit the message in the conversation. This removes the old branch and adds the new one.
-            let (new_thread_id, edited_message_opt) = {
+            let (success, edited_message_opt) = {
                 let mut conversation = app.conversation.lock().await;
-                let new_thread_id = conversation.edit_message(
+                let result = conversation.edit_message(
                     &message_id,
                     vec![UserContent::Text {
                         text: new_content.clone(),
                     }],
                 );
 
-                // Attempt to fetch the newly created edited message (it will be the latest User message in the new thread)
-                let edited_msg = new_thread_id.and_then(|tid| {
+                // Attempt to fetch the newly created edited message (it will be the latest User message)
+                let edited_msg = if result.is_some() {
                     conversation
                         .messages
                         .iter()
                         .rev()
-                        .find(|m| m.thread_id() == &tid && matches!(m, Message::User { .. }))
+                        .find(|m| matches!(m, Message::User { .. }))
                         .cloned()
-                });
+                } else {
+                    None
+                };
 
-                (new_thread_id, edited_msg)
+                (result.is_some(), edited_msg)
             };
 
             // Notify the UI about the newly edited user message so it can appear immediately
@@ -1268,8 +1256,8 @@ async fn handle_app_command(
                 });
             }
 
-            if let Some(thread_id) = new_thread_id {
-                debug!(target: "handle_app_command", "Created new branch with thread_id: {}", thread_id);
+            if success {
+                debug!(target: "handle_app_command", "Successfully edited message and created new branch");
 
                 // This message is now the latest in the conversation.
                 // We can now start a new agent operation.
@@ -1643,12 +1631,9 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             match result {
                 Ok(response_text) => {
                     info!(target: "handle_task_outcome", "Dispatch agent successful.");
-                    let (thread_id, parent_id) = {
+                    let parent_id = {
                         let conv = app.conversation.lock().await;
-                        (
-                            conv.current_thread_id,
-                            conv.messages.last().map(|m| m.id().to_string()),
-                        )
+                        conv.messages.last().map(|m| m.id().to_string())
                     };
 
                     app.add_message(Message::Assistant {
@@ -1657,7 +1642,6 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         }],
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("assistant", Message::current_timestamp()),
-                        thread_id,
                         parent_message_id: parent_id,
                     })
                     .await;
@@ -1694,12 +1678,9 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     let (stdout, stderr, exit_code) = parse_bash_output(&output_str);
 
                     // Add the command execution as a message
-                    let (thread_id, parent_id) = {
+                    let parent_id = {
                         let conv = app.conversation.lock().await;
-                        (
-                            conv.current_thread_id,
-                            conv.messages.last().map(|m| m.id().to_string()),
-                        )
+                        conv.messages.last().map(|m| m.id().to_string())
                     };
 
                     let message = Message::User {
@@ -1711,7 +1692,6 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         }],
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("user", Message::current_timestamp()),
-                        thread_id,
                         parent_message_id: parent_id,
                     };
                     app.add_message(message).await;
@@ -1747,12 +1727,9 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         });
                     } else {
                         // Add error as a command execution with error output
-                        let (thread_id, parent_id) = {
+                        let parent_id = {
                             let conv = app.conversation.lock().await;
-                            (
-                                conv.current_thread_id,
-                                conv.messages.last().map(|m| m.id().to_string()),
-                            )
+                            conv.messages.last().map(|m| m.id().to_string())
                         };
 
                         let error_message = format!("Error executing command: {e}");
@@ -1765,7 +1742,6 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                             }],
                             timestamp: Message::current_timestamp(),
                             id: Message::generate_id("user", Message::current_timestamp()),
-                            thread_id,
                             parent_message_id: parent_id,
                         };
                         app.add_message(message).await;

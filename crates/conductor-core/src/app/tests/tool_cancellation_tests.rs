@@ -78,7 +78,6 @@ mod tests {
             ],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         };
 
@@ -161,7 +160,6 @@ mod tests {
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         };
 
@@ -176,7 +174,6 @@ mod tests {
             }),
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         };
 
@@ -249,7 +246,6 @@ mod tests {
             ],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         };
 

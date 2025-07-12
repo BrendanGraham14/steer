@@ -605,14 +605,13 @@ impl SessionStore for SqliteSessionStore {
             }
         };
 
-        // Extract thread_id and parent_message_id from the message
-        let thread_id = message.thread_id();
+        // Extract parent_message_id from the message
         let parent_message_id = message.parent_message_id();
 
         sqlx::query(
             r#"
-            INSERT INTO messages (id, session_id, sequence_num, role, content, created_at, thread_id, parent_message_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO messages (id, session_id, sequence_num, role, content, created_at, parent_message_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
         )
         .bind(id)
@@ -621,7 +620,6 @@ impl SessionStore for SqliteSessionStore {
         .bind(role)
         .bind(&content_json)
         .bind(Utc::now())
-        .bind(thread_id)
         .bind(parent_message_id)
         .execute(&self.pool)
         .await
@@ -638,7 +636,7 @@ impl SessionStore for SqliteSessionStore {
         let query = if let Some(seq) = after_sequence {
             sqlx::query(
                 r#"
-                SELECT id, sequence_num, role, content, created_at, thread_id, parent_message_id
+                SELECT id, sequence_num, role, content, created_at, parent_message_id
                 FROM messages
                 WHERE session_id = ?1 AND sequence_num > ?2
                 ORDER BY sequence_num ASC
@@ -649,7 +647,7 @@ impl SessionStore for SqliteSessionStore {
         } else {
             sqlx::query(
                 r#"
-                SELECT id, sequence_num, role, content, created_at, thread_id, parent_message_id
+                SELECT id, sequence_num, role, content, created_at, parent_message_id
                 FROM messages
                 WHERE session_id = ?1
                 ORDER BY sequence_num ASC
@@ -670,8 +668,6 @@ impl SessionStore for SqliteSessionStore {
             let id: String = row.get("id");
             let created_at = row.get::<chrono::DateTime<chrono::Utc>, _>("created_at");
 
-            // Get UUIDs directly from SQLx
-            let thread_id: Uuid = row.get("thread_id");
             let parent_message_id: Option<String> = row.get("parent_message_id");
 
             // Deserialize based on role
@@ -687,7 +683,6 @@ impl SessionStore for SqliteSessionStore {
                         content,
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
-                        thread_id,
                         parent_message_id: parent_message_id.clone(),
                     }
                 }
@@ -702,7 +697,6 @@ impl SessionStore for SqliteSessionStore {
                         content,
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
-                        thread_id,
                         parent_message_id: parent_message_id.clone(),
                     }
                 }
@@ -723,7 +717,6 @@ impl SessionStore for SqliteSessionStore {
                         result: stored.result,
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
-                        thread_id,
                         parent_message_id: parent_message_id.clone(),
                     }
                 }
@@ -1113,7 +1106,6 @@ mod tests {
             }],
             timestamp: 123456789,
             id: "msg1".to_string(),
-            thread_id: uuid::Uuid::now_v7(),
             parent_message_id: None,
         };
 
@@ -1224,7 +1216,6 @@ mod tests {
                 }],
                 timestamp: 123456789,
                 id: "msg1".to_string(),
-                thread_id: uuid::Uuid::now_v7(),
                 parent_message_id: None,
             },
             usage: None,

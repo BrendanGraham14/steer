@@ -11,7 +11,6 @@ use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 #[tokio::test]
 #[ignore]
@@ -37,7 +36,6 @@ async fn test_api_basic() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
-        thread_id: Uuid::new_v4(),
         parent_message_id: None,
     }];
 
@@ -162,7 +160,6 @@ async fn test_api_with_tools() {
                 }],
                 timestamp,
                 id: Message::generate_id("user", timestamp),
-                thread_id: Uuid::new_v4(),
                 parent_message_id: None,
             }];
 
@@ -305,7 +302,6 @@ async fn test_api_with_tool_response() {
                     }],
                     timestamp: ts1,
                     id: Message::generate_id("user", ts1),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: None,
                 },
                 Message::Assistant {
@@ -318,7 +314,6 @@ async fn test_api_with_tool_response() {
                     }],
                     timestamp: ts2,
                     id: Message::generate_id("assistant", ts2),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: Some(Message::generate_id("user", ts1)),
                 },
                 Message::Tool {
@@ -329,7 +324,6 @@ async fn test_api_with_tool_response() {
                     }),
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: Some(Message::generate_id("assistant", ts2)),
                 },
                 Message::User {
@@ -338,7 +332,6 @@ async fn test_api_with_tool_response() {
                     }],
                     timestamp: ts3 + 1,
                     id: Message::generate_id("user", ts3 + 1),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: Some(Message::generate_id("tool", ts3)),
                 },
             ];
@@ -420,7 +413,6 @@ async fn test_gemini_system_instructions() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
-        thread_id: Uuid::new_v4(),
         parent_message_id: None,
     }];
 
@@ -471,7 +463,6 @@ async fn test_gemini_api_tool_result_error() {
             }],
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
-            thread_id: Uuid::new_v4(),
             parent_message_id: None,
         },
         Message::Assistant {
@@ -484,7 +475,6 @@ async fn test_gemini_api_tool_result_error() {
             }],
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         Message::Tool {
@@ -495,7 +485,6 @@ async fn test_gemini_api_tool_result_error() {
             }),
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::User {
@@ -504,7 +493,6 @@ async fn test_gemini_api_tool_result_error() {
             }],
             timestamp: ts3 + 1,
             id: Message::generate_id("user", ts3 + 1),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("tool", ts3)),
         },
     ];
@@ -579,7 +567,6 @@ async fn test_gemini_api_complex_tool_schema() {
         }],
         timestamp,
         id: Message::generate_id("user", timestamp),
-        thread_id: Uuid::new_v4(),
         parent_message_id: None,
     }];
 
@@ -630,7 +617,6 @@ async fn test_gemini_api_tool_result_json() {
             }],
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
-            thread_id: Uuid::new_v4(),
             parent_message_id: None,
         },
         Message::Assistant {
@@ -643,7 +629,6 @@ async fn test_gemini_api_tool_result_json() {
             }],
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         Message::Tool {
@@ -654,7 +639,6 @@ async fn test_gemini_api_tool_result_json() {
             }),
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::User {
@@ -663,7 +647,6 @@ async fn test_gemini_api_tool_result_json() {
             }],
             timestamp: ts3 + 1,
             id: Message::generate_id("user", ts3 + 1),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("tool", ts3)),
         },
     ];
@@ -704,7 +687,6 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             }],
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
-            thread_id: Uuid::new_v4(),
             parent_message_id: None,
         },
         // Assistant makes two tool calls
@@ -727,7 +709,6 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             ],
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         // Provide results for both tool calls
@@ -739,7 +720,6 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             }),
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::Tool {
@@ -750,7 +730,6 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             }),
             timestamp: ts4,
             id: Message::generate_id("tool", ts4),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
         Message::User {
@@ -759,7 +738,6 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             }],
             timestamp: ts4 + 1,
             id: Message::generate_id("user", ts4 + 1),
-            thread_id: Uuid::new_v4(),
             parent_message_id: Some(Message::generate_id("tool", ts4)),
         },
     ];
@@ -840,7 +818,6 @@ async fn test_api_with_cancelled_tool_execution() {
                     }],
                     timestamp: ts1,
                     id: Message::generate_id("user", ts1),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: None,
                 },
                 // Assistant requests a tool call
@@ -854,7 +831,6 @@ async fn test_api_with_cancelled_tool_execution() {
                     }],
                     timestamp: ts2,
                     id: Message::generate_id("assistant", ts2),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: Some(Message::generate_id("user", ts1)),
                 },
                 // Tool execution was cancelled - this is what inject_cancelled_tool_results would add
@@ -867,7 +843,6 @@ async fn test_api_with_cancelled_tool_execution() {
                     }),
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: Some(Message::generate_id("assistant", ts2)),
                 },
                 // User continues the conversation
@@ -877,7 +852,6 @@ async fn test_api_with_cancelled_tool_execution() {
                     }],
                     timestamp: ts4,
                     id: Message::generate_id("user", ts4),
-                    thread_id: Uuid::new_v4(),
                     parent_message_id: Some(Message::generate_id("tool", ts3)),
                 },
             ];

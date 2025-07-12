@@ -97,7 +97,6 @@ impl EventProcessor for ToolEventProcessor {
                     tool_use_id: id.clone(),
                     result: result.clone(),
                     timestamp: chrono::Utc::now().timestamp() as u64,
-                    thread_id: ctx.current_thread.unwrap_or(uuid::Uuid::new_v4()),
                     parent_message_id: None,
                 };
 
@@ -125,7 +124,6 @@ impl EventProcessor for ToolEventProcessor {
                         message: error.clone(),
                     }),
                     timestamp: chrono::Utc::now().timestamp() as u64,
-                    thread_id: ctx.current_thread.unwrap_or(uuid::Uuid::new_v4()),
                     parent_message_id: None,
                 };
 
@@ -263,7 +261,6 @@ mod tests {
                 tool_call: full_call.clone(),
             }],
             timestamp: 0,
-            thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
 
@@ -281,7 +278,6 @@ mod tests {
                 current_tool_approval: &mut ctx.current_tool_approval,
                 current_model: &mut ctx.current_model,
                 messages_updated: &mut ctx.messages_updated,
-                current_thread: None,
                 in_flight_operations: &mut ctx.in_flight_operations,
             };
             let _ = msg_proc
@@ -308,7 +304,6 @@ mod tests {
                 current_tool_approval: &mut ctx.current_tool_approval,
                 current_model: &mut ctx.current_model,
                 messages_updated: &mut ctx.messages_updated,
-                current_thread: None,
                 in_flight_operations: &mut ctx.in_flight_operations,
             };
             let _ = tool_proc

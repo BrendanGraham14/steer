@@ -117,8 +117,7 @@ message CompactResult {
 message UserMessage {
   repeated UserContent content = 1;
   uint64 timestamp = 2;
-  bytes thread_id = 3;  // UUID stored as bytes
-  optional string parent_message_id = 4;
+  optional string parent_message_id = 3;
 }
 
 message UserContent {
@@ -132,8 +131,7 @@ message UserContent {
 message AssistantMessage {
   repeated AssistantContent content = 1;
   uint64 timestamp = 2;
-  bytes thread_id = 3;  // UUID stored as bytes
-  optional string parent_message_id = 4;
+  optional string parent_message_id = 3;
 }
 
 message AssistantContent {
@@ -169,8 +167,7 @@ message ToolMessage {
   string tool_use_id = 1;
   ToolResult result = 2;
   uint64 timestamp = 3;
-  bytes thread_id = 4;  // UUID stored as bytes
-  optional string parent_message_id = 5;
+  optional string parent_message_id = 4;
 }
 
 message MessageUpdatedEvent {
