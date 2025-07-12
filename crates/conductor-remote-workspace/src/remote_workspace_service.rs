@@ -262,12 +262,6 @@ impl RemoteWorkspaceService {
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-
-            // Skip hidden files and directories
-            if file_name.starts_with('.') {
-                continue;
-            }
 
             if let Ok(rel_path) = path.strip_prefix(&std::env::current_dir()?) {
                 let path_str = rel_path.to_string_lossy().to_string();
@@ -653,7 +647,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
     ) -> Result<Response<Self::ListFilesStream>, Status> {
         use fuzzy_matcher::FuzzyMatcher;
         use fuzzy_matcher::skim::SkimMatcherV2;
-        use ignore::Walk;
+        use ignore::WalkBuilder;
 
         let req = request.into_inner();
 
@@ -664,17 +658,14 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         tokio::spawn(async move {
             let mut files = Vec::new();
 
-            // Walk the current directory, respecting .gitignore
-            for entry in Walk::new(".") {
+            // Walk the current directory, respecting .gitignore but including hidden files
+            let walker = WalkBuilder::new(".")
+                .hidden(false) // Include hidden files
+                .build();
+
+            for entry in walker {
                 match entry {
                     Ok(entry) => {
-                        // Skip hidden files/directories (those starting with .)
-                        if let Some(file_name) = entry.file_name().to_str() {
-                            if file_name.starts_with('.') && entry.path() != Path::new(".") {
-                                continue;
-                            }
-                        }
-
                         // Get the relative path from the root
                         if let Ok(relative_path) = entry.path().strip_prefix(".") {
                             if let Some(path_str) = relative_path.to_str() {

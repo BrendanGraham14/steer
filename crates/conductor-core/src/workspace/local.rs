@@ -118,26 +118,23 @@ impl Workspace for LocalWorkspace {
         query: Option<&str>,
         max_results: Option<usize>,
     ) -> Result<Vec<String>> {
-        use ignore::Walk;
+        use ignore::WalkBuilder;
 
         let mut files = Vec::new();
 
         info!(target: "workspace.list_files", "Listing files in workspace: {:?}", self.root_path);
 
-        // Walk the workspace directory, respecting .gitignore
-        for entry in Walk::new(&self.root_path) {
+        // Walk the workspace directory, respecting .gitignore but including hidden files
+        let walker = WalkBuilder::new(&self.root_path)
+            .hidden(false) // Include hidden files
+            .build();
+
+        for entry in walker {
             let entry = entry?;
 
             // Skip the root directory itself
             if entry.path() == self.root_path {
                 continue;
-            }
-
-            // Skip hidden files/directories (those starting with .)
-            if let Some(file_name) = entry.file_name().to_str() {
-                if file_name.starts_with('.') && entry.path() != self.root_path {
-                    continue;
-                }
             }
 
             // Get the relative path from the root
@@ -298,5 +295,38 @@ mod tests {
         // Test with max_results
         let files = workspace.list_files(None, Some(2)).await.unwrap();
         assert_eq!(files.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_files_includes_dotfiles() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        // Create dotfiles and dot-directories
+        std::fs::write(temp_dir.path().join(".gitignore"), "target/").unwrap();
+        std::fs::write(temp_dir.path().join(".env"), "SECRET=value").unwrap();
+        std::fs::create_dir(temp_dir.path().join(".git")).unwrap();
+        std::fs::write(temp_dir.path().join(".git/config"), "[core]").unwrap();
+
+        // Create regular files too
+        std::fs::write(temp_dir.path().join("README.md"), "# Test").unwrap();
+
+        // List all files
+        let files = workspace.list_files(None, None).await.unwrap();
+
+        // Should include both dotfiles and regular files
+        assert!(files.contains(&".gitignore".to_string()));
+        assert!(files.contains(&".env".to_string()));
+        assert!(files.contains(&".git/".to_string())); // Directory with trailing slash
+        assert!(files.contains(&".git/config".to_string()));
+        assert!(files.contains(&"README.md".to_string()));
+
+        // Test fuzzy search on dotfiles
+        let files = workspace.list_files(Some(".git"), None).await.unwrap();
+        assert!(files.iter().any(|f| f == ".gitignore"));
+        assert!(files.iter().any(|f| f == ".git/"));
+        assert!(files.iter().any(|f| f == ".git/config"));
     }
 }
