@@ -308,9 +308,8 @@ impl InputPanelState {
     }
 
     /// Populate edit selection messages from chat store
-    pub fn populate_edit_selection(&mut self, chat_items: &[ChatItem]) {
+    pub fn populate_edit_selection<'a>(&mut self, chat_items: impl Iterator<Item = &'a ChatItem>) {
         self.edit_selection_messages = chat_items
-            .iter()
             .filter_map(|item| {
                 if let ChatItem::Message(row) = item {
                     if let Message::User { content, .. } = &row.inner {
@@ -935,7 +934,7 @@ mod tests {
             })),
         ];
 
-        state.populate_edit_selection(&chat_items);
+        state.populate_edit_selection(chat_items.iter());
 
         // Should have 2 user messages
         assert_eq!(state.edit_selection_messages.len(), 2);

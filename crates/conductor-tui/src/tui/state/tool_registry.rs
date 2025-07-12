@@ -67,8 +67,6 @@ pub struct ToolCallRegistry {
     active_calls: HashMap<String, ToolCallState>,
     /// Tool calls that have completed (success or failure)
     completed_calls: HashMap<String, CompletedToolCall>,
-    /// Fast lookup from tool-id to message index for rendering
-    tool_message_index: HashMap<String, usize>,
 }
 
 impl ToolCallRegistry {
@@ -138,7 +136,7 @@ impl ToolCallRegistry {
             let state = ToolCallState {
                 call: call.clone(),
                 status: ToolStatus::Active,
-                message_index: self.tool_message_index.get(id).copied(),
+                message_index: None,
                 started_at: Some(Instant::now()),
             };
             self.active_calls.insert(id.to_string(), state);
@@ -236,7 +234,7 @@ impl ToolCallRegistry {
             return Some(ToolCallInfo {
                 call: call.clone(),
                 status: ToolStatus::Pending,
-                message_index: self.tool_message_index.get(id).copied(),
+                message_index: None,
                 started_at: None,
                 completed_at: None,
                 result: None,
@@ -271,21 +269,6 @@ impl ToolCallRegistry {
         result
     }
 
-    /// Set the message index for a tool call (for rendering)
-    pub fn set_message_index(&mut self, id: &str, index: usize) {
-        self.tool_message_index.insert(id.to_string(), index);
-
-        // Update active call state if it exists
-        if let Some(state) = self.active_calls.get_mut(id) {
-            state.message_index = Some(index);
-        }
-    }
-
-    /// Get the message index for a tool call
-    pub fn get_message_index(&self, id: &str) -> Option<usize> {
-        self.tool_message_index.get(id).copied()
-    }
-
     /// Check if a tool call is pending result
     pub fn is_pending_result(&self, id: &str) -> bool {
         self.active_calls.contains_key(id)
@@ -306,17 +289,11 @@ impl ToolCallRegistry {
         &self.completed_calls
     }
 
-    /// Get the tool message index map (for backwards compatibility)
-    pub fn tool_message_index(&self) -> &HashMap<String, usize> {
-        &self.tool_message_index
-    }
-
     /// Clear all registry state
     pub fn clear(&mut self) {
         self.pending_calls.clear();
         self.active_calls.clear();
         self.completed_calls.clear();
-        self.tool_message_index.clear();
     }
 
     /// Get metrics about the registry state

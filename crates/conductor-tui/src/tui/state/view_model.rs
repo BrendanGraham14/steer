@@ -53,8 +53,8 @@ impl MessageViewModel {
             }
         }
 
-        // Add the message and get its index
-        let message_index = self.chat_store.add_message(message.clone());
+        // Add the message
+        self.chat_store.add_message(message.clone());
 
         // For tool messages, set the message index in the registry
         if let Message::Tool { tool_use_id, .. } = &message {
@@ -69,8 +69,6 @@ impl MessageViewModel {
                     parameters: serde_json::Value::Null,
                 });
             self.tool_registry.register_call(tool_call);
-            self.tool_registry
-                .set_message_index(tool_use_id, message_index);
         }
     }
 
@@ -95,7 +93,7 @@ impl MessageViewModel {
             }
 
             // Add the message
-            let message_index = self.chat_store.add_message(message.clone());
+            self.chat_store.add_message(message.clone());
 
             // For tool messages, set the message index in the registry
             if let Message::Tool { tool_use_id, .. } = &message {
@@ -109,8 +107,6 @@ impl MessageViewModel {
                         parameters: serde_json::Value::Null,
                     });
                 self.tool_registry.register_call(tool_call);
-                self.tool_registry
-                    .set_message_index(tool_use_id, message_index);
             }
         }
 

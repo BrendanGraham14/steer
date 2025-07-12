@@ -127,7 +127,7 @@ impl ChatListState {
 
 /// The ChatList widget
 pub struct ChatList<'a> {
-    items: &'a [ChatItem],
+    items: Vec<&'a ChatItem>,
     block: Option<Block<'a>>,
     hovered_message_id: Option<&'a str>,
     theme: &'a Theme,
@@ -135,7 +135,7 @@ pub struct ChatList<'a> {
 }
 
 impl<'a> ChatList<'a> {
-    pub fn new(items: &'a [ChatItem], theme: &'a Theme) -> Self {
+    pub fn new(items: Vec<&'a ChatItem>, theme: &'a Theme) -> Self {
         Self {
             items,
             block: None,

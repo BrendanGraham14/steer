@@ -57,6 +57,7 @@ tui-big-text = "0.7.1"
 syntect = "5.2.0"
 strum = { version = "0.27.1", features = ["derive"] }
 strum_macros = "0.27.1"
+indexmap = { version = "2.0", features = ["std"] }
 
 [dev-dependencies]
 conductor-proto = { path = "../conductor-proto" }
