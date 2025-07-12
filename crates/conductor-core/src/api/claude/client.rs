@@ -407,6 +407,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                     id: Some(id),
                 })
             } else {
+                debug!("No content blocks found: {:?}", content);
                 Err(ApiError::InvalidRequest {
                     provider: "anthropic".to_string(),
                     details: format!(
