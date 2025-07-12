@@ -110,8 +110,12 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.messages_updated = true;
 
                 // Remove any in-flight operation rows (stops spinners)
-                for (_, idx) in ctx.in_flight_operations.drain() {
-                    ctx.chat_store.remove(idx);
+                let operations_to_remove: Vec<uuid::Uuid> =
+                    ctx.in_flight_operations.iter().cloned().collect();
+                ctx.in_flight_operations.clear();
+
+                for operation_id in operations_to_remove {
+                    ctx.chat_store.remove_in_flight_op(&operation_id);
                     *ctx.messages_updated = true;
                 }
 
@@ -136,19 +140,16 @@ impl EventProcessor for ProcessingStateProcessor {
                     label,
                     ts: time::OffsetDateTime::now_utc(),
                 };
-                let item_idx = ctx.chat_store.push(chat_item);
+                ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
-
-                // Store the mapping from operation ID to chat item index
-                ctx.in_flight_operations.insert(id, item_idx);
+                ctx.in_flight_operations.insert(id);
 
                 ProcessingResult::Handled
             }
             AppEvent::Finished { id, outcome: _ } => {
                 // Remove the in-flight operation if it exists
-                if let Some(item_idx) = ctx.in_flight_operations.remove(&id) {
-                    // Remove the in-flight item from chat store
-                    ctx.chat_store.remove(item_idx);
+                if ctx.in_flight_operations.remove(&id) {
+                    ctx.chat_store.remove_in_flight_op(&id);
                     *ctx.messages_updated = true;
                 }
 

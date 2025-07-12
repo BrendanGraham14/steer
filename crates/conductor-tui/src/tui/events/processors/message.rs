@@ -139,22 +139,6 @@ impl MessageEventProcessor {
 
                     // Update registry entry with full parameters
                     ctx.tool_registry.upsert_call(tool_call.clone());
-
-                    // If we already created a placeholder Tool message for this id,
-                    // update it with the real parameters
-                    if let Some(idx) = ctx.tool_registry.get_message_index(&tool_call.id) {
-                        if let Some(ChatItem::Message(row)) = ctx.chat_store.get_mut(idx) {
-                            if let conductor_core::app::conversation::Message::Tool {
-                                tool_use_id,
-                                ..
-                            } = &mut row.inner
-                            {
-                                if tool_use_id == &tool_call.id {
-                                    // Tool messages are already properly handled, we just needed to update the registry
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -274,8 +258,7 @@ mod tests {
             thread_id: uuid::Uuid::new_v4(),
             parent_message_id: None,
         };
-        let tool_idx = ctx.chat_store.add_message(placeholder_msg);
-        ctx.tool_registry.set_message_index(&tool_id, tool_idx);
+        ctx.chat_store.add_message(placeholder_msg);
         ctx.tool_registry.register_call(placeholder_call);
 
         // Verify the placeholder was created
@@ -303,7 +286,7 @@ mod tests {
         };
 
         let current_thread = uuid::Uuid::new_v4();
-        let mut in_flight_operations = std::collections::HashMap::new();
+        let mut in_flight_operations = std::collections::HashSet::new();
         let mut ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,

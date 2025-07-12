@@ -2,7 +2,7 @@
 //!
 //! This module implements the terminal user interface using ratatui.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -155,7 +155,7 @@ pub struct Tui {
     /// Authentication controller (if active)
     auth_controller: Option<AuthController>,
     /// Track in-flight operations (operation_id -> chat_store_index)
-    in_flight_operations: HashMap<uuid::Uuid, usize>,
+    in_flight_operations: HashSet<uuid::Uuid>,
     /// Command registry for slash commands
     command_registry: CommandRegistry,
 }
@@ -220,7 +220,7 @@ impl Tui {
             theme: theme.unwrap_or_default(),
             setup_state: None,
             auth_controller: None,
-            in_flight_operations: HashMap::new(),
+            in_flight_operations: HashSet::new(),
             command_registry: CommandRegistry::new(),
         };
 
@@ -566,7 +566,7 @@ impl Tui {
             let current_model_owned = self.current_model;
 
             // Get chat items from the chat store
-            let chat_items = self.view_model.chat_store.as_slice();
+            let chat_items = self.view_model.chat_store.as_items();
 
             // Get the hovered ID before the render call to avoid borrowing issues
             let hovered_id = self
@@ -821,7 +821,7 @@ impl Tui {
     #[allow(clippy::too_many_arguments)]
     fn render_ui_static(
         f: &mut Frame,
-        chat_items: &[crate::tui::model::ChatItem],
+        chat_items: Vec<&crate::tui::model::ChatItem>,
         chat_list_state: &mut ChatListState,
         input_mode: InputMode,
         current_model: &Model,
@@ -1179,7 +1179,7 @@ impl Tui {
     fn scroll_to_message_id(&mut self, message_id: &str) {
         // Find the index of the message in the chat store
         let mut target_index = None;
-        for (idx, item) in self.view_model.chat_store.as_slice().iter().enumerate() {
+        for (idx, item) in self.view_model.chat_store.items().enumerate() {
             if let crate::tui::model::ChatItem::Message(row) = item {
                 if row.inner.id() == message_id {
                     target_index = Some(idx);
@@ -1200,7 +1200,7 @@ impl Tui {
 
         // Populate the edit selection messages in the input panel state
         self.input_panel_state
-            .populate_edit_selection(self.view_model.chat_store.as_slice());
+            .populate_edit_selection(self.view_model.chat_store.iter_items());
 
         // Scroll to the hovered message if there is one
         if let Some(id) = self.input_panel_state.get_hovered_id() {

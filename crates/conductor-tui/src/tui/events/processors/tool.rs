@@ -76,8 +76,7 @@ impl EventProcessor for ToolEventProcessor {
                     ts: time::OffsetDateTime::now_utc(),
                 };
 
-                let idx = ctx.chat_store.add_pending_tool(pending);
-                ctx.tool_registry.set_message_index(&id, idx);
+                ctx.chat_store.add_pending_tool(pending);
 
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
@@ -90,12 +89,7 @@ impl EventProcessor for ToolEventProcessor {
             } => {
                 *ctx.progress_message = None;
 
-                // Find and remove the pending tool call
-                if let Some(idx) = ctx.tool_registry.get_message_index(&id) {
-                    if let Some(ChatItem::PendingToolCall { .. }) = ctx.chat_store.get(idx) {
-                        ctx.chat_store.remove(idx);
-                    }
-                }
+                ctx.chat_store.remove_pending_tool(&id);
 
                 // Create a complete tool message
                 let tool_msg = conductor_core::app::conversation::Message::Tool {
@@ -120,12 +114,7 @@ impl EventProcessor for ToolEventProcessor {
             } => {
                 *ctx.progress_message = None;
 
-                // Find and remove the pending tool call
-                if let Some(idx) = ctx.tool_registry.get_message_index(&id) {
-                    if let Some(ChatItem::PendingToolCall { .. }) = ctx.chat_store.get(idx) {
-                        ctx.chat_store.remove(idx);
-                    }
-                }
+                ctx.chat_store.remove_pending_tool(&id);
 
                 // Create a complete tool message with error
                 let tool_msg = conductor_core::app::conversation::Message::Tool {
@@ -201,7 +190,7 @@ mod tests {
     use conductor_core::error::Result;
     use conductor_tools::schema::ToolCall;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     // Mock command sink for tests
@@ -225,7 +214,7 @@ mod tests {
         current_tool_approval: Option<ToolCall>,
         current_model: conductor_core::api::Model,
         messages_updated: bool,
-        in_flight_operations: HashMap<uuid::Uuid, usize>,
+        in_flight_operations: HashSet<uuid::Uuid>,
     }
     fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
@@ -238,7 +227,7 @@ mod tests {
         let current_tool_approval = None;
         let current_model = conductor_core::api::Model::Claude3_5Sonnet20241022;
         let messages_updated = false;
-        let in_flight_operations = HashMap::new();
+        let in_flight_operations = HashSet::new();
         TestContext {
             chat_store,
             chat_list_state,
