@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::theme::Theme;
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{AssistantContent, Message};
@@ -155,6 +156,8 @@ pub struct Tui {
     auth_controller: Option<AuthController>,
     /// Track in-flight operations (operation_id -> chat_store_index)
     in_flight_operations: HashMap<uuid::Uuid, usize>,
+    /// Command registry for slash commands
+    command_registry: CommandRegistry,
 }
 
 impl Tui {
@@ -218,6 +221,7 @@ impl Tui {
             setup_state: None,
             auth_controller: None,
             in_flight_operations: HashMap::new(),
+            command_registry: CommandRegistry::new(),
         };
 
         // Restore messages using the public method
@@ -575,7 +579,8 @@ impl Tui {
                 let results = self.input_panel_state.fuzzy_finder.results().to_vec();
                 let selected = self.input_panel_state.fuzzy_finder.selected_index();
                 let input_height = self.input_panel_state.required_height(10);
-                Some((results, selected, input_height))
+                let mode = self.input_panel_state.fuzzy_finder.mode();
+                Some((results, selected, input_height, mode))
             } else {
                 None
             };
@@ -598,13 +603,15 @@ impl Tui {
             }
 
             // Render fuzzy finder overlay when active
-            if let Some((results, selected_index, input_height)) = fuzzy_finder_data {
+            if let Some((results, selected_index, input_height, mode)) = fuzzy_finder_data {
                 Self::render_fuzzy_finder_overlay_static(
                     f,
                     &results,
                     selected_index,
                     input_height,
+                    mode,
                     &self.theme,
+                    &self.command_registry,
                 );
             }
         })?;
@@ -617,7 +624,9 @@ impl Tui {
         results: &[String],
         selected_index: usize,
         input_panel_height: u16,
+        mode: crate::tui::widgets::fuzzy_finder::FuzzyFinderMode,
         theme: &Theme,
+        command_registry: &CommandRegistry,
     ) {
         use ratatui::layout::Rect;
         use ratatui::style::Style;
@@ -652,26 +661,54 @@ impl Tui {
 
         // Create list items with selection highlighting
         // Reverse the order so best match (index 0) is at the bottom
-        let items: Vec<ListItem> = results
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(i, path)| {
-                let is_selected = selected_index == i;
-                let style = if is_selected {
-                    theme.style(theme::Component::PopupSelection)
-                } else {
-                    Style::default()
-                };
-                ListItem::new(path.as_str()).style(style)
-            })
-            .collect();
+        let items: Vec<ListItem> = match mode {
+            crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Files => results
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, path)| {
+                    let is_selected = selected_index == i;
+                    let style = if is_selected {
+                        theme.style(theme::Component::PopupSelection)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(path.as_str()).style(style)
+                })
+                .collect(),
+            crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Commands => {
+                results
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(i, cmd_name)| {
+                        let is_selected = selected_index == i;
+                        let style = if is_selected {
+                            theme.style(theme::Component::PopupSelection)
+                        } else {
+                            Style::default()
+                        };
+
+                        // Get command info to include description
+                        if let Some(cmd_info) = command_registry.get(cmd_name.as_str()) {
+                            let line = format!("/{:<12} {}", cmd_info.name, cmd_info.description);
+                            ListItem::new(line).style(style)
+                        } else {
+                            ListItem::new(format!("/{cmd_name}")).style(style)
+                        }
+                    })
+                    .collect()
+            }
+        };
 
         // Create the list widget
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme.style(theme::Component::PopupBorder))
-            .title(" Files (best match at bottom) ");
+            .title(match mode {
+                crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Files => " Files ",
+                crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Commands => " Commands ",
+            });
 
         let list = List::new(items)
             .block(list_block)
@@ -908,7 +945,7 @@ impl Tui {
     }
 
     async fn handle_slash_command(&mut self, command: String) -> Result<()> {
-        use crate::tui::commands::{AppCommand as TuiAppCommand, TuiCommand};
+        use crate::tui::commands::{AppCommand as TuiAppCommand, TuiCommand, TuiCommandType};
         use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
 
         let app_cmd = match TuiAppCommand::parse(&command) {
@@ -949,6 +986,16 @@ impl Tui {
                                 ts: time::OffsetDateTime::now_utc(),
                             };
                             self.view_model.chat_store.push(notice);
+                        } else {
+                            let response = ChatItem::TuiCommandResponse {
+                                id: generate_row_id(),
+                                command: TuiCommandType::ReloadFiles.command_name(),
+                                response:
+                                    "File cache cleared. Files will be reloaded on next access."
+                                        .to_string(),
+                                ts: time::OffsetDateTime::now_utc(),
+                            };
+                            self.view_model.chat_store.push(response);
                         }
                     }
                     TuiCommand::Theme(theme_name) => {
@@ -958,13 +1005,13 @@ impl Tui {
                             match loader.load_theme(&name) {
                                 Ok(new_theme) => {
                                     self.theme = new_theme;
-                                    let notice = ChatItem::SystemNotice {
+                                    let response = ChatItem::TuiCommandResponse {
                                         id: generate_row_id(),
-                                        level: NoticeLevel::Info,
-                                        text: format!("Loaded theme: {name}"),
+                                        command: TuiCommandType::Theme.command_name(),
+                                        response: format!("Theme changed to '{name}'"),
                                         ts: time::OffsetDateTime::now_utc(),
                                     };
-                                    self.view_model.chat_store.push(notice);
+                                    self.view_model.chat_store.push(response);
                                 }
                                 Err(e) => {
                                     let notice = ChatItem::SystemNotice {
@@ -985,14 +1032,46 @@ impl Tui {
                             } else {
                                 format!("Available themes:\n{}", themes.join("\n"))
                             };
-                            let notice = ChatItem::SystemNotice {
+                            let response = ChatItem::TuiCommandResponse {
                                 id: generate_row_id(),
-                                level: NoticeLevel::Info,
-                                text: theme_list,
+                                command: TuiCommandType::Theme.command_name(),
+                                response: theme_list,
                                 ts: time::OffsetDateTime::now_utc(),
                             };
-                            self.view_model.chat_store.push(notice);
+                            self.view_model.chat_store.push(response);
                         }
+                    }
+                    TuiCommand::Help(command_name) => {
+                        // Build and show help text
+                        let help_text = if let Some(cmd_name) = command_name {
+                            // Show help for specific command
+                            if let Some(cmd_info) = self.command_registry.get(&cmd_name) {
+                                format!(
+                                    "Command: {}\n\nDescription: {}\n\nUsage: {}",
+                                    cmd_info.name, cmd_info.description, cmd_info.usage
+                                )
+                            } else {
+                                format!("Unknown command: {cmd_name}")
+                            }
+                        } else {
+                            // Show general help with all commands
+                            let mut help_lines = vec!["Available commands:".to_string()];
+                            for cmd_info in self.command_registry.all_commands() {
+                                help_lines.push(format!(
+                                    "  {:<20} - {}",
+                                    cmd_info.usage, cmd_info.description
+                                ));
+                            }
+                            help_lines.join("\n")
+                        };
+
+                        let notice = ChatItem::TuiCommandResponse {
+                            id: generate_row_id(),
+                            command: TuiCommandType::Help.command_name(),
+                            response: help_text,
+                            ts: time::OffsetDateTime::now_utc(),
+                        };
+                        self.view_model.chat_store.push(notice);
                     }
                     TuiCommand::Auth => {
                         // Launch auth setup
@@ -1033,10 +1112,10 @@ impl Tui {
                         );
                         self.input_mode = InputMode::Setup;
 
-                        let notice = ChatItem::SystemNotice {
+                        let notice = ChatItem::TuiCommandResponse {
                             id: generate_row_id(),
-                            level: NoticeLevel::Info,
-                            text: "Entering authentication setup mode...".to_string(),
+                            command: TuiCommandType::Auth.to_string(),
+                            response: "Entering authentication setup mode...".to_string(),
                             ts: time::OffsetDateTime::now_utc(),
                         };
                         self.view_model.chat_store.push(notice);

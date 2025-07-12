@@ -1,5 +1,14 @@
 use ratatui::widgets::ListState;
 
+/// Type of content being searched
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FuzzyFinderMode {
+    /// Searching for files (triggered by @)
+    Files,
+    /// Searching for commands (triggered by /)
+    Commands,
+}
+
 /// Result of fuzzy finder operations
 pub enum FuzzyFinderResult {
     /// User wants to close the finder
@@ -21,6 +30,8 @@ pub struct FuzzyFinder {
     list_state: ListState,
     /// The byte position of the @ that triggered this fuzzy finder
     trigger_position: Option<usize>,
+    /// The mode of the fuzzy finder (files or commands)
+    mode: FuzzyFinderMode,
 }
 
 impl Default for FuzzyFinder {
@@ -38,6 +49,7 @@ impl FuzzyFinder {
             selected: 0,
             list_state: ListState::default(),
             trigger_position: None,
+            mode: FuzzyFinderMode::Files,
         }
     }
 
@@ -46,13 +58,14 @@ impl FuzzyFinder {
         self.active
     }
 
-    /// Activate the fuzzy finder with the position of the @ that triggered it
-    pub fn activate(&mut self, trigger_position: usize) {
+    /// Activate the fuzzy finder with the position of the trigger character and mode
+    pub fn activate(&mut self, trigger_position: usize, mode: FuzzyFinderMode) {
         self.active = true;
         self.selected = 0;
         self.results.clear();
         self.list_state = ListState::default();
         self.trigger_position = Some(trigger_position);
+        self.mode = mode;
     }
 
     /// Deactivate the fuzzy finder
@@ -92,6 +105,11 @@ impl FuzzyFinder {
         } else {
             Some(self.selected)
         });
+    }
+
+    /// Get the current mode
+    pub fn mode(&self) -> FuzzyFinderMode {
+        self.mode
     }
 
     /// Handle keyboard input

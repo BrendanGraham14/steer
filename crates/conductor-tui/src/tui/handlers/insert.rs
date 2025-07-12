@@ -119,6 +119,37 @@ impl Tui {
                 self.input_panel_state.textarea.delete_line_by_end();
                 Ok(false)
             }
+            (KeyCode::Char('/'), KeyModifiers::NONE) => {
+                // Check if we're at the start of an empty input
+                let content = self.input_panel_state.content();
+                let cursor_pos = self.input_panel_state.get_cursor_byte_offset();
+
+                if content.is_empty() && cursor_pos == 0 {
+                    // First, insert the / character
+                    self.input_panel_state.handle_input(input);
+
+                    // Activate fuzzy finder for commands
+                    self.input_panel_state.activate_command_fuzzy();
+                    self.input_mode = InputMode::FuzzyFinder;
+
+                    info!(target: "tui.fuzzy_finder", "Activated command fuzzy finder");
+
+                    // Perform initial search with all commands
+                    let results: Vec<String> = self
+                        .command_registry
+                        .all_commands()
+                        .into_iter()
+                        .map(|cmd| cmd.name.to_string())
+                        .collect();
+                    self.input_panel_state.fuzzy_finder.update_results(results);
+
+                    Ok(false)
+                } else {
+                    // Normal / character insertion
+                    self.input_panel_state.handle_input(input);
+                    Ok(false)
+                }
+            }
             (KeyCode::Char('@'), KeyModifiers::NONE) => {
                 // First, insert the @ character
                 self.input_panel_state.handle_input(input);

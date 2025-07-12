@@ -76,6 +76,14 @@ pub enum ChatItem {
         ts: OffsetDateTime,
     },
 
+    /// TUI command response (e.g., /help, /theme, /auth)
+    TuiCommandResponse {
+        id: RowId,
+        command: String,
+        response: String,
+        ts: OffsetDateTime,
+    },
+
     /// In-flight operation with spinner
     InFlightOperation {
         id: RowId,
@@ -94,6 +102,7 @@ impl ChatItem {
             ChatItem::SlashInput { id, .. } => id,
             ChatItem::CmdResponse { id, .. } => id,
             ChatItem::SystemNotice { id, .. } => id,
+            ChatItem::TuiCommandResponse { id, .. } => id,
             ChatItem::InFlightOperation { id, .. } => id,
         }
     }
@@ -111,6 +120,7 @@ impl ChatItem {
             ChatItem::SlashInput { ts, .. } => *ts,
             ChatItem::CmdResponse { ts, .. } => *ts,
             ChatItem::SystemNotice { ts, .. } => *ts,
+            ChatItem::TuiCommandResponse { ts, .. } => *ts,
             ChatItem::InFlightOperation { ts, .. } => *ts,
         }
     }

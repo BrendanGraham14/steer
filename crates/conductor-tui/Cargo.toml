@@ -55,6 +55,8 @@ itertools = "0.12"
 open = "5.0"
 tui-big-text = "0.7.1"
 syntect = "5.2.0"
+strum = { version = "0.27.1", features = ["derive"] }
+strum_macros = "0.27.1"
 
 [dev-dependencies]
 conductor-proto = { path = "../conductor-proto" }

@@ -46,12 +46,6 @@ pub enum AppCommandType {
     Clear,
     /// Compact the conversation
     Compact,
-    /// Cancel current operation
-    Cancel,
-    /// Show help information
-    Help,
-    /// Manage authentication
-    Auth,
 }
 
 impl AppCommandType {
@@ -80,9 +74,6 @@ impl AppCommandType {
             }
             "clear" => Ok(AppCommandType::Clear),
             "compact" => Ok(AppCommandType::Compact),
-            "cancel" => Ok(AppCommandType::Cancel),
-            "help" => Ok(AppCommandType::Help),
-            "auth" => Ok(AppCommandType::Auth),
             cmd => Err(SlashCommandError::UnknownCommand(cmd.to_string())),
         }
     }
@@ -99,9 +90,6 @@ impl AppCommandType {
             }
             AppCommandType::Clear => "clear".to_string(),
             AppCommandType::Compact => "compact".to_string(),
-            AppCommandType::Cancel => "cancel".to_string(),
-            AppCommandType::Help => "help".to_string(),
-            AppCommandType::Auth => "auth".to_string(),
         }
     }
 }

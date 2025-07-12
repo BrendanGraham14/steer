@@ -94,7 +94,7 @@ impl EventProcessor for ProcessingStateProcessor {
 
                 ProcessingResult::Handled
             }
-            AppEvent::OperationCancelled { op_id: _, info } => {
+            AppEvent::OperationCancelled { op_id: _, info: _ } => {
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
                 *ctx.current_tool_approval = None;

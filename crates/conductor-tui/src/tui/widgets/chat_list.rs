@@ -343,11 +343,6 @@ impl<'a> ChatList<'a> {
                     conductor_core::app::conversation::AppCommandType::Clear => {
                         "/clear".to_string()
                     }
-                    conductor_core::app::conversation::AppCommandType::Cancel => {
-                        "/cancel".to_string()
-                    }
-                    conductor_core::app::conversation::AppCommandType::Help => "/help".to_string(),
-                    conductor_core::app::conversation::AppCommandType::Auth => "/auth".to_string(),
                 };
 
                 // Get the full response text
@@ -502,6 +497,65 @@ impl<'a> ChatList<'a> {
                     self.theme.style(Component::TodoInProgress),
                 ));
                 lines.push(Line::from(first_line));
+
+                let height = lines.len() as u16;
+                (lines, height)
+            }
+
+            ChatItem::TuiCommandResponse {
+                command, response, ..
+            } => {
+                let mut lines = vec![];
+
+                // Format the command response text
+                let header = format!("/{command}:");
+                let full_text = format!("{header} {response}");
+
+                // Wrap the text to fit within available width
+                let wrapper = textwrap::Options::new(width.saturating_sub(2) as usize)
+                    .word_separator(textwrap::WordSeparator::AsciiSpace)
+                    .break_words(true);
+                let wrapped = textwrap::fill(&full_text, wrapper);
+                let wrapped_lines: Vec<&str> = wrapped.lines().collect();
+
+                // Build lines with proper styling
+                for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
+                    let mut line_spans = vec![];
+
+                    if i == 0 {
+                        // First line - add gutter
+                        line_spans.extend(self.render_meta_gutter().spans);
+                        line_spans.push(Span::raw(" "));
+
+                        // Add colored command prefix if present
+                        if let Some(rest) = wrapped_line.strip_prefix(&header) {
+                            line_spans.push(Span::styled(
+                                header.clone(),
+                                self.theme
+                                    .style(Component::CommandText)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                            line_spans.push(Span::styled(
+                                rest.to_string(),
+                                self.theme.style(Component::NoticeInfo),
+                            ));
+                        } else {
+                            line_spans.push(Span::styled(
+                                wrapped_line.to_string(),
+                                self.theme.style(Component::NoticeInfo),
+                            ));
+                        }
+                    } else {
+                        // Continuation lines - just spacing, no gutter
+                        line_spans.push(Span::raw("  ")); // Two spaces to align with gutter + space
+                        line_spans.push(Span::styled(
+                            wrapped_line.to_string(),
+                            self.theme.style(Component::NoticeInfo),
+                        ));
+                    }
+
+                    lines.push(Line::from(line_spans));
+                }
 
                 let height = lines.len() as u16;
                 (lines, height)
@@ -673,15 +727,6 @@ impl<'a> ChatList<'a> {
                                     }
                                     conductor_core::app::conversation::AppCommandType::Clear => {
                                         "/clear".to_string()
-                                    }
-                                    conductor_core::app::conversation::AppCommandType::Cancel => {
-                                        "/cancel".to_string()
-                                    }
-                                    conductor_core::app::conversation::AppCommandType::Help => {
-                                        "/help".to_string()
-                                    }
-                                    conductor_core::app::conversation::AppCommandType::Auth => {
-                                        "/auth".to_string()
                                     }
                                 };
 

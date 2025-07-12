@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
 use crate::tui::{InputMode, Tui};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_textarea::Input;
@@ -22,11 +23,14 @@ impl Tui {
             return Ok(false);
         }
 
+        // Get the current mode
+        let mode = self.input_panel_state.fuzzy_finder.mode();
+
         // First, let the input panel process the key
         let post_result = self.input_panel_state.handle_fuzzy_key(key).await;
 
-        // Determine if cursor is still immediately after an @ with no whitespace in-between
-        let cursor_after_at = {
+        // Determine if cursor is still immediately after trigger character
+        let cursor_after_trigger = {
             let content = self.input_panel_state.content();
             let (row, col) = self.input_panel_state.textarea.cursor();
             // Get absolute byte offset of cursor by summing line lengths + newlines
@@ -40,15 +44,15 @@ impl Tui {
                 }
             }
             // Check if we have a stored trigger position
-            if let Some(at_pos) = self.input_panel_state.fuzzy_finder.trigger_position() {
-                // Check if cursor is past the @ and no whitespace between
-                if offset <= at_pos {
-                    false // Cursor before the @
+            if let Some(trigger_pos) = self.input_panel_state.fuzzy_finder.trigger_position() {
+                // Check if cursor is past the trigger and no whitespace between
+                if offset <= trigger_pos {
+                    false // Cursor before the trigger
                 } else {
                     let bytes = content.as_bytes();
-                    // Check for whitespace between @ and cursor
+                    // Check for whitespace between trigger and cursor
                     let mut still_in_word = true;
-                    for idx in at_pos + 1..offset {
+                    for idx in trigger_pos + 1..offset {
                         if idx >= bytes.len() {
                             break;
                         }
@@ -67,7 +71,7 @@ impl Tui {
             }
         };
 
-        if !cursor_after_at {
+        if !cursor_after_trigger {
             self.input_panel_state.deactivate_fuzzy();
             self.input_mode = InputMode::Insert;
             return Ok(false);
@@ -80,13 +84,42 @@ impl Tui {
                     self.input_panel_state.deactivate_fuzzy();
                     self.input_mode = InputMode::Insert;
                 }
-                FuzzyFinderResult::Select(path) => {
-                    self.input_panel_state.complete_fuzzy_finder(&path);
+                FuzzyFinderResult::Select(selected) => {
+                    match mode {
+                        FuzzyFinderMode::Files => {
+                            // Complete with file path
+                            self.input_panel_state.complete_fuzzy_finder(&selected);
+                        }
+                        FuzzyFinderMode::Commands => {
+                            // Complete with command
+                            self.input_panel_state.complete_command_fuzzy(&selected);
+                        }
+                    }
                     self.input_panel_state.deactivate_fuzzy();
                     self.input_mode = InputMode::Insert;
                 }
             }
         }
+
+        // Handle typing for command search
+        if mode == FuzzyFinderMode::Commands {
+            // Extract search query from content
+            let content = self.input_panel_state.content();
+            if let Some(trigger_pos) = self.input_panel_state.fuzzy_finder.trigger_position() {
+                if trigger_pos + 1 < content.len() {
+                    let query = &content[trigger_pos + 1..];
+                    // Search commands
+                    let results: Vec<String> = self
+                        .command_registry
+                        .search(query)
+                        .into_iter()
+                        .map(|cmd| cmd.name.to_string())
+                        .collect();
+                    self.input_panel_state.fuzzy_finder.update_results(results);
+                }
+            }
+        }
+
         Ok(false)
     }
 }
