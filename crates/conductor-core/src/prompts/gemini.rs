@@ -23,7 +23,6 @@ IMPORTANT: Before you begin work, think about what the code you're editing is su
 ## User Commands
 - **/help**: Show help
 - **/compact**: Compact conversation (useful at context limits)
-- **/cancel**: Cancel current operation
 - **/model**: Show/change model
 
 Additional commands exist. Run `conductor -h` with {BASH_TOOL_NAME} if user asks about functionality. Never assume commands exist without checking.

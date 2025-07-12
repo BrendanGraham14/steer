@@ -291,7 +291,7 @@ prop_compose! {
     fn arb_app_command()(
         variant in 0..4usize,
         user_input in ".*",
-        command in prop::sample::select(vec!["model", "clear", "compact", "cancel", "help"]),
+        command in prop::sample::select(vec!["model", "clear", "compact"]),
         bash_command in "[a-z ]+",
         tool_id in "[a-zA-Z0-9-]+",
         approved in prop::bool::ANY,

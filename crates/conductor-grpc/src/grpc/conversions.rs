@@ -342,9 +342,6 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                             }
                             AppCommandType::Clear => Some(proto::app_command_type::CommandType::Clear(true)),
                             AppCommandType::Compact => Some(proto::app_command_type::CommandType::Compact(true)),
-                            AppCommandType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
-                            AppCommandType::Help => Some(proto::app_command_type::CommandType::Help(true)),
-                            AppCommandType::Auth => Some(proto::app_command_type::CommandType::Auth(true)),
                         };
 
                         let proto_response = response.as_ref().map(|resp| {
@@ -953,9 +950,6 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                                     }
                                     app_command_type::CommandType::Clear(_) => AppCommandType::Clear,
                                     app_command_type::CommandType::Compact(_) => AppCommandType::Compact,
-                                    app_command_type::CommandType::Cancel(_) => AppCommandType::Cancel,
-                                    app_command_type::CommandType::Help(_) => AppCommandType::Help,
-                                    app_command_type::CommandType::Auth(_) => AppCommandType::Auth,
                                 })
                             });
 
@@ -1195,9 +1189,6 @@ pub fn app_event_to_server_event(
                 AppCommandType::Compact => {
                     Some(proto::app_command_type::CommandType::Compact(true))
                 }
-                AppCommandType::Cancel => Some(proto::app_command_type::CommandType::Cancel(true)),
-                AppCommandType::Help => Some(proto::app_command_type::CommandType::Help(true)),
-                AppCommandType::Auth => Some(proto::app_command_type::CommandType::Auth(true)),
             };
 
             // Convert app response to proto response
@@ -1355,9 +1346,6 @@ fn proto_app_command_type_to_app_command_type(
         },
         proto::app_command_type::CommandType::Clear(_) => AppCommandType::Clear,
         proto::app_command_type::CommandType::Compact(_) => AppCommandType::Compact,
-        proto::app_command_type::CommandType::Cancel(_) => AppCommandType::Cancel,
-        proto::app_command_type::CommandType::Help(_) => AppCommandType::Help,
-        proto::app_command_type::CommandType::Auth(_) => AppCommandType::Auth,
     }
 }
 

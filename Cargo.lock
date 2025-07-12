@@ -1042,6 +1042,8 @@ dependencies = [
  "serde",
  "serde_json",
  "similar",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
  "syntect",
  "tempfile",
  "textwrap",

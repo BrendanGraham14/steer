@@ -16,7 +16,7 @@ use crate::tui::get_spinner_char;
 use crate::tui::model::ChatItem;
 use crate::tui::state::file_cache::FileCache;
 use crate::tui::theme::{Component, Theme};
-use crate::tui::widgets::fuzzy_finder::FuzzyFinder;
+use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderMode};
 
 /// Helper function to format keybind hints with consistent styling
 fn format_keybind(key: &str, description: &str, theme: &Theme) -> Vec<Span<'static>> {
@@ -185,6 +185,55 @@ impl InputPanelState {
         }
     }
 
+    /// Complete command fuzzy finder by replacing the query text with the selected command
+    pub fn complete_command_fuzzy(&mut self, selected_command: &str) {
+        if let Some(trigger_pos) = self.fuzzy_finder.trigger_position() {
+            let cursor_offset = self.get_cursor_byte_offset();
+
+            // Convert content to string and replace the query portion
+            let content = self.content();
+            let mut new_content = String::new();
+
+            // For commands, we want to replace everything from the trigger onwards
+            new_content.push_str(&content[..trigger_pos]);
+
+            // Add the selected command with a space
+            new_content.push('/');
+            new_content.push_str(selected_command);
+            new_content.push(' ');
+
+            // Keep everything after the cursor
+            if cursor_offset < content.len() {
+                new_content.push_str(&content[cursor_offset..]);
+            }
+
+            // Replace the entire content
+            let lines: Vec<&str> = new_content.lines().collect();
+            self.set_content_from_lines(lines);
+
+            // Position cursor after the inserted command and space
+            let new_cursor_pos_bytes = trigger_pos + 1 + selected_command.len() + 1;
+
+            // Now, convert this byte position to a (row, col) grapheme position
+            let mut bytes_traversed = 0;
+            for (row_idx, line) in self.textarea.lines().iter().enumerate() {
+                let line_len_bytes = line.len();
+                if bytes_traversed + line_len_bytes >= new_cursor_pos_bytes {
+                    // The cursor should be on this line
+                    let byte_offset_in_line = new_cursor_pos_bytes - bytes_traversed;
+                    // Convert byte offset in line to character/grapheme column
+                    let char_col = line[..byte_offset_in_line].chars().count();
+                    self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+                        row_idx as u16,
+                        char_col as u16,
+                    ));
+                    break;
+                }
+                bytes_traversed += line_len_bytes + 1; // +1 for newline
+            }
+        }
+    }
+
     /// Insert a string (e.g., for paste operations)
     pub fn insert_str(&mut self, s: &str) {
         self.textarea.insert_str(s);
@@ -311,16 +360,31 @@ impl InputPanelState {
         self.edit_selection_hovered_id = None;
     }
 
-    /// Activate fuzzy finder
+    /// Activate fuzzy finder for files
     pub fn activate_fuzzy(&mut self) {
         // The @ is one character before the cursor (since we just typed it)
         let cursor_pos = self.get_cursor_byte_offset();
         if cursor_pos > 0 {
             // The trigger is the @ just before the cursor
-            self.fuzzy_finder.activate(cursor_pos - 1);
+            self.fuzzy_finder
+                .activate(cursor_pos - 1, FuzzyFinderMode::Files);
         } else {
             // Shouldn't happen, but handle gracefully
-            self.fuzzy_finder.activate(0);
+            self.fuzzy_finder.activate(0, FuzzyFinderMode::Files);
+        }
+    }
+
+    /// Activate fuzzy finder for commands
+    pub fn activate_command_fuzzy(&mut self) {
+        // The / is one character before the cursor (since we just typed it)
+        let cursor_pos = self.get_cursor_byte_offset();
+        if cursor_pos > 0 {
+            // The trigger is the / just before the cursor
+            self.fuzzy_finder
+                .activate(cursor_pos - 1, FuzzyFinderMode::Commands);
+        } else {
+            // Shouldn't happen, but handle gracefully
+            self.fuzzy_finder.activate(0, FuzzyFinderMode::Commands);
         }
     }
 
