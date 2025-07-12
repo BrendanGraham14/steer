@@ -1,3 +1,5 @@
+use crate::prompts::MEMORY_FILE_NAME;
+use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
 use conductor_tools::tools::{
     AST_GREP_TOOL_NAME, BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME,
     LS_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, VIEW_TOOL_NAME,
@@ -34,12 +36,12 @@ Additional commands exist. Run `conductor -h` with {BASH_TOOL_NAME} if user asks
 
 # Operational Guidelines
 ## Memory (CLAUDE.md)
-If working directory contains CLAUDE.md, it's auto-loaded with:
+If working directory contains {MEMORY_FILE_NAME}, it's auto-loaded with:
 - Build/test/lint commands
 - Code style preferences  
 - Codebase structure info
 
-When you discover useful commands or conventions, ask user if you should add them to CLAUDE.md.
+When you discover useful commands or conventions, ask user if you should add them to {MEMORY_FILE_NAME}.
 
 ## Output Format
 - CLI display with Github-flavored markdown
@@ -51,7 +53,7 @@ When you discover useful commands or conventions, ask user if you should add the
 - {AST_GREP_TOOL_NAME}: Code structure searches (`function $FUNC($$$ARGS) {{ $$$ }}`)
 - {GREP_TOOL_NAME}: Text searches
 - {GLOB_TOOL_NAME}: File pattern matching
-- dispatch agent: Complex file searches
+- {DISPATCH_AGENT_TOOL_NAME}: Complex file searches
 - Make parallel tool calls when possible
 
 ## Safety & Conventions  
