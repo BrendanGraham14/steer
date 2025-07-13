@@ -7,6 +7,10 @@ pub enum FuzzyFinderMode {
     Files,
     /// Searching for commands (triggered by /)
     Commands,
+    /// Searching for models (triggered by /model without args)
+    Models,
+    /// Searching for themes (triggered by /theme without args)
+    Themes,
 }
 
 /// Result of fuzzy finder operations

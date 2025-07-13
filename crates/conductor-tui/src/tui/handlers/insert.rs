@@ -176,6 +176,77 @@ impl Tui {
                 self.input_mode = InputMode::Normal;
                 Ok(false)
             }
+            (KeyCode::Char(' '), KeyModifiers::NONE) => {
+                // Check if we just typed "/model " or "/theme "
+                let content = self.input_panel_state.content();
+                let cursor_pos = self.input_panel_state.get_cursor_byte_offset();
+
+                // Check if the content before cursor ends with "/model" or "/theme" (allowing preceding text)
+                if cursor_pos > 0 && cursor_pos <= content.len() {
+                    // Import command types
+                    use crate::tui::commands::{CoreCommandType, TuiCommandType};
+
+                    let before_cursor = &content[..cursor_pos];
+                    let model_cmd = format!("/{}", CoreCommandType::Model.command_name());
+                    let theme_cmd = format!("/{}", TuiCommandType::Theme.command_name());
+                    if before_cursor == model_cmd || before_cursor == theme_cmd {
+                        // Don't insert the space yet - let the fuzzy finder handle it
+                        // Don't clear the input - keep the "/model " or "/theme " visible
+
+                        // Activate appropriate fuzzy finder
+                        if before_cursor == model_cmd {
+                            use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
+                            self.input_panel_state
+                                .fuzzy_finder
+                                .activate(cursor_pos, FuzzyFinderMode::Models);
+                            self.input_mode = InputMode::FuzzyFinder;
+
+                            // Insert the space now
+                            self.input_panel_state.handle_input(input);
+
+                            // Populate with available models
+                            use conductor_core::api::Model;
+                            use strum::IntoEnumIterator;
+
+                            let current_model = self.current_model;
+                            let models: Vec<String> = Model::iter()
+                                .map(|m| {
+                                    let model_str = m.as_ref();
+                                    if m == current_model {
+                                        format!("{model_str} (current)")
+                                    } else {
+                                        model_str.to_string()
+                                    }
+                                })
+                                .collect();
+
+                            self.input_panel_state.fuzzy_finder.update_results(models);
+                        } else if before_cursor == theme_cmd {
+                            use crate::tui::theme::ThemeLoader;
+                            use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
+
+                            self.input_panel_state
+                                .fuzzy_finder
+                                .activate(cursor_pos, FuzzyFinderMode::Themes);
+                            self.input_mode = InputMode::FuzzyFinder;
+
+                            // Insert the space now
+                            self.input_panel_state.handle_input(input);
+
+                            // Populate with available themes
+                            let loader = ThemeLoader::new();
+                            let themes = loader.list_themes();
+                            self.input_panel_state.fuzzy_finder.update_results(themes);
+                        }
+
+                        return Ok(false);
+                    }
+                }
+
+                // Normal space insertion
+                self.input_panel_state.handle_input(input);
+                Ok(false)
+            }
             _ => {
                 // Let input panel state handle the input
                 self.input_panel_state.handle_input(input);
