@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use strum::IntoEnumIterator;
+
 use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::theme::Theme;
@@ -1334,13 +1336,17 @@ pub async fn run_tui(
         (session_id, vec![])
     };
 
+    let all_models: Vec<conductor_core::api::Model> = conductor_core::api::Model::iter()
+        .filter(|m| m.should_show())
+        .collect();
+
     client.start_streaming().await.map_err(Box::new)?;
     let event_rx = client.subscribe().await;
     let mut tui = Tui::new(
         client.clone() as std::sync::Arc<dyn AppCommandSink>,
         client.clone() as std::sync::Arc<dyn AppEventSource>,
         model,
-        vec![model], // For now, just pass the single model
+        all_models,
         session_id,
         theme.clone(),
     )

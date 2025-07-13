@@ -113,6 +113,7 @@ impl Tui {
                             use strum::IntoEnumIterator;
                             let current_model = self.current_model;
                             let models: Vec<String> = Model::iter()
+                                .filter(|m| m.should_show())
                                 .map(|m| {
                                     let n = m.as_ref();
                                     if m == current_model {
@@ -305,6 +306,7 @@ impl Tui {
                     let current_model = self.current_model;
 
                     let mut scored_models: Vec<(i64, String)> = Model::iter()
+                        .filter(|m| m.should_show())
                         .filter_map(|m| {
                             let model_str = m.as_ref();
                             let display_str = if m == current_model {
@@ -313,20 +315,30 @@ impl Tui {
                                 model_str.to_string()
                             };
 
-                            if query.is_empty() {
-                                Some((0, display_str))
+                            let display_score = matcher.fuzzy_match(&display_str, &query);
+                            let exact_alias_match = m
+                                .aliases()
+                                .iter()
+                                .any(|alias| alias.eq_ignore_ascii_case(&query));
+
+                            let alias_score = if exact_alias_match {
+                                Some(1000) // High score for exact matches
                             } else {
-                                matcher
-                                    .fuzzy_match(&display_str, &query)
-                                    .or_else(|| {
-                                        // Also match against aliases
-                                        m.aliases()
-                                            .iter()
-                                            .filter_map(|alias| matcher.fuzzy_match(alias, &query))
-                                            .max()
-                                    })
-                                    .map(|score| (score, display_str))
-                            }
+                                m.aliases()
+                                    .iter()
+                                    .filter_map(|alias| matcher.fuzzy_match(alias, &query))
+                                    .max()
+                            };
+
+                            // Take the maximum score
+                            let best_score = match (display_score, alias_score) {
+                                (Some(d), Some(a)) => Some(d.max(a)),
+                                (Some(d), None) => Some(d),
+                                (None, Some(a)) => Some(a),
+                                (None, None) => None,
+                            };
+
+                            best_score.map(|score| (score, display_str))
                         })
                         .collect();
 
