@@ -699,6 +699,21 @@ impl Tui {
                     })
                     .collect()
             }
+            crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Models
+            | crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Themes => results
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(i, item)| {
+                    let is_selected = selected_index == i;
+                    let style = if is_selected {
+                        theme.style(theme::Component::PopupSelection)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(item.as_str()).style(style)
+                })
+                .collect(),
         };
 
         // Create the list widget
@@ -708,6 +723,8 @@ impl Tui {
             .title(match mode {
                 crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Files => " Files ",
                 crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Commands => " Commands ",
+                crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Models => " Select Model ",
+                crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Themes => " Select Theme ",
             });
 
         let list = List::new(items)

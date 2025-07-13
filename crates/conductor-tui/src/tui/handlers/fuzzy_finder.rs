@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::tui::theme::ThemeLoader;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
 use crate::tui::{InputMode, Tui};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -31,49 +32,122 @@ impl Tui {
 
         // Determine if cursor is still immediately after trigger character
         let cursor_after_trigger = {
-            let content = self.input_panel_state.content();
-            let (row, col) = self.input_panel_state.textarea.cursor();
-            // Get absolute byte offset of cursor by summing line lengths + newlines
-            let mut offset = 0usize;
-            for (i, line) in self.input_panel_state.textarea.lines().iter().enumerate() {
-                if i == row {
-                    offset += col;
-                    break;
-                } else {
-                    offset += line.len() + 1;
+            match mode {
+                FuzzyFinderMode::Models | FuzzyFinderMode::Themes => {
+                    // For models and themes, always stay active until explicitly closed
+                    true
                 }
-            }
-            // Check if we have a stored trigger position
-            if let Some(trigger_pos) = self.input_panel_state.fuzzy_finder.trigger_position() {
-                // Check if cursor is past the trigger and no whitespace between
-                if offset <= trigger_pos {
-                    false // Cursor before the trigger
-                } else {
-                    let bytes = content.as_bytes();
-                    // Check for whitespace between trigger and cursor
-                    let mut still_in_word = true;
-                    for idx in trigger_pos + 1..offset {
-                        if idx >= bytes.len() {
+                FuzzyFinderMode::Files | FuzzyFinderMode::Commands => {
+                    let content = self.input_panel_state.content();
+                    let (row, col) = self.input_panel_state.textarea.cursor();
+                    // Get absolute byte offset of cursor by summing line lengths + newlines
+                    let mut offset = 0usize;
+                    for (i, line) in self.input_panel_state.textarea.lines().iter().enumerate() {
+                        if i == row {
+                            offset += col;
                             break;
-                        }
-                        match bytes[idx] {
-                            b' ' | b'\t' | b'\n' => {
-                                still_in_word = false;
-                                break;
-                            }
-                            _ => {}
+                        } else {
+                            offset += line.len() + 1;
                         }
                     }
-                    still_in_word
+                    // Check if we have a stored trigger position
+                    if let Some(trigger_pos) =
+                        self.input_panel_state.fuzzy_finder.trigger_position()
+                    {
+                        // Check if cursor is past the trigger and no whitespace between
+                        if offset <= trigger_pos {
+                            false // Cursor before the trigger
+                        } else {
+                            let bytes = content.as_bytes();
+                            // Check for whitespace between trigger and cursor
+                            let mut still_in_word = true;
+                            for idx in trigger_pos + 1..offset {
+                                if idx >= bytes.len() {
+                                    break;
+                                }
+                                match bytes[idx] {
+                                    b' ' | b'\t' | b'\n' => {
+                                        still_in_word = false;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            still_in_word
+                        }
+                    } else {
+                        false // No trigger position stored
+                    }
                 }
-            } else {
-                false // No trigger position stored
             }
         };
 
         if !cursor_after_trigger {
-            self.input_panel_state.deactivate_fuzzy();
-            self.input_mode = InputMode::Insert;
+            // The command fuzzy finder closed because we typed whitespace.
+            // If the user just finished typing a top-level command like "/model " or
+            // "/theme ", immediately open the next-level fuzzy finder.
+            let reopen_handled = if mode == FuzzyFinderMode::Commands
+                && key.code == KeyCode::Char(' ')
+                && key.modifiers == KeyModifiers::NONE
+            {
+                let content = self.input_panel_state.content();
+                let cursor_pos = self.input_panel_state.get_cursor_byte_offset();
+                if cursor_pos > 0 {
+                    use crate::tui::commands::{CoreCommandType, TuiCommandType};
+                    let before_space = &content[..cursor_pos - 1]; // exclude the space itself
+                    let model_cmd = format!("/{}", CoreCommandType::Model.command_name());
+                    let theme_cmd = format!("/{}", TuiCommandType::Theme.command_name());
+                    let is_model_cmd = before_space.trim_end().ends_with(&model_cmd);
+                    let is_theme_cmd = before_space.trim_end().ends_with(&theme_cmd);
+                    if is_model_cmd || is_theme_cmd {
+                        // Don't clear the textarea - keep the command visible
+                        // The fuzzy finder will overlay on top of the existing text
+
+                        use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode as FMode;
+                        if is_model_cmd {
+                            self.input_panel_state
+                                .fuzzy_finder
+                                .activate(cursor_pos, FMode::Models);
+                            // Populate models
+                            use conductor_core::api::Model;
+                            use strum::IntoEnumIterator;
+                            let current_model = self.current_model;
+                            let models: Vec<String> = Model::iter()
+                                .map(|m| {
+                                    let n = m.as_ref();
+                                    if m == current_model {
+                                        format!("{n} (current)")
+                                    } else {
+                                        n.to_string()
+                                    }
+                                })
+                                .collect();
+                            self.input_panel_state.fuzzy_finder.update_results(models);
+                        } else {
+                            self.input_panel_state
+                                .fuzzy_finder
+                                .activate(cursor_pos, FMode::Themes);
+                            // Populate themes
+                            let loader = ThemeLoader::new();
+                            let themes = loader.list_themes();
+                            self.input_panel_state.fuzzy_finder.update_results(themes);
+                        }
+                        self.input_mode = InputMode::FuzzyFinder;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !reopen_handled {
+                self.input_panel_state.deactivate_fuzzy();
+                self.input_mode = InputMode::Insert;
+            }
             return Ok(false);
         }
 
@@ -91,12 +165,92 @@ impl Tui {
                             self.input_panel_state.complete_fuzzy_finder(&selected);
                         }
                         FuzzyFinderMode::Commands => {
-                            // Complete with command
-                            self.input_panel_state.complete_command_fuzzy(&selected);
+                            // Check if this is model or theme command
+                            use crate::tui::commands::{CoreCommandType, TuiCommandType};
+                            let model_cmd_name = CoreCommandType::Model.command_name();
+                            let theme_cmd_name = TuiCommandType::Theme.command_name();
+
+                            if selected == model_cmd_name || selected == theme_cmd_name {
+                                // User selected model or theme - open the appropriate fuzzy finder
+                                let content = format!("/{selected} ");
+                                self.input_panel_state.clear();
+                                self.input_panel_state
+                                    .set_content_from_lines(vec![&content]);
+
+                                // Set cursor at end
+                                let cursor_pos = content.len();
+                                self.input_panel_state
+                                    .textarea
+                                    .move_cursor(tui_textarea::CursorMove::End);
+
+                                use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode as FMode;
+                                if selected == model_cmd_name {
+                                    self.input_panel_state
+                                        .fuzzy_finder
+                                        .activate(cursor_pos, FMode::Models);
+
+                                    // Populate models
+                                    use conductor_core::api::Model;
+                                    use strum::IntoEnumIterator;
+                                    let current_model = self.current_model;
+                                    let models: Vec<String> = Model::iter()
+                                        .map(|m| {
+                                            let model_str = m.as_ref();
+                                            if m == current_model {
+                                                format!("{model_str} (current)")
+                                            } else {
+                                                model_str.to_string()
+                                            }
+                                        })
+                                        .collect();
+                                    self.input_panel_state.fuzzy_finder.update_results(models);
+                                } else {
+                                    self.input_panel_state
+                                        .fuzzy_finder
+                                        .activate(cursor_pos, FMode::Themes);
+
+                                    // Populate themes
+                                    let loader = ThemeLoader::new();
+                                    let themes = loader.list_themes();
+                                    self.input_panel_state.fuzzy_finder.update_results(themes);
+                                }
+                                // Stay in fuzzy finder mode
+                                self.input_mode = InputMode::FuzzyFinder;
+                            } else {
+                                // Complete with command normally
+                                self.input_panel_state.complete_command_fuzzy(&selected);
+                                self.input_panel_state.deactivate_fuzzy();
+                                self.input_mode = InputMode::Insert;
+                            }
+                        }
+                        FuzzyFinderMode::Models => {
+                            // Extract model name (remove " (current)" suffix if present)
+                            let model_name = selected.trim_end_matches(" (current)");
+                            // Send the model command using command_name()
+                            use crate::tui::commands::CoreCommandType;
+                            let command = format!(
+                                "/{} {}",
+                                CoreCommandType::Model.command_name(),
+                                model_name
+                            );
+                            self.send_message(command).await?;
+                            // Clear the input after sending
+                            self.input_panel_state.clear();
+                        }
+                        FuzzyFinderMode::Themes => {
+                            // Send the theme command using command_name()
+                            use crate::tui::commands::TuiCommandType;
+                            let command =
+                                format!("/{} {}", TuiCommandType::Theme.command_name(), selected);
+                            self.send_message(command).await?;
+                            // Clear the input after sending
+                            self.input_panel_state.clear();
                         }
                     }
-                    self.input_panel_state.deactivate_fuzzy();
-                    self.input_mode = InputMode::Insert;
+                    if mode != FuzzyFinderMode::Commands {
+                        self.input_panel_state.deactivate_fuzzy();
+                        self.input_mode = InputMode::Insert;
+                    }
                 }
             }
         }
@@ -117,6 +271,105 @@ impl Tui {
                         .collect();
                     self.input_panel_state.fuzzy_finder.update_results(results);
                 }
+            }
+        } else if mode == FuzzyFinderMode::Models || mode == FuzzyFinderMode::Themes {
+            // For models and themes, use the typed content *after the command prefix* as search query
+            use crate::tui::commands::{CoreCommandType, TuiCommandType};
+            let raw_content = self.input_panel_state.content();
+            let query = match mode {
+                FuzzyFinderMode::Models => {
+                    let prefix = format!("/{} ", CoreCommandType::Model.command_name());
+                    raw_content
+                        .strip_prefix(&prefix)
+                        .unwrap_or(&raw_content)
+                        .to_string()
+                }
+                FuzzyFinderMode::Themes => {
+                    let prefix = format!("/{} ", TuiCommandType::Theme.command_name());
+                    raw_content
+                        .strip_prefix(&prefix)
+                        .unwrap_or(&raw_content)
+                        .to_string()
+                }
+                _ => unreachable!(),
+            };
+
+            match mode {
+                FuzzyFinderMode::Models => {
+                    // Filter models based on query
+                    use conductor_core::api::Model;
+                    use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+                    use strum::IntoEnumIterator;
+
+                    let matcher = SkimMatcherV2::default();
+                    let current_model = self.current_model;
+
+                    let mut scored_models: Vec<(i64, String)> = Model::iter()
+                        .filter_map(|m| {
+                            let model_str = m.as_ref();
+                            let display_str = if m == current_model {
+                                format!("{model_str} (current)")
+                            } else {
+                                model_str.to_string()
+                            };
+
+                            if query.is_empty() {
+                                Some((0, display_str))
+                            } else {
+                                matcher
+                                    .fuzzy_match(&display_str, &query)
+                                    .or_else(|| {
+                                        // Also match against aliases
+                                        m.aliases()
+                                            .iter()
+                                            .filter_map(|alias| matcher.fuzzy_match(alias, &query))
+                                            .max()
+                                    })
+                                    .map(|score| (score, display_str))
+                            }
+                        })
+                        .collect();
+
+                    // Sort by score (highest first)
+                    scored_models.sort_by(|a, b| b.0.cmp(&a.0));
+
+                    let results: Vec<String> =
+                        scored_models.into_iter().map(|(_, model)| model).collect();
+
+                    self.input_panel_state.fuzzy_finder.update_results(results);
+                }
+                FuzzyFinderMode::Themes => {
+                    // Filter themes based on query
+                    use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+
+                    let loader = ThemeLoader::new();
+                    let all_themes = loader.list_themes();
+
+                    if query.is_empty() {
+                        self.input_panel_state
+                            .fuzzy_finder
+                            .update_results(all_themes);
+                    } else {
+                        let matcher = SkimMatcherV2::default();
+                        let mut scored_themes: Vec<(i64, String)> = all_themes
+                            .into_iter()
+                            .filter_map(|theme| {
+                                matcher
+                                    .fuzzy_match(&theme, &query)
+                                    .map(|score| (score, theme))
+                            })
+                            .collect();
+
+                        // Sort by score (highest first)
+                        scored_themes.sort_by(|a, b| b.0.cmp(&a.0));
+
+                        let results: Vec<String> =
+                            scored_themes.into_iter().map(|(_, theme)| theme).collect();
+
+                        self.input_panel_state.fuzzy_finder.update_results(results);
+                    }
+                }
+                _ => {}
             }
         }
 
