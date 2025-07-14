@@ -23,7 +23,11 @@ path = "src/bin/schema_generator.rs"
 clap = { version = "4.4", features = ["derive", "env"] }
 
 # API client
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = [
+  "json",
+  "stream",
+  "rustls-tls",
+], default-features = false }
 tokio = { version = "1", features = ["full"] }
 async-stream = "0.3.5"
 futures = "0.3"
