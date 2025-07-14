@@ -41,6 +41,5 @@ conductor-tools = { path = "../conductor-tools" }
 fuzzy-matcher = "0.3.7"
 ignore = "0.4.23"
 tokio-stream = "0.1.17"
-git2 = { version = "0.20.2", default-features = false }
 conductor-proto = { version = "0.1.0", path = "../conductor-proto" }
 conductor-workspace = { version = "0.1.0", path = "../conductor-workspace" }

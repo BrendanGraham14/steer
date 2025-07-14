@@ -54,7 +54,7 @@ pub enum WorkspaceError {
     #[error("Invalid workspace path: {0}")]
     InvalidPath(String),
     #[error(transparent)]
-    Git(#[from] git2::Error),
+    Git(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("Remote workspace error: {0}")]
     Remote(String),
 }

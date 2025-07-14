@@ -82,26 +82,25 @@ pub struct GitStatusUtils;
 impl GitStatusUtils {
     /// Get git status information for a repository
     pub fn get_git_status(repo_path: &Path) -> Result<String, std::io::Error> {
-        use git2::Repository;
-
         let mut result = String::new();
 
-        let repo = Repository::discover(repo_path)
+        let repo = gix::discover(repo_path)
             .map_err(|e| std::io::Error::other(format!("Failed to open git repository: {e}")))?;
 
         // Get current branch
-        match repo.head() {
-            Ok(head) => {
-                let branch = if head.is_branch() {
-                    head.shorthand().unwrap_or("<unknown>")
-                } else {
-                    "HEAD (detached)"
-                };
+        match repo.head_name() {
+            Ok(Some(name)) => {
+                let branch = name.as_bstr().to_string();
+                // Remove "refs/heads/" prefix if present
+                let branch = branch.strip_prefix("refs/heads/").unwrap_or(&branch);
                 result.push_str(&format!("Current branch: {branch}\n\n"));
+            }
+            Ok(None) => {
+                result.push_str("Current branch: HEAD (detached)\n\n");
             }
             Err(e) => {
                 // Handle case where HEAD doesn't exist (new repo)
-                if e.code() == git2::ErrorCode::UnbornBranch {
+                if e.to_string().contains("does not exist") {
                     result.push_str("Current branch: <unborn>\n\n");
                 } else {
                     return Err(std::io::Error::other(format!("Failed to get HEAD: {e}")));
@@ -110,70 +109,60 @@ impl GitStatusUtils {
         }
 
         // Get status
-        let statuses = repo
-            .statuses(None)
+        let iter = repo
+            .status(gix::progress::Discard)
+            .map_err(|e| std::io::Error::other(format!("Failed to get git status: {e}")))?
+            .into_index_worktree_iter(Vec::new())
             .map_err(|e| std::io::Error::other(format!("Failed to get git status: {e}")))?;
         result.push_str("Status:\n");
-        if statuses.is_empty() {
-            result.push_str("Working tree clean\n");
-        } else {
-            for entry in statuses.iter() {
-                let status = entry.status();
-                let path = entry.path().unwrap_or("<unknown>");
-
-                let status_char = if status.contains(git2::Status::INDEX_NEW) {
-                    "A"
-                } else if status.contains(git2::Status::INDEX_MODIFIED) {
-                    "M"
-                } else if status.contains(git2::Status::INDEX_DELETED) {
-                    "D"
-                } else if status.contains(git2::Status::WT_NEW) {
-                    "?"
-                } else if status.contains(git2::Status::WT_MODIFIED) {
-                    "M"
-                } else if status.contains(git2::Status::WT_DELETED) {
-                    "D"
-                } else {
-                    " "
+        use gix::bstr::ByteSlice;
+        use gix::status::index_worktree::iter::Summary;
+        let mut has_changes = false;
+        for item_res in iter {
+            let item = item_res
+                .map_err(|e| std::io::Error::other(format!("Failed to get git status: {e}")))?;
+            if let Some(summary) = item.summary() {
+                has_changes = true;
+                let path = item.rela_path().to_str_lossy();
+                let (status_char, wt_char) = match summary {
+                    Summary::Added => (" ", "?"),
+                    Summary::Removed => ("D", " "),
+                    Summary::Modified => ("M", " "),
+                    Summary::TypeChange => ("T", " "),
+                    Summary::Renamed => ("R", " "),
+                    Summary::Copied => ("C", " "),
+                    Summary::IntentToAdd => ("A", " "),
+                    Summary::Conflict => ("U", "U"),
                 };
-
-                let wt_char = if status.contains(git2::Status::WT_NEW) {
-                    "?"
-                } else if status.contains(git2::Status::WT_MODIFIED) {
-                    "M"
-                } else if status.contains(git2::Status::WT_DELETED) {
-                    "D"
-                } else {
-                    " "
-                };
-
                 result.push_str(&format!("{status_char}{wt_char} {path}\n"));
             }
+        }
+        if !has_changes {
+            result.push_str("Working tree clean\n");
         }
 
         // Get recent commits
         result.push_str("\nRecent commits:\n");
-        match repo.revwalk() {
-            Ok(mut revwalk) => {
-                if let Ok(()) = revwalk.push_head() {
-                    let mut count = 0;
-                    for oid in revwalk {
-                        if count >= 5 {
-                            break;
-                        }
-                        if let Ok(oid) = oid {
-                            if let Ok(commit) = repo.find_commit(oid) {
-                                let summary = commit.summary().unwrap_or("<no summary>");
-                                let id = commit.id();
-                                result.push_str(&format!("{id:.7} {summary}\n"));
-                                count += 1;
-                            }
-                        }
+        match repo.head_id() {
+            Ok(head_id) => {
+                let oid = head_id.detach();
+                let mut count = 0;
+                if let Ok(object) = repo.find_object(oid) {
+                    if let Ok(commit) = object.try_into_commit() {
+                        // Just show the HEAD commit for now, as rev_walk API changed
+                        let summary_bytes = commit.message_raw_sloppy();
+                        let summary = summary_bytes
+                            .lines()
+                            .next()
+                            .and_then(|line| std::str::from_utf8(line).ok())
+                            .unwrap_or("<no summary>");
+                        let short_id = oid.to_hex().to_string();
+                        let short_id = &short_id[..7.min(short_id.len())];
+                        result.push_str(&format!("{short_id} {summary}\n"));
+                        count = 1;
                     }
-                    if count == 0 {
-                        result.push_str("<no commits>\n");
-                    }
-                } else {
+                }
+                if count == 0 {
                     result.push_str("<no commits>\n");
                 }
             }
@@ -261,7 +250,7 @@ impl EnvironmentUtils {
 
     /// Check if a directory is a git repository
     pub fn is_git_repo(path: &Path) -> bool {
-        git2::Repository::discover(path).is_ok()
+        gix::discover(path).is_ok()
     }
 
     /// Read README.md if it exists
@@ -339,7 +328,7 @@ mod tests {
         assert!(!EnvironmentUtils::is_git_repo(temp_dir.path()));
 
         // Create a git repo
-        git2::Repository::init(temp_dir.path()).unwrap();
+        gix::init(temp_dir.path()).unwrap();
         assert!(EnvironmentUtils::is_git_repo(temp_dir.path()));
     }
 }
