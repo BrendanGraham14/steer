@@ -3,28 +3,23 @@ pub mod bash;
 pub mod confirm_exit;
 pub mod edit_selection;
 pub mod fuzzy_finder;
-pub mod insert;
-pub mod model_selection;
-pub mod normal;
 pub mod setup;
+pub mod simple;
+pub mod text_manipulation;
+pub mod vim;
 
 mod setup_impl;
 
 use crate::error::Result;
-use crate::tui::{InputMode, Tui};
+use crate::tui::Tui;
 use ratatui::crossterm::event::KeyEvent;
 
 impl Tui {
     pub async fn handle_key_event(&mut self, key: KeyEvent) -> Result<bool> {
-        match self.input_mode {
-            InputMode::Normal => self.handle_normal_mode(key).await,
-            InputMode::Insert => self.handle_insert_mode(key).await,
-            InputMode::BashCommand => self.handle_bash_mode(key).await,
-            InputMode::AwaitingApproval => self.handle_approval_mode(key).await,
-            InputMode::ConfirmExit => self.handle_confirm_exit_mode(key).await,
-            InputMode::EditMessageSelection => self.handle_edit_selection_mode(key).await,
-            InputMode::FuzzyFinder => self.handle_fuzzy_finder_mode(key).await,
-            InputMode::Setup => self.handle_setup_mode(key).await,
+        // Check editing mode to determine handler
+        match self.preferences.ui.editing_mode {
+            conductor_core::preferences::EditingMode::Simple => self.handle_simple_mode(key).await,
+            conductor_core::preferences::EditingMode::Vim => self.handle_vim_mode(key).await,
         }
     }
 }

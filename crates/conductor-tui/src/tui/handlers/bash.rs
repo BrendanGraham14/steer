@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::tui::{InputMode, Tui};
+use crate::tui::Tui;
 use conductor_core::app::AppCommand;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_textarea::CursorMove;
@@ -15,7 +15,7 @@ impl Tui {
                     .await?;
             } else {
                 // Cancel bash mode and return to normal without clearing text
-                self.input_mode = InputMode::Normal;
+                self.input_mode = self.default_input_mode();
                 self.input_panel_state
                     .textarea
                     .set_placeholder_text("Type your message here...");
@@ -26,7 +26,7 @@ impl Tui {
         // Check for Esc
         if key.code == KeyCode::Esc {
             // Return to normal mode without clearing text
-            self.input_mode = InputMode::Normal;
+            self.input_mode = self.default_input_mode();
             self.input_panel_state
                 .textarea
                 .set_placeholder_text("Type your message here...");
@@ -69,7 +69,7 @@ impl Tui {
                     .send_command(AppCommand::ExecuteBashCommand { command })
                     .await?;
                 self.input_panel_state.clear(); // Clear after executing
-                self.input_mode = InputMode::Normal;
+                self.input_mode = self.default_input_mode();
                 self.input_panel_state
                     .textarea
                     .set_placeholder_text("Type your message here...");

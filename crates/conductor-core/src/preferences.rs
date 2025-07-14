@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub enum EditingMode {
+    #[default]
+    Simple, // Default - no modal editing
+    Vim, // Full vim keybindings
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Preferences {
     #[serde(default)]
@@ -20,6 +27,8 @@ pub struct UiPreferences {
     pub notifications: NotificationPreferences,
     pub history_limit: Option<usize>,
     pub provider_priority: Option<Vec<String>>,
+    #[serde(default)]
+    pub editing_mode: EditingMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

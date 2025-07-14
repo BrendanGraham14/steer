@@ -1,7 +1,8 @@
 use crate::error::Result;
+use crate::tui::InputMode;
+use crate::tui::Tui;
 use crate::tui::auth_controller::AuthController;
 use crate::tui::state::{AuthStatus, SetupState, SetupStep};
-use crate::tui::{InputMode, Tui};
 use conductor_core::api::ProviderKind;
 use conductor_core::auth::{AuthMethod, AuthProgress, DefaultAuthStorage, ProviderRegistry};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -88,7 +89,7 @@ impl SetupHandler {
             | (KeyCode::Esc, KeyModifiers::NONE)
             | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 state.skip_setup = true;
-                Ok(Some(InputMode::Normal))
+                Ok(Some(InputMode::Simple))
             }
             _ => Ok(None),
         }
@@ -137,14 +138,14 @@ impl SetupHandler {
             }
             (KeyCode::Char('s'), KeyModifiers::NONE) | (KeyCode::Char('S'), KeyModifiers::NONE) => {
                 state.skip_setup = true;
-                Ok(Some(InputMode::Normal))
+                Ok(Some(InputMode::Simple))
             }
             (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 // If we're at provider selection and this is from /auth command,
                 // exit setup mode instead of going to welcome
                 if matches!(state.current_step, SetupStep::ProviderSelection) {
                     // Clear setup state and return to normal mode
-                    Ok(Some(InputMode::Normal))
+                    Ok(Some(InputMode::Simple))
                 } else {
                     state.previous_step();
                     Ok(None)
@@ -406,7 +407,7 @@ impl SetupHandler {
 
                 // Clear setup state and transition to normal mode
                 tui.setup_state = None;
-                Ok(Some(InputMode::Normal))
+                Ok(Some(InputMode::Simple))
             }
             _ => Ok(None),
         }

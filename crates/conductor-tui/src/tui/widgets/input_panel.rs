@@ -464,16 +464,17 @@ impl InputPanelState {
     }
 }
 
-fn get_formatted_mode(mode: InputMode, theme: &Theme) -> Span<'static> {
+fn get_formatted_mode(mode: InputMode, theme: &Theme) -> Option<Span<'static>> {
     // Add mode name with special styling
     let mode_name = match mode {
-        InputMode::Insert => "Insert",
-        InputMode::Normal => "Normal",
+        InputMode::Simple => return None,
+        InputMode::VimNormal => "NORMAL",
+        InputMode::VimInsert => "INSERT",
         InputMode::BashCommand => "Bash",
         InputMode::AwaitingApproval => "Awaiting Approval",
         InputMode::ConfirmExit => "Confirm Exit",
         InputMode::EditMessageSelection => "Edit Selection",
-        InputMode::FuzzyFinder => "Insert",
+        InputMode::FuzzyFinder => "Search",
         InputMode::Setup => "Setup",
     };
 
@@ -486,7 +487,7 @@ fn get_formatted_mode(mode: InputMode, theme: &Theme) -> Span<'static> {
         _ => Component::ModelInfo,
     };
 
-    Span::styled(mode_name, theme.style(component))
+    Some(Span::styled(mode_name, theme.style(component)))
 }
 
 /// Properties for the [`InputPanel`] widget.
@@ -517,27 +518,49 @@ impl<'a> InputPanel<'a> {
     }
 
     /// Get the title for the current mode with properly formatted keybinds
-    fn get_mode_title(&self) -> Line<'static> {
+    fn get_mode_title(&self, state: &InputPanelState) -> Line<'static> {
         let mut spans = vec![Span::raw(" ")];
 
-        spans.push(get_formatted_mode(self.input_mode, self.theme));
-        spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
+        let formatted_mode = get_formatted_mode(self.input_mode, self.theme);
+        if let Some(mode) = formatted_mode {
+            spans.push(mode);
+            spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
+        }
 
         match self.input_mode {
-            InputMode::Insert => {
-                spans.extend(format_keybinds(
-                    &[("Enter", "send"), ("Esc", "cancel")],
-                    self.theme,
-                ));
+            InputMode::Simple => {
+                if state.content().is_empty() {
+                    spans.extend(format_keybinds(
+                        &[
+                            ("Enter", "send"),
+                            ("ESC ESC", "edit previous"),
+                            ("!", "bash"),
+                            ("/", "command"),
+                            ("@", "file"),
+                        ],
+                        self.theme,
+                    ));
+                } else {
+                    spans.extend(format_keybinds(
+                        &[("Enter", "send"), ("ESC ESC", "clear")],
+                        self.theme,
+                    ));
+                }
             }
-            InputMode::Normal => {
+            InputMode::VimNormal => {
                 spans.extend(format_keybinds(
                     &[
                         ("i", "insert"),
-                        ("!", "bash"),
-                        ("u/d/j/k", "scroll"),
+                        (":", "command"),
+                        ("hjkl", "move"),
                         ("e", "edit previous"),
                     ],
+                    self.theme,
+                ));
+            }
+            InputMode::VimInsert => {
+                spans.extend(format_keybinds(
+                    &[("Esc", "normal"), ("ESC ESC", "clear"), ("Enter", "send")],
                     self.theme,
                 ));
             }
@@ -694,22 +717,45 @@ impl StatefulWidget for InputPanel<'_> {
         }
 
         // Add mode-specific title
-        title_spans.extend(self.get_mode_title().spans);
+        title_spans.extend(self.get_mode_title(state).spans);
 
-        let input_block = Block::default()
+        let mut input_block = Block::default()
             .borders(Borders::ALL)
-            .title(Line::from(title_spans))
-            .style(match self.input_mode {
-                InputMode::Insert => self.theme.style(Component::InputPanelBorderActive),
-                InputMode::Normal => self.theme.style(Component::InputPanelBorder),
-                InputMode::BashCommand => self.theme.style(Component::InputPanelBorderCommand),
-                InputMode::ConfirmExit => self.theme.style(Component::InputPanelBorderError),
-                InputMode::EditMessageSelection => {
-                    self.theme.style(Component::InputPanelBorderCommand)
-                }
-                InputMode::FuzzyFinder => self.theme.style(Component::InputPanelBorderActive),
-                _ => self.theme.style(Component::InputPanelBorder),
-            });
+            .title(Line::from(title_spans));
+
+        match self.input_mode {
+            InputMode::Simple | InputMode::VimInsert => {
+                // Active border and text style
+                let active = self.theme.style(Component::InputPanelBorderActive);
+                input_block = input_block.style(active).border_style(active);
+            }
+            InputMode::VimNormal => {
+                // Keep text style the same as VimInsert (active) but dim the border
+                let text_style = self.theme.style(Component::InputPanelBorderActive);
+                let border_dim = self.theme.style(Component::InputPanelBorder);
+                input_block = input_block.style(text_style).border_style(border_dim);
+            }
+            InputMode::BashCommand => {
+                let style = self.theme.style(Component::InputPanelBorderCommand);
+                input_block = input_block.style(style).border_style(style);
+            }
+            InputMode::ConfirmExit => {
+                let style = self.theme.style(Component::InputPanelBorderError);
+                input_block = input_block.style(style).border_style(style);
+            }
+            InputMode::EditMessageSelection => {
+                let style = self.theme.style(Component::InputPanelBorderCommand);
+                input_block = input_block.style(style).border_style(style);
+            }
+            InputMode::FuzzyFinder => {
+                let style = self.theme.style(Component::InputPanelBorderActive);
+                input_block = input_block.style(style).border_style(style);
+            }
+            _ => {
+                let style = self.theme.style(Component::InputPanelBorder);
+                input_block = input_block.style(style).border_style(style);
+            }
+        }
 
         if self.input_mode == InputMode::EditMessageSelection {
             // Selection list rendering

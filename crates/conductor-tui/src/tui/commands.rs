@@ -27,6 +27,8 @@ pub enum TuiCommand {
     Auth,
     /// Show help for commands
     Help(Option<String>),
+    /// Switch editing mode
+    EditingMode(Option<String>),
 }
 
 /// Enum representing all TUI command types (without parameters)
@@ -38,6 +40,7 @@ pub enum TuiCommandType {
     Theme,
     Auth,
     Help,
+    EditingMode,
 }
 
 impl TuiCommandType {
@@ -48,6 +51,7 @@ impl TuiCommandType {
             TuiCommandType::Theme => self.to_string(),
             TuiCommandType::Auth => self.to_string(),
             TuiCommandType::Help => self.to_string(),
+            TuiCommandType::EditingMode => self.to_string(),
         }
     }
 
@@ -58,6 +62,7 @@ impl TuiCommandType {
             TuiCommandType::Theme => "Change or list available themes",
             TuiCommandType::Auth => "Manage authentication settings",
             TuiCommandType::Help => "Show help information",
+            TuiCommandType::EditingMode => "Switch between editing modes (simple/vim)",
         }
     }
 
@@ -68,6 +73,7 @@ impl TuiCommandType {
             TuiCommandType::Theme => format!("/{} [theme_name]", self.command_name()),
             TuiCommandType::Auth => format!("/{}", self.command_name()),
             TuiCommandType::Help => format!("/{} [command]", self.command_name()),
+            TuiCommandType::EditingMode => format!("/{} [simple|vim]", self.command_name()),
         }
     }
 }
@@ -157,6 +163,10 @@ impl TuiCommand {
                         let command_name = parts.get(1).map(|s| s.to_string());
                         Ok(TuiCommand::Help(command_name))
                     }
+                    TuiCommandType::EditingMode => {
+                        let mode_name = parts.get(1).map(|s| s.to_string());
+                        Ok(TuiCommand::EditingMode(mode_name))
+                    }
                 };
             }
         }
@@ -176,6 +186,10 @@ impl TuiCommand {
             TuiCommand::Help(None) => TuiCommandType::Help.command_name().to_string(),
             TuiCommand::Help(Some(cmd)) => {
                 format!("{} {}", TuiCommandType::Help.command_name(), cmd)
+            }
+            TuiCommand::EditingMode(None) => TuiCommandType::EditingMode.command_name().to_string(),
+            TuiCommand::EditingMode(Some(mode)) => {
+                format!("{} {}", TuiCommandType::EditingMode.command_name(), mode)
             }
         }
     }

@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::tui::{InputMode, Tui};
+use crate::tui::Tui;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl Tui {
@@ -7,7 +7,7 @@ impl Tui {
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 // Exit edit selection mode
-                self.input_mode = InputMode::Normal;
+                self.input_mode = self.default_input_mode();
                 self.input_panel_state.clear_edit_selection();
             }
             (KeyCode::Enter, _) => {

@@ -3,6 +3,9 @@
 pub mod chat_store;
 pub use chat_store::ChatStore;
 
+pub mod double_tap;
+pub use double_tap::DoubleTapTracker;
+
 pub mod file_cache;
 pub mod setup;
 pub mod tool_registry;

@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::tui::{InputMode, Tui};
+use crate::tui::Tui;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl Tui {
@@ -15,7 +15,7 @@ impl Tui {
             }
             _ => {
                 // Any other key cancels exit and returns to normal mode
-                self.input_mode = InputMode::Normal;
+                self.input_mode = self.default_input_mode();
             }
         }
         Ok(false)
