@@ -41,11 +41,8 @@ conductor
 # Work inside a different directory
 conductor --directory /path/to/project
 
-# Use a specific model (run `conductor /model` at runtime to list models)
-conductor --model opus
-
 # Start with a session configuration file
-conductor --session-config session.toml
+conductor --session-config config.toml
 
 # Point the client at a remote gRPC server instead of running locally
 conductor --remote 127.0.0.1:50051
@@ -64,20 +61,17 @@ conductor headless --messages-json /tmp/messages.json --model gemini-pro
 conductor headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
 
 # Supply a custom session configuration (tool approvals, MCP backends, etc.)
-conductor headless --session-config session.toml < prompt.txt
+conductor headless --session-config config.toml < prompt.txt
 ```
 
 ### Authentication
 
 ```bash
-# Login to Anthropic (Claude) using OAuth - available for Claude Pro users!
-conductor auth login anthropic
+# Launch Conductor and follow the first-run setup wizard
+conductor
 
-# Check authentication status for all providers
-conductor auth status
-
-# Logout when done
-conductor auth logout anthropic
+# Re-run the wizard any time inside the chat
+/auth
 ```
 
 ### gRPC server / remote mode
@@ -100,10 +94,10 @@ conductor session list --limit 20
 conductor session delete <SESSION_ID> --force
 
 # Create a new session with a config file
-conductor session create --session-config session.toml
+conductor session create --session-config config.toml
 
 # Create with overrides
-conductor session create --session-config session.toml --system-prompt "Custom prompt"
+conductor session create --session-config config.toml --system-prompt "Custom prompt"
 ```
 
 ### Session Configuration Files
@@ -196,10 +190,11 @@ transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-K
 
 ```
 /help        Show help
+/auth        Set up authentication for AI providers
 /model       Show or change the current model
 /clear       Clear conversation history and tool approvals
 /compact     Summarise older messages to save context space
-/cancel      Cancel the current operation in progress
+/theme       Change or list available themes
 ```
 
 ---
@@ -238,42 +233,28 @@ export CONDUCTOR_NOTIFICATION_DESKTOP=false
 
 ## Authentication
 
-### OAuth Authentication (Anthropic/Claude)
+Conductor supports multiple methods for providing credentials.
 
-Conductor supports OAuth authentication for Anthropic's Claude models, allowing Claude Pro subscribers to authenticate without managing API keys:
+### Interactive Setup
 
-```bash
-# Login to Anthropic using OAuth
-conductor auth login anthropic
+The first time you start Conductor it should launch a setup wizard. If it does not, you may trigger it from the chat with the `/auth` command.
 
-# Check authentication status
-conductor auth status
+All providers (Anthropic, OpenAI, Gemini, xAI) support API key authentication.
+ 
+For Claude Pro/Max users, Conductor also supports authenticating via OAuth. **Note**: If OAuth tokens and an API key are saved for Anthropic, the OAuth token takes precedence.
 
-# Logout from Anthropic
-conductor auth logout anthropic
-```
+Credentials are stored securely using the OS-native keyring.
 
-When you run `conductor auth login anthropic`:
-1. Your browser will open to authorize Conductor
-2. After authorizing, you'll see a code on the redirect page
-3. Copy the ENTIRE code (including the part after #) and paste it into the terminal
-4. Conductor will exchange this for access tokens and store them securely
+### Environment Variables
 
-Tokens are stored securely using:
-- **macOS**: Keychain
-- **Windows**: Windows Credential Store
-- **Linux**: Secret Service API (or encrypted file fallback)
-
-### API Keys (Traditional)
-
-You can still use traditional API keys by setting environment variables (optionally loaded from a `.env` file):
+Conductor will detect the following environment variables:
 
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`
 * `GEMINI_API_KEY`
 * `XAI_API_KEY` or `GROK_API_KEY` 
 
-**Note**: If both OAuth tokens and API keys are available for Anthropic, the API key takes precedence.
+Environment variables take precedence over stored credentials.
 
 ---
 
@@ -296,55 +277,3 @@ approved_patterns = [
     "cargo build*"
 ]
 ```
-
----
-
-## Development
-
-The recommended way to build and test is with Nix, which provides a reproducible environment with all dependencies.
-
-```bash
-# Enter the development shell
-nix develop
-
-# Or with direnv for automatic environment loading
-direnv allow
-
-# Run checks and tests
-nix flake check
-
-# Build the project
-nix build
-```
-
-If you don't have Nix, you can use `cargo` directly, but you'll need to install dependencies like `protobuf` and `pkg-config` manually.
-
-```bash
-# Build & test with Cargo
-cargo build
-cargo test
-```
-
-The `justfile` provides helpful commands for common tasks. Run `just` to see the available commands.
-
----
-
-## Project layout (crates)
-
-* `crates/conductor-proto`     – Protocol buffer definitions and generated code
-* `crates/conductor-core`      – Pure domain logic (LLM APIs, session management, tool execution)
-* `crates/conductor-grpc`      – gRPC server/client implementation and core ↔ proto conversions
-* `crates/conductor-tui`       – Terminal UI library (ratatui-based)
-* `crates/conductor-cli`       – Command-line interface and main binary
-* `crates/conductor-tools`     – Tool trait definitions and implementations
-* `crates/conductor-macros`    – Procedural macros for tool definitions
-* `crates/conductor-remote-workspace` – gRPC service for remote tool execution
-
-### Architecture principles
-
-1. **Clean dependency graph**: proto → core → grpc → cli/tui
-2. **Single API surface**: All clients (TUI, headless, etc.) go through gRPC
-3. **No in-process shortcuts**: Even local mode uses an in-memory gRPC channel
-4. **Clear boundaries**: Each crate has a single, well-defined responsibility
-
-Full details live in `ARCHITECTURE.md`.
