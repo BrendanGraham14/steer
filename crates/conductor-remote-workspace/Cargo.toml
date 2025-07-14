@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Remote workspace for Conductor."
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
+repository = "https://github.com/brendangraham14/conductor"
 
 [lints]
 workspace = true
