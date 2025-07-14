@@ -21,7 +21,7 @@ pub enum WorkspaceError {
     InvalidConfiguration(String),
 
     #[error("Git error: {0}")]
-    Git(#[from] git2::Error),
+    Git(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     #[error("Tonic transport error: {0}")]
     TonicTransport(#[from] tonic::transport::Error),
