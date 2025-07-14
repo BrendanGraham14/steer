@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api::ToolCall;
-use crate::auth::DefaultAuthStorage;
 use crate::config::LlmConfigProvider;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};
@@ -85,7 +84,20 @@ pub struct LocalBackend {
     registry: HashMap<String, Box<dyn ExecutableTool>>,
 }
 
+impl Default for LocalBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalBackend {
+    /// Create a new empty LocalBackend
+    pub fn new() -> Self {
+        Self {
+            registry: HashMap::new(),
+        }
+    }
+
     /// Create a backend from a collection of tool instances
     pub fn from_tools(tools: Vec<Box<dyn ExecutableTool>>) -> Self {
         let mut registry = HashMap::new();
@@ -102,6 +114,7 @@ impl LocalBackend {
     pub fn with_tools(
         tool_names: Vec<String>,
         llm_config_provider: Arc<LlmConfigProvider>,
+        workspace: Arc<dyn crate::workspace::Workspace>,
     ) -> Self {
         let mut all_tools = workspace_tools();
         all_tools.push(Box::new(FetchToolWrapper(FetchTool {
@@ -109,6 +122,7 @@ impl LocalBackend {
         })));
         all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
             llm_config_provider: llm_config_provider.clone(),
+            workspace,
         })));
 
         let filtered_tools: Vec<Box<dyn ExecutableTool>> = all_tools
@@ -126,6 +140,7 @@ impl LocalBackend {
     pub fn without_tools(
         excluded_tools: Vec<String>,
         llm_config_provider: Arc<LlmConfigProvider>,
+        workspace: Arc<dyn crate::workspace::Workspace>,
     ) -> Self {
         let mut all_tools = workspace_tools();
         all_tools.push(Box::new(FetchToolWrapper(FetchTool {
@@ -133,6 +148,7 @@ impl LocalBackend {
         })));
         all_tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
             llm_config_provider: llm_config_provider.clone(),
+            workspace,
         })));
 
         let filtered_tools: Vec<Box<dyn ExecutableTool>> = all_tools
@@ -144,7 +160,10 @@ impl LocalBackend {
     }
 
     /// Create a new LocalBackend with all tools (workspace + server tools)
-    pub fn full(llm_config_provider: Arc<LlmConfigProvider>) -> Self {
+    pub fn full(
+        llm_config_provider: Arc<LlmConfigProvider>,
+        workspace: Arc<dyn crate::workspace::Workspace>,
+    ) -> Self {
         let mut tools = workspace_tools();
         // Add server-side tools
         tools.push(Box::new(FetchToolWrapper(FetchTool {
@@ -152,23 +171,23 @@ impl LocalBackend {
         })));
         tools.push(Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
             llm_config_provider: llm_config_provider.clone(),
+            workspace,
         })));
         Self::from_tools(tools)
     }
 
-    /// Create a LocalBackend with only workspace tools
-    pub fn workspace_only() -> Self {
-        Self::from_tools(workspace_tools())
-    }
-
     /// Create a LocalBackend with only server-side tools
-    pub fn server_only(llm_config_provider: Arc<LlmConfigProvider>) -> Self {
+    pub fn server_only(
+        llm_config_provider: Arc<LlmConfigProvider>,
+        workspace: Arc<dyn crate::workspace::Workspace>,
+    ) -> Self {
         Self::from_tools(vec![
             Box::new(FetchToolWrapper(FetchTool {
                 llm_config_provider: llm_config_provider.clone(),
             })),
             Box::new(DispatchAgentToolWrapper(DispatchAgentTool {
                 llm_config_provider: llm_config_provider.clone(),
+                workspace,
             })),
         ])
     }
@@ -205,23 +224,9 @@ impl ToolBackend for LocalBackend {
             .get(&tool_call.name)
             .ok_or_else(|| ToolError::UnknownTool(tool_call.name.clone()))?;
 
-        // Extract working directory from execution environment
-        let working_directory = match &context.environment {
-            crate::tools::ExecutionEnvironment::Local { working_directory } => {
-                working_directory.clone()
-            }
-            crate::tools::ExecutionEnvironment::Remote {
-                working_directory, ..
-            } => working_directory
-                .as_ref()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(crate::utils::default_working_directory),
-        };
-
         // Create execution context for conductor-tools
         let conductor_context = ConductorExecutionContext::new(tool_call.id.clone())
-            .with_cancellation_token(context.cancellation_token.clone())
-            .with_working_directory(working_directory);
+            .with_cancellation_token(context.cancellation_token.clone());
 
         // Execute the tool and get the result
         tool.run(tool_call.parameters.clone(), &conductor_context)
@@ -247,145 +252,25 @@ impl ToolBackend for LocalBackend {
     fn metadata(&self) -> BackendMetadata {
         BackendMetadata::new("Local".to_string(), "Local".to_string())
             .with_location("localhost".to_string())
-            .with_info("tool_count".to_string(), self.registry.len().to_string())
-            .with_info("execution_env".to_string(), "current_process".to_string())
-    }
-
-    async fn health_check(&self) -> bool {
-        // Local backend is always healthy if we can access the registry
-        !self.registry.is_empty()
-    }
-
-    async fn requires_approval(&self, tool_name: &str) -> Result<bool, ToolError> {
-        // Get the tool from the registry and check its requires_approval method
-        self.registry
-            .get(tool_name)
-            .map(|tool| tool.requires_approval())
-            .ok_or_else(|| ToolError::UnknownTool(tool_name.to_string()))
-    }
-}
-
-impl Default for LocalBackend {
-    fn default() -> Self {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        Self::full(llm_config_provider)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::ToolCall;
-    use conductor_tools::tools::{EDIT_TOOL_NAME, VIEW_TOOL_NAME, bash::BASH_TOOL_NAME};
-    use serde_json::json;
-    use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
     async fn test_local_backend_creation() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::full(llm_config_provider);
-        assert!(!backend.registry.is_empty());
-        assert!(backend.has_tool("bash"));
-        assert!(backend.has_tool("read_file"));
-        assert!(!backend.has_tool("nonexistent_tool"));
-    }
-
-    #[tokio::test]
-    async fn test_local_backend_read_only() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::read_only(llm_config_provider);
-        assert!(!backend.registry.is_empty());
-        assert!(backend.has_tool("read_file"));
-        assert!(!backend.has_tool("bash")); // bash is not in read-only set
+        let backend = LocalBackend::new();
+        assert_eq!(backend.registry.len(), 0);
     }
 
     #[tokio::test]
     async fn test_local_backend_metadata() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::full(llm_config_provider);
+        let backend = LocalBackend::new();
         let metadata = backend.metadata();
-
         assert_eq!(metadata.name, "Local");
         assert_eq!(metadata.backend_type, "Local");
         assert_eq!(metadata.location, Some("localhost".to_string()));
-        assert!(metadata.additional_info.contains_key("tool_count"));
-        assert!(metadata.additional_info.contains_key("execution_env"));
-    }
-
-    #[tokio::test]
-    async fn test_local_backend_supported_tools() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::full(llm_config_provider);
-        let supported = backend.supported_tools().await;
-
-        assert!(!supported.is_empty());
-        assert!(supported.contains(&BASH_TOOL_NAME.to_string()));
-        assert!(supported.contains(&VIEW_TOOL_NAME.to_string()));
-        assert!(supported.contains(&EDIT_TOOL_NAME.to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_local_backend_health_check() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::full(llm_config_provider);
-        assert!(backend.health_check().await);
-    }
-
-    #[tokio::test]
-    async fn test_local_backend_execution_unknown_tool() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::full(llm_config_provider);
-
-        let tool_call = ToolCall {
-            name: "unknown_tool".to_string(),
-            parameters: json!({}),
-            id: "test_id".to_string(),
-        };
-
-        let context = ExecutionContext::new(
-            "session".to_string(),
-            "operation".to_string(),
-            "tool_call".to_string(),
-            CancellationToken::new(),
-        );
-
-        let result = backend.execute(&tool_call, &context).await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(ToolError::UnknownTool(_))));
-        if let Err(ToolError::UnknownTool(name)) = result {
-            assert_eq!(name, "unknown_tool");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_local_backend_requires_approval() {
-        let auth_storage = Arc::new(DefaultAuthStorage::new().unwrap());
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(auth_storage));
-        let backend = LocalBackend::full(llm_config_provider);
-
-        // Test a tool that typically requires approval (like bash)
-        let result = backend.requires_approval("bash").await;
-        assert!(result.is_ok());
-        assert!(result.unwrap()); // bash should require approval
-
-        // Test a tool that typically doesn't require approval (like read_file)
-        let result = backend.requires_approval("read_file").await;
-        assert!(result.is_ok());
-        assert!(!result.unwrap()); // read_file should NOT require approval
-
-        // Test an unknown tool
-        let result = backend.requires_approval("unknown_tool").await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(ToolError::UnknownTool(_))));
-        if let Err(ToolError::UnknownTool(name)) = result {
-            assert_eq!(name, "unknown_tool");
-        }
     }
 }

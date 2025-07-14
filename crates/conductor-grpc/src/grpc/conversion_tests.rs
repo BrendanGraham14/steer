@@ -222,20 +222,13 @@ prop_compose! {
     fn arb_backend_config()(
         variant in 0..4usize,
         name in "[a-z]+",
-        endpoint in "[a-z]+://[a-z]+:[0-9]+",
-        auth in proptest::option::of(arb_remote_auth()),
-        image in "[a-z]+:[a-z]+",
-        runtime in prop::sample::select(vec![ContainerRuntime::Docker, ContainerRuntime::Podman]),
-        server_name in "[a-z_]+",
         transport in arb_mcp_transport(),
         tool_filter in arb_tool_filter(),
     ) -> BackendConfig {
         match variant {
             0 => BackendConfig::Local { tool_filter },
-            1 => BackendConfig::Remote { name, endpoint, auth, tool_filter },
-            2 => BackendConfig::Container { image, runtime, tool_filter },
             _ => BackendConfig::Mcp {
-                server_name,
+                server_name: name,
                 transport,
                 tool_filter
             },
@@ -534,32 +527,6 @@ proptest! {
         for (original, converted) in config.backends.iter().zip(roundtrip.backends.iter()) {
             match (original, converted) {
                 (BackendConfig::Local { tool_filter: tf1 }, BackendConfig::Local { tool_filter: tf2 }) => {
-                    prop_assert_eq!(tf1, tf2);
-                }
-                (BackendConfig::Remote { name: n1, endpoint: e1, auth: a1, tool_filter: tf1 },
-                 BackendConfig::Remote { name: n2, endpoint: e2, auth: a2, tool_filter: tf2 }) => {
-                    prop_assert_eq!(n1, n2);
-                    prop_assert_eq!(e1, e2);
-                    match (a1, a2) {
-                        (Some(RemoteAuth::Bearer { token: t1 }), Some(RemoteAuth::Bearer { token: t2 })) => {
-                            prop_assert_eq!(t1, t2);
-                        }
-                        (Some(RemoteAuth::ApiKey { key: k1 }), Some(RemoteAuth::ApiKey { key: k2 })) => {
-                            prop_assert_eq!(k1, k2);
-                        }
-                        (None, None) => {},
-                        _ => prop_assert!(false, "Auth mismatch"),
-                    }
-                    prop_assert_eq!(tf1, tf2);
-                }
-                (BackendConfig::Container { image: i1, runtime: r1, tool_filter: tf1 },
-                 BackendConfig::Container { image: i2, runtime: r2, tool_filter: tf2 }) => {
-                    prop_assert_eq!(i1, i2);
-                    match (r1, r2) {
-                        (ContainerRuntime::Docker, ContainerRuntime::Docker) => {},
-                        (ContainerRuntime::Podman, ContainerRuntime::Podman) => {},
-                        _ => prop_assert!(false, "Runtime mismatch"),
-                    }
                     prop_assert_eq!(tf1, tf2);
                 }
                 (BackendConfig::Mcp { server_name: s1, transport: t1, tool_filter: tf1 },

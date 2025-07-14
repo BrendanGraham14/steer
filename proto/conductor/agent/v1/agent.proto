@@ -557,9 +557,7 @@ message ToolBlacklist {
 message BackendConfig {
   oneof backend {
     LocalBackendConfig local = 1;
-    RemoteBackendConfig remote = 2;
-    ContainerBackendConfig container = 3;
-    McpBackendConfig mcp = 4;
+    McpBackendConfig mcp = 2;
   }
 }
 
@@ -581,19 +579,6 @@ message ExcludeFilter {
 
 message LocalBackendConfig {
   ToolFilter tool_filter = 1;
-}
-
-message RemoteBackendConfig {
-  string name = 1;
-  string endpoint = 2;
-  optional RemoteAuth auth = 3;
-  ToolFilter tool_filter = 4;
-}
-
-message ContainerBackendConfig {
-  string image = 1;
-  ContainerRuntime runtime = 2;
-  ToolFilter tool_filter = 3;
 }
 
 message McpBackendConfig {

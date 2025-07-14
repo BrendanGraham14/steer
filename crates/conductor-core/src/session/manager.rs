@@ -82,17 +82,20 @@ impl ManagedSession {
         // Initialize the global command sender for tool approval requests
         crate::app::OpContext::init_command_tx(app_command_tx.clone());
 
-        // Build backend registry from session tool config
-        let backend_registry = session
-            .config
-            .build_registry(Arc::new(app_config.llm_config_provider.clone()))
-            .await?;
-
-        // Build workspace from session config
+        // Build workspace from session config first
         let workspace = session.build_workspace().await?;
 
+        // Build backend registry from session tool config, passing workspace
+        let backend_registry = session
+            .config
+            .build_registry(
+                Arc::new(app_config.llm_config_provider.clone()),
+                workspace.clone(),
+            )
+            .await?;
+
         let tool_executor = Arc::new(crate::app::ToolExecutor::with_all_components(
-            Some(workspace.clone()),
+            workspace.clone(),
             Arc::new(backend_registry),
             Arc::new(crate::app::validation::ValidatorRegistry::new()),
             app_config.llm_config_provider.clone(),

@@ -27,6 +27,15 @@ mod tests {
         Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)))
     }
 
+    async fn test_workspace() -> Arc<dyn crate::workspace::Workspace> {
+        let temp_dir = TempDir::new().unwrap();
+        crate::workspace::create_workspace(&conductor_workspace::WorkspaceConfig::Local {
+            path: temp_dir.path().to_path_buf(),
+        })
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn test_mcp_backend_in_session_config() {
         // For this test, we'll use the TCP backend test case which is more reliable
@@ -83,7 +92,7 @@ mod tests {
 
         // Build the registry - this should succeed
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
 
@@ -180,7 +189,7 @@ mod tests {
 
         // Build the registry - this should succeed
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
 
@@ -266,7 +275,7 @@ mod tests {
 
         // Build the registry - this should succeed
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
 
@@ -333,7 +342,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
 
@@ -430,7 +439,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
 
@@ -497,7 +506,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
 
@@ -590,7 +599,7 @@ mod tests {
 
         // Build the registry
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
 
@@ -683,7 +692,7 @@ mod tests {
 
         // Registry creation should still succeed
         let registry = config
-            .build_registry(default_llm_config_provider())
+            .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
 

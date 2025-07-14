@@ -28,8 +28,6 @@ pub mod context_util;
 pub mod conversation;
 pub mod io;
 
-mod environment;
-
 mod tool_executor;
 pub mod validation;
 
@@ -40,9 +38,9 @@ use crate::app::context::TaskOutcome;
 
 pub use cancellation::CancellationInfo;
 pub use command::AppCommand;
+pub use conductor_workspace::EnvironmentInfo;
 pub use context::OpContext;
 pub use conversation::{Conversation, Message};
-pub use environment::EnvironmentInfo;
 pub use tool_executor::ToolExecutor;
 
 pub use agent_executor::{
@@ -311,7 +309,13 @@ impl App {
                 create_system_prompt_with_workspace(Some(self.current_model), workspace.as_ref())
                     .await?
             } else {
-                create_system_prompt(Some(self.current_model))?
+                // If no workspace, create a minimal system prompt
+
+                if let Some(model) = Some(self.current_model) {
+                    get_model_system_prompt(model)
+                } else {
+                    crate::prompts::default_system_prompt()
+                }
             };
             // Cache the system prompt
             self.cached_system_prompt = Some(prompt.clone());
@@ -1769,26 +1773,6 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             app.current_op_context = None;
         }
     }
-}
-
-fn create_system_prompt(model: Option<Model>) -> Result<String> {
-    let env_info = EnvironmentInfo::collect()?;
-
-    // Use model-specific prompt if available, otherwise use default
-    let system_prompt_body = if let Some(model) = model {
-        get_model_system_prompt(model)
-    } else {
-        crate::prompts::default_system_prompt()
-    };
-
-    let prompt = format!(
-        r#"{}
-
-{}"#,
-        system_prompt_body,
-        env_info.as_context()
-    );
-    Ok(prompt)
 }
 
 async fn create_system_prompt_with_workspace(

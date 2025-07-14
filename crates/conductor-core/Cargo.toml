@@ -106,6 +106,8 @@ hyper-util = { version = "0.1.14", features = [
 serde_urlencoded = "0.7.1"
 zeroize = "1.8.1"
 toml = "0.9.0"
+conductor-workspace = { version = "0.1.0", path = "../conductor-workspace" }
+conductor-workspace-client = { version = "0.1.0", path = "../conductor-workspace-client" }
 
 [build-dependencies]
 

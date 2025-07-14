@@ -13,6 +13,14 @@ use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
 use conductor_tools::tools::read_only_workspace_tools;
 use conductor_tools::{ToolCall, result::ToolResult};
 
+/// Container runtime to use
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerRuntime {
+    Docker,
+    Podman,
+}
+
 /// Defines the primary execution environment for a session's workspace
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -36,6 +44,28 @@ impl WorkspaceConfig {
             WorkspaceConfig::Local { path } => Some(path.to_string_lossy().to_string()),
             WorkspaceConfig::Remote { agent_address, .. } => Some(agent_address.clone()),
             WorkspaceConfig::Container { .. } => None,
+        }
+    }
+
+    /// Convert to conductor_workspace::WorkspaceConfig
+    pub fn to_workspace_config(&self) -> conductor_workspace::WorkspaceConfig {
+        match self {
+            WorkspaceConfig::Local { path } => {
+                conductor_workspace::WorkspaceConfig::Local { path: path.clone() }
+            }
+            WorkspaceConfig::Remote {
+                agent_address,
+                auth,
+            } => conductor_workspace::WorkspaceConfig::Remote {
+                address: agent_address.clone(),
+                auth: auth.as_ref().map(|a| a.to_workspace_auth()),
+            },
+            WorkspaceConfig::Container { .. } => {
+                // For now, container workspaces are not implemented in conductor_workspace
+                conductor_workspace::WorkspaceConfig::Local {
+                    path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                }
+            }
         }
     }
 }
@@ -82,7 +112,7 @@ impl Session {
 
     /// Build a workspace from this session's configuration
     pub async fn build_workspace(&self) -> Result<Arc<dyn crate::workspace::Workspace>> {
-        crate::workspace::create_workspace(&self.config.workspace).await
+        crate::workspace::create_workspace(&self.config.workspace.to_workspace_config()).await
     }
 }
 
@@ -103,6 +133,7 @@ impl SessionConfig {
     pub async fn build_registry(
         &self,
         llm_config_provider: Arc<LlmConfigProvider>,
+        workspace: Arc<dyn crate::workspace::Workspace>,
     ) -> Result<BackendRegistry> {
         let mut registry = BackendRegistry::new();
 
@@ -112,41 +143,23 @@ impl SessionConfig {
             match backend_config {
                 BackendConfig::Local { tool_filter } => {
                     let backend = match tool_filter {
-                        ToolFilter::All => LocalBackend::full(llm_config_provider.clone()),
-                        ToolFilter::Include(tools) => {
-                            LocalBackend::with_tools(tools.clone(), llm_config_provider.clone())
+                        ToolFilter::All => {
+                            LocalBackend::full(llm_config_provider.clone(), workspace.clone())
                         }
+                        ToolFilter::Include(tools) => LocalBackend::with_tools(
+                            tools.clone(),
+                            llm_config_provider.clone(),
+                            workspace.clone(),
+                        ),
                         ToolFilter::Exclude(excluded) => LocalBackend::without_tools(
                             excluded.clone(),
                             llm_config_provider.clone(),
+                            workspace.clone(),
                         ),
                     };
                     registry
                         .register(format!("user_local_{idx}"), Arc::new(backend))
                         .await;
-                }
-                BackendConfig::Remote {
-                    name,
-                    endpoint,
-                    auth: _,
-                    tool_filter: _,
-                } => {
-                    // Remote backends require conductor-grpc and cannot be created in conductor-core
-                    tracing::warn!(
-                        "Remote backend '{}' at {} requires conductor-grpc. Skipping.",
-                        name,
-                        endpoint
-                    );
-                }
-                BackendConfig::Container {
-                    image,
-                    runtime: _,
-                    tool_filter: _,
-                } => {
-                    tracing::warn!(
-                        "User-defined Container backend with image '{}' not yet supported, skipping.",
-                        image
-                    );
                 }
                 BackendConfig::Mcp {
                     server_name,
@@ -188,15 +201,14 @@ impl SessionConfig {
 
         // 2. Register SERVER tools (like dispatch_agent and web_fetch).
         // These are external tools, not workspace tools.
-        let server_backend = LocalBackend::server_only(llm_config_provider.clone());
+        let server_backend = LocalBackend::server_only(llm_config_provider.clone(), workspace);
         if !server_backend.supported_tools().await.is_empty() {
             registry
                 .register("server".to_string(), Arc::new(server_backend))
                 .await;
         }
 
-        // Note: Workspace tools are no longer registered here.
-        // They are handled directly by the Workspace implementation.
+        // Note: Workspace tools are handled directly by the Workspace implementation.
 
         Ok(registry)
     }
@@ -322,6 +334,18 @@ pub enum RemoteAuth {
     ApiKey { key: String },
 }
 
+impl RemoteAuth {
+    /// Convert to conductor_workspace RemoteAuth type
+    pub fn to_workspace_auth(&self) -> conductor_workspace::RemoteAuth {
+        match self {
+            RemoteAuth::Bearer { token } => {
+                conductor_workspace::RemoteAuth::BearerToken(token.clone())
+            }
+            RemoteAuth::ApiKey { key } => conductor_workspace::RemoteAuth::ApiKey(key.clone()),
+        }
+    }
+}
+
 /// Tool filtering configuration for backends
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -340,30 +364,12 @@ impl Default for ToolFilter {
     }
 }
 
-/// Container runtime configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub enum ContainerRuntime {
-    Docker,
-    Podman,
-}
-
 /// Backend configuration for different tool execution environments
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendConfig {
     Local {
         /// Tool filtering configuration for the local backend
-        tool_filter: ToolFilter,
-    },
-    Remote {
-        name: String,
-        endpoint: String,
-        auth: Option<RemoteAuth>,
-        tool_filter: ToolFilter,
-    },
-    Container {
-        image: String,
-        runtime: ContainerRuntime,
         tool_filter: ToolFilter,
     },
     Mcp {
@@ -889,7 +895,16 @@ mod tests {
         let auth_storage =
             DefaultAuthStorage::new().expect("Failed to create auth storage for test");
         let llm_config_provider = Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)));
-        let registry = config.build_registry(llm_config_provider).await.unwrap();
+
+        // Create a test workspace
+        let workspace = crate::workspace::create_workspace(&config.workspace.to_workspace_config())
+            .await
+            .unwrap();
+
+        let registry = config
+            .build_registry(llm_config_provider, workspace)
+            .await
+            .unwrap();
         let schemas = registry.get_tool_schemas().await;
         let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
 
@@ -931,32 +946,7 @@ mod tests {
             }
         }
 
-        // Test Remote variant
-        let remote_config = BackendConfig::Remote {
-            name: "test-remote".to_string(),
-            endpoint: "http://localhost:8080".to_string(),
-            auth: None,
-            tool_filter: ToolFilter::All,
-        };
-
-        assert!(matches!(remote_config, BackendConfig::Remote { .. }));
-        if let BackendConfig::Remote { name, endpoint, .. } = remote_config {
-            assert_eq!(name, "test-remote");
-            assert_eq!(endpoint, "http://localhost:8080");
-        }
-
-        // Test Container variant
-        let container_config = BackendConfig::Container {
-            image: "ubuntu:latest".to_string(),
-            runtime: ContainerRuntime::Docker,
-            tool_filter: ToolFilter::All,
-        };
-
-        assert!(matches!(container_config, BackendConfig::Container { .. }));
-        if let BackendConfig::Container { image, runtime, .. } = container_config {
-            assert_eq!(image, "ubuntu:latest");
-            assert!(matches!(runtime, ContainerRuntime::Docker));
-        }
+        // Container backend has been removed - tests removed
 
         // Test Mcp variant
         let mcp_config = BackendConfig::Mcp {
