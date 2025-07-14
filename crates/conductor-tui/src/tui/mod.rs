@@ -2,7 +2,7 @@
 //!
 //! This module implements the terminal user interface using ratatui.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,7 +46,7 @@ use crate::tui::events::processors::tool::ToolEventProcessor;
 use crate::tui::state::SetupState;
 use crate::tui::state::view_model::MessageViewModel;
 
-use crate::tui::widgets::chat_list::{ChatList, ChatListState, ViewMode};
+use crate::tui::widgets::chat_list::{ChatList, ChatListState};
 use crate::tui::widgets::{InputPanel, InputPanelState, StatusBar};
 
 pub mod commands;
@@ -59,48 +59,18 @@ mod auth_controller;
 mod events;
 mod handlers;
 
-/// Popup state for model selection
-#[derive(Debug, Clone, Default)]
-struct PopupState {
-    selected: Option<usize>,
-}
-
-impl PopupState {
-    fn select(&mut self, index: Option<usize>) {
-        self.selected = index;
-    }
-
-    fn selected(&self) -> Option<usize> {
-        self.selected
-    }
-
-    fn next(&mut self, total: usize) {
-        if total == 0 {
-            return;
-        }
-        self.selected = Some(match self.selected {
-            None => 0,
-            Some(i) => (i + 1) % total,
-        });
-    }
-
-    fn previous(&mut self) {
-        if let Some(i) = self.selected {
-            self.selected = Some(if i == 0 { 0 } else { i - 1 });
-        }
-    }
-}
-
 /// How often to update the spinner animation (when processing)
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Input modes for the TUI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
-    /// Normal mode - navigation and commands
-    Normal,
-    /// Insert mode - typing messages
-    Insert,
+    /// Simple mode - default non-modal editing
+    Simple,
+    /// Vim normal mode
+    VimNormal,
+    /// Vim insert mode
+    VimInsert,
     /// Bash command mode - executing shell commands
     BashCommand,
     /// Awaiting tool approval
@@ -113,6 +83,27 @@ pub enum InputMode {
     FuzzyFinder,
     /// Setup mode - first run experience
     Setup,
+}
+
+/// Vim operator types
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum VimOperator {
+    Delete,
+    Change,
+    Yank,
+}
+
+/// State for tracking vim key sequences
+#[derive(Debug, Default)]
+struct VimState {
+    /// Pending operator (d, c, y)
+    pending_operator: Option<VimOperator>,
+    /// Waiting for second 'g' in gg
+    pending_g: bool,
+    /// In replace mode (after 'r')
+    replace_mode: bool,
+    /// In visual mode
+    visual_mode: bool,
 }
 
 /// Main TUI application state
@@ -136,12 +127,8 @@ pub struct Tui {
     spinner_state: usize,
     /// Current tool approval request
     current_tool_approval: Option<ToolCall>,
-    /// Available models for selection
-    models: Vec<Model>,
     /// Current model in use
     current_model: Model,
-    /// Popup selection state (when showing model list)
-    popup_state: PopupState,
     /// Event processing pipeline
     event_pipeline: EventPipeline,
     /// Message view model (data + ui state)
@@ -158,15 +145,74 @@ pub struct Tui {
     in_flight_operations: HashSet<uuid::Uuid>,
     /// Command registry for slash commands
     command_registry: CommandRegistry,
+    /// User preferences
+    preferences: conductor_core::preferences::Preferences,
+    /// Double-tap tracker for key sequences
+    double_tap_tracker: crate::tui::state::DoubleTapTracker,
+    /// Vim mode state
+    vim_state: VimState,
+    /// Stack to track previous modes (for returning after fuzzy finder, etc.)
+    mode_stack: VecDeque<InputMode>,
 }
 
+const MAX_MODE_DEPTH: usize = 8;
+
 impl Tui {
+    /// Push current mode onto stack before switching
+    fn push_mode(&mut self) {
+        if self.mode_stack.len() == MAX_MODE_DEPTH {
+            self.mode_stack.pop_front(); // drop oldest
+        }
+        self.mode_stack.push_back(self.input_mode);
+    }
+
+    /// Pop and restore previous mode
+    fn pop_mode(&mut self) -> Option<InputMode> {
+        self.mode_stack.pop_back()
+    }
+
+    /// Switch to a new mode, automatically managing the mode stack
+    pub fn switch_mode(&mut self, new_mode: InputMode) {
+        if self.input_mode != new_mode {
+            self.push_mode();
+            self.input_mode = new_mode;
+        }
+    }
+
+    /// Switch mode without pushing to stack (for direct transitions like vim normal->insert)
+    pub fn set_mode(&mut self, new_mode: InputMode) {
+        self.input_mode = new_mode;
+    }
+
+    /// Restore previous mode from stack (or default if empty)
+    pub fn restore_previous_mode(&mut self) {
+        self.input_mode = self.pop_mode().unwrap_or_else(|| self.default_input_mode());
+    }
+
+    /// Get the default input mode based on editing preferences
+    fn default_input_mode(&self) -> InputMode {
+        match self.preferences.ui.editing_mode {
+            conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
+            conductor_core::preferences::EditingMode::Vim => InputMode::VimNormal,
+        }
+    }
+
+    /// Check if current mode accepts text input
+    fn is_text_input_mode(&self) -> bool {
+        matches!(
+            self.input_mode,
+            InputMode::Simple
+                | InputMode::VimInsert
+                | InputMode::BashCommand
+                | InputMode::Setup
+                | InputMode::FuzzyFinder
+        )
+    }
     /// Create a new TUI instance
     pub async fn new(
         command_sink: Arc<dyn AppCommandSink>,
         _event_source: Arc<dyn AppEventSource>,
         current_model: Model,
-        models: Vec<Model>,
         session_id: String,
         theme: Option<Theme>,
     ) -> Result<Self> {
@@ -197,11 +243,22 @@ impl Tui {
             messages.len()
         );
 
+        // Load preferences
+        let preferences = conductor_core::preferences::Preferences::load()
+            .map_err(crate::error::Error::Core)
+            .unwrap_or_default();
+
+        // Determine initial input mode based on editing mode preference
+        let input_mode = match preferences.ui.editing_mode {
+            conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
+            conductor_core::preferences::EditingMode::Vim => InputMode::VimNormal,
+        };
+
         // Create TUI with restored messages
         let mut tui = Self {
             terminal,
             terminal_size,
-            input_mode: InputMode::Normal,
+            input_mode,
             input_panel_state: crate::tui::widgets::input_panel::InputPanelState::new(
                 session_id.clone(),
             ),
@@ -211,9 +268,7 @@ impl Tui {
             progress_message: None,
             spinner_state: 0,
             current_tool_approval: None,
-            models,
             current_model,
-            popup_state: PopupState::default(),
             event_pipeline: Self::create_event_pipeline(),
             view_model: MessageViewModel::new(),
             session_id,
@@ -222,6 +277,10 @@ impl Tui {
             auth_controller: None,
             in_flight_operations: HashSet::new(),
             command_registry: CommandRegistry::new(),
+            preferences,
+            double_tap_tracker: crate::tui::state::DoubleTapTracker::new(),
+            vim_state: VimState::default(),
+            mode_stack: VecDeque::new(),
         };
 
         // Restore messages using the public method
@@ -401,10 +460,7 @@ impl Tui {
                                 }
                                 Event::Paste(data) => {
                                     // Handle paste in modes that accept text input
-                                    if matches!(
-                                        self.input_mode,
-                                        InputMode::Insert | InputMode::BashCommand | InputMode::Setup
-                                    ) {
+                                    if self.is_text_input_mode() {
                                         if self.input_mode == InputMode::Setup {
                                             // Handle paste in setup mode
                                             if let Some(setup_state) = &mut self.setup_state {
@@ -476,29 +532,27 @@ impl Tui {
     fn handle_mouse_event(&mut self, event: MouseEvent) -> Result<bool> {
         let needs_redraw = match event.kind {
             event::MouseEventKind::ScrollUp => {
-                match self.input_mode {
-                    InputMode::Normal => {
-                        self.view_model.chat_list_state.scroll_up(3);
-                        true
-                    }
-                    InputMode::Insert => {
-                        // In insert mode, let textarea handle scrolling if needed
-                        false
-                    }
-                    _ => false,
+                // In vim normal mode or simple mode (when not typing), allow scrolling
+                if !self.is_text_input_mode()
+                    || (self.input_mode == InputMode::Simple
+                        && self.input_panel_state.content().is_empty())
+                {
+                    self.view_model.chat_list_state.scroll_up(3);
+                    true
+                } else {
+                    false
                 }
             }
             event::MouseEventKind::ScrollDown => {
-                match self.input_mode {
-                    InputMode::Normal => {
-                        self.view_model.chat_list_state.scroll_down(3);
-                        true
-                    }
-                    InputMode::Insert => {
-                        // In insert mode, let textarea handle scrolling if needed
-                        false
-                    }
-                    _ => false,
+                // In vim normal mode or simple mode (when not typing), allow scrolling
+                if !self.is_text_input_mode()
+                    || (self.input_mode == InputMode::Simple
+                        && self.input_panel_state.content().is_empty())
+                {
+                    self.view_model.chat_list_state.scroll_down(3);
+                    true
+                } else {
+                    false
                 }
             }
             _ => false,
@@ -784,11 +838,11 @@ impl Tui {
 
         // Handle special input mode changes for tool approval
         if self.current_tool_approval.is_some() && self.input_mode != InputMode::AwaitingApproval {
-            self.input_mode = InputMode::AwaitingApproval;
+            self.switch_mode(InputMode::AwaitingApproval);
         } else if self.current_tool_approval.is_none()
             && self.input_mode == InputMode::AwaitingApproval
         {
-            self.input_mode = InputMode::Normal;
+            self.restore_previous_mode();
         }
 
         // Auto-scroll if messages were added
@@ -1100,12 +1154,49 @@ impl Tui {
                         self.setup_state = Some(
                             crate::tui::state::SetupState::new_for_auth_command(provider_status),
                         );
-                        self.input_mode = InputMode::Setup;
+                        self.switch_mode(InputMode::Setup);
 
                         let notice = ChatItem::TuiCommandResponse {
                             id: generate_row_id(),
                             command: TuiCommandType::Auth.to_string(),
                             response: "Entering authentication setup mode...".to_string(),
+                            ts: time::OffsetDateTime::now_utc(),
+                        };
+                        self.view_model.chat_store.push(notice);
+                    }
+                    TuiCommand::EditingMode(ref mode_name) => {
+                        let response = match mode_name.as_deref() {
+                            None => {
+                                // Show current mode
+                                let mode_str = match self.preferences.ui.editing_mode {
+                                    conductor_core::preferences::EditingMode::Simple => "simple",
+                                    conductor_core::preferences::EditingMode::Vim => "vim",
+                                };
+                                format!("Current editing mode: {mode_str}")
+                            }
+                            Some("simple") => {
+                                self.preferences.ui.editing_mode =
+                                    conductor_core::preferences::EditingMode::Simple;
+                                self.set_mode(InputMode::Simple);
+                                self.preferences.save().map_err(crate::error::Error::Core)?;
+                                "Switched to Simple mode".to_string()
+                            }
+                            Some("vim") => {
+                                self.preferences.ui.editing_mode =
+                                    conductor_core::preferences::EditingMode::Vim;
+                                self.set_mode(InputMode::VimNormal);
+                                self.preferences.save().map_err(crate::error::Error::Core)?;
+                                "Switched to Vim mode (Normal)".to_string()
+                            }
+                            Some(mode) => {
+                                format!("Unknown mode: '{mode}'. Use 'simple' or 'vim'")
+                            }
+                        };
+
+                        let notice = ChatItem::TuiCommandResponse {
+                            id: generate_row_id(),
+                            command: tui_cmd.as_command_str(),
+                            response,
                             ts: time::OffsetDateTime::now_utc(),
                         };
                         self.view_model.chat_store.push(notice);
@@ -1157,7 +1248,11 @@ impl Tui {
                 // Set up textarea with the message content
                 self.input_panel_state
                     .set_content_from_lines(text.lines().collect::<Vec<_>>());
-                self.input_mode = InputMode::Insert;
+                // Switch to appropriate mode based on editing preference
+                self.input_mode = match self.preferences.ui.editing_mode {
+                    conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
+                    conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
+                };
 
                 // Store the message ID we're editing
                 self.editing_message_id = Some(message_id.to_string());
@@ -1186,7 +1281,7 @@ impl Tui {
 
     /// Enter edit message selection mode
     fn enter_edit_selection_mode(&mut self) {
-        self.input_mode = InputMode::EditMessageSelection;
+        self.switch_mode(InputMode::EditMessageSelection);
 
         // Populate the edit selection messages in the input panel state
         self.input_panel_state
@@ -1334,16 +1429,12 @@ pub async fn run_tui(
         (session_id, vec![])
     };
 
-    let all_models: Vec<conductor_core::api::Model> =
-        conductor_core::api::Model::iter_recommended().collect();
-
     client.start_streaming().await.map_err(Box::new)?;
     let event_rx = client.subscribe().await;
     let mut tui = Tui::new(
         client.clone() as std::sync::Arc<dyn AppCommandSink>,
         client.clone() as std::sync::Arc<dyn AppEventSource>,
         model,
-        all_models,
         session_id,
         theme.clone(),
     )
@@ -1472,9 +1563,8 @@ mod tests {
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
         let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
-        let models = vec![model];
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, event_source, model, models, session_id, None)
+        let mut tui = Tui::new(command_sink, event_source, model, session_id, None)
             .await
             .unwrap();
 
@@ -1537,9 +1627,8 @@ mod tests {
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
         let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
         let model = conductor_core::api::Model::Claude3_5Sonnet20241022;
-        let models = vec![model];
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, event_source, model, models, session_id, None)
+        let mut tui = Tui::new(command_sink, event_source, model, session_id, None)
             .await
             .unwrap();
 

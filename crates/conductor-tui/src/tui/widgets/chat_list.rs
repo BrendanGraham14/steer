@@ -123,6 +123,16 @@ impl ChatListState {
         // Use a special offset value to indicate we need to calculate scroll position for item
         self.offset = u16::MAX - 1 - (index as u16); // Encode the index in the offset
     }
+
+    /// Toggle between compact and detailed view modes
+    pub fn toggle_view_mode(&mut self) {
+        self.view_mode = match self.view_mode {
+            ViewMode::Compact => ViewMode::Detailed,
+            ViewMode::Detailed => ViewMode::Compact,
+        };
+        // Clear cache when switching modes to force re-render
+        self.line_cache.clear();
+    }
 }
 
 /// The ChatList widget

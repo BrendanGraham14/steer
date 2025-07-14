@@ -1,7 +1,8 @@
 use crate::error::Result;
+use crate::tui::InputMode;
+use crate::tui::Tui;
 use crate::tui::theme::ThemeLoader;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
-use crate::tui::{InputMode, Tui};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_textarea::Input;
 
@@ -132,7 +133,7 @@ impl Tui {
                             let themes = loader.list_themes();
                             self.input_panel_state.fuzzy_finder.update_results(themes);
                         }
-                        self.input_mode = InputMode::FuzzyFinder;
+                        self.switch_mode(InputMode::FuzzyFinder);
                         true
                     } else {
                         false
@@ -146,7 +147,7 @@ impl Tui {
 
             if !reopen_handled {
                 self.input_panel_state.deactivate_fuzzy();
-                self.input_mode = InputMode::Insert;
+                self.restore_previous_mode();
             }
             return Ok(false);
         }
@@ -156,7 +157,7 @@ impl Tui {
             match result {
                 FuzzyFinderResult::Close => {
                     self.input_panel_state.deactivate_fuzzy();
-                    self.input_mode = InputMode::Insert;
+                    self.restore_previous_mode();
                 }
                 FuzzyFinderResult::Select(selected) => {
                     match mode {
@@ -220,7 +221,7 @@ impl Tui {
                                 // Complete with command normally
                                 self.input_panel_state.complete_command_fuzzy(&selected);
                                 self.input_panel_state.deactivate_fuzzy();
-                                self.input_mode = InputMode::Insert;
+                                self.restore_previous_mode();
                             }
                         }
                         FuzzyFinderMode::Models => {
@@ -249,7 +250,7 @@ impl Tui {
                     }
                     if mode != FuzzyFinderMode::Commands {
                         self.input_panel_state.deactivate_fuzzy();
-                        self.input_mode = InputMode::Insert;
+                        self.restore_previous_mode();
                     }
                 }
             }

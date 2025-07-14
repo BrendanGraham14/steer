@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::error::Result;
-use crate::tui::{InputMode, Tui};
+use crate::tui::Tui;
 use conductor_core::app::{AppCommand, command::ApprovalType};
 use conductor_core::error::Error as CoreError;
 use conductor_tools::ToolError;
@@ -21,7 +21,7 @@ impl Tui {
                             approval: ApprovalType::Once,
                         })
                         .await?;
-                    self.input_mode = InputMode::Normal;
+                    self.input_mode = self.default_input_mode();
                 }
                 KeyCode::Char('a') | KeyCode::Char('A') => {
                     debug!(target: "handle_approval_mode", "Approving tool call with ID '{}' and name '{}'", tool_call.id, tool_call.name);
@@ -53,7 +53,7 @@ impl Tui {
                             })
                             .await?;
                     }
-                    self.input_mode = InputMode::Normal;
+                    self.input_mode = self.default_input_mode();
                 }
                 KeyCode::Char('l') | KeyCode::Char('L') => {
                     if tool_call.name == BASH_TOOL_NAME {
@@ -63,7 +63,7 @@ impl Tui {
                                 approval: ApprovalType::AlwaysTool,
                             })
                             .await?;
-                        self.input_mode = InputMode::Normal;
+                        self.input_mode = self.default_input_mode();
                     } else {
                         // Put it back if not a bash command
                         self.current_tool_approval = Some(tool_call);
@@ -77,7 +77,7 @@ impl Tui {
                             approval: ApprovalType::Denied,
                         })
                         .await?;
-                    self.input_mode = InputMode::Normal;
+                    self.input_mode = self.default_input_mode();
                 }
                 _ => {
                     // Put it back if not handled
@@ -86,7 +86,7 @@ impl Tui {
             }
         } else {
             // No approval pending, return to normal
-            self.input_mode = InputMode::Normal;
+            self.input_mode = self.default_input_mode();
         }
         Ok(false)
     }
