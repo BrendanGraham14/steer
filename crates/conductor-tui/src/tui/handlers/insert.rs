@@ -206,10 +206,9 @@ impl Tui {
 
                             // Populate with available models
                             use conductor_core::api::Model;
-                            use strum::IntoEnumIterator;
 
                             let current_model = self.current_model;
-                            let models: Vec<String> = Model::iter()
+                            let models: Vec<String> = Model::iter_recommended()
                                 .map(|m| {
                                     let model_str = m.as_ref();
                                     if m == current_model {

@@ -110,10 +110,9 @@ impl Tui {
                                 .activate(cursor_pos, FMode::Models);
                             // Populate models
                             use conductor_core::api::Model;
-                            use strum::IntoEnumIterator;
+
                             let current_model = self.current_model;
-                            let models: Vec<String> = Model::iter()
-                                .filter(|m| m.should_show())
+                            let models: Vec<String> = Model::iter_recommended()
                                 .map(|m| {
                                     let n = m.as_ref();
                                     if m == current_model {
@@ -192,9 +191,9 @@ impl Tui {
 
                                     // Populate models
                                     use conductor_core::api::Model;
-                                    use strum::IntoEnumIterator;
+
                                     let current_model = self.current_model;
-                                    let models: Vec<String> = Model::iter()
+                                    let models: Vec<String> = Model::iter_recommended()
                                         .map(|m| {
                                             let model_str = m.as_ref();
                                             if m == current_model {
@@ -305,8 +304,7 @@ impl Tui {
                     let matcher = SkimMatcherV2::default();
                     let current_model = self.current_model;
 
-                    let mut scored_models: Vec<(i64, String)> = Model::iter()
-                        .filter(|m| m.should_show())
+                    let mut scored_models: Vec<(i64, String)> = Model::iter_recommended()
                         .filter_map(|m| {
                             let model_str = m.as_ref();
                             let display_str = if m == current_model {

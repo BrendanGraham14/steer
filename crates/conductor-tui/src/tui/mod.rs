@@ -1336,9 +1336,8 @@ pub async fn run_tui(
         (session_id, vec![])
     };
 
-    let all_models: Vec<conductor_core::api::Model> = conductor_core::api::Model::iter()
-        .filter(|m| m.should_show())
-        .collect();
+    let all_models: Vec<conductor_core::api::Model> =
+        conductor_core::api::Model::iter_recommended().collect();
 
     client.start_streaming().await.map_err(Box::new)?;
     let event_rx = client.subscribe().await;

@@ -120,6 +120,11 @@ impl Model {
         }
     }
 
+    pub fn iter_recommended() -> impl Iterator<Item = Model> {
+        use strum::IntoEnumIterator;
+        Model::iter().filter(|m| m.should_show())
+    }
+
     pub fn provider(&self) -> ProviderKind {
         match self {
             Model::Claude3_7Sonnet20250219

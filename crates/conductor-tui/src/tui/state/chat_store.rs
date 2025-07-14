@@ -377,7 +377,7 @@ mod tests {
         Message::User {
             id: id.to_string(),
             content: vec![UserContent::Text {
-                text: format!("Test message {}", id),
+                text: format!("Test message {id}"),
             }],
             timestamp: 1234567890,
             parent_message_id: parent_id.map(|s| s.to_string()),
@@ -458,7 +458,7 @@ mod tests {
 
         let operation_id = Uuid::new_v4();
         store.push(ChatItem::InFlightOperation {
-            id: format!("op_{}", operation_id),
+            id: format!("op_{operation_id}"),
             operation_id,
             label: "Test operation".to_string(),
             ts: OffsetDateTime::now_utc(),
@@ -474,7 +474,7 @@ mod tests {
         assert!(store.get_by_id(&"A".to_string()).is_some());
         assert!(store.get_by_id(&"B".to_string()).is_some());
         assert!(store.get_by_id(&"C".to_string()).is_none());
-        
+
         // Verify non-message items are preserved
         assert!(store.get_pending_tool_key("tool1").is_some());
         assert!(store.get_in_flight_op_key(&operation_id).is_some());
@@ -548,7 +548,7 @@ mod tests {
         assert!(store.get_by_id(&"B".to_string()).is_some());
         assert!(store.get_by_id(&"E".to_string()).is_some());
         assert!(store.get_by_id(&"G".to_string()).is_some());
-        
+
         // Others should be removed
         assert!(store.get_by_id(&"C".to_string()).is_none());
         assert!(store.get_by_id(&"D".to_string()).is_none());
