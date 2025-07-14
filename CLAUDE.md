@@ -64,17 +64,19 @@ Each module typically defines its own error type (e.g., `ApiError`, `SessionErro
 **Note**: If you need to present errors to users in a more readable format, use `eyre` for error reporting at the UI boundary, but NEVER use `anyhow`. The core logic should always use typed errors.
 
 
-# Crate Architecture
+# Crate Architecture (Polylith-style)
 
-All crates are organized under the `crates/` directory:
+All crates are organized under the `crates/` directory following a polylith-style architecture:
 - `crates/conductor-proto/` - Protocol buffer definitions and generated code
-- `crates/conductor-core/` - Core domain logic (LLM APIs, session management, tool execution)
+- `crates/conductor-core/` - Core domain logic (LLM APIs, session management, tool execution backends)
 - `crates/conductor-grpc/` - gRPC server/client implementation
 - `crates/conductor-cli/` - Command-line interface and main binary
 - `crates/conductor-tui/` - Terminal UI library (ratatui-based)
 - `crates/conductor-tools/` - Tool trait definitions and implementations
 - `crates/conductor-macros/` - Procedural macros for tool definitions
-- `crates/conductor-remote-workspace/` - gRPC service for remote tool execution
+- `crates/conductor-workspace/` - Workspace trait and local workspace implementation (provider)
+- `crates/conductor-workspace-client/` - Remote workspace client implementation (consumer)
+- `crates/conductor-remote-workspace/` - gRPC service for remote workspace operations
 
 ## Nix Development Environment
 
@@ -89,8 +91,15 @@ The project includes a Nix flake for reproducible development environments. To p
 ## Dependency Graph
 The crates must maintain a strict acyclic dependency graph:
 ```
-conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc.)
+conductor-tools → conductor-workspace → conductor-core → conductor-grpc → clients (tui, cli, etc.)
+         ↓                                      ↑
+conductor-macros                   conductor-workspace-client
 ```
+
+Key principles:
+- Provider/consumer separation: workspace trait (provider) is separate from remote client (consumer)
+- No circular dependencies: each crate has clear, one-way dependencies
+- Tool execution (backends) is separate from workspace operations
 
 ## Crate Responsibilities
 
@@ -99,13 +108,26 @@ conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc
 - Defines the stable wire protocol
 - No business logic whatsoever
 
+### conductor-workspace
+- Defines the Workspace trait for environment and filesystem operations
+- Provides LocalWorkspace implementation
+- NO tool execution logic - purely environment/filesystem focused
+- Exports EnvironmentInfo, WorkspaceConfig types
+
+### conductor-workspace-client
+- RemoteWorkspace client implementation
+- Depends on conductor-workspace for trait definitions
+- Uses gRPC to communicate with conductor-remote-workspace service
+
 ### conductor-core
-- Pure domain logic (LLM APIs, session management, validation, tool execution)
+- Pure domain logic (LLM APIs, session management, validation)
+- Tool execution backends (LocalBackend, McpBackend)
 - MUST NOT:
   - Import conductor-grpc
   - Return or accept proto types in public APIs
   - Know about networking, UI, or transport concerns
 - CAN import conductor-proto for basic type definitions only
+- Imports conductor-workspace for workspace operations
 - Exports domain types (Message, SessionConfig) and traits (AppCommandSink, AppEventSource)
 
 ### conductor-grpc
@@ -114,6 +136,11 @@ conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc
 - Contains ALL conversions between core domain types ↔ proto messages
 - Conversion functions must be pub(crate), never public
 - Implements gRPC server/client that wrap core functionality
+
+### conductor-remote-workspace
+- gRPC service implementing remote workspace operations
+- Wraps a LocalWorkspace to expose it over the network
+- Used by RemoteWorkspace clients
 
 ### Client crates (conductor-tui, etc.)
 - MUST go through conductor-grpc, never directly access conductor-core
@@ -127,4 +154,6 @@ conductor-proto → conductor-core → conductor-grpc → clients (tui, cli, etc
 3. **No in-process shortcuts**: Clients must always use the gRPC interface, even for local operations
 4. **Clean boundaries**: Each crate has a single, clear responsibility
 5. **Path references**: When referencing files outside crates (e.g., `include_str!`), remember to account for the extra directory level: `../../` becomes `../../../` or `../../../../`
+6. **Workspace vs Tools**: Workspace handles environment/filesystem, backends handle tool execution - never mix these concerns
+7. **Provider/Consumer split**: Workspace trait provider (conductor-workspace) is separate from remote consumer (conductor-workspace-client)
 

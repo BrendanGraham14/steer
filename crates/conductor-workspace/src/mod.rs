@@ -4,13 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::app::EnvironmentInfo;
-use crate::error::{Result, WorkspaceError};
-use crate::session::state::WorkspaceConfig;
-use crate::tools::ExecutionContext;
+use crate::error::Result;
+use conductor_tools::ExecutionContext;
 
 pub mod local;
 pub mod remote;
+pub mod config;
 
 /// Core workspace abstraction that owns both environment information and tool execution
 #[async_trait]
@@ -89,6 +88,83 @@ impl CachedEnvironment {
     }
 }
 
+/// Environment information for a workspace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentInfo {
+    pub working_directory: std::path::PathBuf,
+    pub is_git_repo: bool,
+    pub platform: String,
+    pub date: String,
+    pub directory_structure: String,
+    pub git_status: Option<String>,
+    pub readme_content: Option<String>,
+    pub claude_md_content: Option<String>,
+}
+
+impl EnvironmentInfo {
+    /// Collect environment information for a given path
+    pub fn collect_for_path(path: &std::path::Path) -> Result<Self> {
+        use crate::utils::{DirectoryStructureUtils, EnvironmentUtils, GitStatusUtils};
+
+        let is_git_repo = EnvironmentUtils::is_git_repo(path);
+        let platform = EnvironmentUtils::get_platform().to_string();
+        let date = EnvironmentUtils::get_current_date();
+        
+        let directory_structure = DirectoryStructureUtils::get_directory_structure(path, 3)?;
+        
+        let git_status = if is_git_repo {
+            GitStatusUtils::get_git_status(path).ok()
+        } else {
+            None
+        };
+
+        let readme_content = EnvironmentUtils::read_readme(path);
+        let claude_md_content = EnvironmentUtils::read_claude_md(path);
+
+        Ok(Self {
+            working_directory: path.to_path_buf(),
+            is_git_repo,
+            platform,
+            date,
+            directory_structure,
+            git_status,
+            readme_content,
+            claude_md_content,
+        })
+    }
+}
+
+/// Configuration for a workspace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WorkspaceConfig {
+    /// Local filesystem workspace
+    Local {
+        /// Path to the workspace directory
+        path: std::path::PathBuf,
+    },
+    /// Remote workspace accessed via gRPC
+    Remote {
+        /// Address of the remote workspace service (e.g., "localhost:50051")
+        address: String,
+        /// Optional authentication for the remote service
+        auth: Option<RemoteAuth>,
+    },
+    /// Container workspace (not yet implemented)
+    Container {
+        /// Container ID or name
+        container_id: String,
+    },
+}
+
+/// Authentication information for remote workspaces
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RemoteAuth {
+    /// Bearer token authentication
+    BearerToken(String),
+    /// API key authentication
+    ApiKey(String),
+}
+
 /// Create a workspace from configuration
 pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Workspace>> {
     match config {
@@ -96,19 +172,14 @@ pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Worksp
             let workspace = local::LocalWorkspace::with_path(path.clone()).await?;
             Ok(Arc::new(workspace))
         }
-        WorkspaceConfig::Remote { .. } => {
-            // Remote workspaces are not supported in conductor-core
-            // They must be created through conductor-grpc
-            Err(WorkspaceError::NotSupported(
-                "Remote workspaces require conductor-grpc. Use conductor-grpc to create remote workspaces.".to_string()
-            ).into())
+        WorkspaceConfig::Remote { address, auth } => {
+            let workspace = remote::RemoteWorkspace::new(address.clone(), auth.clone()).await?;
+            Ok(Arc::new(workspace))
         }
         WorkspaceConfig::Container { .. } => {
-            // For now, container workspaces are not supported
-            Err(WorkspaceError::NotSupported(
+            Err(crate::error::WorkspaceError::NotSupported(
                 "Container workspaces are not yet supported.".to_string(),
-            )
-            .into())
+            ))
         }
     }
 }
@@ -116,7 +187,6 @@ pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Worksp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::state::WorkspaceConfig;
 
     #[tokio::test]
     async fn test_create_local_workspace() {

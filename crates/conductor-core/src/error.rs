@@ -58,3 +58,37 @@ pub enum WorkspaceError {
     #[error("Remote workspace error: {0}")]
     Remote(String),
 }
+
+impl From<conductor_workspace::WorkspaceError> for WorkspaceError {
+    fn from(err: conductor_workspace::WorkspaceError) -> Self {
+        match err {
+            conductor_workspace::WorkspaceError::NotSupported(msg) => {
+                WorkspaceError::NotSupported(msg)
+            }
+            conductor_workspace::WorkspaceError::ToolExecution(msg) => {
+                WorkspaceError::ToolExecution(msg)
+            }
+            conductor_workspace::WorkspaceError::Git(e) => WorkspaceError::Git(e),
+            conductor_workspace::WorkspaceError::Io(e) => {
+                WorkspaceError::EnvironmentCollection(e.to_string())
+            }
+            conductor_workspace::WorkspaceError::Transport(msg) => WorkspaceError::Remote(msg),
+            conductor_workspace::WorkspaceError::Status(msg) => WorkspaceError::Remote(msg),
+            conductor_workspace::WorkspaceError::InvalidConfiguration(msg) => {
+                WorkspaceError::InvalidPath(msg)
+            }
+            conductor_workspace::WorkspaceError::TonicTransport(e) => {
+                WorkspaceError::Remote(e.to_string())
+            }
+            conductor_workspace::WorkspaceError::TonicStatus(e) => {
+                WorkspaceError::Remote(e.to_string())
+            }
+        }
+    }
+}
+
+impl From<conductor_workspace::WorkspaceError> for Error {
+    fn from(err: conductor_workspace::WorkspaceError) -> Self {
+        Error::Workspace(err.into())
+    }
+}

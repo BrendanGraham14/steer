@@ -2,10 +2,10 @@ use conductor_core::api::ApiError;
 use conductor_core::api::{Client, Model};
 use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
 use conductor_core::test_utils;
-use conductor_core::workspace::Workspace;
-use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::result::{ExternalResult, ToolResult};
 use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
+use conductor_workspace::Workspace;
+use conductor_workspace::local::LocalWorkspace;
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;
@@ -215,12 +215,7 @@ async fn test_api_with_tools() {
                     .await
                     .unwrap(),
             );
-            let ctx = conductor_core::tools::ExecutionContext::new(
-                "test-session".to_string(),
-                "test-operation".to_string(),
-                first_tool_call.id.clone(),
-                tokio_util::sync::CancellationToken::new(),
-            );
+            let ctx = conductor_tools::ExecutionContext::new(first_tool_call.id.clone());
             let result = workspace.execute_tool(first_tool_call, ctx).await;
 
             // Assert tool execution success within the task

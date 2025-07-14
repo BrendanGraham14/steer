@@ -299,7 +299,6 @@ impl Tui {
                     // Filter models based on query
                     use conductor_core::api::Model;
                     use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-                    use strum::IntoEnumIterator;
 
                     let matcher = SkimMatcherV2::default();
                     let current_model = self.current_model;

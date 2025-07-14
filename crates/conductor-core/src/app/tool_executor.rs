@@ -15,7 +15,7 @@ use conductor_tools::{ToolError, result::ToolResult};
 #[derive(Clone)]
 pub struct ToolExecutor {
     /// Optional workspace for executing workspace tools
-    pub(crate) workspace: Option<Arc<dyn Workspace>>,
+    pub(crate) workspace: Arc<dyn Workspace>,
     /// Registry for external tool backends (MCP servers, etc.)
     pub(crate) backend_registry: Arc<BackendRegistry>,
     /// Validators for tool execution
@@ -24,27 +24,11 @@ pub struct ToolExecutor {
     pub(crate) llm_config_provider: Option<LlmConfigProvider>,
 }
 
-impl Default for ToolExecutor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ToolExecutor {
     /// Create a ToolExecutor with a workspace for workspace tools
     pub fn with_workspace(workspace: Arc<dyn Workspace>) -> Self {
         Self {
-            workspace: Some(workspace),
-            backend_registry: Arc::new(BackendRegistry::new()),
-            validators: Arc::new(ValidatorRegistry::new()),
-            llm_config_provider: None,
-        }
-    }
-
-    /// Create a ToolExecutor without a workspace (external tools only)
-    pub fn new() -> Self {
-        Self {
-            workspace: None,
+            workspace,
             backend_registry: Arc::new(BackendRegistry::new()),
             validators: Arc::new(ValidatorRegistry::new()),
             llm_config_provider: None,
@@ -53,7 +37,7 @@ impl ToolExecutor {
 
     /// Create a ToolExecutor with custom components
     pub fn with_components(
-        workspace: Option<Arc<dyn Workspace>>,
+        workspace: Arc<dyn Workspace>,
         backend_registry: Arc<BackendRegistry>,
         validators: Arc<ValidatorRegistry>,
     ) -> Self {
@@ -67,7 +51,7 @@ impl ToolExecutor {
 
     /// Create a ToolExecutor with all components including LLM config provider
     pub fn with_all_components(
-        workspace: Option<Arc<dyn Workspace>>,
+        workspace: Arc<dyn Workspace>,
         backend_registry: Arc<BackendRegistry>,
         validators: Arc<ValidatorRegistry>,
         llm_config_provider: LlmConfigProvider,
@@ -82,15 +66,17 @@ impl ToolExecutor {
 
     pub async fn requires_approval(&self, tool_name: &str) -> Result<bool> {
         // First check if it's a workspace tool
-        if let Some(workspace) = &self.workspace {
-            let workspace_tools = workspace.available_tools().await;
-            if workspace_tools.iter().any(|t| t.name == tool_name) {
-                return workspace.requires_approval(tool_name).await.map_err(|e| {
+        let workspace_tools = self.workspace.available_tools().await;
+        if workspace_tools.iter().any(|t| t.name == tool_name) {
+            return self
+                .workspace
+                .requires_approval(tool_name)
+                .await
+                .map_err(|e| {
                     Error::Tool(conductor_tools::ToolError::InternalError(format!(
                         "Failed to check approval requirement: {e}"
                     )))
                 });
-            }
         }
 
         // Otherwise check external backends
@@ -110,9 +96,7 @@ impl ToolExecutor {
         let mut schemas = Vec::new();
 
         // Add workspace tools if available
-        if let Some(workspace) = &self.workspace {
-            schemas.extend(workspace.available_tools().await);
-        }
+        schemas.extend(self.workspace.available_tools().await);
 
         // Add external backend tools
         schemas.extend(self.backend_registry.get_tool_schemas().await);
@@ -184,22 +168,18 @@ impl ToolExecutor {
         let context = builder.build();
 
         // First check if it's a workspace tool
-        if let Some(workspace) = &self.workspace {
-            let workspace_tools = workspace.available_tools().await;
-            if workspace_tools.iter().any(|t| &t.name == tool_name) {
-                debug!(
-                    target: "app.tool_executor.execute_tool_with_cancellation",
-                    "Executing workspace tool {} ({}) with cancellation",
-                    tool_name,
-                    tool_id
-                );
-                return workspace
-                    .execute_tool(tool_call, context)
-                    .await
-                    .map_err(|e| {
-                        ToolError::InternalError(format!("Workspace execution failed: {e}"))
-                    });
-            }
+        let workspace_tools = self.workspace.available_tools().await;
+        if workspace_tools.iter().any(|t| &t.name == tool_name) {
+            debug!(
+                target: "app.tool_executor.execute_tool_with_cancellation",
+                "Executing workspace tool {} ({}) with cancellation",
+                tool_name,
+                tool_id
+            );
+
+            return self
+                .execute_workspace_tool(&self.workspace, tool_call, &context)
+                .await;
         }
 
         // Otherwise check external backends
@@ -256,22 +236,18 @@ impl ToolExecutor {
         let context = builder.build();
 
         // First check if it's a workspace tool (no validation for direct execution)
-        if let Some(workspace) = &self.workspace {
-            let workspace_tools = workspace.available_tools().await;
-            if workspace_tools.iter().any(|t| &t.name == tool_name) {
-                debug!(
-                    target: "app.tool_executor.execute_tool_direct",
-                    "Executing workspace tool {} ({}) directly (no validation)",
-                    tool_name,
-                    tool_id
-                );
-                return workspace
-                    .execute_tool(tool_call, context)
-                    .await
-                    .map_err(|e| {
-                        ToolError::InternalError(format!("Workspace execution failed: {e}"))
-                    });
-            }
+        let workspace_tools = self.workspace.available_tools().await;
+        if workspace_tools.iter().any(|t| &t.name == tool_name) {
+            debug!(
+                target: "app.tool_executor.execute_tool_direct",
+                "Executing workspace tool {} ({}) directly (no validation)",
+                tool_name,
+                tool_id
+            );
+
+            return self
+                .execute_workspace_tool(&self.workspace, tool_call, &context)
+                .await;
         }
 
         // Otherwise check external backends
@@ -297,5 +273,22 @@ impl ToolExecutor {
         );
 
         backend.execute(tool_call, &context).await
+    }
+
+    /// Helper method to execute a workspace tool
+    async fn execute_workspace_tool(
+        &self,
+        workspace: &Arc<dyn Workspace>,
+        tool_call: &ToolCall,
+        context: &ExecutionContext,
+    ) -> std::result::Result<ToolResult, conductor_tools::ToolError> {
+        // Convert ExecutionContext to conductor-tools ExecutionContext
+        let tools_context = conductor_tools::ExecutionContext::new(context.tool_call_id.clone())
+            .with_cancellation_token(context.cancellation_token.clone());
+
+        workspace
+            .execute_tool(tool_call, tools_context)
+            .await
+            .map_err(|e| ToolError::InternalError(format!("Workspace execution failed: {e}")))
     }
 }

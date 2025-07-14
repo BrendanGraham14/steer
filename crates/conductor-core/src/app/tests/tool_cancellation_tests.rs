@@ -8,14 +8,17 @@ mod tests {
     };
     use crate::test_utils;
     use crate::tools::{BackendRegistry, LocalBackend};
-    use crate::workspace::local::LocalWorkspace;
+    use crate::workspace::Workspace;
     use conductor_tools::{ToolCall, ToolError, result::ToolResult};
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
-    async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {
-        let workspace = LocalWorkspace::new().await.unwrap();
-        Arc::new(workspace) as Arc<dyn crate::workspace::Workspace>
+    async fn create_test_workspace() -> Arc<dyn Workspace> {
+        crate::workspace::create_workspace(&conductor_workspace::WorkspaceConfig::Local {
+            path: std::env::current_dir().unwrap(),
+        })
+        .await
+        .unwrap()
     }
 
     async fn create_test_tool_executor(
@@ -27,12 +30,12 @@ mod tests {
         backend_registry
             .register(
                 "local".to_string(),
-                Arc::new(LocalBackend::full(llm_config_provider)),
+                Arc::new(LocalBackend::full(llm_config_provider, workspace.clone())),
             )
             .await;
 
         Arc::new(ToolExecutor::with_components(
-            Some(workspace),
+            workspace,
             Arc::new(backend_registry),
             Arc::new(ValidatorRegistry::new()),
         ))

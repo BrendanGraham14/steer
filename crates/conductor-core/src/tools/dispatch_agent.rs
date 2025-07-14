@@ -7,7 +7,6 @@ use crate::{
     app::{
         ApprovalDecision, ToolExecutor,
         conversation::{Message, UserContent},
-        validation::ValidatorRegistry,
     },
     config::LlmConfigProvider,
 };
@@ -38,6 +37,7 @@ fn format_dispatch_agent_tools() -> String {
 tool! {
     pub struct DispatchAgentTool {
         pub llm_config_provider: Arc<LlmConfigProvider>,
+        pub workspace: Arc<dyn crate::workspace::Workspace>,
     } {
         params: DispatchAgentParams,
         output: conductor_tools::result::AgentResult,
@@ -72,23 +72,13 @@ Usage notes:
         let api_client = Arc::new(crate::api::Client::new_with_provider((*tool.llm_config_provider).clone())); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
-        let mut backend_registry = crate::tools::BackendRegistry::new();
-        backend_registry.register("local".to_string(), Arc::new(crate::tools::LocalBackend::read_only(tool.llm_config_provider.clone()))).await;
-        let tool_executor = Arc::new(ToolExecutor::with_components(
-            None, // No workspace for agent dispatch
-            Arc::new(backend_registry),
-            Arc::new(ValidatorRegistry::new()),
-        ));
+        let tool_executor = Arc::new(ToolExecutor::with_workspace(tool.workspace.clone()));
 
-        // Get available tools before moving read_only_tool_executor into the closure
         let available_tools: Vec<ToolSchema> = tool_executor.get_tool_schemas().await;
-
-        // Define the tool approval callback - all tools are pre-approved for dispatch agent
         let tool_approval_callback = move |_tool_call: ToolCall| {
             async move { Ok(ApprovalDecision::Approved) }
         };
 
-        // Define the tool execution callback for the agent
         let tool_execution_callback =
             move |tool_call: ToolCall, callback_token: CancellationToken| {
                 let executor = tool_executor.clone();
@@ -107,7 +97,8 @@ Usage notes:
             parent_message_id: None,
         }];
 
-        let system_prompt = create_dispatch_agent_system_prompt()
+        let system_prompt = create_dispatch_agent_system_prompt(&tool.workspace)
+            .await
             .map_err(|e| ToolError::execution(DISPATCH_AGENT_TOOL_NAME, format!("Failed to create system prompt: {e}")))?;
 
         // Use a channel to receive events, though we might just aggregate the final result here.
@@ -170,8 +161,13 @@ Usage notes:
     }
 }
 
-pub fn create_dispatch_agent_system_prompt() -> crate::error::Result<String> {
-    let env_info = crate::app::EnvironmentInfo::collect()?;
+pub async fn create_dispatch_agent_system_prompt(
+    workspace: &Arc<dyn crate::workspace::Workspace>,
+) -> crate::error::Result<String> {
+    // Get full environment context
+    let env_info = workspace.environment().await?;
+    let env_context = env_info.as_context();
+
     let dispatch_prompt = format!(
         r#"You are an agent for a CLI-based coding tool. Given the user's prompt, you should use the tools available to you to answer the user's question.
 
@@ -180,9 +176,8 @@ Notes:
 2. When relevant, share file names and code snippets relevant to the query
 3. Any file paths you return in your final response MUST be absolute. DO NOT use relative paths.
 
-{}
-"#,
-        env_info.as_context()
+{env_context}
+"#
     );
 
     Ok(dispatch_prompt)
@@ -191,6 +186,7 @@ Notes:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conductor_workspace::local::LocalWorkspace;
     use dotenv::dotenv;
 
     #[tokio::test]
@@ -231,6 +227,11 @@ fn search_database() {}
         // Instantiate the tool struct (assuming default if no specific state needed)
         let tool_instance = DispatchAgentTool {
             llm_config_provider,
+            workspace: Arc::new(
+                LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+                    .await
+                    .unwrap(),
+            ),
         };
 
         // Execute the agent using the run method

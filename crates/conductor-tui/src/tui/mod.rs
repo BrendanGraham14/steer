@@ -8,8 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use strum::IntoEnumIterator;
-
 use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::theme::Theme;

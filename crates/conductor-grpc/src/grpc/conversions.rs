@@ -602,26 +602,6 @@ pub fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendConfig {
         BackendConfig::Local { tool_filter } => Backend::Local(proto::LocalBackendConfig {
             tool_filter: Some(tool_filter_to_proto(tool_filter)),
         }),
-        BackendConfig::Remote {
-            name,
-            endpoint,
-            auth,
-            tool_filter,
-        } => Backend::Remote(proto::RemoteBackendConfig {
-            name: name.clone(),
-            endpoint: endpoint.clone(),
-            auth: auth.as_ref().map(remote_auth_to_proto),
-            tool_filter: Some(tool_filter_to_proto(tool_filter)),
-        }),
-        BackendConfig::Container {
-            image,
-            runtime,
-            tool_filter,
-        } => Backend::Container(proto::ContainerBackendConfig {
-            image: image.clone(),
-            runtime: container_runtime_to_proto(runtime) as i32,
-            tool_filter: Some(tool_filter_to_proto(tool_filter)),
-        }),
         BackendConfig::Mcp {
             server_name,
             transport,
@@ -807,38 +787,6 @@ pub fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> SessionTo
                 Some(proto::backend_config::Backend::Local(local)) => BackendConfig::Local {
                     tool_filter: proto_to_tool_filter(local.tool_filter),
                 },
-                Some(proto::backend_config::Backend::Remote(remote)) => {
-                    let auth = remote.auth.map(|proto_auth| {
-                        match proto_auth.auth {
-                            Some(proto::remote_auth::Auth::BearerToken(token)) => {
-                                RemoteAuth::Bearer { token }
-                            }
-                            Some(proto::remote_auth::Auth::ApiKey(key)) => {
-                                RemoteAuth::ApiKey { key }
-                            }
-                            None => RemoteAuth::ApiKey { key: String::new() }, // Default fallback
-                        }
-                    });
-
-                    BackendConfig::Remote {
-                        name: remote.name,
-                        endpoint: remote.endpoint,
-                        auth,
-                        tool_filter: proto_to_tool_filter(remote.tool_filter),
-                    }
-                }
-                Some(proto::backend_config::Backend::Container(container)) => {
-                    let runtime = match proto::ContainerRuntime::try_from(container.runtime) {
-                        Ok(proto::ContainerRuntime::Docker) => ContainerRuntime::Docker,
-                        Ok(proto::ContainerRuntime::Podman) => ContainerRuntime::Podman,
-                        _ => ContainerRuntime::Docker, // Default fallback
-                    };
-                    BackendConfig::Container {
-                        image: container.image,
-                        runtime,
-                        tool_filter: proto_to_tool_filter(container.tool_filter),
-                    }
-                }
                 Some(proto::backend_config::Backend::Mcp(mcp)) => {
                     // Try to deserialize transport from JSON string
                     let transport = if !mcp.transport.is_empty() && mcp.transport != "{}" {

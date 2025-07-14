@@ -4,11 +4,11 @@ use conductor_core::app::{
     App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor, command::ApprovalType,
 };
 use conductor_core::test_utils;
-use conductor_core::workspace::local::LocalWorkspace;
 use conductor_tools::ToolCall;
 use conductor_tools::tools::edit::EditTool;
 use conductor_tools::tools::view::ViewTool;
 use conductor_tools::traits::Tool;
+use conductor_workspace::local::LocalWorkspace;
 use dotenv::dotenv;
 use serde_json::json;
 use std::sync::Arc;

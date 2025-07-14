@@ -8,6 +8,9 @@ use tonic::{Request, Response, Status};
 use conductor_tools::tools::workspace_tools;
 use conductor_tools::traits::ExecutableTool;
 use conductor_tools::{ExecutionContext, ToolError};
+use conductor_workspace::utils::{
+    DirectoryStructureUtils, EnvironmentUtils, FileListingUtils, GitStatusUtils,
+};
 
 use crate::proto::{
     ExecuteToolRequest, ExecuteToolResponse, GetAgentInfoRequest, GetAgentInfoResponse,
@@ -238,148 +241,13 @@ impl RemoteWorkspaceService {
     /// Get directory structure for environment info
     fn get_directory_structure(&self) -> Result<String, std::io::Error> {
         let current_dir = std::env::current_dir()?;
-        let mut structure = vec![current_dir.display().to_string()];
-
-        // Simple directory traversal (limited depth to avoid huge responses)
-        Self::collect_directory_paths(&current_dir, &mut structure, 0, 3)?;
-
-        structure.sort();
-        Ok(structure.join("\n"))
-    }
-
-    /// Recursively collect directory paths
-    fn collect_directory_paths(
-        dir: &Path,
-        paths: &mut Vec<String>,
-        current_depth: usize,
-        max_depth: usize,
-    ) -> Result<(), std::io::Error> {
-        if current_depth >= max_depth {
-            return Ok(());
-        }
-
-        let entries = std::fs::read_dir(dir)?;
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Ok(rel_path) = path.strip_prefix(&std::env::current_dir()?) {
-                let path_str = rel_path.to_string_lossy().to_string();
-                if path.is_dir() {
-                    paths.push(format!("{path_str}/"));
-                    Self::collect_directory_paths(&path, paths, current_depth + 1, max_depth)?;
-                } else {
-                    paths.push(path_str);
-                }
-            }
-        }
-
-        Ok(())
+        DirectoryStructureUtils::get_directory_structure(&current_dir, 3)
     }
 
     /// Get git status information
     async fn get_git_status(&self) -> Result<String, std::io::Error> {
-        use git2::Repository;
-
-        let mut result = String::new();
-
-        let repo = Repository::discover(".")
-            .map_err(|e| std::io::Error::other(format!("Failed to open git repository: {e}")))?;
-
-        // Get current branch
-        match repo.head() {
-            Ok(head) => {
-                let branch = if head.is_branch() {
-                    head.shorthand().unwrap_or("<unknown>")
-                } else {
-                    "HEAD (detached)"
-                };
-                result.push_str(&format!("Current branch: {branch}\n\n"));
-            }
-            Err(e) => {
-                // Handle case where HEAD doesn't exist (new repo)
-                if e.code() == git2::ErrorCode::UnbornBranch {
-                    result.push_str("Current branch: <unborn>\n\n");
-                } else {
-                    return Err(std::io::Error::other(format!("Failed to get HEAD: {e}")));
-                }
-            }
-        }
-
-        // Get status
-        let statuses = repo
-            .statuses(None)
-            .map_err(|e| std::io::Error::other(format!("Failed to get git status: {e}")))?;
-        result.push_str("Status:\n");
-        if statuses.is_empty() {
-            result.push_str("Working tree clean\n");
-        } else {
-            for entry in statuses.iter() {
-                let status = entry.status();
-                let path = entry.path().unwrap_or("<unknown>");
-
-                let status_char = if status.contains(git2::Status::INDEX_NEW) {
-                    "A"
-                } else if status.contains(git2::Status::INDEX_MODIFIED) {
-                    "M"
-                } else if status.contains(git2::Status::INDEX_DELETED) {
-                    "D"
-                } else if status.contains(git2::Status::WT_NEW) {
-                    "?"
-                } else if status.contains(git2::Status::WT_MODIFIED) {
-                    "M"
-                } else if status.contains(git2::Status::WT_DELETED) {
-                    "D"
-                } else {
-                    " "
-                };
-
-                let wt_char = if status.contains(git2::Status::WT_NEW) {
-                    "?"
-                } else if status.contains(git2::Status::WT_MODIFIED) {
-                    "M"
-                } else if status.contains(git2::Status::WT_DELETED) {
-                    "D"
-                } else {
-                    " "
-                };
-
-                result.push_str(&format!("{status_char}{wt_char} {path}\n"));
-            }
-        }
-
-        // Get recent commits
-        result.push_str("\nRecent commits:\n");
-        match repo.revwalk() {
-            Ok(mut revwalk) => {
-                if let Ok(()) = revwalk.push_head() {
-                    let mut count = 0;
-                    for oid in revwalk {
-                        if count >= 5 {
-                            break;
-                        }
-                        if let Ok(oid) = oid {
-                            if let Ok(commit) = repo.find_commit(oid) {
-                                let summary = commit.summary().unwrap_or("<no summary>");
-                                let id = commit.id();
-                                result.push_str(&format!("{id:.7} {summary}\n"));
-                                count += 1;
-                            }
-                        }
-                    }
-                    if count == 0 {
-                        result.push_str("<no commits>\n");
-                    }
-                } else {
-                    result.push_str("<no commits>\n");
-                }
-            }
-            Err(_) => {
-                result.push_str("<no commits>\n");
-            }
-        }
-
-        Ok(result)
+        let current_dir = std::env::current_dir()?;
+        GitStatusUtils::get_git_status(&current_dir)
     }
 }
 
@@ -591,22 +459,13 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         }
 
         // Check if it's a git repo
-        let is_git_repo = git2::Repository::discover(&working_directory).is_ok();
+        let is_git_repo = EnvironmentUtils::is_git_repo(Path::new(&working_directory));
 
         // Get platform information
-        let platform = if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "macos"
-        } else if cfg!(target_os = "linux") {
-            "linux"
-        } else {
-            "unknown"
-        }
-        .to_string();
+        let platform = EnvironmentUtils::get_platform().to_string();
 
-        // Get current date (simplified)
-        let date = "2025-06-17".to_string(); // TODO: Use proper date formatting
+        // Get current date
+        let date = EnvironmentUtils::get_current_date();
 
         // Get directory structure (simplified for now)
         let directory_structure = self.get_directory_structure().unwrap_or_else(|_| {
@@ -621,10 +480,10 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         };
 
         // Read README.md if it exists
-        let readme_content = std::fs::read_to_string("README.md").ok();
+        let readme_content = EnvironmentUtils::read_readme(Path::new(&working_directory));
 
         // Read CLAUDE.md if it exists
-        let claude_md_content = std::fs::read_to_string("CLAUDE.md").ok();
+        let claude_md_content = EnvironmentUtils::read_claude_md(Path::new(&working_directory));
 
         let response = crate::proto::GetEnvironmentInfoResponse {
             working_directory,
@@ -645,10 +504,6 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         &self,
         request: Request<ListFilesRequest>,
     ) -> Result<Response<Self::ListFilesStream>, Status> {
-        use fuzzy_matcher::FuzzyMatcher;
-        use fuzzy_matcher::skim::SkimMatcherV2;
-        use ignore::WalkBuilder;
-
         let req = request.into_inner();
 
         // Create the response stream
@@ -656,68 +511,28 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
 
         // Spawn task to stream the files
         tokio::spawn(async move {
-            let mut files = Vec::new();
-
-            // Walk the current directory, respecting .gitignore but including hidden files
-            let walker = WalkBuilder::new(".")
-                .hidden(false) // Include hidden files
-                .build();
-
-            for entry in walker {
-                match entry {
-                    Ok(entry) => {
-                        // Get the relative path from the root
-                        if let Ok(relative_path) = entry.path().strip_prefix(".") {
-                            if let Some(path_str) = relative_path.to_str() {
-                                if !path_str.is_empty() {
-                                    // Add trailing slash for directories
-                                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                                        files.push(format!("{path_str}/"));
-                                    } else {
-                                        files.push(path_str.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error walking directory: {}", e);
-                    }
-                }
-            }
-
-            // Apply fuzzy filter if query is provided
-            let filtered_files = if !req.query.is_empty() {
-                let matcher = SkimMatcherV2::default();
-                let mut scored_files: Vec<(i64, String)> = files
-                    .into_iter()
-                    .filter_map(|file| {
-                        matcher
-                            .fuzzy_match(&file, &req.query)
-                            .map(|score| (score, file))
-                    })
-                    .collect();
-
-                // Sort by score (highest first)
-                scored_files.sort_by(|a, b| b.0.cmp(&a.0));
-
-                scored_files.into_iter().map(|(_, file)| file).collect()
+            // Use the shared file listing utility
+            let query = if req.query.is_empty() {
+                None
             } else {
-                files
+                Some(req.query.as_str())
+            };
+            let max_results = if req.max_results > 0 {
+                Some(req.max_results as usize)
+            } else {
+                None
             };
 
-            // Apply max_results limit if specified
-            let limited_files = if req.max_results > 0 {
-                filtered_files
-                    .into_iter()
-                    .take(req.max_results as usize)
-                    .collect()
-            } else {
-                filtered_files
+            let files = match FileListingUtils::list_files(Path::new("."), query, max_results) {
+                Ok(files) => files,
+                Err(e) => {
+                    tracing::error!("Error listing files: {}", e);
+                    return;
+                }
             };
 
             // Stream files in chunks of 1000
-            for chunk in limited_files.chunks(1000) {
+            for chunk in files.chunks(1000) {
                 let response = ListFilesResponse {
                     paths: chunk.to_vec(),
                 };
