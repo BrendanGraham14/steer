@@ -2,9 +2,9 @@
 default:
     @just --list
 
-fix:
-    cargo fix --all-features --allow-staged
-    cargo clippy --fix --all-features --allow-staged -- -D warnings
+fix *args:
+    cargo fix --all-features --allow-staged {{args}}
+    cargo clippy --fix --all-features --allow-staged {{args}} -- -D warnings
     cargo fmt
 
 test:
