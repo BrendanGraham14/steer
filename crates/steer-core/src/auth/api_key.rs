@@ -1,18 +1,31 @@
-use crate::api::ProviderKind;
 use crate::auth::{AuthError, AuthStorage, Credential, CredentialType, Result};
 use crate::auth::{AuthMethod, AuthProgress, AuthenticationFlow};
+use crate::config::provider::ProviderId;
 use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Generic API key authentication flow for providers that support API keys
 pub struct ApiKeyAuthFlow {
     storage: Arc<dyn AuthStorage>,
-    provider: ProviderKind,
+    provider_id: ProviderId,
 }
 
 impl ApiKeyAuthFlow {
-    pub fn new(storage: Arc<dyn AuthStorage>, provider: ProviderKind) -> Self {
-        Self { storage, provider }
+    pub fn new(storage: Arc<dyn AuthStorage>, provider_id: ProviderId) -> Self {
+        Self {
+            storage,
+            provider_id,
+        }
+    }
+
+    /// Get the provider name for display/storage purposes
+    fn provider_name(&self) -> String {
+        self.provider_id.storage_key()
+    }
+
+    /// Get the display name for the provider
+    fn provider_display_name(&self) -> String {
+        self.provider_id.default_display_name()
     }
 
     /// Validate an API key format based on provider-specific rules
@@ -26,8 +39,8 @@ impl ApiKeyAuthFlow {
         }
 
         // Provider-specific validation
-        match self.provider {
-            ProviderKind::OpenAI => {
+        match &self.provider_id {
+            ProviderId::Openai => {
                 if !trimmed.starts_with("sk-") || trimmed.len() < 20 {
                     return Err(AuthError::InvalidCredential(
                         "OpenAI API keys should start with 'sk-' and be at least 20 characters"
@@ -35,14 +48,14 @@ impl ApiKeyAuthFlow {
                     ));
                 }
             }
-            ProviderKind::Anthropic => {
+            ProviderId::Anthropic => {
                 if !trimmed.starts_with("sk-ant-") {
                     return Err(AuthError::InvalidCredential(
                         "Anthropic API keys should start with 'sk-ant-'".to_string(),
                     ));
                 }
             }
-            ProviderKind::Google => {
+            ProviderId::Google => {
                 // Google/Gemini keys are typically 39 characters
                 if trimmed.len() < 30 {
                     return Err(AuthError::InvalidCredential(
@@ -50,13 +63,17 @@ impl ApiKeyAuthFlow {
                     ));
                 }
             }
-            ProviderKind::XAI => {
+            ProviderId::Xai => {
                 // Grok doesn't have a specific format requirement yet
                 if trimmed.len() < 10 {
                     return Err(AuthError::InvalidCredential(
                         "API key appears to be too short".to_string(),
                     ));
                 }
+            }
+            ProviderId::Custom(_) => {
+                // No specific validation for custom providers
+                // Just ensure it's not empty (already checked above)
             }
         }
 
@@ -92,7 +109,7 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
             }),
             _ => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
-                provider: self.provider,
+                provider: self.provider_display_name(),
             }),
         }
     }
@@ -105,11 +122,11 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
         match method {
             AuthMethod::ApiKey => Ok(AuthProgress::NeedInput(format!(
                 "Enter your {} API key",
-                self.provider
+                self.provider_display_name()
             ))),
             _ => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
-                provider: self.provider,
+                provider: self.provider_display_name(),
             }),
         }
     }
@@ -127,7 +144,7 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
         // Store the API key
         self.storage
             .set_credential(
-                &self.provider.to_string(),
+                &self.provider_name(),
                 Credential::ApiKey {
                     value: input.trim().to_string(),
                 },
@@ -142,13 +159,13 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
     async fn is_authenticated(&self) -> Result<bool> {
         Ok(self
             .storage
-            .get_credential(&self.provider.to_string(), CredentialType::ApiKey)
+            .get_credential(&self.provider_name(), CredentialType::ApiKey)
             .await?
             .is_some())
     }
 
     fn provider_name(&self) -> String {
-        self.provider.to_string()
+        self.provider_name()
     }
 }
 
@@ -208,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_key_flow() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage.clone(), ProviderKind::XAI);
+        let auth_flow = ApiKeyAuthFlow::new(storage.clone(), ProviderId::Xai);
 
         // Test available methods
         let methods = auth_flow.available_methods();
@@ -225,7 +242,7 @@ mod tests {
             .await
             .unwrap();
         match progress {
-            AuthProgress::NeedInput(msg) => assert_eq!(msg, "Enter your xai API key"),
+            AuthProgress::NeedInput(msg) => assert_eq!(msg, "Enter your xAI API key"),
             _ => panic!("Expected NeedInput progress"),
         }
 
@@ -240,7 +257,7 @@ mod tests {
 
         // Verify API key was stored
         let cred = storage
-            .get_credential(&ProviderKind::XAI.to_string(), CredentialType::ApiKey)
+            .get_credential("xai", CredentialType::ApiKey)
             .await
             .unwrap();
         assert!(cred.is_some());
@@ -257,7 +274,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_api_key() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::XAI);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderId::Xai);
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 
@@ -275,7 +292,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_method() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::XAI);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderId::Xai);
 
         // Test with OAuth method
         let result = auth_flow.start_auth(AuthMethod::OAuth).await;
@@ -283,7 +300,7 @@ mod tests {
         match result.unwrap_err() {
             AuthError::UnsupportedMethod { method, provider } => {
                 assert_eq!(method, "OAuth");
-                assert_eq!(provider, ProviderKind::XAI);
+                assert_eq!(provider, "xAI");
             }
             _ => panic!("Expected UnsupportedMethod error"),
         }
@@ -292,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn test_openai_key_validation() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::OpenAI);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderId::Openai);
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 
@@ -316,7 +333,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_key_with_spaces() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderKind::XAI);
+        let auth_flow = ApiKeyAuthFlow::new(storage, ProviderId::Xai);
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 

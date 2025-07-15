@@ -9,7 +9,7 @@ use url::Url;
 pub enum Provider {
     Anthropic,
     Openai,
-    Gemini,
+    Google,
     Xai,
     /// Arbitrary, user-supplied provider identifier.
     Custom(String),
@@ -17,12 +17,39 @@ pub enum Provider {
 
 pub type ProviderId = Provider;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+impl ProviderId {
+    /// Returns the storage key used for credential persistence.
+    /// This provides a single source of truth for storage keys.
+    pub fn storage_key(&self) -> String {
+        match self {
+            ProviderId::Anthropic => "anthropic".to_string(),
+            ProviderId::Openai => "openai".to_string(),
+            ProviderId::Google => "gemini".to_string(),
+            ProviderId::Xai => "xai".to_string(),
+            ProviderId::Custom(name) => name.clone(),
+        }
+    }
+
+    /// Returns the default display name for this provider ID.
+    /// Custom providers should override this with their configured name.
+    pub fn default_display_name(&self) -> String {
+        match self {
+            ProviderId::Anthropic => "Anthropic".to_string(),
+            ProviderId::Openai => "OpenAI".to_string(),
+            ProviderId::Google => "Google".to_string(),
+            ProviderId::Xai => "xAI".to_string(),
+            ProviderId::Custom(name) => name.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ApiFormat {
-    Openai,
+    OpenaiResponses,
+    OpenaiChat,
     Anthropic,
-    Gemini,
+    Google,
     Xai,
 }
 

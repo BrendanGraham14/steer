@@ -7,13 +7,13 @@ auth_schemes = ["api_key", "oauth2"]
 [[providers]]
 id = "openai"
 name = "OpenAI"
-api_format = "openai"
+api_format = "openai-responses"
 auth_schemes = ["api_key"]
 
 [[providers]]
-id = "gemini"
-name = "Gemini"
-api_format = "gemini"
+id = "google"
+name = "Google"
+api_format = "google"
 auth_schemes = ["api_key"]
 
 [[providers]]

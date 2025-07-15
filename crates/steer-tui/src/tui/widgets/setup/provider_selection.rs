@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Widget},
 };
-use steer_core::api::ProviderKind;
+use steer_core::config::provider::AuthScheme;
 
 pub struct ProviderSelectionWidget;
 
@@ -46,56 +46,15 @@ impl ProviderSelectionWidget {
             .iter()
             .enumerate()
             .map(|(i, provider)| {
-                let (name, status_icon, status_style) = match provider {
-                    ProviderKind::Anthropic => {
-                        let status = state.auth_providers.get(provider);
-                        let (icon, style) = match status {
-                            Some(AuthStatus::OAuthConfigured) => {
-                                ("✓", theme.style(Component::SetupStatusActive))
-                            }
-                            Some(AuthStatus::ApiKeySet) => {
-                                ("✓", theme.style(Component::SetupStatusActive))
-                            }
-                            Some(AuthStatus::InProgress) => {
-                                ("⟳", theme.style(Component::SetupStatusInProgress))
-                            }
-                            _ => ("✗", theme.style(Component::SetupStatusInactive)),
-                        };
-                        (provider.display_name(), icon, style)
-                    }
-                    ProviderKind::OpenAI => {
-                        let (icon, style) = if matches!(
-                            state.auth_providers.get(provider),
-                            Some(AuthStatus::ApiKeySet)
-                        ) {
-                            ("✓", theme.style(Component::SetupStatusActive))
-                        } else {
-                            ("✗", theme.style(Component::SetupStatusInactive))
-                        };
-                        (provider.display_name(), icon, style)
-                    }
-                    ProviderKind::Google => {
-                        let (icon, style) = if matches!(
-                            state.auth_providers.get(provider),
-                            Some(AuthStatus::ApiKeySet)
-                        ) {
-                            ("✓", theme.style(Component::SetupStatusActive))
-                        } else {
-                            ("✗", theme.style(Component::SetupStatusInactive))
-                        };
-                        (provider.display_name(), icon, style)
-                    }
-                    ProviderKind::XAI => {
-                        let (icon, style) = if matches!(
-                            state.auth_providers.get(provider),
-                            Some(AuthStatus::ApiKeySet)
-                        ) {
-                            ("✓", theme.style(Component::SetupStatusActive))
-                        } else {
-                            ("✗", theme.style(Component::SetupStatusInactive))
-                        };
-                        (provider.display_name(), icon, style)
-                    }
+                let status = state
+                    .auth_providers
+                    .get(&provider.id)
+                    .unwrap_or(&AuthStatus::NotConfigured);
+                let (icon, status_style) = match status {
+                    AuthStatus::OAuthConfigured => ("✓", theme.style(Component::SetupStatusActive)),
+                    AuthStatus::ApiKeySet => ("✓", theme.style(Component::SetupStatusActive)),
+                    AuthStatus::InProgress => ("⟳", theme.style(Component::SetupStatusInProgress)),
+                    _ => ("✗", theme.style(Component::SetupStatusInactive)),
                 };
 
                 let style = if i == state.provider_cursor {
@@ -104,9 +63,20 @@ impl ProviderSelectionWidget {
                     theme.style(Component::SetupProviderName)
                 };
 
+                // Show provider name with auth method hints
+                let auth_hint = if provider.auth_schemes.contains(&AuthScheme::Oauth2)
+                    && provider.auth_schemes.contains(&AuthScheme::ApiKey)
+                {
+                    " (OAuth/API Key)"
+                } else if provider.auth_schemes.contains(&AuthScheme::Oauth2) {
+                    " (OAuth)"
+                } else {
+                    " (API Key)"
+                };
+
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("  {status_icon} "), status_style),
-                    Span::styled(name, style),
+                    Span::styled(format!("  {icon} "), status_style),
+                    Span::styled(format!("{}{auth_hint}", provider.name), style),
                 ]))
             })
             .collect();

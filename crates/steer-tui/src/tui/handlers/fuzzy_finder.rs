@@ -4,6 +4,7 @@ use crate::tui::Tui;
 use crate::tui::theme::ThemeLoader;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use steer_core::api::Model;
 use tui_textarea::Input;
 
 impl Tui {
@@ -200,11 +201,8 @@ impl Tui {
                                         .fuzzy_finder
                                         .activate(cursor_pos, FMode::Models);
 
-                                    // Populate models
-                                    use steer_core::api::Model;
-
                                     let current_model = self.current_model;
-                                    let models: Vec<_> = Model::iter_recommended()
+                                    let results: Vec<_> = Model::iter_recommended()
                                         .map(|m| {
                                             let model_str = m.as_ref();
                                             if m == current_model {
@@ -218,7 +216,7 @@ impl Tui {
                                             }
                                         })
                                         .collect();
-                                    self.input_panel_state.fuzzy_finder.update_results(models);
+                                    self.input_panel_state.fuzzy_finder.update_results(results);
                                 } else {
                                     self.input_panel_state
                                         .fuzzy_finder
@@ -329,42 +327,55 @@ impl Tui {
 
                     let matcher = SkimMatcherV2::default();
                     let current_model = self.current_model;
+                    let mut scored_models: Vec<(i64, String)> = Vec::new();
 
-                    let mut scored_models: Vec<(i64, String)> = Model::iter_recommended()
-                        .filter_map(|m| {
-                            let model_str = m.as_ref();
-                            let display_str = if m == current_model {
-                                format!("{model_str} (current)")
-                            } else {
-                                model_str.to_string()
-                            };
+                    // Group models by provider
+                    for provider_config in self.provider_registry.all() {
+                        let provider_name = &provider_config.name;
+                        for m in Model::iter_recommended() {
+                            if m.provider_id() == provider_config.id {
+                                let model_str = m.as_ref();
+                                let full_label = if m == current_model {
+                                    format!("{provider_name}/{model_str} (current)")
+                                } else {
+                                    format!("{provider_name}/{model_str}")
+                                };
 
-                            let display_score = matcher.fuzzy_match(&display_str, &query);
-                            let exact_alias_match = m
-                                .aliases()
-                                .iter()
-                                .any(|alias| alias.eq_ignore_ascii_case(&query));
-
-                            let alias_score = if exact_alias_match {
-                                Some(1000) // High score for exact matches
-                            } else {
-                                m.aliases()
+                                // Match against full label, model name, or aliases
+                                let full_score = matcher.fuzzy_match(&full_label, &query);
+                                let model_score = matcher.fuzzy_match(model_str, &query);
+                                let exact_alias_match = m
+                                    .aliases()
                                     .iter()
-                                    .filter_map(|alias| matcher.fuzzy_match(alias, &query))
-                                    .max()
-                            };
+                                    .any(|alias| alias.eq_ignore_ascii_case(&query));
 
-                            // Take the maximum score
-                            let best_score = match (display_score, alias_score) {
-                                (Some(d), Some(a)) => Some(d.max(a)),
-                                (Some(d), None) => Some(d),
-                                (None, Some(a)) => Some(a),
-                                (None, None) => None,
-                            };
+                                let alias_score = if exact_alias_match {
+                                    Some(1000) // High score for exact matches
+                                } else {
+                                    m.aliases()
+                                        .iter()
+                                        .filter_map(|alias| matcher.fuzzy_match(alias, &query))
+                                        .max()
+                                };
 
-                            best_score.map(|score| (score, display_str))
-                        })
-                        .collect();
+                                // Take the maximum score from all matches
+                                let best_score = match (full_score, model_score, alias_score) {
+                                    (Some(f), Some(m), Some(a)) => Some(f.max(m).max(a)),
+                                    (Some(f), Some(m), None) => Some(f.max(m)),
+                                    (Some(f), None, Some(a)) => Some(f.max(a)),
+                                    (None, Some(m), Some(a)) => Some(m.max(a)),
+                                    (Some(f), None, None) => Some(f),
+                                    (None, Some(m), None) => Some(m),
+                                    (None, None, Some(a)) => Some(a),
+                                    (None, None, None) => None,
+                                };
+
+                                if let Some(score) = best_score {
+                                    scored_models.push((score, full_label));
+                                }
+                            }
+                        }
+                    }
 
                     // Sort by score (highest first)
                     scored_models.sort_by(|a, b| b.0.cmp(&a.0));

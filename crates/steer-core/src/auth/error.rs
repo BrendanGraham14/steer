@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use crate::api::ProviderKind;
-
 #[derive(Error, Debug)]
 pub enum AuthError {
     #[error("Network error: {0}")]
@@ -41,10 +39,7 @@ pub enum AuthError {
     Io(#[from] std::io::Error),
 
     #[error("Unsupported authentication method: {method} for provider {provider}")]
-    UnsupportedMethod {
-        method: String,
-        provider: ProviderKind,
-    },
+    UnsupportedMethod { method: String, provider: String },
 
     #[error("Invalid authentication state: {0}")]
     InvalidState(String),

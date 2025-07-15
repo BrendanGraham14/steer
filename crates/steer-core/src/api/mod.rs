@@ -1,16 +1,18 @@
 pub mod claude;
 pub mod error;
+pub mod factory;
 pub mod gemini;
 pub mod openai;
 pub mod provider;
+pub mod util;
 pub mod xai;
 
+use crate::auth::ProviderRegistry;
+use crate::auth::storage::{Credential, CredentialType};
 use crate::config::{ApiAuth, LlmConfigProvider};
 use crate::error::Result;
-pub use claude::AnthropicClient;
 pub use error::ApiError;
-pub use gemini::GeminiClient;
-pub use openai::OpenAIClient;
+pub use factory::{create_provider, create_provider_with_storage};
 pub use provider::{CompletionResponse, Provider};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,30 +25,8 @@ use strum_macros::{AsRefStr, EnumString};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
-pub use xai::XAIClient;
 
 use crate::app::conversation::Message;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
-pub enum ProviderKind {
-    Anthropic,
-    OpenAI,
-    Google,
-    #[strum(serialize = "xai")]
-    XAI,
-}
-
-impl ProviderKind {
-    pub fn display_name(&self) -> String {
-        match self {
-            ProviderKind::Anthropic => "Anthropic".to_string(),
-            ProviderKind::OpenAI => "OpenAI".to_string(),
-            ProviderKind::Google => "Google".to_string(),
-            ProviderKind::XAI => "xAI".to_string(),
-        }
-    }
-}
 
 #[derive(
     Debug,
@@ -139,7 +119,9 @@ impl Model {
         Model::iter().filter(|m| m.should_show())
     }
 
-    pub fn provider(&self) -> ProviderKind {
+    /// Returns the provider ID for this model.
+    pub fn provider_id(&self) -> crate::config::provider::ProviderId {
+        use crate::config::provider::ProviderId;
         match self {
             Model::Claude3_7Sonnet20250219
             | Model::Claude3_5Sonnet20240620
@@ -147,7 +129,7 @@ impl Model {
             | Model::Claude3_5Haiku20241022
             | Model::ClaudeSonnet4_20250514
             | Model::ClaudeOpus4_20250514
-            | Model::ClaudeOpus4_1_20250805 => ProviderKind::Anthropic,
+            | Model::ClaudeOpus4_1_20250805 => ProviderId::Anthropic,
 
             Model::Gpt4_1_20250414
             | Model::Gpt4_1Mini20250414
@@ -156,13 +138,13 @@ impl Model {
             | Model::O3_20250416
             | Model::O3Pro20250610
             | Model::O4Mini20250416
-            | Model::CodexMiniLatest => ProviderKind::OpenAI,
+            | Model::CodexMiniLatest => ProviderId::Openai,
 
             Model::Gemini2_5FlashPreview0417
             | Model::Gemini2_5ProPreview0506
-            | Model::Gemini2_5ProPreview0605 => ProviderKind::Google,
+            | Model::Gemini2_5ProPreview0605 => ProviderId::Google,
 
-            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderKind::XAI,
+            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderId::Xai,
         }
     }
 
@@ -215,13 +197,19 @@ impl Model {
 pub struct Client {
     provider_map: Arc<RwLock<HashMap<Model, Arc<dyn Provider>>>>,
     config_provider: LlmConfigProvider,
+    provider_registry: Arc<ProviderRegistry>,
 }
 
 impl Client {
     pub fn new_with_provider(provider: LlmConfigProvider) -> Self {
+        // Load the provider registry
+        let provider_registry =
+            Arc::new(ProviderRegistry::load().expect("Failed to load provider registry"));
+
         Self {
             provider_map: Arc::new(RwLock::new(HashMap::new())),
             config_provider: provider,
+            provider_registry,
         }
     }
 
@@ -234,12 +222,46 @@ impl Client {
             }
         }
 
-        // Get provider kind and auth before acquiring write lock
-        let provider_kind = model.provider();
-        let auth = self
+        // Get provider ID directly from the model
+        let provider_id = model.provider_id();
+
+        // Get the provider config from registry
+        let provider_config = self.provider_registry.get(&provider_id).ok_or_else(|| {
+            crate::error::Error::Api(ApiError::Configuration(format!(
+                "No provider configuration found for {provider_id:?}"
+            )))
+        })?;
+
+        // Get credential for the provider
+        let credential = match self
             .config_provider
-            .get_auth_for_provider(provider_kind)
-            .await?;
+            .get_auth_for_provider(&provider_id)
+            .await?
+        {
+            Some(ApiAuth::OAuth) => {
+                // Get OAuth credential from storage using the centralized storage_key()
+                self.config_provider
+                    .auth_storage()
+                    .get_credential(&provider_id.storage_key(), CredentialType::OAuth2)
+                    .await
+                    .map_err(|e| {
+                        crate::error::Error::Api(ApiError::Configuration(format!(
+                            "Failed to get OAuth credential: {e}"
+                        )))
+                    })?
+                    .ok_or_else(|| {
+                        crate::error::Error::Api(ApiError::Configuration(
+                            "OAuth credential not found in storage".to_string(),
+                        ))
+                    })?
+            }
+            Some(ApiAuth::Key(key)) => Credential::ApiKey { value: key },
+            None => {
+                return Err(crate::error::Error::Api(ApiError::Configuration(format!(
+                    "No authentication configured for {provider_id:?} needed by model {model:?}"
+                ))));
+            }
+        };
 
         // Now acquire write lock and create provider
         let mut map = self.provider_map.write().unwrap();
@@ -249,31 +271,19 @@ impl Client {
             return Ok(provider.clone());
         }
 
-        // Create and insert the provider
-        let provider_instance: Arc<dyn Provider> = match auth {
-            Some(ApiAuth::OAuth) => {
-                if provider_kind == ProviderKind::Anthropic {
-                    let storage = self.config_provider.auth_storage();
-                    Arc::new(AnthropicClient::with_oauth(storage.clone()))
-                } else {
-                    return Err(crate::error::Error::Api(ApiError::Configuration(format!(
-                        "OAuth is not supported for {provider_kind:?} provider"
-                    ))));
-                }
-            }
-            Some(ApiAuth::Key(key)) => match provider_kind {
-                ProviderKind::Anthropic => Arc::new(AnthropicClient::with_api_key(&key)),
-                ProviderKind::OpenAI => Arc::new(OpenAIClient::new(key)),
-                ProviderKind::Google => Arc::new(GeminiClient::new(&key)),
-                ProviderKind::XAI => Arc::new(XAIClient::new(key)),
-            },
-
-            None => {
-                return Err(crate::error::Error::Api(ApiError::Configuration(format!(
-                    "No authentication configured for {provider_kind:?} needed by model {model:?}"
-                ))));
-            }
+        // Create the provider using factory
+        let provider_instance = if matches!(&credential, Credential::OAuth2(_)) {
+            factory::create_provider_with_storage(
+                provider_config,
+                &credential,
+                self.config_provider.auth_storage().clone(),
+            )
+            .map_err(crate::error::Error::Api)?
+        } else {
+            factory::create_provider(provider_config, &credential)
+                .map_err(crate::error::Error::Api)?
         };
+
         map.insert(model, provider_instance.clone());
         Ok(provider_instance)
     }

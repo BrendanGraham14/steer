@@ -34,7 +34,12 @@ impl CompletionWidget {
             .filter(|(_, status)| {
                 matches!(status, AuthStatus::ApiKeySet | AuthStatus::OAuthConfigured)
             })
-            .map(|(provider, _)| provider.display_name())
+            .filter_map(|(provider_id, _)| {
+                state
+                    .registry
+                    .get(provider_id)
+                    .map(|config| config.name.clone())
+            })
             .collect();
 
         if !authenticated_providers.is_empty() {

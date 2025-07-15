@@ -1,8 +1,5 @@
-use crate::api::ProviderKind;
-use crate::auth::{AuthFlowWrapper, AuthStorage, DynAuthenticationFlow};
 use crate::config::provider::{ProviderConfig, ProviderId, builtin_providers};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Registry for provider definitions and authentication flow factories.
 ///
@@ -68,27 +65,6 @@ impl ProviderRegistry {
     pub fn all(&self) -> impl Iterator<Item = &ProviderConfig> {
         self.providers.values()
     }
-
-    /// Factory for authentication flows – kept for legacy call-sites.
-    pub fn create_auth_flow(
-        provider: ProviderKind,
-        storage: Arc<dyn AuthStorage>,
-    ) -> Option<Box<dyn DynAuthenticationFlow>> {
-        match provider {
-            ProviderKind::Anthropic => {
-                use crate::auth::anthropic::AnthropicOAuthFlow;
-                Some(Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(
-                    storage,
-                ))))
-            }
-            ProviderKind::OpenAI | ProviderKind::Google | ProviderKind::XAI => {
-                use crate::auth::api_key::ApiKeyAuthFlow;
-                Some(Box::new(AuthFlowWrapper::new(ApiKeyAuthFlow::new(
-                    storage, provider,
-                ))))
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -100,8 +76,8 @@ mod tests {
 
     // Helper to build a minimal provider config TOML with given definitions
     fn write_user_providers(base_dir: &std::path::Path, providers: &[ProviderConfig]) {
-        let conductor_dir = base_dir.join("conductor");
-        fs::create_dir_all(&conductor_dir).unwrap();
+        let steer_dir = base_dir.join("conductor");
+        fs::create_dir_all(&steer_dir).unwrap();
 
         #[derive(serde::Serialize)]
         struct Wrapper<'a> {
@@ -109,7 +85,7 @@ mod tests {
         }
 
         let toml_str = toml::to_string(&Wrapper { providers }).unwrap();
-        fs::write(conductor_dir.join("providers.toml"), toml_str).unwrap();
+        fs::write(steer_dir.join("providers.toml"), toml_str).unwrap();
     }
 
     #[test]
@@ -140,7 +116,7 @@ mod tests {
         let custom_provider = ProviderConfig {
             id: Provider::Custom("myprov".into()),
             name: "My Provider".into(),
-            api_format: ApiFormat::Openai,
+            api_format: ApiFormat::OpenaiResponses,
             auth_schemes: vec![AuthScheme::ApiKey],
             base_url: None,
         };

@@ -1,4 +1,4 @@
-use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
+use crate::api::{Client as ApiClient, Model, ToolCall};
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::ApprovalType;
 use crate::app::conversation::{AppCommandType, AssistantContent, CompactResult, UserContent};
@@ -327,22 +327,18 @@ impl App {
 
     pub async fn set_model(&mut self, model: Model) -> Result<()> {
         // Check if the provider is available (has API key or OAuth)
-        let provider = model.provider();
+        let provider_id = model.provider_id();
+
         let auth = self
             .config
             .llm_config_provider
-            .get_auth_for_provider(provider)
+            .get_auth_for_provider(&provider_id)
             .await?;
         if auth.is_none() {
             return Err(crate::error::Error::Configuration(format!(
-                "Cannot set model to {}: missing authentication for {} provider",
+                "Cannot set model to {}: missing authentication for {:?} provider",
                 model.as_ref(),
-                match provider {
-                    ProviderKind::Anthropic => "Anthropic",
-                    ProviderKind::OpenAI => "OpenAI",
-                    ProviderKind::Google => "Google",
-                    ProviderKind::XAI => "xAI",
-                }
+                provider_id
             )));
         }
 

@@ -5,8 +5,11 @@ use crate::tui::auth_controller::AuthController;
 use crate::tui::state::{AuthStatus, SetupState, SetupStep};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::sync::Arc;
-use steer_core::api::ProviderKind;
-use steer_core::auth::{AuthMethod, AuthProgress, DefaultAuthStorage, ProviderRegistry};
+use steer_core::auth::{
+    AuthFlowWrapper, AuthMethod, AuthProgress, DefaultAuthStorage, DynAuthenticationFlow,
+    api_key::ApiKeyAuthFlow,
+};
+use steer_core::config::provider::{AuthScheme, ProviderId};
 use tracing::debug;
 
 // Remove TODO comment - authentication is now handled using the generic trait
@@ -16,7 +19,7 @@ impl SetupHandler {
     /// Ensure an auth controller exists for the given provider and method
     async fn ensure_controller(
         tui: &mut Tui,
-        provider: ProviderKind,
+        provider_id: ProviderId,
         method: AuthMethod,
     ) -> Result<()> {
         if tui.auth_controller.is_some() {
@@ -27,30 +30,58 @@ impl SetupHandler {
             DefaultAuthStorage::new().map_err(|e| crate::error::Error::Auth(e.to_string()))?,
         );
 
-        if let Some(auth_flow) = ProviderRegistry::create_auth_flow(provider, auth_storage) {
-            match auth_flow.start_auth(method).await {
-                Ok(auth_state) => {
-                    tui.auth_controller = Some(AuthController {
-                        flow: Arc::from(auth_flow),
-                        state: auth_state,
-                    });
-                    // Mark authentication as in progress
-                    if let Some(setup_state) = &mut tui.setup_state {
-                        setup_state
-                            .auth_providers
-                            .insert(provider, AuthStatus::InProgress);
-                    }
+        // Get provider config from registry
+        let provider_config = tui.provider_registry.get(&provider_id).ok_or_else(|| {
+            crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
+        })?;
+
+        // Create appropriate auth flow based on provider and method
+        let auth_flow: Box<dyn DynAuthenticationFlow> = match (&provider_id, method) {
+            (ProviderId::Anthropic, AuthMethod::OAuth) => {
+                // Only Anthropic supports OAuth currently
+                use steer_core::auth::anthropic::AnthropicOAuthFlow;
+                Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage)))
+            }
+            (_, AuthMethod::ApiKey) => {
+                // All providers support API key
+                Box::new(AuthFlowWrapper::new(ApiKeyAuthFlow::new(
+                    auth_storage,
+                    provider_id.clone(),
+                )))
+            }
+            _ => {
+                if let Some(setup_state) = &mut tui.setup_state {
+                    setup_state.error_message = Some(format!(
+                        "{} doesn't support {:?} authentication",
+                        provider_config.name, method
+                    ));
                 }
-                Err(e) => {
-                    if let Some(setup_state) = &mut tui.setup_state {
-                        setup_state.error_message =
-                            Some(format!("Failed to initialize authentication: {e}"));
-                    }
-                    return Err(crate::error::Error::Auth(e.to_string()));
+                return Err(crate::error::Error::Auth(
+                    "Unsupported authentication method".to_string(),
+                ));
+            }
+        };
+
+        match auth_flow.start_auth(method).await {
+            Ok(auth_state) => {
+                tui.auth_controller = Some(AuthController {
+                    flow: Arc::from(auth_flow),
+                    state: auth_state,
+                });
+                // Mark authentication as in progress
+                if let Some(setup_state) = &mut tui.setup_state {
+                    setup_state
+                        .auth_providers
+                        .insert(provider_id, AuthStatus::InProgress);
                 }
             }
-        } else if let Some(setup_state) = &mut tui.setup_state {
-            setup_state.error_message = Some(format!("{provider} doesn't support authentication"));
+            Err(e) => {
+                if let Some(setup_state) = &mut tui.setup_state {
+                    setup_state.error_message =
+                        Some(format!("Failed to initialize authentication: {e}"));
+                }
+                return Err(crate::error::Error::Auth(e.to_string()));
+            }
         }
 
         Ok(())
@@ -70,9 +101,9 @@ impl SetupHandler {
             SetupStep::ProviderSelection => {
                 Self::handle_provider_selection(tui.setup_state.as_mut().unwrap(), key)
             }
-            SetupStep::Authentication(provider) => {
-                let provider = *provider;
-                Self::handle_authentication(tui, provider, key).await
+            SetupStep::Authentication(provider_id) => {
+                let provider_id = provider_id.clone();
+                Self::handle_authentication(tui, provider_id, key).await
             }
             SetupStep::Completion => Self::handle_completion(tui, key).await,
         }
@@ -130,8 +161,8 @@ impl SetupHandler {
                 Ok(None)
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
-                if let Some(provider) = providers.get(state.provider_cursor) {
-                    state.selected_provider = Some(*provider);
+                if let Some(provider_config) = providers.get(state.provider_cursor) {
+                    state.selected_provider = Some(provider_config.id.clone());
                     state.next_step();
                 }
                 Ok(None)
@@ -157,13 +188,26 @@ impl SetupHandler {
 
     async fn handle_authentication(
         tui: &mut Tui,
-        provider: ProviderKind,
+        provider_id: ProviderId,
         key: KeyEvent,
     ) -> Result<Option<InputMode>> {
-        // For non-Anthropic providers, automatically initialize API key auth
-        if provider != ProviderKind::Anthropic
+        // Get provider config to check auth schemes
+        let (supports_oauth, supports_api_key, provider_name) = {
+            let provider_config = tui.provider_registry.get(&provider_id).ok_or_else(|| {
+                crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
+            })?;
+            (
+                provider_config.auth_schemes.contains(&AuthScheme::Oauth2),
+                provider_config.auth_schemes.contains(&AuthScheme::ApiKey),
+                provider_config.name.clone(),
+            )
+        };
+
+        // For providers that only support API key, automatically initialize API key auth
+        if !supports_oauth
+            && supports_api_key
             && tui.auth_controller.is_none()
-            && Self::ensure_controller(tui, provider, AuthMethod::ApiKey)
+            && Self::ensure_controller(tui, provider_id.clone(), AuthMethod::ApiKey)
                 .await
                 .is_err()
         {
@@ -172,9 +216,9 @@ impl SetupHandler {
         }
 
         match key.code {
-            KeyCode::Char('1') if provider == ProviderKind::Anthropic => {
+            KeyCode::Char('1') if supports_oauth && provider_id == ProviderId::Anthropic => {
                 // Start OAuth flow
-                if Self::ensure_controller(tui, provider, AuthMethod::OAuth)
+                if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::OAuth)
                     .await
                     .is_err()
                 {
@@ -210,7 +254,7 @@ impl SetupHandler {
                 }
                 Ok(None)
             }
-            KeyCode::Char('2') if provider == ProviderKind::Anthropic => {
+            KeyCode::Char('2') if supports_oauth && provider_id == ProviderId::Anthropic => {
                 // Check conditions before calling ensure_controller
                 let should_proceed = {
                     let state = tui.setup_state.as_ref().unwrap();
@@ -222,7 +266,7 @@ impl SetupHandler {
                     debug!("Starting API key input mode");
                     let state = tui.setup_state.as_mut().unwrap();
                     state.api_key_input.clear();
-                    if Self::ensure_controller(tui, provider, AuthMethod::ApiKey)
+                    if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::ApiKey)
                         .await
                         .is_err()
                     {
@@ -259,7 +303,7 @@ impl SetupHandler {
                                 state.oauth_callback_input.clear();
                                 state
                                     .auth_providers
-                                    .insert(provider, AuthStatus::OAuthConfigured);
+                                    .insert(provider_id.clone(), AuthStatus::OAuthConfigured);
                                 state.error_message =
                                     Some("OAuth authentication successful!".to_string());
                                 // Clear auth controller for next provider
@@ -291,7 +335,7 @@ impl SetupHandler {
                     }
                 } else if has_api_key {
                     // Ensure we have a controller for API key auth
-                    if Self::ensure_controller(tui, provider, AuthMethod::ApiKey)
+                    if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::ApiKey)
                         .await
                         .is_err()
                     {
@@ -310,9 +354,12 @@ impl SetupHandler {
                         {
                             Ok(AuthProgress::Complete) => {
                                 state.api_key_input.clear();
-                                state.auth_providers.insert(provider, AuthStatus::ApiKeySet);
-                                state.error_message =
-                                    Some(format!("API key successfully imported for {provider}!"));
+                                state
+                                    .auth_providers
+                                    .insert(provider_id.clone(), AuthStatus::ApiKeySet);
+                                state.error_message = Some(format!(
+                                    "API key successfully imported for {provider_name}!"
+                                ));
                                 // Clear auth controller for next provider
                                 tui.auth_controller = None;
                                 // Return to provider selection to allow authenticating with other providers
@@ -340,8 +387,9 @@ impl SetupHandler {
                     state.oauth_callback_input.push(c);
                     Ok(None)
                 } else if tui.auth_controller.is_some()
-                    && (provider != ProviderKind::Anthropic
-                        || (provider == ProviderKind::Anthropic && state.oauth_state.is_none()))
+                    && (!supports_oauth
+                        || provider_id != ProviderId::Anthropic
+                        || (provider_id == ProviderId::Anthropic && state.oauth_state.is_none()))
                 {
                     // Typing API key
                     state.api_key_input.push(c);
@@ -356,8 +404,9 @@ impl SetupHandler {
                     state.oauth_callback_input.pop();
                     Ok(None)
                 } else if tui.auth_controller.is_some()
-                    && (provider != ProviderKind::Anthropic
-                        || (provider == ProviderKind::Anthropic && state.oauth_state.is_none()))
+                    && (!supports_oauth
+                        || provider_id != ProviderId::Anthropic
+                        || (provider_id == ProviderId::Anthropic && state.oauth_state.is_none()))
                 {
                     state.api_key_input.pop();
                     Ok(None)
@@ -372,11 +421,11 @@ impl SetupHandler {
                 state.oauth_callback_input.clear();
                 state.error_message = None; // Clear any error messages
                 // Reset auth status if it was in progress
-                if let Some(provider) = state.selected_provider {
-                    if state.auth_providers.get(&provider) == Some(&AuthStatus::InProgress) {
+                if let Some(provider) = &state.selected_provider {
+                    if state.auth_providers.get(provider) == Some(&AuthStatus::InProgress) {
                         state
                             .auth_providers
-                            .insert(provider, AuthStatus::NotConfigured);
+                            .insert(provider.clone(), AuthStatus::NotConfigured);
                     }
                 }
                 tui.auth_controller = None; // Clear auth controller
