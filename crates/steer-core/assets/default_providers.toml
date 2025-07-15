@@ -1,0 +1,23 @@
+[[providers]]
+id = "anthropic"
+name = "Anthropic"
+api_format = "anthropic"
+auth_schemes = ["api_key", "oauth2"]
+
+[[providers]]
+id = "openai"
+name = "OpenAI"
+api_format = "openai"
+auth_schemes = ["api_key"]
+
+[[providers]]
+id = "gemini"
+name = "Gemini"
+api_format = "gemini"
+auth_schemes = ["api_key"]
+
+[[providers]]
+id = "xai"
+name = "xAI"
+api_format = "xai"
+auth_schemes = ["api_key"]
