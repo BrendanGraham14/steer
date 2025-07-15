@@ -31,7 +31,7 @@ async fn logout_anthropic() -> Result<()> {
 
     // Check if any credentials exist
     let has_auth_tokens = storage
-        .get_credential("anthropic", CredentialType::AuthTokens)
+        .get_credential("anthropic", CredentialType::OAuth2)
         .await
         .map_err(|e| eyre!("Failed to check auth tokens: {}", e))?
         .is_some();
@@ -50,7 +50,7 @@ async fn logout_anthropic() -> Result<()> {
     // Remove auth tokens if they exist
     if has_auth_tokens {
         storage
-            .remove_credential("anthropic", CredentialType::AuthTokens)
+            .remove_credential("anthropic", CredentialType::OAuth2)
             .await
             .map_err(|e| eyre!("Failed to remove auth tokens: {}", e))?;
     }

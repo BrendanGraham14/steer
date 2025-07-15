@@ -188,7 +188,7 @@ mod tests {
             let mut creds = self.credentials.lock().await;
             let cred_type = match &credential {
                 Credential::ApiKey { .. } => CredentialType::ApiKey,
-                Credential::AuthTokens { .. } => CredentialType::AuthTokens,
+                Credential::OAuth2 { .. } => CredentialType::OAuth2,
             };
             creds.insert((provider.to_string(), cred_type), credential);
             Ok(())
