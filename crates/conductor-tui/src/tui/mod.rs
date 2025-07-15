@@ -174,6 +174,10 @@ impl Tui {
     /// Switch to a new mode, automatically managing the mode stack
     pub fn switch_mode(&mut self, new_mode: InputMode) {
         if self.input_mode != new_mode {
+            debug!(
+                "Switching mode from {:?} to {:?}",
+                self.input_mode, new_mode
+            );
             self.push_mode();
             self.input_mode = new_mode;
         }
@@ -181,6 +185,7 @@ impl Tui {
 
     /// Switch mode without pushing to stack (for direct transitions like vim normal->insert)
     pub fn set_mode(&mut self, new_mode: InputMode) {
+        debug!("Setting mode from {:?} to {:?}", self.input_mode, new_mode);
         self.input_mode = new_mode;
     }
 
@@ -1154,7 +1159,11 @@ impl Tui {
                         self.setup_state = Some(
                             crate::tui::state::SetupState::new_for_auth_command(provider_status),
                         );
-                        self.switch_mode(InputMode::Setup);
+                        // Enter setup mode directly without pushing to the mode stack so that
+                        // it can’t be accidentally popped by a later `restore_previous_mode`.
+                        self.set_mode(InputMode::Setup);
+                        // Clear the mode stack to avoid returning to a pre-setup mode.
+                        self.mode_stack.clear();
 
                         let notice = ChatItem::TuiCommandResponse {
                             id: generate_row_id(),
