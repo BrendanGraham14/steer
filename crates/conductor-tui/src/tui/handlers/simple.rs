@@ -16,7 +16,7 @@ impl Tui {
             InputMode::FuzzyFinder => return self.handle_fuzzy_finder_mode(key).await,
             InputMode::ConfirmExit => return self.handle_confirm_exit_mode(key).await,
             InputMode::Setup => return self.handle_setup_mode(key).await,
-            _ => {}
+            InputMode::Simple | InputMode::VimInsert | InputMode::VimNormal => {}
         }
 
         match key.code {

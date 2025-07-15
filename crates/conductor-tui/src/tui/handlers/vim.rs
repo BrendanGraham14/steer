@@ -18,7 +18,7 @@ impl Tui {
             InputMode::FuzzyFinder => self.handle_fuzzy_finder_mode(key).await,
             InputMode::ConfirmExit => self.handle_confirm_exit_mode(key).await,
             InputMode::Setup => self.handle_setup_mode(key).await,
-            _ => self.handle_simple_mode(key).await, // Fallback
+            InputMode::Simple => self.handle_simple_mode(key).await, // Fallback
         }
     }
 
@@ -427,8 +427,11 @@ impl Tui {
                         let old_editing_mode = self.preferences.ui.editing_mode;
                         self.handle_slash_command(content).await?;
                         self.input_panel_state.clear();
-                        // If editing mode changed, don't revert to VimNormal
-                        if self.preferences.ui.editing_mode == old_editing_mode {
+                        // Return to VimNormal only if we're *still* in VimInsert and the
+                        // editing mode hasn’t changed (e.g. not switched into Setup).
+                        if self.input_mode == InputMode::VimInsert
+                            && self.preferences.ui.editing_mode == old_editing_mode
+                        {
                             self.set_mode(InputMode::VimNormal);
                         }
                     } else {
