@@ -947,6 +947,7 @@ dependencies = [
 name = "conductor-grpc"
 version = "0.1.0"
 dependencies = [
+ "async-stream",
  "async-trait",
  "chrono",
  "conductor-core",

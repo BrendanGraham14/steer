@@ -29,6 +29,14 @@ impl AgentServiceImpl {
 impl agent_service_server::AgentService for AgentServiceImpl {
     type StreamSessionStream = ReceiverStream<Result<StreamSessionResponse, Status>>;
     type ListFilesStream = ReceiverStream<Result<ListFilesResponse, Status>>;
+    type GetSessionStream =
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<GetSessionResponse, Status>> + Send>>;
+    type GetConversationStream = std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<GetConversationResponse, Status>> + Send>,
+    >;
+    type ActivateSessionStream = std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<ActivateSessionResponse, Status>> + Send>,
+    >;
 
     async fn stream_session(
         &self,
@@ -311,26 +319,63 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn get_session(
         &self,
         request: Request<GetSessionRequest>,
-    ) -> Result<Response<GetSessionResponse>, Status> {
+    ) -> Result<Response<Self::GetSessionStream>, Status> {
         let req = request.into_inner();
+        let session_manager = self.session_manager.clone();
 
-        match self
-            .session_manager
-            .get_session_proto(&req.session_id)
-            .await
-        {
-            Ok(Some(session_state)) => Ok(Response::new(GetSessionResponse {
-                session: Some(session_state),
-            })),
-            Ok(None) => Err(Status::not_found(format!(
-                "Session not found: {}",
-                req.session_id
-            ))),
-            Err(e) => {
-                error!("Failed to get session: {}", e);
-                Err(Status::internal(format!("Failed to get session: {e}")))
+        let stream = async_stream::try_stream! {
+            match session_manager.get_session_proto(&req.session_id).await {
+                Ok(Some(session_state)) => {
+                    // Send header
+                    yield GetSessionResponse {
+                        chunk: Some(get_session_response::Chunk::Header(SessionStateHeader {
+                            id: session_state.id,
+                            created_at: session_state.created_at,
+                            updated_at: session_state.updated_at,
+                            config: session_state.config,
+                        })),
+                    };
+
+                    // Stream messages one by one
+                    for message in session_state.messages {
+                        yield GetSessionResponse {
+                            chunk: Some(get_session_response::Chunk::Message(message)),
+                        };
+                    }
+
+                    // Stream tool calls
+                    for (key, value) in session_state.tool_calls {
+                        yield GetSessionResponse {
+                            chunk: Some(get_session_response::Chunk::ToolCall(ToolCallStateEntry {
+                                key,
+                                value: Some(value),
+                            })),
+                        };
+                    }
+
+                    // Send footer
+                    yield GetSessionResponse {
+                        chunk: Some(get_session_response::Chunk::Footer(SessionStateFooter {
+                            approved_tools: session_state.approved_tools,
+                            last_event_sequence: session_state.last_event_sequence,
+                            metadata: session_state.metadata,
+                        })),
+                    };
+                }
+                Ok(None) => {
+                    Err(Status::not_found(format!(
+                        "Session not found: {}",
+                        req.session_id
+                    )))?;
+                }
+                Err(e) => {
+                    error!("Failed to get session: {}", e);
+                    Err(Status::internal(format!("Failed to get session: {e}")))?;
+                }
             }
-        }
+        };
+
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn delete_session(
@@ -355,54 +400,51 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn get_conversation(
         &self,
         request: Request<GetConversationRequest>,
-    ) -> Result<Response<GetConversationResponse>, Status> {
+    ) -> Result<Response<Self::GetConversationStream>, Status> {
         let req = request.into_inner();
+        let session_manager = self.session_manager.clone();
 
         info!("GetConversation called for session: {}", req.session_id);
 
-        match self
-            .session_manager
-            .get_session_state(&req.session_id)
-            .await
-        {
-            Ok(Some(session_state)) => {
-                info!(
-                    "Found session state with {} messages and {} approved tools",
-                    session_state.messages.len(),
-                    session_state.approved_tools.len()
-                );
+        let stream = async_stream::try_stream! {
+            match session_manager.get_session_state(&req.session_id).await {
+                Ok(Some(session_state)) => {
+                    info!(
+                        "Found session state with {} messages and {} approved tools",
+                        session_state.messages.len(),
+                        session_state.approved_tools.len()
+                    );
 
-                // Convert messages to proto format
-                let messages: Vec<_> = session_state
-                    .messages
-                    .iter()
-                    .map(|msg| {
-                        let proto_msg = message_to_proto(msg.clone());
-                        debug!("Converted message {} to proto", msg.id());
-                        proto_msg
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
+                    // Stream messages one by one
+                    for msg in session_state.messages {
+                        let proto_msg = message_to_proto(msg.clone())
+                            .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
+                        yield GetConversationResponse {
+                            chunk: Some(get_conversation_response::Chunk::Message(proto_msg)),
+                        };
+                    }
 
-                info!("Converted {} messages to proto format", messages.len());
+                    // Send footer with approved tools
+                    yield GetConversationResponse {
+                        chunk: Some(get_conversation_response::Chunk::Footer(GetConversationFooter {
+                            approved_tools: session_state.approved_tools.into_iter().collect(),
+                        })),
+                    };
+                }
+                Ok(None) => {
+                    Err(Status::not_found(format!(
+                        "Session not found: {}",
+                        req.session_id
+                    )))?;
+                }
+                Err(e) => {
+                    error!("Failed to get session state: {}", e);
+                    Err(Status::internal(format!("Failed to get session state: {e}")))?;
+                }
+            }
+        };
 
-                Ok(Response::new(GetConversationResponse {
-                    messages,
-                    approved_tools: session_state.approved_tools.into_iter().collect(),
-                }))
-            }
-            Ok(None) => {
-                info!("Session not found: {}", req.session_id);
-                Err(Status::not_found(format!(
-                    "Session not found: {}",
-                    req.session_id
-                )))
-            }
-            Err(e) => {
-                error!("Failed to get conversation: {}", e);
-                Err(Status::internal(format!("Failed to get conversation: {e}")))
-            }
-        }
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn send_message(
@@ -495,61 +537,57 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     async fn activate_session(
         &self,
         request: Request<ActivateSessionRequest>,
-    ) -> Result<Response<ActivateSessionResponse>, Status> {
+    ) -> Result<Response<Self::ActivateSessionStream>, Status> {
         let req = request.into_inner();
+        let session_manager = self.session_manager.clone();
+        let llm_config_provider = self.llm_config_provider.clone();
+
         info!("ActivateSession called for {}", req.session_id);
 
-        // If already active, return state directly
-        if let Ok(Some(state)) = self
-            .session_manager
-            .get_session_state(&req.session_id)
-            .await
-        {
-            return Ok(Response::new(ActivateSessionResponse {
-                messages: state
-                    .messages
-                    .into_iter()
-                    .map(message_to_proto)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?,
-                approved_tools: state.approved_tools.into_iter().collect(),
-            }));
-        }
+        let stream = async_stream::try_stream! {
+            // Check if already active or activate it
+            let state = if let Ok(Some(state)) = session_manager
+                .get_session_state(&req.session_id)
+                .await
+            {
+                state
+            } else {
+                // Not active, so activate it
+                let app_config = conductor_core::app::AppConfig {
+                    llm_config_provider: llm_config_provider.clone(),
+                };
 
-        let app_config = conductor_core::app::AppConfig {
-            llm_config_provider: self.llm_config_provider.clone(),
-        };
+                session_manager
+                    .resume_session(&req.session_id, app_config)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to resume session: {e}")))?;
 
-        match self
-            .session_manager
-            .resume_session(&req.session_id, app_config)
-            .await
-        {
-            Ok(_) => {
-                // Fetch state now active
-                if let Ok(Some(state)) = self
-                    .session_manager
+                // Fetch state now that it's active
+                session_manager
                     .get_session_state(&req.session_id)
                     .await
-                {
-                    return Ok(Response::new(ActivateSessionResponse {
-                        messages: state
-                            .messages
-                            .into_iter()
-                            .map(message_to_proto)
-                            .collect::<Result<Vec<_>, _>>()
-                            .map_err(|e| {
-                                Status::internal(format!("Failed to convert message: {e}"))
-                            })?,
-                        approved_tools: state.approved_tools.into_iter().collect(),
-                    }));
-                }
-                Err(Status::internal(
-                    "Activation succeeded but state unavailable",
-                ))
+                    .map_err(|e| Status::internal(format!("Failed to get session state: {e}")))?
+                    .ok_or_else(|| Status::not_found(format!("Session not found: {}", req.session_id)))?
+            };
+
+            // Stream messages one by one
+            for msg in state.messages {
+                let proto_msg = message_to_proto(msg)
+                    .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
+                yield ActivateSessionResponse {
+                    chunk: Some(activate_session_response::Chunk::Message(proto_msg)),
+                };
             }
-            Err(e) => Err(Status::internal(format!("Failed to activate session: {e}"))),
-        }
+
+            // Send footer with approved tools
+            yield ActivateSessionResponse {
+                chunk: Some(activate_session_response::Chunk::Footer(ActivateSessionFooter {
+                    approved_tools: state.approved_tools.into_iter().collect(),
+                })),
+            };
+        };
+
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn cancel_operation(
