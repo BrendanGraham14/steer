@@ -266,4 +266,5 @@ impl LlmConfigProvider {
     }
 }
 
+pub mod model;
 pub mod provider;
