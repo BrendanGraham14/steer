@@ -4,35 +4,50 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
-use strum::Display;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthTokens {
+pub struct OAuth2Token {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: SystemTime,
 }
 
+// Alias for backwards compatibility
+pub type AuthTokens = OAuth2Token;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Credential {
-    AuthTokens(AuthTokens),
-    ApiKey { value: String },
+    #[serde(alias = "AuthTokens")]
+    OAuth2(OAuth2Token),
+    ApiKey {
+        value: String,
+    },
 }
 
 impl Credential {
     pub fn credential_type(&self) -> CredentialType {
         match self {
-            Credential::AuthTokens(_) => CredentialType::AuthTokens,
+            Credential::OAuth2(_) => CredentialType::OAuth2,
             Credential::ApiKey { .. } => CredentialType::ApiKey,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CredentialType {
-    AuthTokens,
+    #[serde(alias = "AuthTokens")]
+    OAuth2,
     ApiKey,
+}
+
+impl std::fmt::Display for CredentialType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CredentialType::OAuth2 => write!(f, "OAuth2"),
+            CredentialType::ApiKey => write!(f, "ApiKey"),
+        }
+    }
 }
 
 /// Collection of all credentials kept in the keyring. The first key is the
@@ -90,9 +105,10 @@ impl AuthStorage for KeyringStorage {
         let provider = provider.to_string();
         let username = Self::get_username();
         let service = self.service_name.clone();
+        let cred_type = credential_type;
 
         // Load, parse and query the credential store
-        tokio::task::spawn_blocking(
+        let result = tokio::task::spawn_blocking(
             move || -> std::result::Result<Option<Credential>, keyring::Error> {
                 let entry = keyring::Entry::new(&service, &username)?;
                 let store_json = match entry.get_password() {
@@ -102,17 +118,22 @@ impl AuthStorage for KeyringStorage {
                 };
 
                 let store: CredentialStore = serde_json::from_str(&store_json).unwrap_or_default();
+
+                // Get the credential with the requested type
+                // The serde aliases handle migration from old "AuthTokens" to "OAuth2" automatically
                 let cred = store
                     .0
                     .get(&provider)
-                    .and_then(|m| m.get(&credential_type))
+                    .and_then(|m| m.get(&cred_type))
                     .cloned();
+
                 Ok(cred)
             },
         )
         .await
-        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?
-        .map_err(AuthError::from)
+        .map_err(|e| AuthError::Storage(format!("Task join error: {e}")))?;
+
+        result.map_err(AuthError::from)
     }
 
     async fn set_credential(&self, provider: &str, credential: Credential) -> Result<()> {
@@ -213,18 +234,18 @@ impl DefaultAuthStorage {
     }
 
     // Convenience methods for working with specific credential types
-    pub async fn get_auth_tokens(&self, provider: &str) -> Result<Option<AuthTokens>> {
+    pub async fn get_auth_tokens(&self, provider: &str) -> Result<Option<OAuth2Token>> {
         match self
-            .get_credential(provider, CredentialType::AuthTokens)
+            .get_credential(provider, CredentialType::OAuth2)
             .await?
         {
-            Some(Credential::AuthTokens(tokens)) => Ok(Some(tokens)),
+            Some(Credential::OAuth2(tokens)) => Ok(Some(tokens)),
             _ => Ok(None),
         }
     }
 
-    pub async fn set_auth_tokens(&self, provider: &str, tokens: AuthTokens) -> Result<()> {
-        self.set_credential(provider, Credential::AuthTokens(tokens))
+    pub async fn set_auth_tokens(&self, provider: &str, tokens: OAuth2Token) -> Result<()> {
+        self.set_credential(provider, Credential::OAuth2(tokens))
             .await
     }
 
@@ -244,7 +265,7 @@ impl DefaultAuthStorage {
     }
 
     pub async fn remove_auth_tokens(&self, provider: &str) -> Result<()> {
-        self.remove_credential(provider, CredentialType::AuthTokens)
+        self.remove_credential(provider, CredentialType::OAuth2)
             .await
     }
 
@@ -278,5 +299,61 @@ impl AuthStorage for DefaultAuthStorage {
         self.keyring
             .remove_credential(provider, credential_type)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn test_credential_deserialization_with_alias() {
+        // Test that old "AuthTokens" format deserializes correctly to OAuth2
+        let old_json_format = r#"{
+            "anthropic": {
+                "AuthTokens": {
+                    "type": "AuthTokens",
+                    "access_token": "old_access_token",
+                    "refresh_token": "old_refresh_token",
+                    "expires_at": {
+                        "secs_since_epoch": 1678886400,
+                        "nanos_since_epoch": 0
+                    }
+                }
+            }
+        }"#;
+
+        let store: CredentialStore =
+            serde_json::from_str(old_json_format).expect("Failed to deserialize old format");
+
+        // The serde alias should have converted AuthTokens to OAuth2
+        let creds = store.0.get("anthropic").unwrap();
+        let cred = creds.get(&CredentialType::OAuth2).unwrap();
+
+        match cred {
+            Credential::OAuth2(token) => {
+                assert_eq!(token.access_token, "old_access_token");
+                assert_eq!(token.refresh_token, "old_refresh_token");
+                assert_eq!(
+                    token.expires_at,
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(1678886400)
+                );
+            }
+            _ => panic!("Deserialization failed: expected OAuth2 credential"),
+        }
+    }
+
+    #[test]
+    fn test_credential_type_deserialization_with_alias() {
+        // Test that the old "AuthTokens" string deserializes to OAuth2
+        let old_type = r#""AuthTokens""#;
+        let cred_type: CredentialType = serde_json::from_str(old_type).unwrap();
+        assert_eq!(cred_type, CredentialType::OAuth2);
+
+        // Also test that "OAuth2" works
+        let new_type = r#""OAuth2""#;
+        let cred_type: CredentialType = serde_json::from_str(new_type).unwrap();
+        assert_eq!(cred_type, CredentialType::OAuth2);
     }
 }

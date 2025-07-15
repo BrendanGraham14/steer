@@ -229,12 +229,12 @@ pub async fn refresh_if_needed(
     oauth_client: &AnthropicOAuth,
 ) -> Result<AuthTokens> {
     let credential = storage
-        .get_credential("anthropic", CredentialType::AuthTokens)
+        .get_credential("anthropic", CredentialType::OAuth2)
         .await?
         .ok_or(AuthError::ReauthRequired)?;
 
     let mut tokens = match credential {
-        Credential::AuthTokens(tokens) => tokens,
+        Credential::OAuth2(tokens) => tokens,
         _ => return Err(AuthError::ReauthRequired),
     };
 
@@ -243,14 +243,14 @@ pub async fn refresh_if_needed(
         match oauth_client.refresh_tokens(&tokens.refresh_token).await {
             Ok(new_tokens) => {
                 storage
-                    .set_credential("anthropic", Credential::AuthTokens(new_tokens.clone()))
+                    .set_credential("anthropic", Credential::OAuth2(new_tokens.clone()))
                     .await?;
                 tokens = new_tokens;
             }
             Err(AuthError::ReauthRequired) => {
                 // Refresh token is invalid, clear tokens
                 storage
-                    .remove_credential("anthropic", CredentialType::AuthTokens)
+                    .remove_credential("anthropic", CredentialType::OAuth2)
                     .await?;
                 return Err(AuthError::ReauthRequired);
             }
@@ -400,7 +400,7 @@ impl AuthenticationFlow for AnthropicOAuthFlow {
 
                 // Store the tokens
                 self.storage
-                    .set_credential("anthropic", Credential::AuthTokens(tokens))
+                    .set_credential("anthropic", Credential::OAuth2(tokens))
                     .await?;
 
                 Ok(AuthProgress::Complete)
@@ -429,9 +429,9 @@ impl AuthenticationFlow for AnthropicOAuthFlow {
 
     async fn is_authenticated(&self) -> Result<bool> {
         // Check for OAuth tokens first
-        if let Some(Credential::AuthTokens(tokens)) = self
+        if let Some(Credential::OAuth2(tokens)) = self
             .storage
-            .get_credential("anthropic", CredentialType::AuthTokens)
+            .get_credential("anthropic", CredentialType::OAuth2)
             .await?
         {
             // Check if tokens are still valid
