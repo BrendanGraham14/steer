@@ -9,7 +9,7 @@ fn parses_default_providers() {
     use Provider as P;
     assert!(ids.iter().any(|id| matches!(id, P::Anthropic)));
     assert!(ids.iter().any(|id| matches!(id, P::Openai)));
-    assert!(ids.iter().any(|id| matches!(id, P::Gemini)));
+    assert!(ids.iter().any(|id| matches!(id, P::Google)));
     assert!(ids.iter().any(|id| matches!(id, P::Xai)));
 
     let anthro = providers

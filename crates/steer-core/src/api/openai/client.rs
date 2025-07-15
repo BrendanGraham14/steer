@@ -7,22 +7,35 @@ use crate::api::provider::{CompletionResponse, Provider};
 use crate::app::conversation::Message as AppMessage;
 use steer_tools::ToolSchema;
 
-use super::chat;
-use super::responses;
+use super::{OpenAIMode, chat, responses};
 
-/// Unified OpenAI client that routes to the appropriate API based on model
+/// Unified OpenAI client that routes to the appropriate API based on configured mode
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct OpenAIClient {
     chat_client: chat::Client,
     responses_client: responses::Client,
+    default_mode: OpenAIMode,
 }
 
 impl OpenAIClient {
     pub fn new(api_key: String) -> Self {
+        Self::with_mode(api_key, OpenAIMode::Responses)
+    }
+
+    pub fn with_mode(api_key: String, mode: OpenAIMode) -> Self {
         Self {
             chat_client: chat::Client::new(api_key.clone()),
             responses_client: responses::Client::new(api_key),
+            default_mode: mode,
+        }
+    }
+
+    pub fn with_base_url_mode(api_key: String, base_url: Option<String>, mode: OpenAIMode) -> Self {
+        Self {
+            chat_client: chat::Client::with_base_url(api_key.clone(), base_url.clone()),
+            responses_client: responses::Client::with_base_url(api_key, base_url),
+            default_mode: mode,
         }
     }
 }
@@ -41,17 +54,30 @@ impl Provider for OpenAIClient {
         tools: Option<Vec<ToolSchema>>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        // Route all OpenAI models to the Responses API by default
-        self.responses_client
-            .complete(model, messages, system, tools, token)
-            .await
-
-        // Optional: Add fallback to chat API if responses fails with "not supported"
-        // match self.responses_client.complete(model, messages.clone(), system.clone(), tools.clone(), token.clone()).await {
-        //     Err(ApiError::InvalidRequest { details, .. }) if details.contains("not supported") => {
-        //         self.chat_client.complete(model, messages, system, tools, token).await
-        //     }
-        //     result => result,
-        // }
+        match self.default_mode {
+            OpenAIMode::Responses => {
+                self.responses_client
+                    .complete(
+                        model,
+                        messages.clone(),
+                        system.clone(),
+                        tools.clone(),
+                        token.clone(),
+                    )
+                    .await
+                // Optional fallback to chat if Responses says unsupported
+                // .or_else(|e| match e {
+                //     ApiError::InvalidRequest { details, .. } if details.contains("not supported") => {
+                //         self.chat_client.complete(model, messages, system, tools, token)
+                //     }
+                //     err => Err(err),
+                // })
+            }
+            OpenAIMode::Chat => {
+                self.chat_client
+                    .complete(model, messages, system, tools, token)
+                    .await
+            }
+        }
     }
 }
