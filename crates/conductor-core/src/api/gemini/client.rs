@@ -185,20 +185,20 @@ struct GeminiFunctionCall {
     args: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 struct GeminiTool {
     #[serde(rename = "functionDeclarations")]
     function_declarations: Vec<GeminiFunctionDeclaration>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 struct GeminiFunctionDeclaration {
     name: String,
     description: String,
     parameters: GeminiParameterSchema,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 struct GeminiParameterSchema {
     #[serde(rename = "type")]
     schema_type: String, // Typically "object"
@@ -467,6 +467,11 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
     if let Some(prop_map_orig) = property_value.as_object() {
         let mut simplified_prop = prop_map_orig.clone();
 
+        // Remove 'additionalProperties' as Gemini doesn't support it
+        if simplified_prop.remove("additionalProperties").is_some() {
+            debug!(target: "gemini::simplify_property_schema", "Removed 'additionalProperties' from property '{}' in tool '{}'", key, tool_name);
+        }
+
         // Simplify 'type' field (handle arrays like ["string", "null"])
         if let Some(type_val) = simplified_prop.get_mut("type") {
             if let Some(type_array) = type_val.as_array() {
@@ -496,6 +501,63 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
                 }
             }
         }
+
+        // For string types, Gemini only supports 'enum' and 'date-time' formats
+        if simplified_prop.get("type") == Some(&serde_json::Value::String("string".to_string())) {
+            let should_remove_format = simplified_prop
+                .get("format")
+                .and_then(|f| f.as_str())
+                .map(|format_str| format_str != "enum" && format_str != "date-time")
+                .unwrap_or(false);
+
+            if should_remove_format {
+                if let Some(format_val) = simplified_prop.remove("format") {
+                    if let Some(format_str) = format_val.as_str() {
+                        debug!(target: "gemini::simplify_property_schema", "Removed unsupported format '{}' from string property '{}' in tool '{}'", format_str, key, tool_name);
+                    }
+                }
+            }
+
+            // Also remove other string validation fields that might not be supported
+            if simplified_prop.remove("minLength").is_some() {
+                debug!(target: "gemini::simplify_property_schema", "Removed 'minLength' from string property '{}' in tool '{}'", key, tool_name);
+            }
+            if simplified_prop.remove("maxLength").is_some() {
+                debug!(target: "gemini::simplify_property_schema", "Removed 'maxLength' from string property '{}' in tool '{}'", key, tool_name);
+            }
+            if simplified_prop.remove("pattern").is_some() {
+                debug!(target: "gemini::simplify_property_schema", "Removed 'pattern' from string property '{}' in tool '{}'", key, tool_name);
+            }
+        }
+
+        // Recursively simplify 'items' if this is an array type
+        if simplified_prop.get("type") == Some(&serde_json::Value::String("array".to_string())) {
+            if let Some(items_val) = simplified_prop.get_mut("items") {
+                *items_val =
+                    simplify_property_schema(&format!("{key}.items"), tool_name, items_val);
+            }
+        }
+
+        // Recursively simplify nested 'properties' if this is an object type
+        if simplified_prop.get("type") == Some(&serde_json::Value::String("object".to_string())) {
+            if let Some(Value::Object(props)) = simplified_prop.get_mut("properties") {
+                let simplified_nested_props: serde_json::Map<String, Value> = props
+                    .iter()
+                    .map(|(nested_key, nested_value)| {
+                        (
+                            nested_key.clone(),
+                            simplify_property_schema(
+                                &format!("{key}.{nested_key}"),
+                                tool_name,
+                                nested_value,
+                            ),
+                        )
+                    })
+                    .collect();
+                *props = simplified_nested_props;
+            }
+        }
+
         serde_json::Value::Object(simplified_prop)
     } else {
         warn!(target: "gemini::simplify_property_schema", "Property value for '{}' in tool '{}' is not an object: {:?}. Using original value.", key, tool_name, property_value);
@@ -783,5 +845,245 @@ impl Provider for GeminiClient {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_simplify_property_schema_removes_additional_properties() {
+        let property_value = json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"}
+            },
+            "additionalProperties": false
+        });
+
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"}
+            }
+        });
+
+        let result = simplify_property_schema("testProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_simplify_property_schema_removes_unsupported_string_formats() {
+        let property_value = json!({
+            "type": "string",
+            "format": "uri",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^https://"
+        });
+
+        let expected = json!({
+            "type": "string"
+        });
+
+        let result = simplify_property_schema("urlProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_simplify_property_schema_keeps_supported_string_formats() {
+        let property_value = json!({
+            "type": "string",
+            "format": "date-time"
+        });
+
+        let expected = json!({
+            "type": "string",
+            "format": "date-time"
+        });
+
+        let result = simplify_property_schema("dateProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_simplify_property_schema_handles_array_types() {
+        let property_value = json!({
+            "type": ["string", "null"],
+            "format": "email"
+        });
+
+        let expected = json!({
+            "type": "string"
+        });
+
+        let result = simplify_property_schema("emailProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_simplify_property_schema_recursively_handles_array_items() {
+        let property_value = json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "format": "uri"
+                    }
+                },
+                "additionalProperties": false
+            }
+        });
+
+        let expected = json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string"
+                    }
+                }
+            }
+        });
+
+        let result = simplify_property_schema("linksProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_simplify_property_schema_recursively_handles_nested_objects() {
+        let property_value = json!({
+            "type": "object",
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "format": "hostname"
+                        }
+                    },
+                    "additionalProperties": true
+                }
+            },
+            "additionalProperties": false
+        });
+
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        });
+
+        let result = simplify_property_schema("complexProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_simplify_property_schema_fixes_uint64_format() {
+        let property_value = json!({
+            "type": "integer",
+            "format": "uint64"
+        });
+
+        let expected = json!({
+            "type": "integer",
+            "format": "int64"
+        });
+
+        let result = simplify_property_schema("idProp", "testTool", &property_value);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_convert_tools_integration() {
+        use conductor_tools::{InputSchema, ToolSchema};
+
+        let tool = ToolSchema {
+            name: "create_issue".to_string(),
+            description: "Create an issue".to_string(),
+            input_schema: InputSchema {
+                schema_type: "object".to_string(),
+                properties: {
+                    let mut props = serde_json::Map::new();
+                    props.insert(
+                        "title".to_string(),
+                        json!({
+                            "type": "string",
+                            "minLength": 1
+                        }),
+                    );
+                    props.insert(
+                        "links".to_string(),
+                        json!({
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "url": {
+                                        "type": "string",
+                                        "format": "uri"
+                                    }
+                                },
+                                "additionalProperties": false
+                            }
+                        }),
+                    );
+                    props
+                },
+                required: vec!["title".to_string()],
+            },
+        };
+
+        let expected_tools = vec![GeminiTool {
+            function_declarations: vec![GeminiFunctionDeclaration {
+                name: "create_issue".to_string(),
+                description: "Create an issue".to_string(),
+                parameters: GeminiParameterSchema {
+                    schema_type: "object".to_string(),
+                    properties: {
+                        let mut props = serde_json::Map::new();
+                        props.insert(
+                            "title".to_string(),
+                            json!({
+                                "type": "string"
+                            }),
+                        );
+                        props.insert(
+                            "links".to_string(),
+                            json!({
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "url": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }),
+                        );
+                        props
+                    },
+                    required: vec!["title".to_string()],
+                },
+            }],
+        }];
+
+        let result = convert_tools(vec![tool]);
+        assert_eq!(result, expected_tools);
     }
 }
