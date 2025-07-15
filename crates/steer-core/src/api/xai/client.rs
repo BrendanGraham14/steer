@@ -6,15 +6,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use crate::api::provider::{CompletionResponse, Provider};
+use crate::api::util::normalize_chat_url;
 use crate::api::{Model, error::ApiError};
 use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
 use steer_tools::ToolSchema;
 
-const API_URL: &str = "https://api.x.ai/v1/chat/completions";
+const DEFAULT_API_URL: &str = "https://api.x.ai/v1/chat/completions";
 
 #[derive(Clone)]
 pub struct XAIClient {
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 // xAI-specific message format (similar to OpenAI but with some differences)
@@ -267,6 +269,10 @@ struct DebugOutput {
 
 impl XAIClient {
     pub fn new(api_key: String) -> Self {
+        Self::with_base_url(api_key, None)
+    }
+
+    pub fn with_base_url(api_key: String, base_url: Option<String>) -> Self {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -280,8 +286,11 @@ impl XAIClient {
             .build()
             .expect("Failed to build HTTP client");
 
+        let base_url = normalize_chat_url(base_url.as_deref(), DEFAULT_API_URL);
+
         Self {
             http_client: client,
+            base_url,
         }
     }
 
@@ -482,7 +491,7 @@ impl Provider for XAIClient {
 
         let response = self
             .http_client
-            .post(API_URL)
+            .post(&self.base_url)
             .json(&request)
             .send()
             .await

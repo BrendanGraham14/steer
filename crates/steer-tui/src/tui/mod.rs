@@ -49,6 +49,9 @@ use crate::tui::chat_viewport::ChatViewport;
 use crate::tui::ui_layout::UiLayout;
 use crate::tui::widgets::InputPanel;
 
+use steer_core::auth::{AuthStorage, ProviderRegistry};
+use steer_core::config::provider::ProviderId;
+
 pub mod commands;
 pub mod custom_commands;
 pub mod model;
@@ -165,6 +168,8 @@ pub struct Tui {
     mode_stack: VecDeque<InputMode>,
     /// Last known revision of ChatStore for dirty tracking
     last_revision: u64,
+    /// Provider registry for dynamic provider discovery
+    provider_registry: Arc<ProviderRegistry>,
 }
 
 const MAX_MODE_DEPTH: usize = 8;
@@ -257,6 +262,11 @@ impl Tui {
             .map_err(crate::error::Error::Core)
             .unwrap_or_default();
 
+        // Load the provider registry
+        let provider_registry = Arc::new(ProviderRegistry::load().map_err(|e| {
+            crate::error::Error::Generic(format!("Failed to load provider registry: {e}"))
+        })?);
+
         // Determine initial input mode based on editing mode preference
         let input_mode = match preferences.ui.editing_mode {
             steer_core::preferences::EditingMode::Simple => InputMode::Simple,
@@ -293,6 +303,7 @@ impl Tui {
             vim_state: VimState::default(),
             mode_stack: VecDeque::new(),
             last_revision: 0,
+            provider_registry,
         };
 
         Ok(tui)
@@ -635,12 +646,12 @@ impl Tui {
                             &self.theme,
                         );
                     }
-                    crate::tui::state::SetupStep::Authentication(provider) => {
+                    crate::tui::state::SetupStep::Authentication(provider_id) => {
                         AuthenticationWidget::render(
                             f.area(),
                             f.buffer_mut(),
                             setup_state,
-                            *provider,
+                            provider_id.clone(),
                             &self.theme,
                         );
                     }
@@ -1111,34 +1122,49 @@ impl Tui {
                         // Launch auth setup
                         // Initialize auth setup state
                         let auth_storage =
-                            steer_core::auth::DefaultAuthStorage::new().map_err(|e| {
+                            Arc::new(steer_core::auth::DefaultAuthStorage::new().map_err(|e| {
                                 crate::error::Error::Generic(format!(
                                     "Failed to create auth storage: {e}"
                                 ))
-                            })?;
-                        let auth_providers = LlmConfigProvider::new(Arc::new(auth_storage))
+                            })?);
+                        let auth_providers = LlmConfigProvider::new(auth_storage.clone())
                             .available_providers()
                             .await?;
 
                         let mut provider_status = std::collections::HashMap::new();
-                        for provider in [
-                            steer_core::api::ProviderKind::Anthropic,
-                            steer_core::api::ProviderKind::OpenAI,
-                            steer_core::api::ProviderKind::Google,
-                            steer_core::api::ProviderKind::XAI,
-                        ] {
-                            let status = if auth_providers.contains(&provider) {
-                                crate::tui::state::AuthStatus::ApiKeySet
+                        for provider_config in self.provider_registry.all() {
+                            let status = if auth_providers.contains(&provider_config.id) {
+                                // Check if it has OAuth configured (for Anthropic)
+                                if provider_config.id == ProviderId::Anthropic {
+                                    let has_oauth = auth_storage
+                                        .get_credential(
+                                            &provider_config.id.storage_key(),
+                                            steer_core::auth::CredentialType::OAuth2,
+                                        )
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .is_some();
+                                    if has_oauth {
+                                        crate::tui::state::AuthStatus::OAuthConfigured
+                                    } else {
+                                        crate::tui::state::AuthStatus::ApiKeySet
+                                    }
+                                } else {
+                                    crate::tui::state::AuthStatus::ApiKeySet
+                                }
                             } else {
                                 crate::tui::state::AuthStatus::NotConfigured
                             };
-                            provider_status.insert(provider, status);
+                            provider_status.insert(provider_config.id.clone(), status);
                         }
 
                         // Enter setup mode, skipping welcome page
-                        self.setup_state = Some(
-                            crate::tui::state::SetupState::new_for_auth_command(provider_status),
-                        );
+                        self.setup_state =
+                            Some(crate::tui::state::SetupState::new_for_auth_command(
+                                self.provider_registry.clone(),
+                                provider_status,
+                            ));
                         // Enter setup mode directly without pushing to the mode stack so that
                         // it can’t be accidentally popped by a later `restore_previous_mode`.
                         self.set_mode(InputMode::Setup);
@@ -1422,9 +1448,11 @@ pub async fn run_tui(
         tui.restore_messages(messages);
     }
 
-    let auth_storage = steer_core::auth::DefaultAuthStorage::new()
-        .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?;
-    let auth_providers = LlmConfigProvider::new(Arc::new(auth_storage))
+    let auth_storage = Arc::new(
+        steer_core::auth::DefaultAuthStorage::new()
+            .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?,
+    );
+    let auth_providers = LlmConfigProvider::new(auth_storage.clone())
         .available_providers()
         .await
         .map_err(|e| Error::Generic(format!("Failed to check auth: {e}")))?;
@@ -1438,21 +1466,37 @@ pub async fn run_tui(
     // Initialize setup state if first run or forced
     if should_run_setup {
         let mut provider_status = std::collections::HashMap::new();
-        for provider in [
-            steer_core::api::ProviderKind::Anthropic,
-            steer_core::api::ProviderKind::OpenAI,
-            steer_core::api::ProviderKind::Google,
-            steer_core::api::ProviderKind::XAI,
-        ] {
-            let status = if auth_providers.contains(&provider) {
-                crate::tui::state::AuthStatus::ApiKeySet
+        for provider_config in tui.provider_registry.all() {
+            let status = if auth_providers.contains(&provider_config.id) {
+                // Check if it has OAuth configured (for Anthropic)
+                if provider_config.id == ProviderId::Anthropic {
+                    let has_oauth = auth_storage
+                        .get_credential(
+                            &provider_config.id.storage_key(),
+                            steer_core::auth::CredentialType::OAuth2,
+                        )
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    if has_oauth {
+                        crate::tui::state::AuthStatus::OAuthConfigured
+                    } else {
+                        crate::tui::state::AuthStatus::ApiKeySet
+                    }
+                } else {
+                    crate::tui::state::AuthStatus::ApiKeySet
+                }
             } else {
                 crate::tui::state::AuthStatus::NotConfigured
             };
-            provider_status.insert(provider, status);
+            provider_status.insert(provider_config.id.clone(), status);
         }
 
-        tui.setup_state = Some(crate::tui::state::SetupState::new(provider_status));
+        tui.setup_state = Some(crate::tui::state::SetupState::new(
+            tui.provider_registry.clone(),
+            provider_status,
+        ));
         tui.input_mode = InputMode::Setup;
     }
 

@@ -16,15 +16,20 @@ use crate::app::conversation::{
 };
 use steer_tools::ToolSchema;
 
-const API_URL: &str = "https://api.openai.com/v1/responses";
+const DEFAULT_API_URL: &str = "https://api.openai.com/v1/responses";
 
 #[derive(Clone)]
 pub(super) struct Client {
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 impl Client {
     pub(super) fn new(api_key: String) -> Self {
+        Self::with_base_url(api_key, None)
+    }
+
+    pub(super) fn with_base_url(api_key: String, base_url: Option<String>) -> Self {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -38,7 +43,13 @@ impl Client {
             .build()
             .expect("Failed to build HTTP client");
 
-        Self { http_client }
+        let base_url =
+            crate::api::util::normalize_responses_url(base_url.as_deref(), DEFAULT_API_URL);
+
+        Self {
+            http_client,
+            base_url,
+        }
     }
 
     /// Build a request with proper message structure and tool support
@@ -335,7 +346,7 @@ impl Client {
     ) -> Result<CompletionResponse, ApiError> {
         let request = self.build_request(model, messages, system, tools);
 
-        let request_builder = self.http_client.post(API_URL).json(&request);
+        let request_builder = self.http_client.post(&self.base_url).json(&request);
 
         let response = tokio::select! {
             biased;
