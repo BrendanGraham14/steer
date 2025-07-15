@@ -11,17 +11,17 @@ service AgentService {
   // Unary calls for session management
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
-  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+  rpc GetSession(GetSessionRequest) returns (stream GetSessionResponse);
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
 
   // Unary calls for non-streaming operations
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   rpc ApproveTool(ApproveToolRequest) returns (ApproveToolResponse);
   rpc CancelOperation(CancelOperationRequest) returns (CancelOperationResponse);
-  rpc GetConversation(GetConversationRequest) returns (GetConversationResponse);
+  rpc GetConversation(GetConversationRequest) returns (stream GetConversationResponse);
 
   // Explicitly activate (load) a dormant session into memory and return its state
-  rpc ActivateSession(ActivateSessionRequest) returns (ActivateSessionResponse);
+  rpc ActivateSession(ActivateSessionRequest) returns (stream ActivateSessionResponse);
 
   // List files in the workspace for fuzzy finding
   rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
@@ -317,7 +317,30 @@ message GetSessionRequest {
 }
 
 message GetSessionResponse {
-  SessionState session = 1;
+  oneof chunk {
+    SessionStateHeader header = 1;
+    Message message = 2;
+    ToolCallStateEntry tool_call = 3;
+    SessionStateFooter footer = 4;
+  }
+}
+
+message SessionStateHeader {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  SessionConfig config = 4;
+}
+
+message ToolCallStateEntry {
+  string key = 1;
+  ToolCallState value = 2;
+}
+
+message SessionStateFooter {
+  repeated string approved_tools = 1;
+  uint64 last_event_sequence = 2;
+  map<string, string> metadata = 3;
 }
 
 message DeleteSessionRequest {
@@ -337,13 +360,25 @@ message ActivateSessionRequest {
 }
 
 message ActivateSessionResponse {
-  repeated Message messages = 1;
-  repeated string approved_tools = 2;
+  oneof chunk {
+    Message message = 1;
+    ActivateSessionFooter footer = 2;
+  }
+}
+
+message ActivateSessionFooter {
+  repeated string approved_tools = 1;
 }
 
 message GetConversationResponse {
-  repeated Message messages = 1;
-  repeated string approved_tools = 2;
+  oneof chunk {
+    Message message = 1;
+    GetConversationFooter footer = 2;
+  }
+}
+
+message GetConversationFooter {
+  repeated string approved_tools = 1;
 }
 
 // Core data types

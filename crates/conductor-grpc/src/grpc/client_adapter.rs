@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use conductor_core::error::Result;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use tonic::transport::Channel;
@@ -116,7 +117,7 @@ impl GrpcClientAdapter {
     ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
         info!("Activating remote session: {}", session_id);
 
-        let response = self
+        let mut stream = self
             .client
             .lock()
             .await
@@ -127,19 +128,30 @@ impl GrpcClientAdapter {
             .map_err(Box::new)?
             .into_inner();
 
-        // Convert proto messages -> app messages with explicit error handling
         let mut messages = Vec::new();
-        for proto_msg in response.messages.into_iter() {
-            match proto_to_message(proto_msg) {
-                Ok(msg) => messages.push(msg),
-                Err(e) => {
-                    return Err(GrpcError::ConversionError(e));
+        let mut approved_tools = Vec::new();
+
+        while let Some(response) = stream
+            .message()
+            .await
+            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
+        {
+            match response.chunk {
+                Some(proto::activate_session_response::Chunk::Message(proto_msg)) => {
+                    match proto_to_message(proto_msg) {
+                        Ok(msg) => messages.push(msg),
+                        Err(e) => return Err(GrpcError::ConversionError(e)),
+                    }
                 }
+                Some(proto::activate_session_response::Chunk::Footer(footer)) => {
+                    approved_tools = footer.approved_tools;
+                }
+                None => {}
             }
         }
 
         *self.session_id.lock().await = Some(session_id);
-        Ok((messages, response.approved_tools))
+        Ok((messages, approved_tools))
     }
 
     /// Start bidirectional streaming with the server
@@ -310,13 +322,51 @@ impl GrpcClientAdapter {
             session_id: session_id.to_string(),
         });
 
-        match self.client.lock().await.get_session(request).await {
-            Ok(response) => {
-                let get_session_response = response.into_inner();
-                Ok(get_session_response.session)
+        let mut stream = self
+            .client
+            .lock()
+            .await
+            .get_session(request)
+            .await
+            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
+            .into_inner();
+
+        let mut header = None;
+        let mut messages = Vec::new();
+        let mut tool_calls = std::collections::HashMap::new();
+        let mut footer = None;
+
+        while let Some(response) = stream
+            .message()
+            .await
+            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
+        {
+            match response.chunk {
+                Some(proto::get_session_response::Chunk::Header(h)) => header = Some(h),
+                Some(proto::get_session_response::Chunk::Message(m)) => messages.push(m),
+                Some(proto::get_session_response::Chunk::ToolCall(tc)) => {
+                    if let Some(value) = tc.value {
+                        tool_calls.insert(tc.key, value);
+                    }
+                }
+                Some(proto::get_session_response::Chunk::Footer(f)) => footer = Some(f),
+                None => {}
             }
-            Err(status) if status.code() == tonic::Code::NotFound => Ok(None),
-            Err(e) => Err(GrpcError::CallFailed(Box::new(e))),
+        }
+
+        match (header, footer) {
+            (Some(h), Some(f)) => Ok(Some(SessionState {
+                id: h.id,
+                created_at: h.created_at,
+                updated_at: h.updated_at,
+                config: h.config,
+                messages,
+                tool_calls,
+                approved_tools: f.approved_tools,
+                last_event_sequence: f.last_event_sequence,
+                metadata: f.metadata,
+            })),
+            _ => Ok(None),
         }
     }
 
@@ -348,7 +398,7 @@ impl GrpcClientAdapter {
             session_id
         );
 
-        let response = self
+        let mut stream = self
             .client
             .lock()
             .await
@@ -359,31 +409,37 @@ impl GrpcClientAdapter {
             .map_err(Box::new)?
             .into_inner();
 
-        info!(
-            "Received GetConversation response with {} messages and {} approved tools",
-            response.messages.len(),
-            response.approved_tools.len()
-        );
-
-        // Convert proto messages to app messages with explicit error handling
-        let proto_message_count = response.messages.len();
         let mut messages = Vec::new();
-        for proto_msg in response.messages.into_iter() {
-            match proto_to_message(proto_msg) {
-                Ok(msg) => messages.push(msg),
-                Err(e) => {
-                    return Err(GrpcError::ConversionError(e));
+        let mut approved_tools = Vec::new();
+
+        while let Some(response) = stream
+            .message()
+            .await
+            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
+        {
+            match response.chunk {
+                Some(proto::get_conversation_response::Chunk::Message(proto_msg)) => {
+                    match proto_to_message(proto_msg) {
+                        Ok(msg) => messages.push(msg),
+                        Err(e) => {
+                            warn!("Failed to convert message: {}", e);
+                            return Err(GrpcError::ConversionError(e));
+                        }
+                    }
                 }
+                Some(proto::get_conversation_response::Chunk::Footer(footer)) => {
+                    approved_tools = footer.approved_tools;
+                }
+                None => {}
             }
         }
 
         info!(
-            "Converted {} proto messages to {} app messages",
-            proto_message_count,
+            "Successfully converted {} messages from GetConversation response",
             messages.len()
         );
 
-        Ok((messages, response.approved_tools))
+        Ok((messages, approved_tools))
     }
 
     /// Shutdown the adapter and clean up resources
