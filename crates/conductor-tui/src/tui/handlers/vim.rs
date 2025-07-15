@@ -142,8 +142,33 @@ impl Tui {
 
         // Normal mode commands
         match key.code {
-            // ESC - cancel visual mode or pending operators
+            // ESC handling: double-tap clears / edits, single tap cancels or records
             KeyCode::Esc => {
+                // Detect double ESC within 300 ms
+                if self
+                    .double_tap_tracker
+                    .is_double_tap(KeyCode::Esc, Duration::from_millis(300))
+                {
+                    if self.input_panel_state.content().is_empty() {
+                        // Empty input => open edit-previous-message picker
+                        self.enter_edit_selection_mode();
+                    } else {
+                        // Otherwise just clear the buffer
+                        self.input_panel_state.clear();
+                    }
+                    // Clear tracker to avoid triple-tap behaviour
+                    self.double_tap_tracker.clear_key(&KeyCode::Esc);
+
+                    // Reset vim transient state
+                    self.vim_state.pending_operator = None;
+                    self.vim_state.pending_g = false;
+                    self.vim_state.replace_mode = false;
+                    return Ok(false);
+                }
+
+                // First Esc press – record and perform normal cancel behaviour
+                self.double_tap_tracker.record_key(KeyCode::Esc);
+
                 if self.vim_state.visual_mode {
                     self.vim_state.visual_mode = false;
                     // Cancel selection
