@@ -139,7 +139,7 @@ impl LlmConfigProvider {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if self
                     .storage
-                    .get_credential("anthropic", crate::auth::CredentialType::AuthTokens)
+                    .get_credential("anthropic", crate::auth::CredentialType::OAuth2)
                     .await?
                     .is_some()
                 {
