@@ -28,6 +28,10 @@ service AgentService {
 
   // Get MCP server connection status
   rpc GetMcpServers(GetMcpServersRequest) returns (GetMcpServersResponse);
+
+  // Provider and model management
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
 }
 
 // Client to server messages in the bidirectional stream
@@ -76,7 +80,7 @@ message StreamSessionResponse {
 // Event message definitions
 message MessageAddedEvent {
   Message message = 1;
-  string model = 2;
+  ModelSpec model = 2;
 }
 
 message CommandExecution {
@@ -187,7 +191,7 @@ message MessagePartEvent {
 message ToolCallStartedEvent {
   string name = 1;
   string id = 2;
-  string model = 3;
+  ModelSpec model = 3;
   string parameters_json = 4;  // JSON-encoded serde_json::Value
 }
 
@@ -195,14 +199,14 @@ message ToolCallCompletedEvent {
   string name = 1;
   ToolResult result = 2;
   string id = 3;
-  string model = 4;
+  ModelSpec model = 4;
 }
 
 message ToolCallFailedEvent {
   string name = 1;
   string error = 2;
   string id = 3;
-  string model = 4;
+  ModelSpec model = 4;
 }
 
 message RequestToolApprovalEvent {
@@ -227,7 +231,7 @@ message CommandResponseEvent {
 }
 
 message ModelChangedEvent {
-  string model = 1;
+  ModelSpec model = 1;
 }
 
 message ErrorEvent {
@@ -759,6 +763,28 @@ message WorkspaceFilesEvent {
   repeated string files = 1;
 }
 
+// Provider and model configuration
+message ProviderConfig {
+  string id = 1;  // "anthropic", "openai", "gemini", "xai", or custom name
+  string name = 2;  // Display name
+  string api_format = 3;  // "openai", "anthropic", "gemini", "xai"
+  repeated string auth_schemes = 4;  // "api_key", "oauth2"
+  optional string base_url = 5;  // Optional override URL
+}
+
+message ProviderModel {
+  string provider_id = 1;  // References ProviderConfig.id
+  string model_id = 2;  // Model identifier (e.g., "claude-3-5-sonnet-20241022")
+  string display_name = 3;  // User-friendly name
+  bool supports_thinking = 4;  // Whether model supports thinking/reasoning
+  repeated string aliases = 5;  // Short aliases like "sonnet", "opus"
+}
+
+message ModelSpec {
+  string provider_id = 1;  // Provider identifier
+  string model_id = 2;  // Model identifier
+}
+
 message StartedEvent {
   bytes id = 1;  // UUID stored as bytes
   StartedOperation op = 2;
@@ -878,4 +904,20 @@ message McpConnected {
 
 message McpFailed {
   string error = 1;
+}
+// Provider and model management messages
+message ListProvidersRequest {
+  // Empty for now, might add filters later
+}
+
+message ListProvidersResponse {
+  repeated ProviderConfig providers = 1;
+}
+
+message ListModelsRequest {
+  optional string provider_id = 1;  // Filter by provider
+}
+
+message ListModelsResponse {
+  repeated ProviderModel models = 1;
 }

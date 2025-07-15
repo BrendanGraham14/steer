@@ -703,6 +703,67 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             }
         }
     }
+    async fn list_providers(
+        &self,
+        _request: Request<ListProvidersRequest>,
+    ) -> Result<Response<ListProvidersResponse>, Status> {
+        use steer_core::auth::ProviderRegistry;
+
+        // Load the provider registry to get all providers (built-in + custom)
+        let registry = ProviderRegistry::load()
+            .map_err(|e| Status::internal(format!("Failed to load provider registry: {e}")))?;
+
+        // Convert core ProviderConfig to proto
+        let providers = registry
+            .all()
+            .map(|p| proto::ProviderConfig {
+                id: p.id.storage_key(),
+                name: p.name.clone(),
+                api_format: format!("{:?}", p.api_format).to_lowercase(),
+                auth_schemes: p
+                    .auth_schemes
+                    .iter()
+                    .map(|s| format!("{s:?}").to_lowercase())
+                    .collect(),
+                base_url: p.base_url.as_ref().map(|u| u.to_string()),
+            })
+            .collect();
+
+        Ok(Response::new(ListProvidersResponse { providers }))
+    }
+
+    async fn list_models(
+        &self,
+        request: Request<ListModelsRequest>,
+    ) -> Result<Response<ListModelsResponse>, Status> {
+        use steer_core::api::Model;
+
+        let req = request.into_inner();
+
+        // Get all models
+        let all_models = Model::all();
+
+        // Filter by provider if specified
+        let models: Vec<proto::ProviderModel> = all_models
+            .into_iter()
+            .filter(|m| {
+                if let Some(ref provider_id) = req.provider_id {
+                    m.provider_id().storage_key() == *provider_id
+                } else {
+                    true
+                }
+            })
+            .map(|m| proto::ProviderModel {
+                provider_id: m.provider_id().storage_key(),
+                model_id: m.to_string(),
+                display_name: m.to_string(), // Could enhance with better display names
+                supports_thinking: m.supports_thinking(),
+                aliases: m.aliases().into_iter().map(|s| s.to_string()).collect(),
+            })
+            .collect();
+
+        Ok(Response::new(ListModelsResponse { models }))
+    }
 }
 
 async fn try_resume_session(

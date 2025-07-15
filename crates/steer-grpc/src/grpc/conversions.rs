@@ -16,6 +16,22 @@ use steer_proto::agent::v1 as proto;
 use steer_proto::common::v1 as common;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 
+/// Convert a core Model to proto ModelSpec
+fn model_to_proto(model: steer_core::api::Model) -> proto::ModelSpec {
+    proto::ModelSpec {
+        provider_id: model.provider_id().storage_key(),
+        model_id: model.to_string(),
+    }
+}
+
+/// Convert proto ModelSpec to core Model  
+fn proto_to_model(spec: &proto::ModelSpec) -> Result<steer_core::api::Model, ConversionError> {
+    use std::str::FromStr;
+    steer_core::api::Model::from_str(&spec.model_id).map_err(|_| ConversionError::InvalidData {
+        message: format!("Invalid model ID: {}", spec.model_id),
+    })
+}
+
 /// Convert steer_tools ToolResult to protobuf
 fn steer_tools_result_to_proto(
     result: &steer_tools::result::ToolResult,
@@ -945,7 +961,7 @@ pub fn app_event_to_server_event(
             Some(proto::stream_session_response::Event::MessageAdded(
                 proto::MessageAddedEvent {
                     message: Some(proto_message?),
-                    model: model.to_string(),
+                    model: Some(model_to_proto(model)),
                 },
             ))
         }
@@ -978,7 +994,7 @@ pub fn app_event_to_server_event(
             proto::ToolCallStartedEvent {
                 name,
                 id,
-                model: model.to_string(),
+                model: Some(model_to_proto(model)),
                 parameters_json: serde_json::to_string(&parameters).unwrap_or_default(),
             },
         )),
@@ -995,7 +1011,7 @@ pub fn app_event_to_server_event(
                     name,
                     result: Some(proto_result),
                     id,
-                    model: model.to_string(),
+                    model: Some(model_to_proto(model)),
                 },
             ))
         }
@@ -1009,7 +1025,7 @@ pub fn app_event_to_server_event(
                 name,
                 error,
                 id,
-                model: model.to_string(),
+                model: Some(model_to_proto(model)),
             },
         )),
         AppEvent::RequestToolApproval {
@@ -1093,7 +1109,7 @@ pub fn app_event_to_server_event(
         }
         AppEvent::ModelChanged { model } => Some(
             proto::stream_session_response::Event::ModelChanged(proto::ModelChangedEvent {
-                model: model.to_string(),
+                model: Some(model_to_proto(model)),
             }),
         ),
         AppEvent::Error { message } => Some(proto::stream_session_response::Event::Error(
@@ -1252,14 +1268,13 @@ pub fn server_event_to_app_event(
             })?;
 
             let message = proto_to_message(proto_message)?;
-            let model = {
-                use std::str::FromStr;
-                steer_core::api::Model::from_str(&e.model).map_err(|_| {
-                    ConversionError::InvalidValue {
+            let model = match e.model {
+                Some(spec) => proto_to_model(&spec)?,
+                None => {
+                    return Err(ConversionError::MissingField {
                         field: "model".to_string(),
-                        value: e.model.clone(),
-                    }
-                })?
+                    });
+                }
             };
 
             Ok(AppEvent::MessageAdded { message, model })
@@ -1273,14 +1288,13 @@ pub fn server_event_to_app_event(
             delta: e.delta,
         }),
         proto::stream_session_response::Event::ToolCallStarted(e) => {
-            let model = {
-                use std::str::FromStr;
-                steer_core::api::Model::from_str(&e.model).map_err(|_| {
-                    ConversionError::InvalidValue {
+            let model = match e.model {
+                Some(spec) => proto_to_model(&spec)?,
+                None => {
+                    return Err(ConversionError::MissingField {
                         field: "model".to_string(),
-                        value: e.model.clone(),
-                    }
-                })?
+                    });
+                }
             };
             let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
                 ConversionError::InvalidJson {
@@ -1296,14 +1310,13 @@ pub fn server_event_to_app_event(
             })
         }
         proto::stream_session_response::Event::ToolCallCompleted(e) => {
-            let model = {
-                use std::str::FromStr;
-                steer_core::api::Model::from_str(&e.model).map_err(|_| {
-                    ConversionError::InvalidValue {
+            let model = match e.model {
+                Some(spec) => proto_to_model(&spec)?,
+                None => {
+                    return Err(ConversionError::MissingField {
                         field: "model".to_string(),
-                        value: e.model.clone(),
-                    }
-                })?
+                    });
+                }
             };
             Ok(AppEvent::ToolCallCompleted {
                 name: e.name,
@@ -1317,14 +1330,13 @@ pub fn server_event_to_app_event(
             })
         }
         proto::stream_session_response::Event::ToolCallFailed(e) => {
-            let model = {
-                use std::str::FromStr;
-                steer_core::api::Model::from_str(&e.model).map_err(|_| {
-                    ConversionError::InvalidValue {
+            let model = match e.model {
+                Some(spec) => proto_to_model(&spec)?,
+                None => {
+                    return Err(ConversionError::MissingField {
                         field: "model".to_string(),
-                        value: e.model.clone(),
-                    }
-                })?
+                    });
+                }
             };
             Ok(AppEvent::ToolCallFailed {
                 name: e.name,
@@ -1407,14 +1419,13 @@ pub fn server_event_to_app_event(
             })
         }
         proto::stream_session_response::Event::ModelChanged(e) => {
-            let model = {
-                use std::str::FromStr;
-                steer_core::api::Model::from_str(&e.model).map_err(|_| {
-                    ConversionError::InvalidValue {
+            let model = match e.model {
+                Some(spec) => proto_to_model(&spec)?,
+                None => {
+                    return Err(ConversionError::MissingField {
                         field: "model".to_string(),
-                        value: e.model.clone(),
-                    }
-                })?
+                    });
+                }
             };
             Ok(AppEvent::ModelChanged { model })
         }
