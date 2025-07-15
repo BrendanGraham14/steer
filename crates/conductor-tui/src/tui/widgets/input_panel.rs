@@ -548,15 +548,22 @@ impl<'a> InputPanel<'a> {
                 }
             }
             InputMode::VimNormal => {
-                spans.extend(format_keybinds(
-                    &[
-                        ("i", "insert"),
-                        (":", "command"),
-                        ("hjkl", "move"),
-                        ("e", "edit previous"),
-                    ],
-                    self.theme,
-                ));
+                if state.content().is_empty() {
+                    spans.extend(format_keybinds(
+                        &[
+                            ("i", "insert"),
+                            ("ESC ESC", "edit previous"),
+                            ("!", "bash"),
+                            ("/", "command"),
+                        ],
+                        self.theme,
+                    ));
+                } else {
+                    spans.extend(format_keybinds(
+                        &[("i", "insert"), ("ESC ESC", "clear"), ("hjkl", "move")],
+                        self.theme,
+                    ));
+                }
             }
             InputMode::VimInsert => {
                 spans.extend(format_keybinds(
