@@ -359,9 +359,21 @@ impl Tui {
             // Other commands
             KeyCode::Char('e') => self.enter_edit_selection_mode(),
             KeyCode::Char('/') => {
+                // Switch to command mode with fuzzy finder like Simple/VimInsert modes
                 self.input_panel_state.clear();
                 self.input_panel_state.insert_str("/");
-                self.set_mode(InputMode::VimInsert);
+                // Activate command fuzzy finder immediately
+                self.input_panel_state.activate_command_fuzzy();
+                self.switch_mode(InputMode::FuzzyFinder);
+
+                // Populate results with all commands initially
+                let results: Vec<String> = self
+                    .command_registry
+                    .all_commands()
+                    .into_iter()
+                    .map(|cmd| cmd.name.to_string())
+                    .collect();
+                self.input_panel_state.fuzzy_finder.update_results(results);
             }
             KeyCode::Char('!') => {
                 self.input_panel_state.clear();
