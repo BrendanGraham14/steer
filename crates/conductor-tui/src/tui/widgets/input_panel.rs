@@ -441,15 +441,22 @@ impl InputPanelState {
         let input = Input::from(key);
         self.textarea.input(input);
 
-        // After input, check if we are still in a valid query.
-        // If so, update results. If not, the finder should close.
-        if let Some(query) = self.get_current_fuzzy_query() {
-            let results = self.file_cache.fuzzy_search(&query, Some(10)).await;
-            self.fuzzy_finder.update_results(results);
-            None // Not a final result, just an update
+        // After input, handle result updates based on the active fuzzy finder mode.
+        use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
+
+        if self.fuzzy_finder.mode() == FuzzyFinderMode::Files {
+            // For file search, update results or close if the query is no longer valid
+            if let Some(query) = self.get_current_fuzzy_query() {
+                let results = self.file_cache.fuzzy_search(&query, Some(10)).await;
+                self.fuzzy_finder.update_results(results);
+                None // Query updated; stay active
+            } else {
+                // Query became invalid (e.g., whitespace typed) – request close
+                Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close)
+            }
         } else {
-            // No longer a valid query, signal to close.
-            Some(crate::tui::widgets::fuzzy_finder::FuzzyFinderResult::Close)
+            // For other modes (Commands, Models, Themes) the Tui handler deals with closing logic.
+            None
         }
     }
 
