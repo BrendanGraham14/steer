@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-use steer_core::api::ProviderKind;
+use steer_core::config::provider::{AuthScheme, ProviderId};
 
 pub struct AuthenticationWidget;
 
@@ -15,7 +15,7 @@ impl AuthenticationWidget {
         area: Rect,
         buf: &mut Buffer,
         state: &SetupState,
-        provider: ProviderKind,
+        provider_id: ProviderId,
         theme: &Theme,
     ) {
         let chunks = Layout::default()
@@ -29,7 +29,13 @@ impl AuthenticationWidget {
             .split(area);
 
         // Header
-        let provider_name = provider.display_name();
+        let provider_config = state.registry.get(&provider_id);
+        let provider_name = provider_config
+            .map(|c| c.name.as_str())
+            .unwrap_or("Unknown Provider");
+        let supports_oauth = provider_config
+            .map(|c| c.auth_schemes.contains(&AuthScheme::Oauth2))
+            .unwrap_or(false);
 
         let header = vec![
             Line::from(""),
@@ -98,10 +104,11 @@ impl AuthenticationWidget {
                     ),
                 ]));
             }
-        } else if provider == ProviderKind::Anthropic
+        } else if supports_oauth
+            && provider_id == ProviderId::Anthropic
             && state.api_key_input.is_empty()
             && state.oauth_state.is_none()
-            && state.auth_providers.get(&provider)
+            && state.auth_providers.get(&provider_id)
                 != Some(&crate::tui::state::AuthStatus::InProgress)
         {
             // Anthropic - show auth options
@@ -137,7 +144,7 @@ impl AuthenticationWidget {
                 Span::styled(masked_key, theme.style(Component::SetupInputValue)),
             ]));
 
-            if provider == ProviderKind::Anthropic {
+            if provider_id == ProviderId::Anthropic {
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
                     "Tip: Get your API key from console.anthropic.com",
@@ -179,7 +186,10 @@ impl AuthenticationWidget {
                 Span::styled("Esc", theme.style(Component::SetupKeyBinding)),
                 Span::raw(" to cancel"),
             ])]
-        } else if provider == ProviderKind::Anthropic && state.api_key_input.is_empty() {
+        } else if supports_oauth
+            && provider_id == ProviderId::Anthropic
+            && state.api_key_input.is_empty()
+        {
             vec![Line::from(vec![
                 Span::raw("Press "),
                 Span::styled("1", theme.style(Component::SetupKeyBinding)),
