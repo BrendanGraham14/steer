@@ -1,0 +1,64 @@
+# Default model configurations for Conductor
+
+[[models]]
+provider = "anthropic"
+id = "claude-3-5-sonnet-20241022"
+aliases = ["claude-3.5-sonnet", "sonnet", "claude"]
+recommended = true
+supports_thinking = false
+
+[[models]]
+provider = "anthropic"
+id = "claude-3-5-haiku-20241022"
+aliases = ["claude-3.5-haiku", "haiku"]
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "anthropic"
+id = "claude-3-opus-20240229"
+aliases = ["claude-3-opus", "opus"]
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "openai"
+id = "gpt-4-turbo-preview"
+aliases = ["gpt-4-turbo", "gpt-4t"]
+recommended = true
+supports_thinking = false
+
+[[models]]
+provider = "openai"
+id = "gpt-4"
+aliases = []
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "openai"
+id = "gpt-3.5-turbo"
+aliases = ["gpt-3.5"]
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "gemini"
+id = "gemini-1.5-pro"
+aliases = ["gemini-pro"]
+recommended = true
+supports_thinking = false
+
+[[models]]
+provider = "gemini"
+id = "gemini-1.5-flash"
+aliases = ["gemini-flash"]
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "xai"
+id = "grok-beta"
+aliases = ["grok"]
+recommended = true
+supports_thinking = false
