@@ -1,12 +1,14 @@
 use crate::tui::commands::{CoreCommandType, TuiCommandType};
+use crate::tui::custom_commands::{CustomCommand, load_custom_commands};
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use std::collections::HashMap;
 use strum::IntoEnumIterator;
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
 pub struct CommandInfo {
     pub name: String,
-    pub description: &'static str,
+    pub description: String,
     pub usage: String,
     pub scope: CommandScope,
 }
@@ -17,6 +19,8 @@ pub enum CommandScope {
     TuiOnly,
     /// Commands that require server/core support
     Core,
+    /// Custom user-defined commands
+    Custom(CustomCommand),
 }
 
 /// Registry of all available slash commands
@@ -34,7 +38,7 @@ impl CommandRegistry {
                 cmd_type.command_name(),
                 CommandInfo {
                     name: cmd_type.command_name(),
-                    description: cmd_type.description(),
+                    description: cmd_type.description().to_string(),
                     usage: cmd_type.usage(),
                     scope: CommandScope::TuiOnly,
                 },
@@ -47,11 +51,38 @@ impl CommandRegistry {
                 cmd_type.command_name(),
                 CommandInfo {
                     name: cmd_type.command_name(),
-                    description: cmd_type.description(),
+                    description: cmd_type.description().to_string(),
                     usage: cmd_type.usage(),
                     scope: CommandScope::Core,
                 },
             );
+        }
+
+        // Load custom commands
+        match load_custom_commands() {
+            Ok(custom_commands) => {
+                debug!("Loading {} custom commands", custom_commands.len());
+                for custom_cmd in custom_commands {
+                    let display_name = custom_cmd.name().to_string();
+                    debug!(
+                        "Registering custom command: {} - {}",
+                        display_name.clone(),
+                        custom_cmd.description()
+                    );
+                    commands.insert(
+                        display_name.clone(),
+                        CommandInfo {
+                            name: display_name.clone(),
+                            description: custom_cmd.description().to_string(),
+                            usage: format!("/{display_name}"),
+                            scope: CommandScope::Custom(custom_cmd),
+                        },
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("Failed to load custom commands: {}", e);
+            }
         }
 
         CommandRegistry { commands }
@@ -78,7 +109,7 @@ impl CommandRegistry {
             .filter_map(|cmd| {
                 // Match against both command name and description
                 let name_score = matcher.fuzzy_match(&cmd.name, query).unwrap_or(0);
-                let desc_score = matcher.fuzzy_match(cmd.description, query).unwrap_or(0);
+                let desc_score = matcher.fuzzy_match(&cmd.description, query).unwrap_or(0);
 
                 // Use the higher score between name and description
                 let best_score = name_score.max(desc_score);

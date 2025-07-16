@@ -1,6 +1,7 @@
 //! Theme loading functionality
 
 use super::{RawTheme, Theme, ThemeError};
+use directories::ProjectDirs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -56,14 +57,13 @@ impl ThemeLoader {
     pub fn new() -> Self {
         let mut search_paths = Vec::new();
 
-        // Add XDG config directory
-        if let Some(xdg_config) = dirs::config_dir() {
-            search_paths.push(xdg_config.join("conductor/themes"));
-        }
+        // Add paths from directories crate
+        if let Some(proj_dirs) = ProjectDirs::from("", "", "conductor") {
+            // Config directory (e.g., ~/.config/conductor/themes on Linux)
+            search_paths.push(proj_dirs.config_dir().join("themes"));
 
-        // Add home directory fallback
-        if let Some(home) = dirs::home_dir() {
-            search_paths.push(home.join(".config/conductor/themes"));
+            // Data directory as fallback (e.g., ~/.local/share/conductor/themes on Linux)
+            search_paths.push(proj_dirs.data_dir().join("themes"));
         }
 
         Self { search_paths }
