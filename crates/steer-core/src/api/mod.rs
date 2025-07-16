@@ -9,6 +9,7 @@ pub mod xai;
 
 use crate::auth::ProviderRegistry;
 use crate::auth::storage::{Credential, CredentialType};
+use crate::config::model::ModelId;
 use crate::config::{ApiAuth, LlmConfigProvider};
 use crate::error::Result;
 pub use error::ApiError;
@@ -96,6 +97,7 @@ pub enum Model {
 
 impl Model {
     /// Returns true if this model should be shown in the model picker UI
+    #[deprecated(note = "Use ModelRegistry::recommended() instead")]
     pub fn should_show(&self) -> bool {
         matches!(
             self,
@@ -114,12 +116,14 @@ impl Model {
         )
     }
 
+    #[deprecated(note = "Use ModelRegistry::recommended() instead")]
     pub fn iter_recommended() -> impl Iterator<Item = Model> {
         use strum::IntoEnumIterator;
         Model::iter().filter(|m| m.should_show())
     }
 
     /// Returns the provider ID for this model.
+    #[deprecated(note = "Use ModelId conversion and ModelRegistry instead")]
     pub fn provider_id(&self) -> crate::config::provider::ProviderId {
         use crate::config::provider::ProviderId;
         match self {
@@ -148,6 +152,7 @@ impl Model {
         }
     }
 
+    #[deprecated(note = "Use ModelRegistry::by_alias() instead")]
     pub fn aliases(&self) -> Vec<&'static str> {
         match self {
             Model::ClaudeSonnet4_20250514 => vec!["sonnet"],
@@ -166,6 +171,7 @@ impl Model {
         }
     }
 
+    #[deprecated(note = "Use ModelRegistry::get() instead")]
     pub fn supports_thinking(&self) -> bool {
         matches!(
             self,
@@ -187,9 +193,57 @@ impl Model {
     }
 
     /// Get all available models
+    #[deprecated(note = "Use ModelRegistry instead")]
     pub fn all() -> Vec<Model> {
         use strum::IntoEnumIterator;
         Model::iter().collect()
+    }
+}
+
+impl From<Model> for ModelId {
+    fn from(model: Model) -> Self {
+        use crate::config::provider::ProviderId;
+
+        let provider_id = match model {
+            Model::Claude3_7Sonnet20250219
+            | Model::Claude3_5Sonnet20240620
+            | Model::Claude3_5Sonnet20241022
+            | Model::Claude3_5Haiku20241022
+            | Model::ClaudeSonnet4_20250514
+            | Model::ClaudeOpus4_20250514 => ProviderId::Anthropic,
+
+            Model::Gpt4_1_20250414
+            | Model::Gpt4_1Mini20250414
+            | Model::Gpt4_1Nano20250414
+            | Model::O3_20250416
+            | Model::O3Pro20250610
+            | Model::O4Mini20250416 => ProviderId::Openai,
+
+            Model::Gemini2_5FlashPreview0417
+            | Model::Gemini2_5ProPreview0506
+            | Model::Gemini2_5ProPreview0605 => ProviderId::Gemini,
+
+            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderId::Xai,
+        };
+
+        (provider_id, model.as_ref().to_string())
+    }
+}
+
+impl TryFrom<ModelId> for Model {
+    type Error = crate::error::Error;
+
+    fn try_from(model_id: ModelId) -> Result<Self> {
+        use std::str::FromStr;
+
+        let (provider, id) = model_id;
+
+        // Try to parse the model ID string
+        Model::from_str(&id).map_err(|_| {
+            crate::error::Error::Api(ApiError::Configuration(format!(
+                "Unknown model ID: {provider:?}/{id}"
+            )))
+        })
     }
 }
 
@@ -198,6 +252,7 @@ pub struct Client {
     provider_map: Arc<RwLock<HashMap<Model, Arc<dyn Provider>>>>,
     config_provider: LlmConfigProvider,
     provider_registry: Arc<ProviderRegistry>,
+    model_registry: Arc<ModelRegistry>,
 }
 
 impl Client {
@@ -206,10 +261,15 @@ impl Client {
         let provider_registry =
             Arc::new(ProviderRegistry::load().expect("Failed to load provider registry"));
 
+        // Load the model registry
+        let model_registry =
+            Arc::new(ModelRegistry::load().expect("Failed to load model registry"));
+
         Self {
             provider_map: Arc::new(RwLock::new(HashMap::new())),
             config_provider: provider,
             provider_registry,
+            model_registry,
         }
     }
 
