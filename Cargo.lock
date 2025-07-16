@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-cli"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-core"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-grpc"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-macros"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-proto"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "prost",
  "prost-types",
@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-remote-workspace"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "clap",
  "conductor-grpc",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-tools"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-tui"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-workspace"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-workspace-client"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "conductor-proto",

@@ -1,6 +1,6 @@
 [package]
 name = "conductor-tui"
-version = "0.1.1"
+version = "0.1.0"
 edition = "2024"
 description = "Terminal UI library for Conductor"
 

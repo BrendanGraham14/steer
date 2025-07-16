@@ -1,6 +1,6 @@
 [package]
 name = "conductor-cli"
-version = "0.1.1"
+version = "0.1.0"
 edition = "2024"
 description = "Command-line interface for Conductor coding agent."
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]

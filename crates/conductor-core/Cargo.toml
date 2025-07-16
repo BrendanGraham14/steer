@@ -1,6 +1,6 @@
 [package]
 name = "conductor-core"
-version = "0.1.1"
+version = "0.1.0"
 edition = "2024"
 description = "Core logic for Conductor (non-UI)"
 license = "MIT"
