@@ -50,6 +50,7 @@ pub enum AppCommand {
         messages: Vec<Message>,
         approved_tools: HashSet<String>,
         approved_bash_patterns: HashSet<String>,
+        active_message_id: Option<String>,
     },
     /// Request to send the current conversation state
     /// Used by TUI to populate display after session restoration

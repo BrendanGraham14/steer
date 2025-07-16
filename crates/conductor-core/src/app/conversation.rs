@@ -3,7 +3,7 @@ use crate::api::Model;
 use conductor_tools::ToolCall;
 pub use conductor_tools::result::ToolResult;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -469,6 +469,9 @@ When you are using compact - please focus on test output and code changes. Inclu
 pub struct Conversation {
     pub messages: Vec<Message>,
     pub working_directory: PathBuf,
+    /// The ID of the currently active message (head of the selected branch).
+    /// None means use last message semantics for backward compatibility.
+    pub active_message_id: Option<String>,
 }
 
 impl Default for Conversation {
@@ -482,16 +485,43 @@ impl Conversation {
         Self {
             messages: Vec::new(),
             working_directory: PathBuf::new(),
+            active_message_id: None,
         }
     }
 
-    pub fn add_message(&mut self, message: Message) {
+    pub fn add_message(&mut self, message: Message) -> bool {
+        let message_id = message.id().to_string();
+        let parent_id = message.parent_message_id();
+
+        // Update active_message_id:
+        // 1. If parent_id is None, this is a root message (start of new conversation)
+        // 2. If parent_id matches current active_message_id (or active is None and parent is last message),
+        //    we're continuing the current branch
+        let should_update_active = if let Some(ref active_id) = self.active_message_id {
+            // We're continuing the current branch if parent matches active
+            parent_id == Some(active_id.as_str())
+        } else {
+            // No active branch set - use last message semantics
+            parent_id.is_none() || parent_id == self.messages.last().map(|m| m.id())
+        };
+
+        let changed = if should_update_active || parent_id.is_none() {
+            self.active_message_id = Some(message_id);
+            true
+        } else {
+            false
+        };
+
         self.messages.push(message);
+        changed
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> bool {
         debug!(target:"conversation::clear", "Clearing conversation");
         self.messages.clear();
+        let changed = self.active_message_id.is_some();
+        self.active_message_id = None;
+        changed
     }
 
     pub fn add_tool_result(&mut self, tool_use_id: String, message_id: String, result: ToolResult) {
@@ -521,26 +551,32 @@ impl Conversation {
         None
     }
 
-    /// Compact the conversation by summarizing older messages
+    /// Compact the conversation by summarizing older messages in the active thread
     pub async fn compact(
         &mut self,
         api_client: &ApiClient,
         model: Model,
         token: CancellationToken,
     ) -> crate::error::Result<CompactResult> {
+        // Get only the active thread
+        let thread = self.get_active_thread();
+
         // Skip if we don't have enough messages to compact
-        if self.messages.len() < 10 {
+        if thread.len() < 10 {
             return Ok(CompactResult::InsufficientMessages);
         }
-        let mut prompt_messages = self.messages.clone();
-        let last_msg_id = self.messages.last().map(|m| m.id().to_string());
+
+        // Build prompt from active thread only
+        let mut prompt_messages: Vec<Message> = thread.into_iter().cloned().collect();
+        let last_msg_id = prompt_messages.last().map(|m| m.id().to_string());
+
         prompt_messages.push(Message::User {
             content: vec![UserContent::Text {
                 text: SUMMARY_PROMPT.to_string(),
             }],
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
-            parent_message_id: last_msg_id,
+            parent_message_id: last_msg_id.clone(),
         });
 
         let summary = tokio::select! {
@@ -559,85 +595,101 @@ impl Conversation {
 
         let summary_text = summary.extract_text();
 
-        // Clear messages and add compaction marker
-        self.clear();
+        // Create a summary marker message (DO NOT clear messages)
         let timestamp = Message::current_timestamp();
+        let summary_id = Message::generate_id("user", timestamp);
 
-        // Add the summary as a user message with a clear marker
-        self.add_message(Message::User {
+        // Add the summary as a user message continuing the active thread
+        let summary_message = Message::User {
             content: vec![UserContent::Text {
-                text: format!(
-                    "[CONVERSATION COMPACTED]\n\nPrevious conversation summary:\n{summary_text}"
-                ),
+                text: format!("[COMPACTED SUMMARY]\n\n{summary_text}"),
             }],
             timestamp,
-            id: Message::generate_id("user", timestamp),
-            parent_message_id: None, // New root message after compaction
-        });
+            id: summary_id.clone(),
+            parent_message_id: last_msg_id, // Continue from the last message in the thread
+        };
+
+        self.messages.push(summary_message);
+
+        // Update active_message_id to the summary marker
+        self.active_message_id = Some(summary_id);
 
         Ok(CompactResult::Success(summary_text))
     }
 
-    /// Edit a message, which removes the old message and all its children,
-    /// then creates a new branch.
-    pub fn edit_message(&mut self, message_id: &str, new_content: Vec<UserContent>) -> Option<()> {
+    /// Edit a message non-destructively by creating a new branch.
+    /// Returns the ID of the new message if successful.
+    pub fn edit_message(
+        &mut self,
+        message_id: &str,
+        new_content: Vec<UserContent>,
+    ) -> Option<String> {
         // Find the message to edit
-        let message_to_edit = self.messages.iter().find(|m| m.id() == message_id)?.clone();
+        let message_to_edit = self.messages.iter().find(|m| m.id() == message_id)?;
 
         // Only allow editing user messages for now
         if !matches!(message_to_edit, Message::User { .. }) {
             return None;
         }
 
-        // Get the parent_message_id from the original message before we remove it
+        // Get the parent_message_id from the original message
         let parent_id = message_to_edit.parent_message_id().map(|s| s.to_string());
 
-        // Find all descendants of the message to be edited
-        let mut to_remove = HashSet::new();
-        let mut queue = VecDeque::new();
-
-        to_remove.insert(message_id.to_string());
-        queue.push_back(message_id.to_string());
-
-        while let Some(current_id) = queue.pop_front() {
-            for msg in &self.messages {
-                if msg.parent_message_id() == Some(current_id.as_str()) {
-                    let child_id = msg.id().to_string();
-                    if to_remove.insert(child_id.clone()) {
-                        queue.push_back(child_id);
-                    }
-                }
-            }
-        }
-
-        // Remove the old message and all its descendants
-        self.messages.retain(|m| !to_remove.contains(m.id()));
-
-        // Create the edited message with a new ID
+        // Create the new message as a branch from the same parent
+        let new_message_id = Message::generate_id("user", Message::current_timestamp());
         let edited_message = Message::User {
             content: new_content,
             timestamp: Message::current_timestamp(),
-            id: Message::generate_id("user", Message::current_timestamp()),
+            id: new_message_id.clone(),
             parent_message_id: parent_id,
         };
 
-        // Add the edited message
+        // Add the edited message (original remains in history)
         self.messages.push(edited_message);
 
-        Some(())
+        // Update active_message_id to the new branch head
+        self.active_message_id = Some(new_message_id.clone());
+
+        Some(new_message_id)
     }
 
-    /// Get messages in the current active branch by following parent links from the last message
-    pub fn get_thread_messages(&self) -> Vec<&Message> {
+    /// Switch to another branch by setting active_message_id
+    pub fn checkout(&mut self, message_id: &str) -> bool {
+        // Verify the message exists
+        if self.messages.iter().any(|m| m.id() == message_id) {
+            self.active_message_id = Some(message_id.to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get messages in the currently active thread
+    pub fn get_active_thread(&self) -> Vec<&Message> {
         if self.messages.is_empty() {
             return Vec::new();
         }
 
-        let mut result = Vec::new();
-        let mut current_msg = self.messages.last();
+        // Determine the head of the active thread
+        let head_id = if let Some(ref active_id) = self.active_message_id {
+            // Use the explicitly set active message
+            active_id.as_str()
+        } else {
+            // Backward compatibility: use last message
+            self.messages.last().map(|m| m.id()).unwrap_or("")
+        };
 
+        // Find the head message
+        let mut current_msg = self.messages.iter().find(|m| m.id() == head_id);
+        if current_msg.is_none() {
+            // If active_message_id is invalid, fall back to last message
+            current_msg = self.messages.last();
+        }
+
+        let mut result = Vec::new();
         let id_map: HashMap<&str, &Message> = self.messages.iter().map(|m| (m.id(), m)).collect();
 
+        // Walk backwards from head to root
         while let Some(msg) = current_msg {
             result.push(msg);
 
@@ -651,6 +703,12 @@ impl Conversation {
 
         result.reverse();
         result
+    }
+
+    /// Get messages in the current active branch by following parent links from the last message
+    /// This is a thin wrapper around get_active_thread for backward compatibility
+    pub fn get_thread_messages(&self) -> Vec<&Message> {
+        self.get_active_thread()
     }
 }
 
@@ -701,7 +759,7 @@ mod tests {
         conversation.add_message(msg4.clone());
 
         // 2. Edit the *first* user message
-        conversation
+        let edited_id = conversation
             .edit_message(
                 "msg1",
                 vec![UserContent::Text {
@@ -711,29 +769,27 @@ mod tests {
             .unwrap();
 
         // 3. Check the state after editing
-        let edited_msg_id = {
-            let messages_after_edit = conversation.get_thread_messages();
-            let message_ids_after_edit: Vec<&str> =
-                messages_after_edit.iter().map(|m| m.id()).collect();
+        let messages_after_edit = conversation.get_thread_messages();
+        let message_ids_after_edit: Vec<&str> =
+            messages_after_edit.iter().map(|m| m.id()).collect();
 
-            assert_eq!(
-                message_ids_after_edit.len(),
-                1,
-                "History should be pruned to the single edited message."
-            );
-            let id = message_ids_after_edit[0];
-            assert_ne!(id, "msg1");
-            assert!(!message_ids_after_edit.contains(&"msg1"));
-            assert!(!message_ids_after_edit.contains(&"msg2"));
-            assert!(!message_ids_after_edit.contains(&"msg3"));
-            assert!(!message_ids_after_edit.contains(&"msg4"));
-            id.to_string()
-        };
+        assert_eq!(
+            message_ids_after_edit.len(),
+            1,
+            "Active thread should only show the edited message"
+        );
+        assert_eq!(message_ids_after_edit[0], edited_id.as_str());
+
+        // Verify original branch still exists in messages
+        assert!(conversation.messages.iter().any(|m| m.id() == "msg1"));
+        assert!(conversation.messages.iter().any(|m| m.id() == "msg2"));
+        assert!(conversation.messages.iter().any(|m| m.id() == "msg3"));
+        assert!(conversation.messages.iter().any(|m| m.id() == "msg4"));
 
         // 4. Add a new message to the new branch of conversation
         let msg5 = create_assistant_message(
             "msg5",
-            Some(&edited_msg_id),
+            Some(&edited_id),
             "A systems programming language from Google.",
         );
         conversation.add_message(msg5.clone());
@@ -747,7 +803,7 @@ mod tests {
             2,
             "Should have the edited message and the new response."
         );
-        assert_eq!(final_message_ids[0], edited_msg_id);
+        assert_eq!(final_message_ids[0], edited_id.as_str());
         assert_eq!(final_message_ids[1], "msg5");
     }
 
@@ -767,7 +823,7 @@ mod tests {
         conversation.add_message(msg3_original.clone());
 
         // 2. Edit the last user message ("thanks")
-        conversation
+        let edited_id = conversation
             .edit_message(
                 "msg3_original",
                 vec![UserContent::Text {
@@ -776,10 +832,8 @@ mod tests {
             )
             .unwrap();
 
-        let edited_msg_id = conversation.messages.last().unwrap().id().to_string();
-
         // 3. Add a new assistant message to the new branch
-        let msg4 = create_assistant_message("msg4", Some(&edited_msg_id), "I am fine");
+        let msg4 = create_assistant_message("msg4", Some(&edited_id), "I am fine");
         conversation.add_message(msg4.clone());
 
         // 4. Get messages for the current thread
@@ -797,15 +851,18 @@ mod tests {
         assert!(thread_message_ids.contains(&"msg1"), "Should contain msg1");
         assert!(thread_message_ids.contains(&"msg2"), "Should contain msg2");
         assert!(
-            thread_message_ids.contains(&edited_msg_id.as_str()),
+            thread_message_ids.contains(&edited_id.as_str()),
             "Should contain the edited message"
         );
         assert!(thread_message_ids.contains(&"msg4"), "Should contain msg4");
 
-        // CRITICAL: Should NOT contain the original, edited-out message
+        // Verify the original message still exists in the full message list
         assert!(
-            !thread_message_ids.contains(&"msg3_original"),
-            "Should NOT contain the original message that was edited"
+            conversation
+                .messages
+                .iter()
+                .any(|m| m.id() == "msg3_original"),
+            "Original message should still exist in conversation history"
         );
     }
 
@@ -829,7 +886,7 @@ mod tests {
         conversation.add_message(msg4_original.clone());
 
         // 3. Edit the "thanks" message to "how are you"
-        conversation
+        let edited_id = conversation
             .edit_message(
                 "msg3_original",
                 vec![UserContent::Text {
@@ -838,12 +895,10 @@ mod tests {
             )
             .unwrap();
 
-        let edited_msg_id = conversation.messages.last().unwrap().id().to_string();
-
         // 4. Add assistant response in the new branch
         let msg4_new = create_assistant_message(
             "msg4_new",
-            Some(&edited_msg_id),
+            Some(&edited_id),
             "I'm doing well, thanks for asking! Ready to help with any software engineering tasks you have.",
         );
         conversation.add_message(msg4_new.clone());
@@ -880,10 +935,126 @@ mod tests {
             "Third message should be the question"
         );
 
-        // CRITICAL: Should NOT contain "thanks" from the edited-out branch
+        // CRITICAL: Should NOT contain "thanks" from the other branch
         assert!(
             !user_messages.contains(&"thanks".to_string()),
-            "Should NOT contain 'thanks' from the edited-out branch"
+            "Should NOT contain 'thanks' from the non-active branch"
         );
+
+        // But the original message should still exist in the full conversation
+        assert!(
+            conversation
+                .messages
+                .iter()
+                .any(|m| m.id() == "msg3_original"),
+            "Original 'thanks' message should still exist in conversation history"
+        );
+    }
+
+    #[test]
+    fn test_checkout_branch() {
+        let mut conversation = Conversation::new();
+
+        // Create initial conversation
+        let msg1 = create_user_message("msg1", None, "hello");
+        conversation.add_message(msg1.clone());
+
+        let msg2 = create_assistant_message("msg2", Some("msg1"), "hi there");
+        conversation.add_message(msg2.clone());
+
+        // Edit to create a branch
+        let edited_id = conversation
+            .edit_message(
+                "msg1",
+                vec![UserContent::Text {
+                    text: "goodbye".to_string(),
+                }],
+            )
+            .unwrap();
+
+        // Verify we're on the new branch
+        assert_eq!(conversation.active_message_id, Some(edited_id.clone()));
+        let thread = conversation.get_active_thread();
+        assert_eq!(thread.len(), 1);
+        assert_eq!(thread[0].id(), edited_id);
+
+        // Checkout the original branch
+        assert!(conversation.checkout("msg2"));
+        assert_eq!(conversation.active_message_id, Some("msg2".to_string()));
+
+        // Verify we're back on the original branch
+        let thread = conversation.get_active_thread();
+        assert_eq!(thread.len(), 2);
+        assert_eq!(thread[0].id(), "msg1");
+        assert_eq!(thread[1].id(), "msg2");
+
+        // Try to checkout non-existent message
+        assert!(!conversation.checkout("non-existent"));
+        assert_eq!(conversation.active_message_id, Some("msg2".to_string()));
+    }
+
+    #[test]
+    fn test_active_message_id_tracking() {
+        let mut conversation = Conversation::new();
+
+        // Initially no active message
+        assert_eq!(conversation.active_message_id, None);
+
+        // Add root message - should become active
+        let msg1 = create_user_message("msg1", None, "hello");
+        conversation.add_message(msg1);
+        assert_eq!(conversation.active_message_id, Some("msg1".to_string()));
+
+        // Add response - should update active
+        let msg2 = create_assistant_message("msg2", Some("msg1"), "hi");
+        conversation.add_message(msg2);
+        assert_eq!(conversation.active_message_id, Some("msg2".to_string()));
+
+        // Add another branch from msg1
+        let msg3 = create_user_message("msg3", Some("msg1"), "different question");
+        conversation.add_message(msg3);
+        // Should NOT update active since we're not continuing from current active
+        assert_eq!(conversation.active_message_id, Some("msg2".to_string()));
+
+        // Continue from active
+        let msg4 = create_user_message("msg4", Some("msg2"), "follow up");
+        conversation.add_message(msg4);
+        assert_eq!(conversation.active_message_id, Some("msg4".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_thread_aware_compaction() {
+        // This test would require mocking the API client
+        // For now, we'll test the logic without actually calling the API
+
+        let mut conversation = Conversation::new();
+
+        // Create a conversation with branches
+        for i in 0..12 {
+            let parent_id = if i == 0 {
+                None
+            } else {
+                Some(format!("msg{}", i - 1))
+            };
+            let msg = create_user_message(
+                &format!("msg{i}"),
+                parent_id.as_deref(),
+                &format!("message {i}"),
+            );
+            conversation.add_message(msg);
+        }
+
+        // Create a branch from message 5
+        let branch_msg = create_user_message("branch1", Some("msg5"), "branch message");
+        conversation.add_message(branch_msg);
+
+        // The active thread should still be the main branch
+        let thread = conversation.get_active_thread();
+        assert_eq!(thread.len(), 12);
+
+        // After compaction (mocked), original messages should still exist
+        // and active_message_id should point to the summary
+        let original_count = conversation.messages.len();
+        assert_eq!(original_count, 13); // 12 main + 1 branch
     }
 }

@@ -66,6 +66,13 @@ pub trait SessionStore: Send + Sync {
         session_id: &str,
         before_sequence: u64,
     ) -> Result<u64, SessionStoreError>;
+
+    // Active message tracking
+    async fn update_active_message_id(
+        &self,
+        session_id: &str,
+        message_id: Option<&str>,
+    ) -> Result<(), SessionStoreError>;
 }
 
 /// Filter for listing sessions

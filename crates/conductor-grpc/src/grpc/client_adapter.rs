@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use conductor_core::error::Result;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use tonic::transport::Channel;
