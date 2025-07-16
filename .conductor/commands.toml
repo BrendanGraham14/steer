@@ -1,0 +1,5 @@
+[[commands]]
+type = "prompt"
+name = "review"
+description = "Code review"
+prompt = "Review the changes for potential issues, omissions, or smells."

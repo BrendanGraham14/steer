@@ -1052,7 +1052,7 @@ dependencies = [
  "conductor-grpc",
  "conductor-proto",
  "conductor-tools",
- "dirs 6.0.0",
+ "directories",
  "fuzzy-matcher",
  "http 1.3.1",
  "indexmap 2.10.0",
@@ -1421,6 +1421,15 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]

@@ -1,9 +1,10 @@
 pub mod registry;
 
+use crate::tui::custom_commands::CustomCommand;
 use conductor_core::app::conversation::{AppCommandType as CoreCommand, SlashCommandError};
 use std::fmt;
 use std::str::FromStr;
-use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
+use strum::{Display, EnumIter, IntoEnumIterator};
 use thiserror::Error;
 
 /// Errors that can occur when parsing TUI commands
@@ -16,8 +17,7 @@ pub enum TuiCommandError {
 }
 
 /// TUI-specific commands that don't belong in the core
-#[derive(Debug, Clone, PartialEq, EnumString)]
-#[strum(serialize_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TuiCommand {
     /// Reload files in the TUI
     ReloadFiles,
@@ -29,6 +29,8 @@ pub enum TuiCommand {
     Help(Option<String>),
     /// Switch editing mode
     EditingMode(Option<String>),
+    /// Custom user-defined command
+    Custom(CustomCommand),
 }
 
 /// Enum representing all TUI command types (without parameters)
@@ -191,6 +193,7 @@ impl TuiCommand {
             TuiCommand::EditingMode(Some(mode)) => {
                 format!("{} {}", TuiCommandType::EditingMode.command_name(), mode)
             }
+            TuiCommand::Custom(cmd) => cmd.name().to_string(),
         }
     }
 }
@@ -224,6 +227,8 @@ impl AppCommand {
             }
         }
 
+        // Note: Custom commands will be resolved by the caller using the registry
+        // since we can't access the registry from here
         Err(TuiCommandError::UnknownCommand(command.to_string()))
     }
 

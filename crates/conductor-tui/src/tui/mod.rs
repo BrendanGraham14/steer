@@ -50,6 +50,7 @@ use crate::tui::widgets::chat_list::{ChatList, ChatListState};
 use crate::tui::widgets::{InputPanel, InputPanelState, StatusBar};
 
 pub mod commands;
+pub mod custom_commands;
 pub mod model;
 pub mod state;
 pub mod theme;
@@ -993,11 +994,51 @@ impl Tui {
         Ok(())
     }
 
-    async fn handle_slash_command(&mut self, command: String) -> Result<()> {
+    async fn handle_slash_command(&mut self, command_input: String) -> Result<()> {
         use crate::tui::commands::{AppCommand as TuiAppCommand, TuiCommand, TuiCommandType};
         use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
 
-        let app_cmd = match TuiAppCommand::parse(&command) {
+        // First check if it's a custom command in the registry
+        let cmd_name = command_input
+            .trim()
+            .strip_prefix('/')
+            .unwrap_or(command_input.trim());
+
+        if let Some(cmd_info) = self.command_registry.get(cmd_name) {
+            if let crate::tui::commands::registry::CommandScope::Custom(custom_cmd) =
+                &cmd_info.scope
+            {
+                // Create a TuiCommand::Custom and process it
+                let app_cmd = TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd.clone()));
+                // Process through the normal flow
+                match app_cmd {
+                    TuiAppCommand::Tui(tui_cmd) => {
+                        match tui_cmd {
+                            TuiCommand::Custom(custom_cmd) => {
+                                // Handle custom command based on its type
+                                match custom_cmd {
+                                    crate::tui::custom_commands::CustomCommand::Prompt {
+                                        prompt,
+                                        ..
+                                    } => {
+                                        // Forward prompt directly as user input to avoid recursive slash handling
+                                        self.command_sink
+                                            .send_command(AppCommand::ProcessUserInput(prompt))
+                                            .await?;
+                                    } // Future custom command types can be handled here
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                return Ok(());
+            }
+        }
+
+        // Otherwise try to parse as built-in command
+        let app_cmd = match TuiAppCommand::parse(&command_input) {
             Ok(cmd) => cmd,
             Err(e) => {
                 // Add error notice to chat
@@ -1209,6 +1250,19 @@ impl Tui {
                             ts: time::OffsetDateTime::now_utc(),
                         };
                         self.view_model.chat_store.push(notice);
+                    }
+                    TuiCommand::Custom(custom_cmd) => {
+                        // Handle custom command based on its type
+                        match custom_cmd {
+                            crate::tui::custom_commands::CustomCommand::Prompt {
+                                prompt, ..
+                            } => {
+                                // Forward prompt directly as user input to avoid recursive slash handling
+                                self.command_sink
+                                    .send_command(AppCommand::ProcessUserInput(prompt))
+                                    .await?;
+                            } // Future custom command types can be handled here
+                        }
                     }
                 }
             }
