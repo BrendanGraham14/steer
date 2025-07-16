@@ -449,6 +449,11 @@ pub struct SessionState {
 
     /// Additional runtime metadata
     pub metadata: HashMap<String, String>,
+
+    /// The ID of the currently active message (head of selected branch)
+    /// None means use last message semantics for backward compatibility
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_message_id: Option<String>,
 }
 
 impl SessionState {

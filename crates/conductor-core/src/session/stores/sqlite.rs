@@ -162,7 +162,8 @@ impl SessionStore for SqliteSessionStore {
         let row = sqlx::query(
             r#"
             SELECT id, created_at, updated_at, metadata,
-                   tool_policy_type, pre_approved_tools, tool_config, workspace_config, system_prompt
+                   tool_policy_type, pre_approved_tools, tool_config, workspace_config, system_prompt,
+                   active_message_id
             FROM sessions
             WHERE id = ?1
             "#,
@@ -337,6 +338,9 @@ impl SessionStore for SqliteSessionStore {
                 HashSet::new()
             };
 
+        // Get active_message_id from the row
+        let active_message_id: Option<String> = row.get("active_message_id");
+
         let state = SessionState {
             messages,
             tool_calls,
@@ -344,6 +348,7 @@ impl SessionStore for SqliteSessionStore {
             approved_bash_patterns,
             last_event_sequence: last_sequence.unwrap_or(0) as u64,
             metadata: Default::default(),
+            active_message_id,
         };
 
         Ok(Some(Session {
@@ -1026,6 +1031,24 @@ impl SessionStore for SqliteSessionStore {
             .map_err(|e| SessionStoreError::database(format!("Failed to delete events: {e}")))?;
 
         Ok(result.rows_affected())
+    }
+
+    async fn update_active_message_id(
+        &self,
+        session_id: &str,
+        message_id: Option<&str>,
+    ) -> Result<(), SessionStoreError> {
+        sqlx::query("UPDATE sessions SET active_message_id = ?2, updated_at = ?3 WHERE id = ?1")
+            .bind(session_id)
+            .bind(message_id)
+            .bind(Utc::now())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                SessionStoreError::database(format!("Failed to update active_message_id: {e}"))
+            })?;
+
+        Ok(())
     }
 }
 

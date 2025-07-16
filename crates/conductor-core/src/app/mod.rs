@@ -114,6 +114,9 @@ pub enum AppEvent {
         id: uuid::Uuid,
         outcome: OperationOutcome,
     },
+    ActiveMessageIdChanged {
+        message_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -358,7 +361,8 @@ impl App {
 
     pub async fn add_message(&self, message: Message) {
         let mut conversation_guard = self.conversation.lock().await;
-        conversation_guard.messages.push(message.clone());
+        let changed = conversation_guard.add_message(message.clone());
+        let active_id = conversation_guard.active_message_id.clone();
         drop(conversation_guard);
 
         // Emit event only for non-tool messages
@@ -366,6 +370,13 @@ impl App {
             self.emit_event(AppEvent::MessageAdded {
                 message,
                 model: self.current_model,
+            });
+        }
+
+        // Emit event if active message ID changed
+        if changed {
+            self.emit_event(AppEvent::ActiveMessageIdChanged {
+                message_id: active_id,
             });
         }
     }
@@ -631,9 +642,15 @@ impl App {
 
         match command {
             AppCommandType::Clear => {
-                self.conversation.lock().await.clear();
+                let changed = self.conversation.lock().await.clear();
                 self.approved_tools.write().await.clear(); // Also clear tool approvals
                 self.cached_system_prompt = None; // Clear cached system prompt
+
+                // Emit active message ID change event if it changed
+                if changed {
+                    self.emit_event(AppEvent::ActiveMessageIdChanged { message_id: None });
+                }
+
                 Ok(Some(conversation::CommandResponse::Text(
                     "Conversation and tool approvals cleared.".to_string(),
                 )))
@@ -778,6 +795,14 @@ impl App {
                  return Ok(CompactResult::Cancelled);
              }
         };
+
+        // If compaction succeeded, emit active message ID change event
+        if matches!(result, CompactResult::Success(_)) {
+            let active_id = conversation_arc.lock().await.active_message_id.clone();
+            self.emit_event(AppEvent::ActiveMessageIdChanged {
+                message_id: active_id,
+            });
+        }
 
         info!(target:"App.compact_conversation", "Conversation compacted.");
         Ok(result)
@@ -1228,7 +1253,7 @@ async fn handle_app_command(
             }
 
             // Edit the message in the conversation. This removes the old branch and adds the new one.
-            let (success, edited_message_opt) = {
+            let (new_message_id, edited_message_opt, active_id) = {
                 let mut conversation = app.conversation.lock().await;
                 let result = conversation.edit_message(
                     &message_id,
@@ -1249,7 +1274,7 @@ async fn handle_app_command(
                     None
                 };
 
-                (result.is_some(), edited_msg)
+                (result, edited_msg, conversation.active_message_id.clone())
             };
 
             // Notify the UI about the newly edited user message so it can appear immediately
@@ -1260,8 +1285,13 @@ async fn handle_app_command(
                 });
             }
 
-            if success {
+            if new_message_id.is_some() {
                 debug!(target: "handle_app_command", "Successfully edited message and created new branch");
+
+                // Emit active message ID change event
+                app.emit_event(AppEvent::ActiveMessageIdChanged {
+                    message_id: active_id,
+                });
 
                 // This message is now the latest in the conversation.
                 // We can now start a new agent operation.
@@ -1288,14 +1318,16 @@ async fn handle_app_command(
             messages,
             approved_tools,
             approved_bash_patterns,
+            active_message_id,
         } => {
             // Atomically restore entire conversation state
             debug!(target:"handle_app_command", "Restoring conversation with {} messages, {} approved tools, and {} approved bash patterns",
                 messages.len(), approved_tools.len(), approved_bash_patterns.len());
 
-            // Restore messages
+            // Restore messages and active_message_id
             let mut conversation_guard = app.conversation.lock().await;
             conversation_guard.messages = messages;
+            conversation_guard.active_message_id = active_message_id;
             drop(conversation_guard);
 
             // Restore approved tools

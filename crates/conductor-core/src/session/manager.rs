@@ -146,6 +146,16 @@ impl ManagedSession {
                     warn!(session_id = %session_id, "Failed to send event to external consumer: {}", e);
                 }
 
+                // Handle ActiveMessageIdChanged event specially
+                if let AppEvent::ActiveMessageIdChanged { message_id } = &app_event {
+                    if let Err(e) = store_clone
+                        .update_active_message_id(&session_id, message_id.as_deref())
+                        .await
+                    {
+                        error!(session_id = %session_id, error = %e, "Failed to update active message ID");
+                    }
+                }
+
                 // Translate and persist
                 if let Some(stream_event) = translate_app_event(app_event) {
                     // Persist event
@@ -419,6 +429,7 @@ impl SessionManager {
                 .get_path()
                 .unwrap_or_default()
                 .into(),
+            active_message_id: session.state.active_message_id.clone(),
         };
 
         // Create managed session with event translation
@@ -451,6 +462,7 @@ impl SessionManager {
                     messages: session.state.messages.clone(),
                     approved_tools: session.state.approved_tools.clone(),
                     approved_bash_patterns: session.state.approved_bash_patterns.clone(),
+                    active_message_id: session.state.active_message_id.clone(),
                 })
                 .await
                 .map_err(|_| SessionManagerError::CreationFailed {
@@ -1250,5 +1262,131 @@ mod tests {
         // The session should be properly restored with all messages including tool results
         // If the bug were still present, trying to send a new message would fail with the
         // "tool_use ids were found without tool_result blocks" error from the API
+    }
+
+    #[tokio::test]
+    async fn test_active_message_id_persistence() {
+        let (manager, temp) = create_test_manager().await;
+        let app_config = create_test_app_config();
+
+        // Create session
+        let session_config = SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::Local {
+                path: temp.path().to_path_buf(),
+            },
+            tool_config: crate::session::SessionToolConfig::default(),
+            system_prompt: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        let (session_id, _command_tx) = manager
+            .create_session(session_config, app_config.clone())
+            .await
+            .unwrap();
+
+        // Add some messages directly to the store (simulating a conversation with branches)
+        let msg1 = ConversationMessage::User {
+            content: vec![UserContent::Text {
+                text: "Hello".to_string(),
+            }],
+            timestamp: 1000,
+            id: "msg1".to_string(),
+            parent_message_id: None,
+        };
+
+        let msg2 = ConversationMessage::Assistant {
+            content: vec![AssistantContent::Text {
+                text: "Hi there!".to_string(),
+            }],
+            timestamp: 2000,
+            id: "msg2".to_string(),
+            parent_message_id: Some("msg1".to_string()),
+        };
+
+        // Add a branch - edited version of msg1
+        let msg1_edited = ConversationMessage::User {
+            content: vec![UserContent::Text {
+                text: "Goodbye".to_string(),
+            }],
+            timestamp: 3000,
+            id: "msg1_edited".to_string(),
+            parent_message_id: None, // Same parent as original msg1
+        };
+
+        // Store messages
+        manager
+            .store
+            .append_message(&session_id, &msg1)
+            .await
+            .unwrap();
+        manager
+            .store
+            .append_message(&session_id, &msg2)
+            .await
+            .unwrap();
+        manager
+            .store
+            .append_message(&session_id, &msg1_edited)
+            .await
+            .unwrap();
+
+        // Update active message ID to the edited branch
+        manager
+            .store
+            .update_active_message_id(&session_id, Some("msg1_edited"))
+            .await
+            .unwrap();
+
+        // Suspend the session
+        manager.suspend_session(&session_id).await.unwrap();
+
+        // Load the session back and verify active_message_id was persisted
+        let loaded_session = manager
+            .store
+            .get_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // The active_message_id should be set to the edited message
+        assert_eq!(
+            loaded_session.state.active_message_id,
+            Some("msg1_edited".to_string())
+        );
+
+        // Should have 3 messages total (original 2 + edited version)
+        assert_eq!(loaded_session.state.messages.len(), 3);
+
+        // Verify the edited message exists and has correct content
+        let edited_msg = loaded_session
+            .state
+            .messages
+            .iter()
+            .find(|m| m.id() == "msg1_edited")
+            .expect("Edited message should exist");
+
+        match edited_msg {
+            ConversationMessage::User { content, .. } => {
+                if let Some(UserContent::Text { text }) = content.first() {
+                    assert_eq!(text, "Goodbye");
+                } else {
+                    panic!("Expected text content");
+                }
+            }
+            _ => panic!("Expected user message"),
+        }
+
+        // Resume the session and verify the active_message_id is still correct
+        let _ = manager
+            .resume_session(&session_id, app_config)
+            .await
+            .unwrap();
+
+        // Get the state through the manager's API
+        let state = manager
+            .get_session_state(&session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.active_message_id, Some("msg1_edited".to_string()));
     }
 }

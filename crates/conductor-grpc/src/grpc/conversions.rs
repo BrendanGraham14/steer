@@ -1255,6 +1255,10 @@ pub fn app_event_to_server_event(
                 },
             ))
         }
+        AppEvent::ActiveMessageIdChanged { .. } => {
+            // This event is handled internally for persistence but doesn't need to be streamed
+            None
+        }
     };
 
     Ok(proto::StreamSessionResponse {
