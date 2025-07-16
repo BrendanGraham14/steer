@@ -2,63 +2,126 @@
 
 [[models]]
 provider = "anthropic"
-id = "claude-3-5-sonnet-20241022"
-aliases = ["claude-3.5-sonnet", "sonnet", "claude"]
-recommended = true
+id = "claude-3-5-sonnet-20240620"
+aliases = []
+recommended = false
 supports_thinking = false
+
+[[models]]
+provider = "anthropic"
+id = "claude-3-5-sonnet-20241022"
+aliases = []
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "anthropic"
+id = "claude-3-7-sonnet-20250219"
+aliases = []
+recommended = false
+supports_thinking = true
 
 [[models]]
 provider = "anthropic"
 id = "claude-3-5-haiku-20241022"
-aliases = ["claude-3.5-haiku", "haiku"]
+aliases = []
 recommended = false
 supports_thinking = false
 
 [[models]]
 provider = "anthropic"
-id = "claude-3-opus-20240229"
-aliases = ["claude-3-opus", "opus"]
-recommended = false
-supports_thinking = false
-
-[[models]]
-provider = "openai"
-id = "gpt-4-turbo-preview"
-aliases = ["gpt-4-turbo", "gpt-4t"]
+id = "claude-sonnet-4-20250514"
+aliases = ["sonnet"]
 recommended = true
-supports_thinking = false
+supports_thinking = true
+
+[[models]]
+provider = "anthropic"
+id = "claude-opus-4-20250514"
+aliases = ["opus"]
+recommended = true
+supports_thinking = true
 
 [[models]]
 provider = "openai"
-id = "gpt-4"
+id = "gpt-4.1-2025-04-14"
 aliases = []
 recommended = false
 supports_thinking = false
 
 [[models]]
 provider = "openai"
-id = "gpt-3.5-turbo"
-aliases = ["gpt-3.5"]
+id = "gpt-4.1-mini-2025-04-14"
+aliases = []
 recommended = false
 supports_thinking = false
 
 [[models]]
-provider = "gemini"
-id = "gemini-1.5-pro"
-aliases = ["gemini-pro"]
+provider = "openai"
+id = "gpt-4.1-nano-2025-04-14"
+aliases = []
+recommended = false
+supports_thinking = false
+
+[[models]]
+provider = "openai"
+id = "o3-2025-04-16"
+aliases = ["o3"]
 recommended = true
-supports_thinking = false
+supports_thinking = true
+
+[[models]]
+provider = "openai"
+id = "o3-pro-2025-06-10"
+aliases = ["o3-pro"]
+recommended = true
+supports_thinking = true
+
+[[models]]
+provider = "openai"
+id = "o4-mini-2025-04-16"
+aliases = ["o4-mini"]
+recommended = true
+supports_thinking = true
 
 [[models]]
 provider = "gemini"
-id = "gemini-1.5-flash"
-aliases = ["gemini-flash"]
+id = "gemini-2.5-flash-preview-04-17"
+aliases = []
 recommended = false
+supports_thinking = true
+
+[[models]]
+provider = "gemini"
+id = "gemini-2.5-pro-preview-05-06"
+aliases = []
+recommended = false
+supports_thinking = true
+
+[[models]]
+provider = "gemini"
+id = "gemini-2.5-pro-preview-06-05"
+aliases = ["gemini"]
+recommended = true
+supports_thinking = true
+
+[[models]]
+provider = "xai"
+id = "grok-3"
+aliases = []
+recommended = true
 supports_thinking = false
 
 [[models]]
 provider = "xai"
-id = "grok-beta"
+id = "grok-3-mini"
+aliases = ["grok-mini"]
+recommended = false
+supports_thinking = true
+
+[[models]]
+provider = "xai"
+id = "grok-4-0709"
 aliases = ["grok"]
 recommended = true
-supports_thinking = false
+supports_thinking = true
