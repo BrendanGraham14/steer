@@ -5203,6 +5203,7 @@ dependencies = [
  "base64",
  "chrono",
  "colored",
+ "directories",
  "dirs 5.0.1",
  "dotenvy",
  "futures",

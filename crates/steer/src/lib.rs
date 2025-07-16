@@ -3,7 +3,6 @@ pub mod commands;
 pub mod error;
 pub mod session_config;
 
-// Re-export modules from steer-core
 pub use steer_core::{api, app, config, events, runners, session, tools, utils, workspace};
 
 use eyre::Result;
