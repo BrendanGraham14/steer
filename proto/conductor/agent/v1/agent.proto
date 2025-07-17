@@ -66,6 +66,7 @@ message StreamSessionResponse {
     WorkspaceFilesEvent workspace_files = 17;
     StartedEvent started = 18;
     FinishedEvent finished = 19;
+    ActiveMessageIdChangedEvent active_message_id_changed = 20;
   }
 }
 
@@ -232,6 +233,10 @@ message ErrorEvent {
 
 message OperationCancelledEvent {
   CancellationInfo info = 1;
+}
+
+message ActiveMessageIdChangedEvent {
+  optional string message_id = 1;
 }
 
 // Request/Response message definitions

@@ -1255,10 +1255,11 @@ pub fn app_event_to_server_event(
                 },
             ))
         }
-        AppEvent::ActiveMessageIdChanged { .. } => {
-            // This event is handled internally for persistence but doesn't need to be streamed
-            None
-        }
+        AppEvent::ActiveMessageIdChanged { message_id } => Some(
+            proto::stream_session_response::Event::ActiveMessageIdChanged(
+                proto::ActiveMessageIdChangedEvent { message_id },
+            ),
+        ),
     };
 
     Ok(proto::StreamSessionResponse {
@@ -1576,6 +1577,11 @@ pub fn server_event_to_app_event(
             };
 
             Ok(AppEvent::Finished { id, outcome })
+        }
+        proto::stream_session_response::Event::ActiveMessageIdChanged(e) => {
+            Ok(AppEvent::ActiveMessageIdChanged {
+                message_id: e.message_id,
+            })
         }
     }
 }
