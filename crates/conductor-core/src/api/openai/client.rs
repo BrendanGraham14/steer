@@ -487,7 +487,7 @@ impl Provider for OpenAIClient {
                 frequency_penalty: None,
                 logit_bias: None,
                 logprobs: None,
-                max_completion_tokens: Some(100_000), // May need to tweak based on context window
+                max_completion_tokens: Some(32_000), // May need to tweak based on context window
                 metadata: None,
                 modalities: None,
                 n: None,

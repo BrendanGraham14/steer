@@ -1832,7 +1832,9 @@ async fn create_system_prompt_with_workspace(
 
 fn get_model_system_prompt(model: Model) -> String {
     match model {
-        Model::O3_20250416 => crate::prompts::o3_system_prompt(),
+        Model::O3_20250416 | Model::Gpt4_1_20250414 | Model::O4Mini20250416 | Model::Grok4_0709 => {
+            crate::prompts::o3_system_prompt()
+        }
         Model::Gemini2_5FlashPreview0417
         | Model::Gemini2_5ProPreview0506
         | Model::Gemini2_5ProPreview0605 => crate::prompts::gemini_system_prompt(),

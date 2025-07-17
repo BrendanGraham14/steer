@@ -115,6 +115,7 @@ impl Model {
             | Model::Gemini2_5ProPreview0605
             | Model::Grok4_0709
             | Model::Grok3
+            | Model::Gpt4_1_20250414
             | Model::O4Mini20250416 => true,
             _ => false,
         }
