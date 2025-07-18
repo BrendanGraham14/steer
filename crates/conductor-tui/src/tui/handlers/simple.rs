@@ -145,7 +145,7 @@ impl Tui {
 
             // Toggle view mode with Ctrl+R
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.view_model.chat_list_state.toggle_view_mode();
+                self.chat_viewport.state_mut().toggle_view_mode();
             }
 
             _ => {

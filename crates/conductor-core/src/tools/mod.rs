@@ -17,7 +17,7 @@ pub mod dispatch_agent;
 pub mod fetch;
 
 pub use dispatch_agent::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentTool};
-pub use fetch::FetchTool;
+pub use fetch::{FETCH_TOOL_NAME, FetchTool};
 
 #[cfg(test)]
 mod mcp_backend_test;

@@ -24,6 +24,8 @@ pub struct ChatStore {
     pending_tool_keys: HashMap<String, ChatItemKey>,
     /// Fast lookup for in-flight operations (operation_id -> key)
     in_flight_op_keys: HashMap<Uuid, ChatItemKey>,
+    /// Revision number for dirty tracking
+    revision: u64,
 }
 
 impl Default for ChatStore {
@@ -34,6 +36,7 @@ impl Default for ChatStore {
             next_key: 0,
             pending_tool_keys: HashMap::new(),
             in_flight_op_keys: HashMap::new(),
+            revision: 0,
         }
     }
 }
@@ -42,6 +45,11 @@ impl ChatStore {
     /// Create an empty store
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Get current revision number for dirty tracking
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Current number of items
@@ -102,6 +110,7 @@ impl ChatStore {
 
         self.items.insert(key, item);
         self.id_to_key.insert(id, key);
+        self.revision += 1; // Increment revision on mutation
         key
     }
 
@@ -140,6 +149,7 @@ impl ChatStore {
                 }
                 _ => {}
             }
+            self.revision += 1; // Increment revision on mutation
         }
     }
 
@@ -156,6 +166,7 @@ impl ChatStore {
         self.id_to_key.clear();
         self.pending_tool_keys.clear();
         self.in_flight_op_keys.clear();
+        self.revision += 1; // Increment revision on mutation
     }
 
     /// Get mutable reference by id
@@ -362,6 +373,13 @@ impl ChatStore {
     pub fn remove_in_flight_op(&mut self, operation_id: &Uuid) {
         if let Some(key) = self.in_flight_op_keys.get(operation_id).copied() {
             self.remove_by_key(key);
+        }
+    }
+
+    /// Ingest multiple messages at once (used for conversation restoration)
+    pub fn ingest_messages(&mut self, msgs: &[Message]) {
+        for m in msgs {
+            self.add_message(m.clone());
         }
     }
 }

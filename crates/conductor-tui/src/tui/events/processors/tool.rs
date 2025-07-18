@@ -180,7 +180,7 @@ mod tests {
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
-    use crate::tui::widgets::chat_list::ChatListState;
+    use crate::tui::widgets::ChatListState;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
     use conductor_core::app::conversation::{AssistantContent, Message};
