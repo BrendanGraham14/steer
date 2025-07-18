@@ -260,10 +260,21 @@ impl InputPanelState {
     }
 
     /// Calculate required height for the input panel
-    pub fn required_height(&self, max_height: u16) -> u16 {
-        let line_count = self.textarea.lines().len().max(1);
-        // line count + 2 for borders + 1 for padding
-        (line_count + 3).min(max_height as usize) as u16
+    pub fn required_height(
+        &self,
+        current_approval: Option<&ToolCall>,
+        width: u16,
+        max_height: u16,
+    ) -> u16 {
+        if let Some(tool_call) = current_approval {
+            // If there's a pending approval, use the approval height calculation
+            Self::required_height_for_approval(tool_call, width, max_height)
+        } else {
+            // Otherwise use the regular calculation based on textarea lines
+            let line_count = self.textarea.lines().len().max(1);
+            // line count + 2 for borders + 1 for padding
+            (line_count + 3).min(max_height as usize) as u16
+        }
     }
 
     /// Calculate required height for approval mode
@@ -950,15 +961,15 @@ mod tests {
         let mut state = InputPanelState::default();
 
         // Empty textarea
-        assert_eq!(state.required_height(10), 4); // 1 line + 3 for borders/padding
+        assert_eq!(state.required_height(None, 80, 10), 4); // 1 line + 3 for borders/padding
 
         // Multi-line content
         state.set_content_from_lines(vec!["Line 1", "Line 2", "Line 3"]);
-        assert_eq!(state.required_height(10), 6); // 3 lines + 3
+        assert_eq!(state.required_height(None, 80, 10), 6); // 3 lines + 3
 
         // Test max height constraint
         state.set_content_from_lines(vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
-        assert_eq!(state.required_height(8), 8); // Capped at max
+        assert_eq!(state.required_height(None, 80, 8), 8); // Capped at max
     }
 
     #[test]

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::tui::state::{ChatStore, ToolCallRegistry};
-use crate::tui::widgets::chat_list::ChatListState;
+use crate::tui::widgets::ChatListState;
 use conductor_core::api::Model;
 use conductor_core::app::AppEvent;
 use conductor_core::app::io::AppCommandSink;

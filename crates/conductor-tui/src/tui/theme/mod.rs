@@ -81,6 +81,13 @@ pub struct SyntaxConfig {
 /// Theme is now an alias for CompiledTheme for easier use
 pub type Theme = CompiledTheme;
 
+impl Theme {
+    /// Number of blank lines between chat messages
+    pub fn message_spacing(&self) -> u16 {
+        1 // Could later be made configurable from theme file
+    }
+}
+
 /// RGB color that can be deserialized from hex strings
 #[derive(Debug, Clone, Copy)]
 pub struct RgbColor(pub u8, pub u8, pub u8);
@@ -148,6 +155,7 @@ pub enum Component {
 
     // Chat list
     ChatListBorder,
+    ChatListBackground,
     UserMessage,
     UserMessageRole,
     AssistantMessage,
@@ -468,6 +476,7 @@ fn create_default_theme() -> CompiledTheme {
         Component::ChatListBorder,
         Style::default().fg(Color::DarkGray),
     );
+    styles.insert(Component::ChatListBackground, Style::default());
     styles.insert(Component::UserMessage, Style::default());
     styles.insert(
         Component::UserMessageRole,

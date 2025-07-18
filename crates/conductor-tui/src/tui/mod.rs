@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
+use crate::tui::model::ChatItem;
 use crate::tui::theme::Theme;
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{AssistantContent, Message};
@@ -29,9 +30,6 @@ use ratatui::crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     terminal::SetTitle,
 };
-use ratatui::layout::{Constraint, Direction, Layout};
-
-use ratatui::widgets::Borders;
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -44,10 +42,11 @@ use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
 use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
 use crate::tui::state::SetupState;
-use crate::tui::state::view_model::MessageViewModel;
+use crate::tui::state::{ChatStore, ToolCallRegistry};
 
-use crate::tui::widgets::chat_list::{ChatList, ChatListState};
-use crate::tui::widgets::{InputPanel, InputPanelState, StatusBar};
+use crate::tui::chat_viewport::ChatViewport;
+use crate::tui::ui_layout::UiLayout;
+use crate::tui::widgets::InputPanel;
 
 pub mod commands;
 pub mod custom_commands;
@@ -57,8 +56,10 @@ pub mod theme;
 pub mod widgets;
 
 mod auth_controller;
+mod chat_viewport;
 mod events;
 mod handlers;
+mod ui_layout;
 
 /// How often to update the spinner animation (when processing)
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -132,8 +133,12 @@ pub struct Tui {
     current_model: Model,
     /// Event processing pipeline
     event_pipeline: EventPipeline,
-    /// Message view model (data + ui state)
-    view_model: MessageViewModel,
+    /// Chat data store
+    chat_store: ChatStore,
+    /// Tool call registry
+    tool_registry: ToolCallRegistry,
+    /// Chat viewport for efficient rendering
+    chat_viewport: ChatViewport,
     /// Session ID
     session_id: String,
     /// Current theme
@@ -154,6 +159,8 @@ pub struct Tui {
     vim_state: VimState,
     /// Stack to track previous modes (for returning after fuzzy finder, etc.)
     mode_stack: VecDeque<InputMode>,
+    /// Last known revision of ChatStore for dirty tracking
+    last_revision: u64,
 }
 
 const MAX_MODE_DEPTH: usize = 8;
@@ -276,7 +283,9 @@ impl Tui {
             current_tool_approval: None,
             current_model,
             event_pipeline: Self::create_event_pipeline(),
-            view_model: MessageViewModel::new(),
+            chat_store: ChatStore::new(),
+            tool_registry: ToolCallRegistry::new(),
+            chat_viewport: ChatViewport::new(),
             session_id,
             theme: theme.unwrap_or_default(),
             setup_state: None,
@@ -287,6 +296,7 @@ impl Tui {
             double_tap_tracker: crate::tui::state::DoubleTapTracker::new(),
             vim_state: VimState::default(),
             mode_stack: VecDeque::new(),
+            last_revision: 0,
         };
 
         // Restore messages using the public method
@@ -323,25 +333,25 @@ impl Tui {
                             tool_call.name,
                             tool_call.parameters
                         );
-                        self.view_model.tool_registry.upsert_call(tool_call.clone());
+                        self.tool_registry.upsert_call(tool_call.clone());
                     }
                 }
             }
         }
 
         // Debug dump the registry state after first pass
-        self.view_model.tool_registry.debug_dump("After first pass");
+        self.tool_registry.debug_dump("After first pass");
 
-        // Use the view model's add_messages method to add all messages at once
-        self.view_model.add_messages(messages);
+        // Ingest all messages at once using the new ChatStore method
+        self.chat_store.ingest_messages(&messages);
 
         info!(
             "Finished restoring messages. TUI now has {} messages",
-            self.view_model.chat_store.len()
+            self.chat_store.len()
         );
 
         // Reset scroll to bottom after restoring messages
-        self.view_model.chat_list_state.scroll_to_bottom();
+        self.chat_viewport.state_mut().scroll_to_bottom();
     }
 
     /// Load file list into cache
@@ -373,7 +383,7 @@ impl Tui {
         // Log the current state of messages
         info!(
             "Starting TUI run with {} messages in view model",
-            self.view_model.chat_store.len()
+            self.chat_store.len()
         );
 
         // Load the initial file list
@@ -443,13 +453,12 @@ impl Tui {
                                         Err(e) => {
                                             // Display error as a system notice
                                             use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
-                                            let notice = ChatItem::SystemNotice {
+                                            self.chat_store.push(ChatItem::SystemNotice {
                                                 id: generate_row_id(),
                                                 level: NoticeLevel::Error,
                                                 text: e.to_string(),
                                                 ts: time::OffsetDateTime::now_utc(),
-                                            };
-                                            self.view_model.chat_store.push(notice);
+                                            });
                                         }
                                     }
                                     needs_redraw = true;
@@ -511,9 +520,9 @@ impl Tui {
                 }
                 _ = tick.tick() => {
                     // Check if we should animate the spinner
-                    let has_pending_tools = !self.view_model.tool_registry.pending_calls().is_empty()
-                        || !self.view_model.tool_registry.active_calls().is_empty()
-                        || self.view_model.chat_store.has_pending_tools();
+                    let has_pending_tools = !self.tool_registry.pending_calls().is_empty()
+                        || !self.tool_registry.active_calls().is_empty()
+                        || self.chat_store.has_pending_tools();
                     let has_in_flight_operations = !self.in_flight_operations.is_empty();
 
                     if self.is_processing || has_pending_tools || has_in_flight_operations {
@@ -543,7 +552,7 @@ impl Tui {
                     || (self.input_mode == InputMode::Simple
                         && self.input_panel_state.content().is_empty())
                 {
-                    self.view_model.chat_list_state.scroll_up(3);
+                    self.chat_viewport.state_mut().scroll_up(3);
                     true
                 } else {
                     false
@@ -555,7 +564,7 @@ impl Tui {
                     || (self.input_mode == InputMode::Simple
                         && self.input_panel_state.content().is_empty())
                 {
-                    self.view_model.chat_list_state.scroll_down(3);
+                    self.chat_viewport.state_mut().scroll_down(3);
                     true
                 } else {
                     false
@@ -616,41 +625,78 @@ impl Tui {
             let current_tool_approval = self.current_tool_approval.as_ref();
             let current_model_owned = self.current_model;
 
-            // Get chat items from the chat store
-            let chat_items = self.view_model.chat_store.as_items();
+            // Check if ChatStore has changed and trigger rebuild if needed
+            let current_revision = self.chat_store.revision();
+            if current_revision != self.last_revision {
+                self.chat_viewport.mark_dirty();
+                self.last_revision = current_revision;
+            }
 
-            // Get the hovered ID before the render call to avoid borrowing issues
+            // Get chat items from the chat store
+            let chat_items_owned: Vec<ChatItem> = self
+                .chat_store
+                .as_items()
+                .iter()
+                .map(|item| (*item).clone())
+                .collect();
+
+            let terminal_size = f.area();
+
+            let input_area_height = self.input_panel_state.required_height(
+                current_tool_approval,
+                terminal_size.width,
+                terminal_size.height,
+            );
+
+            let layout = UiLayout::compute(terminal_size, input_area_height, &self.theme);
+            layout.prepare_background(f, &self.theme);
+
+            self.chat_viewport.rebuild(
+                &chat_items_owned,
+                layout.chat_area.width,
+                self.chat_viewport.state().view_mode,
+                &self.theme,
+            );
+
             let hovered_id = self
                 .input_panel_state
                 .get_hovered_id()
                 .map(|s| s.to_string());
 
+            self.chat_viewport.render(
+                f,
+                layout.chat_area,
+                spinner_state,
+                hovered_id.as_deref(),
+                &self.theme,
+            );
+
+            let input_panel = InputPanel::new(
+                input_mode,
+                current_tool_approval,
+                is_processing,
+                spinner_state,
+                &self.theme,
+            );
+            f.render_stateful_widget(input_panel, layout.input_area, &mut self.input_panel_state);
+
+            // Render status bar
+            layout.render_status_bar(f, &current_model_owned, &self.theme);
+
             // Get fuzzy finder results before the render call
             let fuzzy_finder_data = if input_mode == InputMode::FuzzyFinder {
                 let results = self.input_panel_state.fuzzy_finder.results().to_vec();
                 let selected = self.input_panel_state.fuzzy_finder.selected_index();
-                let input_height = self.input_panel_state.required_height(10);
+                let input_height = self.input_panel_state.required_height(
+                    current_tool_approval,
+                    terminal_size.width,
+                    10,
+                );
                 let mode = self.input_panel_state.fuzzy_finder.mode();
                 Some((results, selected, input_height, mode))
             } else {
                 None
             };
-
-            if let Err(e) = Tui::render_ui_static(
-                f,
-                chat_items,
-                &mut self.view_model.chat_list_state,
-                input_mode,
-                &current_model_owned,
-                current_tool_approval,
-                is_processing,
-                spinner_state,
-                hovered_id.as_deref(),
-                &mut self.input_panel_state,
-                &self.theme,
-            ) {
-                error!(target:"tui.run.draw", "UI rendering failed: {}", e);
-            }
 
             // Render fuzzy finder overlay when active
             if let Some((results, selected_index, input_height, mode)) = fuzzy_finder_data {
@@ -822,9 +868,9 @@ impl Tui {
 
         // Create processing context
         let mut ctx = crate::tui::events::processor::ProcessingContext {
-            chat_store: &mut self.view_model.chat_store,
-            chat_list_state: &mut self.view_model.chat_list_state,
-            tool_registry: &mut self.view_model.tool_registry,
+            chat_store: &mut self.chat_store,
+            chat_list_state: self.chat_viewport.state_mut(),
+            tool_registry: &mut self.tool_registry,
             command_sink: &self.command_sink,
             is_processing: &mut self.is_processing,
             progress_message: &mut self.progress_message,
@@ -855,8 +901,8 @@ impl Tui {
         if messages_updated {
             // Clear cache for any updated messages
             // Scroll to bottom if we were already at the bottom
-            if self.view_model.chat_list_state.is_at_bottom() {
-                self.view_model.chat_list_state.scroll_to_bottom();
+            if self.chat_viewport.state_mut().is_at_bottom() {
+                self.chat_viewport.state_mut().scroll_to_bottom();
             }
         }
     }
@@ -866,86 +912,6 @@ impl Tui {
     ) -> Result<Vec<Message>> {
         // For now, just return empty - conversation will be restored by the app
         Ok(Vec::new())
-    }
-
-    /// Static UI rendering function
-    #[allow(clippy::too_many_arguments)]
-    fn render_ui_static(
-        f: &mut Frame,
-        chat_items: Vec<&crate::tui::model::ChatItem>,
-        chat_list_state: &mut ChatListState,
-        input_mode: InputMode,
-        current_model: &Model,
-        current_approval: Option<&ToolCall>,
-        is_processing: bool,
-        spinner_state: usize,
-        edit_selection_hovered_id: Option<&str>,
-        input_panel_state: &mut InputPanelState,
-        theme: &Theme,
-    ) -> Result<()> {
-        let size = f.area();
-
-        // Clear the entire terminal area with the theme's background color
-        use ratatui::widgets::{Block, Clear};
-        f.render_widget(Clear, size);
-
-        // Apply background color if theme has one
-        if let Some(bg_color) = theme.get_background_color() {
-            let background_block =
-                Block::default().style(ratatui::style::Style::default().bg(bg_color));
-            f.render_widget(background_block, size);
-        }
-
-        // Calculate required height for input/approval area
-        let input_area_height = if let Some(tool_call) = current_approval {
-            // For approval mode: use the state's calculation
-            InputPanelState::required_height_for_approval(
-                tool_call,
-                size.width,
-                size.height.saturating_sub(4) / 2,
-            )
-        } else {
-            // For input mode: use the state's calculation
-            input_panel_state.required_height(10)
-        };
-
-        // Main layout
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),                    // Messages area (flexible)
-                Constraint::Length(input_area_height), // Input area (dynamic)
-                Constraint::Length(1),                 // Status bar
-            ])
-            .split(size);
-
-        // Render messages
-        let _message_block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Messages ")
-            .style(theme.style(theme::Component::ChatListBorder));
-
-        // Use the ChatList widget as a stateful widget
-        let chat_list = ChatList::new(chat_items, theme)
-            .hovered_message_id(edit_selection_hovered_id)
-            .spinner_state(spinner_state);
-        f.render_stateful_widget(chat_list, chunks[0], chat_list_state);
-
-        // Render input panel using stateful widget
-        let input_panel = InputPanel::new(
-            input_mode,
-            current_approval,
-            is_processing,
-            spinner_state,
-            theme,
-        );
-        f.render_stateful_widget(input_panel, chunks[1], input_panel_state);
-
-        // Render status bar using the new widget
-        let status_bar = StatusBar::new(current_model, theme);
-        f.render_widget(status_bar, chunks[2]);
-
-        Ok(())
     }
 
     async fn send_message(&mut self, content: String) -> Result<()> {
@@ -972,7 +938,7 @@ impl Tui {
                     text: format!("Cannot edit message: {e}"),
                     ts: time::OffsetDateTime::now_utc(),
                 };
-                self.view_model.chat_store.push(notice);
+                self.chat_store.push(notice);
             }
         } else {
             // Send regular message
@@ -988,7 +954,7 @@ impl Tui {
                     text: format!("Cannot send message: {e}"),
                     ts: time::OffsetDateTime::now_utc(),
                 };
-                self.view_model.chat_store.push(notice);
+                self.chat_store.push(notice);
             }
         }
         Ok(())
@@ -1012,23 +978,17 @@ impl Tui {
                 let app_cmd = TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd.clone()));
                 // Process through the normal flow
                 match app_cmd {
-                    TuiAppCommand::Tui(tui_cmd) => {
-                        match tui_cmd {
-                            TuiCommand::Custom(custom_cmd) => {
-                                // Handle custom command based on its type
-                                match custom_cmd {
-                                    crate::tui::custom_commands::CustomCommand::Prompt {
-                                        prompt,
-                                        ..
-                                    } => {
-                                        // Forward prompt directly as user input to avoid recursive slash handling
-                                        self.command_sink
-                                            .send_command(AppCommand::ProcessUserInput(prompt))
-                                            .await?;
-                                    } // Future custom command types can be handled here
-                                }
-                            }
-                            _ => unreachable!(),
+                    TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd)) => {
+                        // Handle custom command based on its type
+                        match custom_cmd {
+                            crate::tui::custom_commands::CustomCommand::Prompt {
+                                prompt, ..
+                            } => {
+                                // Forward prompt directly as user input to avoid recursive slash handling
+                                self.command_sink
+                                    .send_command(AppCommand::ProcessUserInput(prompt))
+                                    .await?;
+                            } // Future custom command types can be handled here
                         }
                     }
                     _ => unreachable!(),
@@ -1049,7 +1009,7 @@ impl Tui {
                     text: error_msg,
                     ts: time::OffsetDateTime::now_utc(),
                 };
-                self.view_model.chat_store.push(notice);
+                self.chat_store.push(notice);
                 return Ok(());
             }
         };
@@ -1075,7 +1035,7 @@ impl Tui {
                                 text: format!("Cannot reload files: {e}"),
                                 ts: time::OffsetDateTime::now_utc(),
                             };
-                            self.view_model.chat_store.push(notice);
+                            self.chat_store.push(notice);
                         } else {
                             let response = ChatItem::TuiCommandResponse {
                                 id: generate_row_id(),
@@ -1085,7 +1045,7 @@ impl Tui {
                                         .to_string(),
                                 ts: time::OffsetDateTime::now_utc(),
                             };
-                            self.view_model.chat_store.push(response);
+                            self.chat_store.push(response);
                         }
                     }
                     TuiCommand::Theme(theme_name) => {
@@ -1101,7 +1061,7 @@ impl Tui {
                                         response: format!("Theme changed to '{name}'"),
                                         ts: time::OffsetDateTime::now_utc(),
                                     };
-                                    self.view_model.chat_store.push(response);
+                                    self.chat_store.push(response);
                                 }
                                 Err(e) => {
                                     let notice = ChatItem::SystemNotice {
@@ -1110,7 +1070,7 @@ impl Tui {
                                         text: format!("Failed to load theme '{name}': {e}"),
                                         ts: time::OffsetDateTime::now_utc(),
                                     };
-                                    self.view_model.chat_store.push(notice);
+                                    self.chat_store.push(notice);
                                 }
                             }
                         } else {
@@ -1128,7 +1088,7 @@ impl Tui {
                                 response: theme_list,
                                 ts: time::OffsetDateTime::now_utc(),
                             };
-                            self.view_model.chat_store.push(response);
+                            self.chat_store.push(response);
                         }
                     }
                     TuiCommand::Help(command_name) => {
@@ -1161,7 +1121,7 @@ impl Tui {
                             response: help_text,
                             ts: time::OffsetDateTime::now_utc(),
                         };
-                        self.view_model.chat_store.push(notice);
+                        self.chat_store.push(notice);
                     }
                     TuiCommand::Auth => {
                         // Launch auth setup
@@ -1212,7 +1172,7 @@ impl Tui {
                             response: "Entering authentication setup mode...".to_string(),
                             ts: time::OffsetDateTime::now_utc(),
                         };
-                        self.view_model.chat_store.push(notice);
+                        self.chat_store.push(notice);
                     }
                     TuiCommand::EditingMode(ref mode_name) => {
                         let response = match mode_name.as_deref() {
@@ -1249,7 +1209,7 @@ impl Tui {
                             response,
                             ts: time::OffsetDateTime::now_utc(),
                         };
-                        self.view_model.chat_store.push(notice);
+                        self.chat_store.push(notice);
                     }
                     TuiCommand::Custom(custom_cmd) => {
                         // Handle custom command based on its type
@@ -1279,7 +1239,7 @@ impl Tui {
                         text: e.to_string(),
                         ts: time::OffsetDateTime::now_utc(),
                     };
-                    self.view_model.chat_store.push(notice);
+                    self.chat_store.push(notice);
                 }
             }
         }
@@ -1290,10 +1250,8 @@ impl Tui {
     /// Enter edit mode for a specific message
     fn enter_edit_mode(&mut self, message_id: &str) {
         // Find the message in the store
-        if let Some(crate::tui::model::ChatItem::Message(row)) = self
-            .view_model
-            .chat_store
-            .get_by_id(&message_id.to_string())
+        if let Some(crate::tui::model::ChatItem::Message(row)) =
+            self.chat_store.get_by_id(&message_id.to_string())
         {
             if let Message::User { content, .. } = &row.inner {
                 // Extract text content from user blocks
@@ -1327,7 +1285,7 @@ impl Tui {
     fn scroll_to_message_id(&mut self, message_id: &str) {
         // Find the index of the message in the chat store
         let mut target_index = None;
-        for (idx, item) in self.view_model.chat_store.items().enumerate() {
+        for (idx, item) in self.chat_store.items().enumerate() {
             if let crate::tui::model::ChatItem::Message(row) = item {
                 if row.inner.id() == message_id {
                     target_index = Some(idx);
@@ -1338,7 +1296,7 @@ impl Tui {
 
         if let Some(idx) = target_index {
             // Scroll to center the message if possible
-            self.view_model.chat_list_state.scroll_to_item(idx);
+            self.chat_viewport.state_mut().scroll_to_item(idx);
         }
     }
 
@@ -1348,7 +1306,7 @@ impl Tui {
 
         // Populate the edit selection messages in the input panel state
         self.input_panel_state
-            .populate_edit_selection(self.view_model.chat_store.iter_items());
+            .populate_edit_selection(self.chat_store.iter_items());
 
         // Scroll to the hovered message if there is one
         if let Some(id) = self.input_panel_state.get_hovered_id() {
@@ -1674,7 +1632,6 @@ mod tests {
 
         // Verify tool call was preserved in registry
         let stored_call = tui
-            .view_model
             .tool_registry
             .get_tool_call(&tool_id)
             .expect("Tool call should be in registry");
@@ -1737,7 +1694,6 @@ mod tests {
 
         // Should still have proper parameters
         let stored_call = tui
-            .view_model
             .tool_registry
             .get_tool_call(&tool_id)
             .expect("Tool call should be in registry");

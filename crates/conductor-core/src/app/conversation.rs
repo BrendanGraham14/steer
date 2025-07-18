@@ -702,6 +702,15 @@ impl Conversation {
         }
 
         result.reverse();
+
+        debug!(
+            "Active thread: [{}]",
+            result
+                .iter()
+                .map(|msg| msg.id())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         result
     }
 

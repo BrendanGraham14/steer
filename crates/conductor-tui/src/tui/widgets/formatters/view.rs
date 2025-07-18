@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::path::Path;
 
 pub struct ViewFormatter;
+const MAX_LINES: usize = 100;
 
 impl ToolFormatter for ViewFormatter {
     fn compact(
@@ -104,11 +105,16 @@ impl ToolFormatter for ViewFormatter {
                     if !file_content.content.is_empty() {
                         lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
 
-                        const MAX_LINES: usize = 20;
                         let (output_lines, truncated) =
                             truncate_lines(&file_content.content, MAX_LINES);
 
-                        for line in output_lines {
+                        // Trim line number & tab
+                        let trimmed_lines: Vec<&str> = output_lines
+                            .iter()
+                            .map(|line| if line.len() > 6 { &line[6..] } else { "" })
+                            .collect();
+
+                        for line in trimmed_lines {
                             for wrapped in textwrap::wrap(line, wrap_width) {
                                 lines.push(Line::from(Span::raw(wrapped.to_string())));
                             }

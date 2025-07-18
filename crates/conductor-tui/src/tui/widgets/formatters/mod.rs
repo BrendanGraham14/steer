@@ -88,7 +88,6 @@ lazy_static! {
     static ref EXTERNAL_FORMATTER: Box<dyn ToolFormatter> = Box::new(ExternalFormatter);
 }
 
-/// Get formatter for a tool name, falling back to default
 pub fn get_formatter(tool_name: &str) -> &'static dyn ToolFormatter {
     if let Some(fmt) = FORMATTERS.get(tool_name) {
         fmt.as_ref()

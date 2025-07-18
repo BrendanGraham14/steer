@@ -9,9 +9,7 @@ pub use double_tap::DoubleTapTracker;
 pub mod file_cache;
 pub mod setup;
 pub mod tool_registry;
-pub mod view_model;
 
 pub use file_cache::FileCache;
 pub use setup::{AuthStatus, OAuthFlowState, SetupState, SetupStep};
 pub use tool_registry::{ToolCallInfo, ToolCallRegistry, ToolRegistryMetrics, ToolStatus};
-pub use view_model::MessageViewModel;

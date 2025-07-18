@@ -43,11 +43,11 @@ impl Tui {
                         self.input_panel_state.textarea.redo();
                     } else {
                         // Toggle view mode otherwise
-                        self.view_model.chat_list_state.toggle_view_mode();
+                        self.chat_viewport.state_mut().toggle_view_mode();
                     }
                 }
-                KeyCode::Char('u') => self.view_model.chat_list_state.scroll_up(10),
-                KeyCode::Char('d') => self.view_model.chat_list_state.scroll_down(10),
+                KeyCode::Char('u') => self.chat_viewport.state_mut().scroll_up(10),
+                KeyCode::Char('d') => self.chat_viewport.state_mut().scroll_down(10),
                 _ => {}
             }
             return Ok(false);
@@ -307,8 +307,8 @@ impl Tui {
                 .input_panel_state
                 .textarea
                 .move_cursor(CursorMove::Forward),
-            KeyCode::Char('j') | KeyCode::Down => self.view_model.chat_list_state.scroll_down(1),
-            KeyCode::Char('k') | KeyCode::Up => self.view_model.chat_list_state.scroll_up(1),
+            KeyCode::Char('j') | KeyCode::Down => self.chat_viewport.state_mut().scroll_down(1),
+            KeyCode::Char('k') | KeyCode::Up => self.chat_viewport.state_mut().scroll_up(1),
             KeyCode::Char('w') => self
                 .input_panel_state
                 .textarea
@@ -322,10 +322,10 @@ impl Tui {
                 .textarea
                 .move_cursor(CursorMove::Head),
             KeyCode::Char('$') => self.input_panel_state.textarea.move_cursor(CursorMove::End),
-            KeyCode::Char('G') => self.view_model.chat_list_state.scroll_to_bottom(),
+            KeyCode::Char('G') => self.chat_viewport.state_mut().scroll_to_bottom(),
             KeyCode::Char('g') => {
                 if self.vim_state.pending_g {
-                    self.view_model.chat_list_state.scroll_to_top();
+                    self.chat_viewport.state_mut().scroll_to_top();
                 }
                 self.vim_state.pending_g = !self.vim_state.pending_g;
                 should_clear_state = false;
