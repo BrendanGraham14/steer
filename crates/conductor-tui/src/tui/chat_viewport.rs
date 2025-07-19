@@ -145,7 +145,7 @@ impl ChatViewport {
     }
 
     /// Diff raw ChatItems; rebuild only when dirty / width or mode changed.
-    pub fn rebuild(&mut self, raw: &[ChatItem], width: u16, mode: ViewMode, theme: &Theme) {
+    pub fn rebuild(&mut self, raw: &Vec<&ChatItem>, width: u16, mode: ViewMode, theme: &Theme) {
         // Check if we need to rebuild
         let width_changed = width != self.last_width;
         let mode_changed = mode != self.state.view_mode;
@@ -200,7 +200,7 @@ impl ChatViewport {
     }
 
     /// Flatten raw ChatItems into 1:1 widget items
-    fn flatten_items(&self, raw: &[ChatItem]) -> Vec<FlattenedItem> {
+    fn flatten_items(&self, raw: &[&ChatItem]) -> Vec<FlattenedItem> {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
         raw.iter().for_each(|item| {
@@ -291,7 +291,7 @@ impl ChatViewport {
                         _ => {
                             // Other meta items
                             flattened.push(FlattenedItem::Meta {
-                                item: item.clone(),
+                                item: item.clone().clone(),
                                 id: match item {
                                     ChatItem::SystemNotice { id, .. } => id.clone(),
                                     ChatItem::CmdResponse { id, .. } => id.clone(),
@@ -693,7 +693,12 @@ mod tests {
                 let area = f.area();
 
                 // Rebuild viewport with messages
-                viewport.rebuild(&messages, area.width, ViewMode::Compact, &theme);
+                viewport.rebuild(
+                    &messages.iter().collect(),
+                    area.width,
+                    ViewMode::Compact,
+                    &theme,
+                );
 
                 // Render the viewport
                 viewport.render(f, area, 0, None, &theme);
@@ -761,7 +766,7 @@ mod tests {
                 let area = f.area();
 
                 // Rebuild viewport
-                viewport.rebuild(&messages, area.width, ViewMode::Compact, &theme);
+                viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme);
 
                 // Measure visible rows
                 let _rows = viewport.measure_visible_rows(area, &theme);
@@ -847,7 +852,7 @@ mod tests {
             let area = f.area();
 
             // Rebuild viewport
-            viewport.rebuild(&messages, area.width, ViewMode::Compact, &theme);
+            viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme);
 
             let _rows = viewport.measure_visible_rows(area, &theme);
             let total_height = viewport.state.total_content_height;
@@ -915,7 +920,12 @@ mod tests {
         let area = Rect::new(0, 0, 80, 10);
 
         // Rebuild viewport
-        viewport.rebuild(&messages, area.width, ViewMode::Compact, &theme);
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+        );
 
         // Scroll to top
         viewport.state.offset = 0;
@@ -951,7 +961,12 @@ mod tests {
         let area = Rect::new(0, 0, 80, 10);
 
         // Rebuild viewport
-        viewport.rebuild(&messages, area.width, ViewMode::Compact, &theme);
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+        );
 
         // Debug: print heights
         println!(

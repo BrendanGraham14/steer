@@ -633,12 +633,7 @@ impl Tui {
             }
 
             // Get chat items from the chat store
-            let chat_items_owned: Vec<ChatItem> = self
-                .chat_store
-                .as_items()
-                .iter()
-                .map(|item| (*item).clone())
-                .collect();
+            let chat_items: Vec<&ChatItem> = self.chat_store.as_items();
 
             let terminal_size = f.area();
 
@@ -652,7 +647,7 @@ impl Tui {
             layout.prepare_background(f, &self.theme);
 
             self.chat_viewport.rebuild(
-                &chat_items_owned,
+                &chat_items,
                 layout.chat_area.width,
                 self.chat_viewport.state().view_mode,
                 &self.theme,
