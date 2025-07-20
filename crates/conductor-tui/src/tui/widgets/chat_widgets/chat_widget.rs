@@ -3,7 +3,6 @@
 //! This module provides the core abstraction for rendering chat items
 //! within precise rectangular bounds, preventing buffer overlap issues.
 
-use crate::tui::model::MessageRow;
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::chat_list_state::ViewMode;
 use crate::tui::widgets::chat_widgets::message_widget::MessageWidget;
@@ -202,10 +201,10 @@ pub enum ChatBlock {
 
 impl ChatBlock {
     /// Create ChatBlocks from a MessageRow, handling coupled tool calls and results
-    pub fn from_message_row(row: &MessageRow, all_messages: &[&MessageRow]) -> Vec<ChatBlock> {
-        match &row.inner {
+    pub fn from_message_row(message: &Message, all_messages: &[&Message]) -> Vec<ChatBlock> {
+        match message {
             Message::User { .. } => {
-                vec![ChatBlock::Message(row.inner.clone())]
+                vec![ChatBlock::Message(message.clone())]
             }
             Message::Assistant { content, .. } => {
                 let mut blocks = vec![];
@@ -231,7 +230,7 @@ impl ChatBlock {
 
                 // Add text message if present
                 if has_text {
-                    blocks.push(ChatBlock::Message(row.inner.clone()));
+                    blocks.push(ChatBlock::Message(message.clone()));
                 }
 
                 // Add tool interactions (coupled with their results)
@@ -242,7 +241,7 @@ impl ChatBlock {
                             tool_use_id,
                             result,
                             ..
-                        } = &msg_row.inner
+                        } = &msg_row
                         {
                             if tool_use_id == &tool_call.id {
                                 Some(result.clone())
@@ -269,7 +268,7 @@ impl ChatBlock {
             } => {
                 // Check if this tool result has a corresponding tool call in the assistant messages
                 let has_corresponding_call = all_messages.iter().any(|msg_row| {
-                    if let Message::Assistant { content, .. } = &msg_row.inner {
+                    if let Message::Assistant { content, .. } = &msg_row {
                         content.iter().any(|block| {
                             if let AssistantContent::ToolCall { tool_call } = block {
                                 tool_call.id == *tool_use_id
@@ -437,8 +436,7 @@ mod tests {
             parent_message_id: None,
         };
 
-        let row = MessageRow::new(user_msg);
-        let blocks = ChatBlock::from_message_row(&row, &[]);
+        let blocks = ChatBlock::from_message_row(&user_msg, &[]);
 
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {

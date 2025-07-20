@@ -1245,34 +1245,32 @@ impl Tui {
     /// Enter edit mode for a specific message
     fn enter_edit_mode(&mut self, message_id: &str) {
         // Find the message in the store
-        if let Some(crate::tui::model::ChatItem::Message(row)) =
+        if let Some(crate::tui::model::ChatItem::Message(Message::User { content, .. })) =
             self.chat_store.get_by_id(&message_id.to_string())
         {
-            if let Message::User { content, .. } = &row.inner {
-                // Extract text content from user blocks
-                let text = content
-                    .iter()
-                    .filter_map(|block| match block {
-                        conductor_core::app::conversation::UserContent::Text { text } => {
-                            Some(text.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+            // Extract text content from user blocks
+            let text = content
+                .iter()
+                .filter_map(|block| match block {
+                    conductor_core::app::conversation::UserContent::Text { text } => {
+                        Some(text.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-                // Set up textarea with the message content
-                self.input_panel_state
-                    .set_content_from_lines(text.lines().collect::<Vec<_>>());
-                // Switch to appropriate mode based on editing preference
-                self.input_mode = match self.preferences.ui.editing_mode {
-                    conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
-                    conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
-                };
+            // Set up textarea with the message content
+            self.input_panel_state
+                .set_content_from_lines(text.lines().collect::<Vec<_>>());
+            // Switch to appropriate mode based on editing preference
+            self.input_mode = match self.preferences.ui.editing_mode {
+                conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
+                conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
+            };
 
-                // Store the message ID we're editing
-                self.editing_message_id = Some(message_id.to_string());
-            }
+            // Store the message ID we're editing
+            self.editing_message_id = Some(message_id.to_string());
         }
     }
 
@@ -1281,8 +1279,8 @@ impl Tui {
         // Find the index of the message in the chat store
         let mut target_index = None;
         for (idx, item) in self.chat_store.items().enumerate() {
-            if let crate::tui::model::ChatItem::Message(row) = item {
-                if row.inner.id() == message_id {
+            if let crate::tui::model::ChatItem::Message(message) = item {
+                if message.id() == message_id {
                     target_index = Some(idx);
                     break;
                 }

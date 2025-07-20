@@ -27,7 +27,7 @@ pub enum WorkspaceError {
     TonicTransport(#[from] tonic::transport::Error),
 
     #[error("Tonic status error: {0}")]
-    TonicStatus(#[from] tonic::Status),
+    TonicStatus(#[from] Box<tonic::Status>),
 }
 
 pub type Result<T> = std::result::Result<T, WorkspaceError>;

@@ -78,7 +78,6 @@ pub struct SyntaxConfig {
     pub syntect_theme: Option<String>,
 }
 
-/// Theme is now an alias for CompiledTheme for easier use
 pub type Theme = CompiledTheme;
 
 impl Theme {
