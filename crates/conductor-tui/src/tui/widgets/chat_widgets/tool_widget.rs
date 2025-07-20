@@ -45,11 +45,47 @@ impl ToolWidget {
         let wrap_width = width.saturating_sub(2) as usize;
 
         // Render both modes
-        self.rendered_compact_lines =
-            Some(formatter.compact(&self.tool_call.parameters, &self.result, wrap_width, theme));
+        let mut compact_lines =
+            formatter.compact(&self.tool_call.parameters, &self.result, wrap_width, theme);
+        let mut detailed_lines =
+            formatter.detailed(&self.tool_call.parameters, &self.result, wrap_width, theme);
 
-        self.rendered_detailed_lines =
-            Some(formatter.detailed(&self.tool_call.parameters, &self.result, wrap_width, theme));
+        // Add tool name header to the first line
+        let header = format!("{} ", self.tool_call.name);
+        if !compact_lines.is_empty() {
+            // Prepend header to first line
+            let mut first_spans = Vec::new();
+            first_spans.push(ratatui::text::Span::styled(
+                header.clone(),
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            ));
+            first_spans.extend(compact_lines[0].spans.clone());
+            compact_lines[0] = Line::from(first_spans);
+        } else {
+            compact_lines.push(Line::from(ratatui::text::Span::styled(
+                header.clone(),
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            )));
+        }
+
+        // Do the same for detailed view
+        if !detailed_lines.is_empty() {
+            let mut first_spans = Vec::new();
+            first_spans.push(ratatui::text::Span::styled(
+                header,
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            ));
+            first_spans.extend(detailed_lines[0].spans.clone());
+            detailed_lines[0] = Line::from(first_spans);
+        } else {
+            detailed_lines.push(Line::from(ratatui::text::Span::styled(
+                header,
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            )));
+        }
+
+        self.rendered_compact_lines = Some(compact_lines);
+        self.rendered_detailed_lines = Some(detailed_lines);
 
         match mode {
             ViewMode::Compact => self.rendered_compact_lines.as_ref().unwrap(),
