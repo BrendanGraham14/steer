@@ -281,9 +281,8 @@ impl InputPanelState {
     pub fn required_height_for_approval(tool_call: &ToolCall, width: u16, max_height: u16) -> u16 {
         let theme = &Theme::default();
         let formatter = crate::tui::widgets::formatters::get_formatter(&tool_call.name);
-        let preview_lines = formatter.compact(
+        let preview_lines = formatter.approval(
             &tool_call.parameters,
-            &None,
             width.saturating_sub(4) as usize,
             theme,
         );
@@ -633,9 +632,8 @@ impl StatefulWidget for InputPanel<'_> {
         // Render approval prompt if needed
         if let Some(tool_call) = self.current_approval {
             let formatter = crate::tui::widgets::formatters::get_formatter(&tool_call.name);
-            let preview_lines = formatter.compact(
+            let preview_lines = formatter.approval(
                 &tool_call.parameters,
-                &None,
                 (area.width.saturating_sub(4)) as usize,
                 self.theme,
             );

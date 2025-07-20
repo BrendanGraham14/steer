@@ -308,4 +308,112 @@ impl ToolFormatter for EditFormatter {
 
         lines
     }
+
+    fn approval(&self, params: &Value, _wrap_width: usize, theme: &Theme) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        // Try parsing as MultiEditParams first
+        if let Ok(params) = serde_json::from_value::<MultiEditParams>(params.clone()) {
+            // Multi-edit formatting
+            let file_name = Path::new(&params.file_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&params.file_path);
+
+            lines.push(Line::from(vec![
+                Span::styled("Edit ", theme.style(Component::DimText)),
+                Span::styled(file_name.to_string(), Style::default()),
+                Span::styled(
+                    format!(" ({} changes)", params.edits.len()),
+                    theme.style(Component::DimText),
+                ),
+            ]));
+
+            // Show preview of first few edits
+            const MAX_PREVIEW_EDITS: usize = 3;
+            for (i, edit) in params.edits.iter().take(MAX_PREVIEW_EDITS).enumerate() {
+                lines.push(Line::from(Span::styled(
+                    format!("  Edit {}:", i + 1),
+                    theme
+                        .style(Component::DimText)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+
+                // Show a very brief diff preview
+                if !edit.old_string.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("  - ", theme.style(Component::CodeDeletion)),
+                        Span::styled(
+                            show_short_context(&edit.old_string, 60),
+                            theme.style(Component::CodeDeletion),
+                        ),
+                    ]));
+                }
+                lines.push(Line::from(vec![
+                    Span::styled("  + ", theme.style(Component::CodeAddition)),
+                    Span::styled(
+                        show_short_context(&edit.new_string, 60),
+                        theme.style(Component::CodeAddition),
+                    ),
+                ]));
+            }
+
+            if params.edits.len() > MAX_PREVIEW_EDITS {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  ... and {} more edits",
+                        params.edits.len() - MAX_PREVIEW_EDITS
+                    ),
+                    theme
+                        .style(Component::DimText)
+                        .add_modifier(Modifier::ITALIC),
+                )));
+            }
+        } else if let Ok(params) = serde_json::from_value::<EditParams>(params.clone()) {
+            // Single edit formatting
+            let file_name = Path::new(&params.file_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&params.file_path);
+
+            lines.push(Line::from(vec![
+                Span::styled("Edit ", theme.style(Component::DimText)),
+                Span::styled(file_name.to_string(), Style::default()),
+            ]));
+
+            // Show brief diff preview
+            if params.old_string.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("  + ", theme.style(Component::CodeAddition)),
+                    Span::styled(
+                        show_short_context(&params.new_string, 80),
+                        theme.style(Component::CodeAddition),
+                    ),
+                ]));
+            } else {
+                // Show brief before/after
+                lines.push(Line::from(vec![
+                    Span::styled("  - ", theme.style(Component::CodeDeletion)),
+                    Span::styled(
+                        show_short_context(&params.old_string, 70),
+                        theme.style(Component::CodeDeletion),
+                    ),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("  + ", theme.style(Component::CodeAddition)),
+                    Span::styled(
+                        show_short_context(&params.new_string, 70),
+                        theme.style(Component::CodeAddition),
+                    ),
+                ]));
+            }
+        } else {
+            return vec![Line::from(Span::styled(
+                "Invalid edit params",
+                theme.style(Component::ErrorText),
+            ))];
+        }
+
+        lines
+    }
 }
