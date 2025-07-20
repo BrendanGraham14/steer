@@ -523,7 +523,12 @@ where
     fn soft_break(&mut self) {
         // Soft break: In markdown, this is typically rendered as a space
         // unless it's at the end of a line
-        if let Some(line) = self.marked_text.lines.last() {
+        // However, inside list items, soft breaks should create new lines
+        // to properly render sub-items like bullet points
+        if !self.list_indices.is_empty() {
+            // We're inside a list item - soft breaks should create new lines
+            self.push_line(Line::default());
+        } else if let Some(line) = self.marked_text.lines.last() {
             if !line.line.spans.is_empty() {
                 // Add a space if there's content on the current line
                 self.push_span(" ".into());
@@ -1418,6 +1423,122 @@ Also test with other inline formatting:
         assert!(
             !has_incorrect_format,
             "Should not have 'MessageViewModel1.' in the output"
+        );
+    }
+
+    #[test]
+    fn test_list_item_bullet_rendering() {
+        let markdown = r#"3. A ChatItem is visible when:
+• it is a Message whose id is in lineage, or
+• it has a parent_chat_item_id that (recursively) leads to a Message whose id is in lineage."#;
+
+        // First, let's see what parser events we get
+        let options = Options::empty();
+        let parser = Parser::new_ext(markdown, options);
+
+        println!("\n=== Parser Events for Bullet List ===");
+        for (idx, event) in parser.enumerate() {
+            match &event {
+                Event::Start(tag) => println!("{idx}: Start {tag:?}"),
+                Event::End(tag) => println!("{idx}: End {tag:?}"),
+                Event::Text(text) => println!("{idx}: Text: '{text}'"),
+                Event::SoftBreak => println!("{idx}: SoftBreak"),
+                Event::HardBreak => println!("{idx}: HardBreak"),
+                _ => println!("{idx}: {event:?}"),
+            }
+        }
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles, &theme);
+
+        println!("\n=== List Item Bullet Rendering Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        // Check that bullet points are on separate lines
+        let lines: Vec<String> = rendered
+            .lines
+            .iter()
+            .map(|line| {
+                line.line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+
+        // There should be at least 3 lines: the numbered item and 2 bullet points
+        assert!(
+            lines.len() >= 3,
+            "Should have at least 3 lines for the list and bullets"
+        );
+
+        // First line should start with "3."
+        assert!(
+            lines[0].starts_with("3."),
+            "First line should start with '3.'"
+        );
+    }
+
+    #[test]
+    fn test_nested_list_with_soft_breaks() {
+        let markdown = r#"1. First level item
+   - Nested bullet one
+   - Nested bullet two
+     with continuation
+   - Nested bullet three
+2. Second level item"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+        let rendered = from_str(markdown, &styles, &theme);
+
+        println!("\n=== Nested List with Soft Breaks Test ===");
+        for (idx, line) in rendered.lines.iter().enumerate() {
+            let line_text: String = line
+                .line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {idx}: '{line_text}'");
+        }
+
+        let lines: Vec<String> = rendered
+            .lines
+            .iter()
+            .map(|line| {
+                line.line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+
+        // Check that we have proper line breaks for nested items
+        assert!(
+            lines.len() >= 6,
+            "Should have at least 6 lines for nested list"
+        );
+
+        // Check that nested items have proper indentation
+        let nested_lines: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.trim_start().starts_with('-'))
+            .collect();
+        assert!(
+            nested_lines.len() >= 3,
+            "Should have at least 3 nested bullet points"
         );
     }
 }
