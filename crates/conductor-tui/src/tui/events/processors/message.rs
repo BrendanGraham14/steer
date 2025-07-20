@@ -43,12 +43,12 @@ impl EventProcessor for MessageEventProcessor {
                 // Find the message in the chat store
                 let mut found = false;
                 for item in ctx.chat_store.iter_mut() {
-                    if let ChatItem::Message(row) = item {
-                        if row.inner.id() == id {
+                    if let ChatItem::Message(message) = item {
+                        if message.id() == id {
                             if let conductor_core::app::conversation::Message::Assistant {
                                 content: blocks,
                                 ..
-                            } = &mut row.inner
+                            } = message
                             {
                                 blocks.clear();
                                 blocks.push(AssistantContent::Text { text: content });
@@ -71,12 +71,12 @@ impl EventProcessor for MessageEventProcessor {
                 // For streaming messages, append to existing text blocks
                 let mut found = false;
                 for item in ctx.chat_store.iter_mut() {
-                    if let ChatItem::Message(row) = item {
-                        if row.inner.id() == id {
+                    if let ChatItem::Message(message) = item {
+                        if message.id() == id {
                             if let conductor_core::app::conversation::Message::Assistant {
                                 content: blocks,
                                 ..
-                            } = &mut row.inner
+                            } = message
                             {
                                 if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
                                     text.push_str(&delta);
@@ -155,7 +155,7 @@ impl MessageEventProcessor {
         if let Some(ref parent_id) = parent_id {
             let siblings = ctx.chat_store.find_by_parent(parent_id);
             let user_siblings = siblings.iter().filter(|item| {
-                matches!(item, ChatItem::Message(row) if matches!(row.inner, conductor_core::app::Message::User { .. }))
+                matches!(item, ChatItem::Message(message) if matches!(message, conductor_core::app::Message::User { .. }))
             }).count();
 
             // If there are multiple user messages with the same parent, we have a branch
@@ -170,7 +170,7 @@ impl MessageEventProcessor {
         } else {
             // Check for root-level branches (multiple messages with no parent)
             let root_messages = ctx.chat_store.iter().filter(|item| {
-                matches!(item, ChatItem::Message(row) if row.inner.parent_message_id().is_none() && matches!(row.inner, conductor_core::app::Message::User { .. }))
+                matches!(item, ChatItem::Message(message) if message.parent_message_id().is_none() && matches!(message, conductor_core::app::Message::User { .. }))
             }).count();
 
             if root_messages > 1 {

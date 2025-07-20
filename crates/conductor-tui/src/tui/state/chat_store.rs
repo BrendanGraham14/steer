@@ -1,6 +1,6 @@
 //! ChatStore - storage for the new ChatItem model
 
-use crate::tui::model::{ChatItem, MessageRow, RowId};
+use crate::tui::model::{ChatItem, RowId};
 use conductor_core::app::conversation::Message;
 
 use indexmap::IndexMap;
@@ -101,7 +101,7 @@ impl ChatStore {
             ChatItem::InFlightOperation { operation_id, .. } => {
                 self.in_flight_op_keys.insert(*operation_id, key);
             }
-            ChatItem::CmdResponse { .. }
+            ChatItem::CoreCmdResponse { .. }
             | ChatItem::SystemNotice { .. }
             | ChatItem::Message(_)
             | ChatItem::SlashInput { .. }
@@ -116,8 +116,7 @@ impl ChatStore {
 
     /// Add a message row
     pub fn add_message(&mut self, message: Message) -> ChatItemKey {
-        let row = MessageRow::new(message);
-        self.push(ChatItem::Message(row))
+        self.push(ChatItem::Message(message))
     }
 
     /// Add a pending tool call
@@ -194,12 +193,12 @@ impl ChatStore {
         let mut live_ids = HashSet::new();
 
         // Build a map of message ID to message for quick lookups
-        let message_map: HashMap<String, &MessageRow> = self
+        let message_map: HashMap<String, &Message> = self
             .items
             .values()
             .filter_map(|item| {
-                if let ChatItem::Message(row) = item {
-                    Some((row.inner.id().to_string(), row))
+                if let ChatItem::Message(message) = item {
+                    Some((message.id().to_string(), message))
                 } else {
                     None
                 }
@@ -214,9 +213,9 @@ impl ChatStore {
                 break; // Avoid cycles
             }
 
-            if let Some(row) = message_map.get(&id) {
+            if let Some(message) = message_map.get(&id) {
                 live_ids.insert(id.clone());
-                current_id = row.inner.parent_message_id().map(|s| s.to_string());
+                current_id = message.parent_message_id().map(|s| s.to_string());
             } else {
                 tracing::warn!(
                     target: "chat_store",
@@ -238,7 +237,7 @@ impl ChatStore {
             .items
             .iter()
             .filter_map(|(&key, item)| match item {
-                ChatItem::Message(row) if !live_ids.contains(row.inner.id()) => Some(key),
+                ChatItem::Message(message) if !live_ids.contains(message.id()) => Some(key),
                 _ => None,
             })
             .collect();
@@ -260,8 +259,8 @@ impl ChatStore {
         self.items
             .values()
             .filter(|item| {
-                if let ChatItem::Message(row) = item {
-                    row.inner.parent_message_id() == Some(parent_id)
+                if let ChatItem::Message(message) = item {
+                    message.parent_message_id() == Some(parent_id)
                 } else {
                     false
                 }
@@ -290,12 +289,12 @@ impl ChatStore {
     }
 
     /// Get only message rows (filtering out meta rows)
-    pub fn messages(&self) -> Vec<&MessageRow> {
+    pub fn messages(&self) -> Vec<&Message> {
         self.items
             .values()
             .filter_map(|item| {
-                if let ChatItem::Message(row) = item {
-                    Some(row)
+                if let ChatItem::Message(message) = item {
+                    Some(message)
                 } else {
                     None
                 }
@@ -311,14 +310,14 @@ impl ChatStore {
     }
 
     /// Get user messages for edit history
-    pub fn user_messages(&self) -> Vec<(usize, &MessageRow)> {
+    pub fn user_messages(&self) -> Vec<(usize, &Message)> {
         self.items
             .values()
             .enumerate()
             .filter_map(|(idx, item)| {
-                if let ChatItem::Message(row) = item {
-                    if matches!(row.inner, Message::User { .. }) {
-                        Some((idx, row))
+                if let ChatItem::Message(message) = item {
+                    if matches!(message, Message::User { .. }) {
+                        Some((idx, message))
                     } else {
                         None
                     }

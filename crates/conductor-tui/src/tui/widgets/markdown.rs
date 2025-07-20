@@ -1320,12 +1320,13 @@ def hello():
     print("Hello from Python")
     return 42
 ```"#;
-
         // Create a theme with syntax highlighting support
         use syntect::highlighting::ThemeSet;
         let theme_set = ThemeSet::load_defaults();
-        let mut theme = Theme::default();
-        theme.syntax_theme = theme_set.themes.get("base16-ocean.dark").cloned();
+        let theme = Theme {
+            syntax_theme: theme_set.themes.get("base16-ocean.dark").cloned(),
+            ..Default::default()
+        };
 
         let styles = MarkdownStyles::from_theme(&theme);
         let rendered = from_str(markdown, &styles, &theme);

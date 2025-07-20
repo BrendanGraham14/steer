@@ -107,18 +107,18 @@ pub enum Model {
 impl Model {
     /// Returns true if this model should be shown in the model picker UI
     pub fn should_show(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Model::ClaudeOpus4_20250514
-            | Model::ClaudeSonnet4_20250514
-            | Model::O3_20250416
-            | Model::O3Pro20250610
-            | Model::Gemini2_5ProPreview0605
-            | Model::Grok4_0709
-            | Model::Grok3
-            | Model::Gpt4_1_20250414
-            | Model::O4Mini20250416 => true,
-            _ => false,
-        }
+                | Model::ClaudeSonnet4_20250514
+                | Model::O3_20250416
+                | Model::O3Pro20250610
+                | Model::Gemini2_5ProPreview0605
+                | Model::Grok4_0709
+                | Model::Grok3
+                | Model::Gpt4_1_20250414
+                | Model::O4Mini20250416
+        )
     }
 
     pub fn iter_recommended() -> impl Iterator<Item = Model> {

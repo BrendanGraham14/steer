@@ -28,7 +28,7 @@ impl SystemEventProcessor {
         response: conductor_core::app::conversation::CommandResponse,
         ctx: &mut ProcessingContext,
     ) {
-        let chat_item = ChatItem::CmdResponse {
+        let chat_item = ChatItem::CoreCmdResponse {
             id: generate_row_id(),
             cmd: command,
             resp: response,

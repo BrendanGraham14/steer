@@ -323,7 +323,7 @@ impl InputPanelState {
         self.edit_selection_messages = chat_items
             .filter_map(|item| {
                 if let ChatItem::Message(row) = item {
-                    if let Message::User { content, .. } = &row.inner {
+                    if let Message::User { content, .. } = &row {
                         // Extract text content from user blocks
                         let text = content
                             .iter()
@@ -333,7 +333,7 @@ impl InputPanelState {
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
-                        Some((row.inner.id().to_string(), text))
+                        Some((row.id().to_string(), text))
                     } else {
                         None
                     }
@@ -870,7 +870,7 @@ impl StatefulWidget for InputPanel<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::model::{ChatItem, MessageRow};
+    use crate::tui::model::ChatItem;
 
     #[test]
     fn test_input_panel_state_default() {
@@ -978,28 +978,28 @@ mod tests {
 
         // Create test chat items
         let chat_items = vec![
-            ChatItem::Message(MessageRow::new(Message::User {
+            ChatItem::Message(Message::User {
                 id: "user1".to_string(),
                 content: vec![UserContent::Text {
                     text: "First user message".to_string(),
                 }],
                 timestamp: 123,
                 parent_message_id: None,
-            })),
-            ChatItem::Message(MessageRow::new(Message::Assistant {
+            }),
+            ChatItem::Message(Message::Assistant {
                 id: "assistant1".to_string(),
                 content: vec![],
                 timestamp: 124,
                 parent_message_id: None,
-            })),
-            ChatItem::Message(MessageRow::new(Message::User {
+            }),
+            ChatItem::Message(Message::User {
                 id: "user2".to_string(),
                 content: vec![UserContent::Text {
                     text: "Second user message".to_string(),
                 }],
                 timestamp: 125,
                 parent_message_id: None,
-            })),
+            }),
         ];
 
         state.populate_edit_selection(chat_items.iter());

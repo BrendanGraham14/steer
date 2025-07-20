@@ -226,15 +226,6 @@ pub fn save_custom_commands(commands: &[CustomCommand]) -> Result<(), CustomComm
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    fn setup_test_config(content: &str) -> PathBuf {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("commands.toml");
-        fs::write(&config_path, content).unwrap();
-        config_path
-    }
 
     #[test]
     fn test_parse_prompt_command() {

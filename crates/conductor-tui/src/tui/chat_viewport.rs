@@ -204,15 +204,13 @@ impl ChatViewport {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
         raw.iter().for_each(|item| {
-            if let ChatItem::Message(row) = item {
-                if let Message::Tool {
-                    tool_use_id,
-                    result,
-                    ..
-                } = &row.inner
-                {
-                    tool_results.insert(tool_use_id.clone(), result.clone());
-                }
+            if let ChatItem::Message(Message::Tool {
+                tool_use_id,
+                result,
+                ..
+            }) = item
+            {
+                tool_results.insert(tool_use_id.clone(), result.clone());
             }
         });
 
@@ -221,7 +219,7 @@ impl ChatViewport {
         for item in raw {
             match item {
                 ChatItem::Message(row) => {
-                    match &row.inner {
+                    match &row {
                         Message::Assistant { content, .. } => {
                             // Check if there's any text content
                             let has_text_content = content.iter().any(|block| match block {
@@ -233,7 +231,7 @@ impl ChatViewport {
                             // Emit MessageText if there's text content
                             if has_text_content {
                                 flattened.push(FlattenedItem::MessageText {
-                                    message: row.inner.clone(),
+                                    message: row.clone(),
                                     id: format!("{}_text", row.id()),
                                 });
                             }
@@ -291,10 +289,10 @@ impl ChatViewport {
                         _ => {
                             // Other meta items
                             flattened.push(FlattenedItem::Meta {
-                                item: item.clone().clone(),
+                                item: (*item).clone(),
                                 id: match item {
                                     ChatItem::SystemNotice { id, .. } => id.clone(),
-                                    ChatItem::CmdResponse { id, .. } => id.clone(),
+                                    ChatItem::CoreCmdResponse { id, .. } => id.clone(),
                                     ChatItem::InFlightOperation { id, .. } => id.to_string(),
                                     ChatItem::SlashInput { id, .. } => id.clone(),
                                     ChatItem::TuiCommandResponse { id, .. } => id.clone(),
@@ -591,7 +589,7 @@ fn create_widget_for_flattened_item(
                     let body = Box::new(SystemNoticeWidget::new(*level, text.clone(), *ts));
                     Box::new(RowWidget::new(gutter, body))
                 }
-                ChatItem::CmdResponse { cmd, resp, .. } => {
+                ChatItem::CoreCmdResponse { cmd, resp, .. } => {
                     let gutter = GutterWidget::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format_app_command(cmd),
@@ -648,18 +646,16 @@ mod tests {
     use std::time::SystemTime;
 
     fn create_test_message(content: &str, id: &str) -> ChatItem {
-        ChatItem::Message(crate::tui::model::MessageRow {
-            inner: Message::User {
-                content: vec![UserContent::Text {
-                    text: content.to_string(),
-                }],
-                timestamp: SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-                id: id.to_string(),
-                parent_message_id: None,
-            },
+        ChatItem::Message(Message::User {
+            content: vec![UserContent::Text {
+                text: content.to_string(),
+            }],
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            id: id.to_string(),
+            parent_message_id: None,
         })
     }
 

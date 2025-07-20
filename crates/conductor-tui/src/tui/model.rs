@@ -8,7 +8,6 @@ use conductor_core::app::conversation::{AppCommandType, CommandResponse, Message
 use conductor_tools::ToolCall;
 use time::OffsetDateTime;
 
-/// Unique, sortable row identifier (monotonic ULID string)
 pub type RowId = String;
 
 /// Severity levels for system notices
@@ -19,27 +18,11 @@ pub enum NoticeLevel {
     Info,
 }
 
-#[derive(Debug, Clone)]
-pub struct MessageRow {
-    /// The core message from conductor-core
-    pub inner: Message,
-}
-
-impl MessageRow {
-    pub fn new(message: Message) -> Self {
-        Self { inner: message }
-    }
-
-    pub fn id(&self) -> &str {
-        self.inner.id()
-    }
-}
-
 /// All rows that can appear in the scrollback panel
 #[derive(Debug, Clone)]
 pub enum ChatItem {
-    /// Real conversation message – always belongs to a branch
-    Message(MessageRow),
+    /// Conversation message
+    Message(Message),
 
     /// A tool call that is in progress
     PendingToolCall {
@@ -48,18 +31,10 @@ pub enum ChatItem {
         ts: OffsetDateTime,
     },
 
-    /// Raw slash command entered by the user (never sent to an LLM)
+    /// Raw slash command entered by the user
     SlashInput {
         id: RowId,
         raw: String,
-        ts: OffsetDateTime,
-    },
-
-    /// Core replied to a command
-    CmdResponse {
-        id: RowId,
-        cmd: AppCommandType,
-        resp: CommandResponse,
         ts: OffsetDateTime,
     },
 
@@ -71,6 +46,14 @@ pub enum ChatItem {
         ts: OffsetDateTime,
     },
 
+    /// Core replied to a command
+    CoreCmdResponse {
+        id: RowId,
+        cmd: AppCommandType,
+        resp: CommandResponse,
+        ts: OffsetDateTime,
+    },
+
     /// TUI command response (e.g., /help, /theme, /auth)
     TuiCommandResponse {
         id: RowId,
@@ -79,7 +62,6 @@ pub enum ChatItem {
         ts: OffsetDateTime,
     },
 
-    /// In-flight operation with spinner
     InFlightOperation {
         id: RowId,
         operation_id: uuid::Uuid,
@@ -95,7 +77,7 @@ impl ChatItem {
             ChatItem::Message(row) => row.id(),
             ChatItem::PendingToolCall { id, .. } => id,
             ChatItem::SlashInput { id, .. } => id,
-            ChatItem::CmdResponse { id, .. } => id,
+            ChatItem::CoreCmdResponse { id, .. } => id,
             ChatItem::SystemNotice { id, .. } => id,
             ChatItem::TuiCommandResponse { id, .. } => id,
             ChatItem::InFlightOperation { id, .. } => id,
@@ -113,7 +95,7 @@ impl ChatItem {
             }
             ChatItem::PendingToolCall { ts, .. } => *ts,
             ChatItem::SlashInput { ts, .. } => *ts,
-            ChatItem::CmdResponse { ts, .. } => *ts,
+            ChatItem::CoreCmdResponse { ts, .. } => *ts,
             ChatItem::SystemNotice { ts, .. } => *ts,
             ChatItem::TuiCommandResponse { ts, .. } => *ts,
             ChatItem::InFlightOperation { ts, .. } => *ts,
@@ -131,7 +113,6 @@ impl ChatItem {
     }
 }
 
-/// Helper function to generate a new row ID (ULID)
 pub fn generate_row_id() -> RowId {
     ulid::Ulid::new().to_string()
 }
