@@ -57,6 +57,12 @@ pub trait ToolFormatter: Send + Sync {
         wrap_width: usize,
         theme: &Theme,
     ) -> Vec<Line<'static>>;
+
+    /// Format tool call for approval request (shows what the tool will do)
+    fn approval(&self, params: &Value, wrap_width: usize, theme: &Theme) -> Vec<Line<'static>> {
+        // Default implementation just wraps compact() without result
+        self.compact(params, &None, wrap_width, theme)
+    }
 }
 
 lazy_static! {
