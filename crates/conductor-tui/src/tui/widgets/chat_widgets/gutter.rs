@@ -49,11 +49,17 @@ pub struct Gutter {
 
 impl Gutter {
     pub fn new(role: RoleGlyph) -> Self {
+        let width = match role {
+            RoleGlyph::User => 2,
+            RoleGlyph::Assistant => 4,
+            RoleGlyph::Tool => 4,
+            RoleGlyph::Meta => 2,
+        };
         Self {
             role,
             spinner: None,
             hovered: false,
-            width: 2,
+            width,
         }
     }
 
@@ -64,11 +70,6 @@ impl Gutter {
 
     pub fn with_hover(mut self, hovered: bool) -> Self {
         self.hovered = hovered;
-        self
-    }
-
-    pub fn with_role(mut self, role: RoleGlyph) -> Self {
-        self.role = role;
         self
     }
 
@@ -89,8 +90,15 @@ impl Gutter {
             self.role.to_string()
         };
 
-        // -1 because char takes up one column
-        let content = format!("{char}{:width$}", "", width = (self.width - 1) as usize);
+        let pad = match self.role {
+            RoleGlyph::User => 0,
+            RoleGlyph::Assistant => 2,
+            RoleGlyph::Tool => 2,
+            RoleGlyph::Meta => 0,
+        };
+        let width = self.width - 1 - pad as u16;
+        let content = format!("{:pad$}{}{:width$}", "", char, "", width = width as usize);
+
         Span::styled(content, style)
     }
 }

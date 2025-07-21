@@ -102,7 +102,7 @@ mod tests {
         // Check layout
         let buffer = terminal.backend().buffer();
         let buffer_lines = buffer.content.chunks(buffer.area.width as usize);
-        let expected_line_symbols = ["◀ Hello world", "  How are you?"];
+        let expected_line_symbols = ["  ◀ Hello world", "    How are you?"];
 
         for (i, line) in buffer_lines.enumerate() {
             if i >= expected_line_symbols.len() {
