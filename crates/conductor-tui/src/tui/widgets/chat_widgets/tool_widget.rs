@@ -4,11 +4,11 @@
 //! formatters to render tool calls and results within bounded areas.
 
 use crate::tui::widgets::chat_list_state::ViewMode;
-use crate::tui::widgets::chat_widgets::chat_widget::ChatWidget;
+use crate::tui::widgets::chat_widgets::chat_widget::ChatRenderable;
 use crate::tui::widgets::formatters;
 use crate::tui::{theme::Theme, widgets::chat_widgets::chat_widget::HeightCache};
 use conductor_tools::{ToolCall, ToolResult};
-use ratatui::{buffer::Buffer, layout::Rect, text::Line, widgets::Widget};
+use ratatui::text::Line;
 
 /// Widget wrapper for tool formatters
 pub struct ToolWidget {
@@ -29,8 +29,10 @@ impl ToolWidget {
             rendered_detailed_lines: None,
         }
     }
+}
 
-    fn render_lines(&mut self, mode: ViewMode, width: u16, theme: &Theme) -> &Vec<Line<'static>> {
+impl ChatRenderable for ToolWidget {
+    fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
         if self.rendered_compact_lines.is_some()
             && self.rendered_detailed_lines.is_some()
             && self.cache.last_width == width
@@ -94,75 +96,6 @@ impl ToolWidget {
     }
 }
 
-impl ChatWidget for ToolWidget {
-    fn height(&mut self, mode: ViewMode, width: u16, theme: &Theme) -> usize {
-        // Check cache first
-        if let Some(cached) = self.cache.get(mode, width) {
-            return cached;
-        }
-
-        // Get the rendered lines
-        let lines = self.render_lines(mode, width, theme);
-        let height = lines.len();
-
-        // Cache the result
-        self.cache.set(mode, width, height);
-        height
-    }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: ViewMode, theme: &Theme) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Get the rendered lines
-        let lines = self.render_lines(mode, area.width, theme);
-
-        let mut y = area.y;
-        for line in lines.iter() {
-            if y >= area.y + area.height {
-                break;
-            }
-            buf.set_line(area.x, y, line, area.width);
-            y += 1;
-        }
-    }
-
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        mode: ViewMode,
-        theme: &Theme,
-        first_line: usize,
-    ) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Get the rendered lines
-        let lines = self.render_lines(mode, area.width, theme);
-        let total_lines = lines.len();
-
-        if first_line >= total_lines {
-            return;
-        }
-
-        // Calculate which lines to render
-        let last_line = (first_line + area.height as usize).min(total_lines);
-        let visible_lines = &lines[first_line..last_line];
-
-        let mut y = area.y;
-        for line in visible_lines.iter() {
-            if y >= area.y + area.height {
-                break;
-            }
-            buf.set_line(area.x, y, line, area.width);
-            y += 1;
-        }
-    }
-}
-
 /// Widget for pending tool calls (no result yet, with header)
 pub struct PendingToolCallWidget {
     tool_call: ToolCall,
@@ -178,8 +111,10 @@ impl PendingToolCallWidget {
             rendered_lines: None,
         }
     }
+}
 
-    fn render_lines(&mut self, width: u16, theme: &Theme) -> &Vec<Line<'static>> {
+impl ChatRenderable for PendingToolCallWidget {
+    fn lines(&mut self, width: u16, _mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
         if self.rendered_lines.is_none() || self.cache.last_width != width {
             let formatter = formatters::get_formatter(&self.tool_call.name);
             let wrap_width = width.saturating_sub(2) as usize; // Account for indent inside RowWidget
@@ -209,68 +144,6 @@ impl PendingToolCallWidget {
     }
 }
 
-impl ChatWidget for PendingToolCallWidget {
-    fn height(&mut self, mode: ViewMode, width: u16, theme: &Theme) -> usize {
-        // pending tool call ignores view_mode (always compact-like)
-        if let Some(cached) = self.cache.get(mode, width) {
-            return cached;
-        }
-        let lines_len = self.render_lines(width, theme).len();
-        self.cache.set(mode, width, lines_len);
-        lines_len
-    }
-
-    fn render(
-        &mut self,
-        area: ratatui::layout::Rect,
-        buf: &mut ratatui::buffer::Buffer,
-        _mode: ViewMode,
-        theme: &Theme,
-    ) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let lines = self.render_lines(area.width, theme).clone();
-        let bg_style = theme.style(crate::tui::theme::Component::ChatListBackground);
-        let para = ratatui::widgets::Paragraph::new(lines)
-            .wrap(ratatui::widgets::Wrap { trim: false })
-            .style(bg_style);
-        para.render(area, buf);
-    }
-
-    #[tracing::instrument(skip(self, area, buf, _mode, theme), fields(first_line))]
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        _mode: ViewMode,
-        theme: &Theme,
-        first_line: usize,
-    ) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Ensure lines are rendered
-        let lines = self.render_lines(area.width, theme);
-        if first_line >= lines.len() {
-            return;
-        }
-
-        // Calculate the slice of lines to render
-        let end_line = (first_line + area.height as usize).min(lines.len());
-        let visible_lines = &lines[first_line..end_line];
-
-        // Create a paragraph with only the visible lines
-        let bg_style = theme.style(crate::tui::theme::Component::ChatListBackground);
-        let paragraph = ratatui::widgets::Paragraph::new(visible_lines.to_vec())
-            .wrap(ratatui::widgets::Wrap { trim: false })
-            .style(bg_style);
-
-        paragraph.render(area, buf);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,15 +170,15 @@ mod tests {
         let mut widget = ToolWidget::new(tool_call, None);
 
         // Test height calculation
-        let height = widget.height(ViewMode::Compact, 80, &theme);
+        let height = widget.lines(80, ViewMode::Compact, &theme).len();
         assert!(height > 0);
 
         // Test cache
-        let height2 = widget.height(ViewMode::Compact, 80, &theme);
+        let height2 = widget.lines(80, ViewMode::Compact, &theme).len();
         assert_eq!(height, height2);
 
         // Test different mode
-        let detailed_height = widget.height(ViewMode::Detailed, 80, &theme);
+        let detailed_height = widget.lines(80, ViewMode::Detailed, &theme).len();
         assert!(detailed_height >= height); // Detailed should be at least as tall
     }
 
@@ -333,7 +206,7 @@ mod tests {
         let mut widget = ToolWidget::new(tool_call, result);
 
         // Test that it renders without panicking
-        let height = widget.height(ViewMode::Compact, 80, &theme);
+        let height = widget.lines(80, ViewMode::Compact, &theme).len();
         assert!(height > 0);
     }
 
@@ -358,8 +231,8 @@ mod tests {
         let mut widget = ToolWidget::new(tool_call, result);
 
         // Test both modes
-        let compact_height = widget.height(ViewMode::Compact, 80, &theme);
-        let detailed_height = widget.height(ViewMode::Detailed, 80, &theme);
+        let compact_height = widget.lines(80, ViewMode::Compact, &theme).len();
+        let detailed_height = widget.lines(80, ViewMode::Detailed, &theme).len();
         assert!(compact_height > 0);
         assert!(detailed_height > 0);
         assert!(detailed_height >= compact_height);
@@ -405,12 +278,12 @@ mod tests {
         let mut widget = ToolWidget::new(tool_call.clone(), result);
 
         // Test height calculation
-        let height = widget.height(ViewMode::Compact, 80, &theme);
+        let height = widget.lines(80, ViewMode::Compact, &theme).len();
         assert!(height > 0);
 
         // Test with no results
         let mut empty_widget = ToolWidget::new(tool_call, None);
-        let empty_height = empty_widget.height(ViewMode::Compact, 80, &theme);
+        let empty_height = empty_widget.lines(80, ViewMode::Compact, &theme).len();
         assert!(empty_height > 0);
     }
 
@@ -443,11 +316,11 @@ mod tests {
         let mut widget = ToolWidget::new(tool_call, result);
 
         // Test that height is reasonable even with large content
-        let compact_height = widget.height(ViewMode::Compact, 80, &theme);
+        let compact_height = widget.lines(80, ViewMode::Compact, &theme).len();
         assert!(compact_height > 0);
         assert!(compact_height < 200); // Should be truncated
 
-        let detailed_height = widget.height(ViewMode::Detailed, 80, &theme);
+        let detailed_height = widget.lines(80, ViewMode::Detailed, &theme).len();
         assert!(detailed_height > compact_height);
     }
 
@@ -481,7 +354,7 @@ mod tests {
             };
 
             // Create widget based on tool name
-            let mut widget: Box<dyn ChatWidget> = match tool_name {
+            let mut widget: Box<dyn ChatRenderable> = match tool_name {
                 LS_TOOL_NAME => Box::new(ToolWidget::new(tool_call, None)),
                 GLOB_TOOL_NAME => Box::new(ToolWidget::new(tool_call, None)),
                 REPLACE_TOOL_NAME => Box::new(ToolWidget::new(tool_call, None)),
@@ -494,7 +367,7 @@ mod tests {
             };
 
             // Test that height calculation works
-            let height = widget.height(ViewMode::Compact, 80, &theme);
+            let height = widget.lines(80, ViewMode::Compact, &theme).len();
             assert!(height > 0, "Widget {tool_name} should have non-zero height");
         }
     }
