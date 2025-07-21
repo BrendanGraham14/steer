@@ -1,12 +1,16 @@
 [package]
 name = "conductor-workspace-client"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Remote workspace client implementation for Conductor"
 
 [dependencies]
-conductor-workspace = { path = "../conductor-workspace" }
-conductor-proto = { path = "../conductor-proto" }
-conductor-tools = { path = "../conductor-tools" }
+conductor-workspace.workspace = true
+conductor-proto.workspace = true
+conductor-tools.workspace = true
 
 tonic = { version = "0.12", features = ["tls"] }
 async-trait = "0.1"

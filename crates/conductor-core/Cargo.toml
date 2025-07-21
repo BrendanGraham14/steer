@@ -1,9 +1,11 @@
 [package]
 name = "conductor-core"
-version = "0.1.0"
-edition = "2024"
-description = "Core logic for Conductor (non-UI)"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+description = "Core logic for Conductor."
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [lints]
 workspace = true
@@ -40,9 +42,9 @@ tokio-util = { version = "0.7.14", features = ["full"] }
 async-trait = "0.1.88"
 tracing = "0.1.41"
 once_cell = "1.21.3"
-conductor-macros = { path = "../conductor-macros" }
-conductor-proto = { path = "../conductor-proto" }
-conductor-tools = { path = "../conductor-tools" }
+conductor-macros.workspace = true
+conductor-proto.workspace = true
+conductor-tools.workspace = true
 ignore = "0.4"
 globset = "0.4.16"
 rand = "0.8"

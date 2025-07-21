@@ -2,6 +2,25 @@
 members = ["crates/*"]
 resolver = "3"
 
+[workspace.package]
+version = "0.1.0"
+authors = ["Brendan Graham <brendanigraham@gmail.com>"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/brendangraham14/conductor"
+
+[workspace.dependencies]
+conductor-cli = { version = "0.1.0", path = "crates/conductor-cli" }
+conductor-core = { version = "0.1.0", path = "crates/conductor-core" }
+conductor-grpc = { version = "0.1.0", path = "crates/conductor-grpc" }
+conductor-macros = { version = "0.1.0", path = "crates/conductor-macros" }
+conductor-proto = { version = "0.1.0", path = "crates/conductor-proto" }
+conductor-remote-workspace = { version = "0.1.0", path = "crates/conductor-remote-workspace" }
+conductor-tools = { version = "0.1.0", path = "crates/conductor-tools" }
+conductor-tui = { version = "0.1.0", path = "crates/conductor-tui" }
+conductor-workspace = { version = "0.1.0", path = "crates/conductor-workspace" }
+conductor-workspace-client = { version = "0.1.0", path = "crates/conductor-workspace-client" }
+
 [workspace.lints.rust]
 unused_must_use = "deny"
 unsafe_code = "deny"
@@ -12,7 +31,6 @@ panic = "deny"
 todo = "deny"
 unimplemented = "deny"
 
-# The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
