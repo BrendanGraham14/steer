@@ -1,7 +1,11 @@
 [package]
 name = "conductor-tools"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tool trait definitions and implementations for Conductor"
 
 [lints]
 workspace = true

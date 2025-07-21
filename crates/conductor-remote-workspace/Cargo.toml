@@ -1,10 +1,11 @@
 [package]
 name = "conductor-remote-workspace"
-version = "0.1.0"
-edition = "2024"
-description = "Remote workspace for Conductor."
-authors = ["Brendan Graham <brendanigraham@gmail.com>"]
-repository = "https://github.com/brendangraham14/conductor"
+version.workspace = true
+edition.workspace = true
+description = "Remote workspace server for Conductor."
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lints]
 workspace = true
@@ -26,7 +27,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # gRPC
-conductor-grpc = { path = "../conductor-grpc" }
+conductor-grpc.workspace = true
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
@@ -37,7 +38,7 @@ gethostname = "0.5"
 serde_json = "1.0"
 
 # Shared crates
-conductor-tools = { path = "../conductor-tools" }
+conductor-tools.workspace = true
 fuzzy-matcher = "0.3.7"
 ignore = "0.4.23"
 tokio-stream = "0.1.17"
