@@ -10,9 +10,9 @@ pub mod slash_input;
 pub mod system_notice;
 pub mod tool_widget;
 
-pub use chat_widget::{ChatWidget, DynamicChatWidget, HeightCache, ParagraphWidget};
+pub use chat_widget::{ChatRenderable, DynamicChatWidget, HeightCache, ParagraphWidget};
 pub use command_response::CommandResponseWidget;
-pub use gutter::{GutterWidget, RoleGlyph};
+pub use gutter::{Gutter, RoleGlyph};
 pub use in_flight_operation::InFlightOperationWidget;
 pub use message_widget::MessageWidget;
 pub use row_widget::RowWidget;

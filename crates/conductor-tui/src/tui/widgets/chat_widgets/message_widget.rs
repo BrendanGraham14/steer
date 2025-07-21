@@ -1,14 +1,10 @@
 use conductor_core::app::conversation::{AppCommandType, AssistantContent};
 use conductor_core::app::conversation::{Message, UserContent};
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Widget, Wrap};
-use tracing::debug;
 
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::formatters::helpers::style_wrap;
-use crate::tui::widgets::{ChatWidget, HeightCache, ViewMode, markdown};
+use crate::tui::widgets::{ChatRenderable, HeightCache, ViewMode, markdown};
 
 pub struct MessageWidget {
     message: Message,
@@ -25,9 +21,16 @@ impl MessageWidget {
         }
     }
 
-    fn render_lines(&mut self, width: u16, theme: &Theme) -> Vec<Line<'static>> {
+    fn render_as_markdown(text: &str, theme: &Theme, max_width: usize) -> markdown::MarkedText {
+        let markdown_styles = markdown::MarkdownStyles::from_theme(theme);
+        markdown::from_str_with_width(text, &markdown_styles, theme, Some(max_width as u16))
+    }
+}
+
+impl ChatRenderable for MessageWidget {
+    fn lines(&mut self, width: u16, _mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
         if self.rendered_lines.is_some() && self.cache.last_width == width {
-            return self.rendered_lines.as_ref().unwrap().clone();
+            return self.rendered_lines.as_ref().unwrap();
         }
 
         let max_width = width.saturating_sub(4) as usize; // Account for gutters
@@ -210,75 +213,7 @@ impl MessageWidget {
         }
 
         self.rendered_lines = Some(lines);
-        self.rendered_lines.as_ref().unwrap().clone()
-    }
-
-    /// Create a paragraph with theme background applied
-    fn create_themed_paragraph(
-        &self,
-        lines: Vec<Line<'static>>,
-        theme: &Theme,
-    ) -> Paragraph<'static> {
-        let bg_style = theme.style(Component::ChatListBackground);
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .style(bg_style)
-    }
-
-    fn render_as_markdown(text: &str, theme: &Theme, max_width: usize) -> markdown::MarkedText {
-        let markdown_styles = markdown::MarkdownStyles::from_theme(theme);
-
-        markdown::from_str_with_width(text, &markdown_styles, theme, Some(max_width as u16))
-    }
-}
-
-impl ChatWidget for MessageWidget {
-    fn height(&mut self, mode: ViewMode, width: u16, theme: &Theme) -> usize {
-        if let Some(cached) = self.cache.get(mode, width) {
-            return cached;
-        }
-
-        let height = self.render_lines(width, theme).len();
-        self.cache.set(mode, width, height);
-        height
-    }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _mode: ViewMode, theme: &Theme) {
-        if area.width == 0 || area.height == 0 {
-            debug!("render: area is empty");
-            return;
-        }
-
-        let lines = self.render_lines(area.width, theme);
-        let paragraph = self.create_themed_paragraph(lines, theme);
-        paragraph.render(area, buf);
-    }
-
-    #[tracing::instrument(skip(self, area, buf, _mode, theme), fields(first_line))]
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        _mode: ViewMode,
-        theme: &Theme,
-        first_line: usize,
-    ) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let lines = self.render_lines(area.width, theme);
-        let total_lines = lines.len();
-
-        if first_line >= total_lines {
-            return;
-        }
-
-        let last_line = (first_line + area.height as usize).min(total_lines);
-        let lines_to_render = lines[first_line..last_line].to_vec();
-
-        let paragraph = self.create_themed_paragraph(lines_to_render, theme);
-        paragraph.render(area, buf);
+        self.rendered_lines.as_ref().unwrap()
     }
 }
 
@@ -286,7 +221,7 @@ impl ChatWidget for MessageWidget {
 mod tests {
     use super::MessageWidget;
     use crate::tui::theme::Theme;
-    use crate::tui::widgets::ChatWidget;
+    use crate::tui::widgets::ChatRenderable;
     use crate::tui::widgets::ViewMode;
     use conductor_core::app::conversation::AssistantContent;
     use conductor_core::app::conversation::{Message, UserContent};
@@ -306,11 +241,11 @@ mod tests {
         let mut widget = MessageWidget::new(user_msg);
 
         // Test height calculation
-        let height = widget.height(ViewMode::Compact, 20, &theme);
+        let height = widget.lines(20, ViewMode::Compact, &theme).len();
         assert_eq!(height, 1); // Single line message
 
         // Test with wrapping
-        let height_wrapped = widget.height(ViewMode::Compact, 8, &theme);
+        let height_wrapped = widget.lines(8, ViewMode::Compact, &theme).len();
         assert!(height_wrapped > 1); // Should wrap
     }
 
@@ -329,7 +264,7 @@ mod tests {
         let mut widget = MessageWidget::new(assistant_msg);
 
         // Test height calculation
-        let height = widget.height(ViewMode::Compact, 30, &theme);
+        let height = widget.lines(30, ViewMode::Compact, &theme).len();
         assert_eq!(height, 1); // Single line message
     }
 
@@ -351,7 +286,7 @@ mod tests {
         let mut widget = MessageWidget::new(cmd_msg);
 
         // Test height calculation - should have command line + 2 output lines
-        let height = widget.height(ViewMode::Compact, 30, &theme);
+        let height = widget.lines(30, ViewMode::Compact, &theme).len();
         assert_eq!(height, 3); // $ ls -la + file1.txt + file2.txt
     }
 
@@ -376,14 +311,14 @@ mod tests {
 
         // Create buffers for both render methods
         let area = Rect::new(0, 0, 50, 5);
-        let mut buf_regular = Buffer::empty(area);
-        let mut buf_partial = Buffer::empty(area);
+        let buf_regular = Buffer::empty(area);
+        let buf_partial = Buffer::empty(area);
 
         // Render with regular method
-        widget.render(area, &mut buf_regular, ViewMode::Compact, &theme);
+        widget.lines(area.width, ViewMode::Compact, &theme);
 
         // Render with partial method
-        widget.render_partial(area, &mut buf_partial, ViewMode::Compact, &theme, 0);
+        widget.lines(area.width, ViewMode::Compact, &theme);
 
         // Compare the buffers - they should be identical
         for y in 0..area.height {
@@ -425,8 +360,8 @@ mod tests {
 
         // Render with partial method
         let area = Rect::new(0, 0, 10, 1);
-        let mut buf = Buffer::empty(area);
-        widget.render_partial(area, &mut buf, ViewMode::Compact, &theme, 0);
+        let buf = Buffer::empty(area);
+        widget.lines(area.width, ViewMode::Compact, &theme);
 
         // With correct Unicode handling:
         // Position 0: 'A' (1 column)

@@ -4,15 +4,8 @@
 //! role indicators, animated spinners, and hover states.
 
 use crate::tui::theme::{Component, Theme};
-use crate::tui::widgets::chat_list_state::ViewMode;
-use crate::tui::widgets::chat_widgets::chat_widget::ChatWidget;
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Modifier,
-    text::{Line, Span},
-    widgets::{Paragraph, Widget},
-};
+use ratatui::{style::Modifier, text::Span};
+use std::fmt;
 
 /// Role glyph types for different message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,17 +16,19 @@ pub enum RoleGlyph {
     Meta,      // •
 }
 
-impl RoleGlyph {
-    /// Get the display character for this role
-    pub fn as_char(&self) -> &'static str {
-        match self {
+impl fmt::Display for RoleGlyph {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let glyph = match self {
             RoleGlyph::User => "▶",
             RoleGlyph::Assistant => "◀",
             RoleGlyph::Tool => "⚙",
             RoleGlyph::Meta => "•",
-        }
+        };
+        write!(f, "{glyph}")
     }
+}
 
+impl RoleGlyph {
     /// Get the theme component for this role
     pub fn theme_component(&self) -> Component {
         match self {
@@ -45,19 +40,20 @@ impl RoleGlyph {
     }
 }
 
-/// Left-hand glyph area widget (2 cells wide)
-pub struct GutterWidget {
+pub struct Gutter {
     role: RoleGlyph,
     spinner: Option<char>,
     hovered: bool,
+    pub width: u16,
 }
 
-impl GutterWidget {
+impl Gutter {
     pub fn new(role: RoleGlyph) -> Self {
         Self {
             role,
             spinner: None,
             hovered: false,
+            width: 2,
         }
     }
 
@@ -70,143 +66,44 @@ impl GutterWidget {
         self.hovered = hovered;
         self
     }
-}
 
-impl ChatWidget for GutterWidget {
-    fn height(&mut self, _mode: ViewMode, _width: u16, _theme: &Theme) -> usize {
-        // Gutter is always 1 line tall
-        1usize
+    pub fn with_role(mut self, role: RoleGlyph) -> Self {
+        self.role = role;
+        self
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _mode: ViewMode, theme: &Theme) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Get base style for the role
+    // Just return a styled Span, not Lines
+    pub fn span(&self, theme: &Theme) -> Span<'static> {
         let mut style = theme.style(self.role.theme_component());
 
-        // For spinner, apply special styling based on role
         if self.spinner.is_some() {
-            style = match self.role {
-                RoleGlyph::Tool => theme
-                    .style(Component::ToolCall)
-                    .add_modifier(Modifier::BOLD),
-                RoleGlyph::Meta => theme
-                    .style(Component::TodoInProgress)
-                    .add_modifier(Modifier::BOLD),
-                _ => style.add_modifier(Modifier::BOLD),
-            };
+            style = style.add_modifier(Modifier::BOLD);
         }
-
-        // Add bold modifier if hovered
         if self.hovered {
             style = style.add_modifier(Modifier::BOLD);
         }
 
-        // Build the gutter content
-        let content = if let Some(spinner_char) = self.spinner {
-            // Show spinner instead of role glyph
-            format!("{spinner_char} ")
+        let char = if let Some(spinner) = self.spinner {
+            spinner.to_string()
         } else {
-            // Show role glyph with space padding
-            format!("{} ", self.role.as_char())
+            self.role.to_string()
         };
 
-        // Create a line with the styled content
-        let line = Line::from(Span::styled(content, style));
-        let paragraph = Paragraph::new(vec![line]);
-
-        // Render into the area
-        paragraph.render(area, buf);
-    }
-
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        _mode: ViewMode,
-        _theme: &Theme,
-        _first_line: usize,
-    ) {
-        self.render(area, buf, _mode, _theme);
+        // -1 because char takes up one column
+        let content = format!("{char}{:width$}", "", width = (self.width - 1) as usize);
+        Span::styled(content, style)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn test_role_glyph_display() {
-        assert_eq!(RoleGlyph::User.as_char(), "▶");
-        assert_eq!(RoleGlyph::Assistant.as_char(), "◀");
-        assert_eq!(RoleGlyph::Tool.as_char(), "⚙");
-        assert_eq!(RoleGlyph::Meta.as_char(), "•");
-    }
-
-    #[test]
-    fn test_gutter_widget_height() {
-        let theme = Theme::default();
-        let mut gutter = GutterWidget::new(RoleGlyph::User);
-
-        // Gutter height is always 1
-        assert_eq!(gutter.height(ViewMode::Compact, 10, &theme), 1);
-        assert_eq!(gutter.height(ViewMode::Detailed, 100, &theme), 1);
-    }
-
-    #[test]
-    fn test_gutter_widget_render_bounds() {
-        let theme = Theme::default();
-        let mut gutter = GutterWidget::new(RoleGlyph::User).with_hover(true);
-
-        // Create a test terminal
-        let backend = TestBackend::new(10, 5);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|f| {
-                let area = Rect::new(0, 0, 2, 1);
-                gutter.render(area, f.buffer_mut(), ViewMode::Compact, &theme);
-            })
-            .unwrap();
-
-        // Check that content is only in the 2x1 area
-        let buffer = terminal.backend().buffer();
-
-        // First two cells should have the gutter content
-        let cell0 = &buffer[(0, 0)];
-        let cell1 = &buffer[(1, 0)];
-        assert_eq!(cell0.symbol(), "▶");
-        assert_eq!(cell1.symbol(), " ");
-
-        // Rest should be empty
-        for x in 2..10 {
-            let cell = &buffer[(x, 0)];
-            assert_eq!(cell.symbol(), " ");
-        }
-    }
-
-    #[test]
-    fn test_spinner_overlay() {
-        let theme = Theme::default();
-        let mut gutter = GutterWidget::new(RoleGlyph::Tool).with_spinner('⠋');
-
-        // Create a test terminal
-        let backend = TestBackend::new(2, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|f| {
-                let area = Rect::new(0, 0, 2, 1);
-                gutter.render(area, f.buffer_mut(), ViewMode::Compact, &theme);
-            })
-            .unwrap();
-
-        // Should show spinner instead of role glyph
-        let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 0)].symbol(), "⠋");
-        assert_eq!(buffer[(1, 0)].symbol(), " ");
+        assert_eq!(RoleGlyph::User.to_string(), "▶");
+        assert_eq!(RoleGlyph::Assistant.to_string(), "◀");
+        assert_eq!(RoleGlyph::Tool.to_string(), "⚙");
+        assert_eq!(RoleGlyph::Meta.to_string(), "•");
     }
 }

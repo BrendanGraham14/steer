@@ -1,17 +1,13 @@
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::chat_list_state::ViewMode;
-use crate::tui::widgets::chat_widgets::chat_widget::{ChatWidget, HeightCache};
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
-};
+use crate::tui::widgets::chat_widgets::chat_widget::{ChatRenderable, HeightCache};
+use ratatui::text::{Line, Span};
 
 /// Widget for in-flight operations with spinner
 pub struct InFlightOperationWidget {
     label: String,
     cache: HeightCache,
+    rendered_lines: Option<Vec<Line<'static>>>,
 }
 
 impl InFlightOperationWidget {
@@ -19,25 +15,15 @@ impl InFlightOperationWidget {
         Self {
             label,
             cache: HeightCache::new(),
+            rendered_lines: None,
         }
     }
 }
 
-impl ChatWidget for InFlightOperationWidget {
-    fn height(&mut self, mode: ViewMode, width: u16, _theme: &Theme) -> usize {
-        if let Some(cached) = self.cache.get(mode, width) {
-            return cached;
-        }
-
-        // In-flight operations are always single line
-        let height = 1usize;
-        self.cache.set(mode, width, height);
-        height
-    }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _mode: ViewMode, theme: &Theme) {
-        if area.width == 0 || area.height == 0 {
-            return;
+impl ChatRenderable for InFlightOperationWidget {
+    fn lines(&mut self, width: u16, _mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
+        if self.rendered_lines.is_some() && self.cache.last_width == width {
+            return self.rendered_lines.as_ref().unwrap();
         }
 
         // Note: The spinner character will be handled by the GutterWidget
@@ -45,24 +31,8 @@ impl ChatWidget for InFlightOperationWidget {
             self.label.clone(),
             theme.style(Component::TodoInProgress),
         ));
-
-        let bg_style = theme.style(Component::ChatListBackground);
-        let paragraph = Paragraph::new(vec![line])
-            .wrap(Wrap { trim: false })
-            .style(bg_style);
-
-        paragraph.render(area, buf);
-    }
-
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        _mode: ViewMode,
-        theme: &Theme,
-        _first_line: usize,
-    ) {
-        self.render(area, buf, _mode, theme);
+        self.rendered_lines = Some(vec![line]);
+        self.rendered_lines.as_ref().unwrap()
     }
 }
 
@@ -75,7 +45,7 @@ mod tests {
         let theme = Theme::default();
         let mut widget = InFlightOperationWidget::new("Processing...".to_string());
 
-        let height = widget.height(ViewMode::Compact, 80, &theme);
+        let height = widget.lines(80, ViewMode::Compact, &theme).len();
         assert_eq!(height, 1); // Always single line
     }
 }

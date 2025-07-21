@@ -8,32 +8,12 @@ use crate::tui::widgets::chat_list_state::ViewMode;
 use crate::tui::widgets::chat_widgets::message_widget::MessageWidget;
 use conductor_core::app::conversation::{AssistantContent, Message};
 use conductor_tools::{ToolCall, ToolResult};
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
-};
+use ratatui::text::{Line, Span};
 
 /// Core trait for chat items that can compute their height and render themselves
-pub trait ChatWidget: Send + Sync {
-    /// Compute height (rows).
-    fn height(&mut self, mode: ViewMode, width: u16, theme: &Theme) -> usize;
-
-    /// Render full widget.
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: ViewMode, theme: &Theme);
-
-    /// Render starting from `first_line` of logical output.
-    /// Default implementation draws to an off-screen buffer then copies the
-    /// requested slice – this preserves behaviour without per-widget work.
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        mode: ViewMode,
-        theme: &Theme,
-        first_line: usize,
-    );
+pub trait ChatRenderable: Send + Sync {
+    /// Return formatted lines; cache internally on `(width, mode)`.
+    fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>];
 }
 
 /// Height cache for efficient scrolling
@@ -87,15 +67,11 @@ impl HeightCache {
 /// Default widget that renders simple text as a paragraph
 pub struct ParagraphWidget {
     lines: Vec<Line<'static>>,
-    cache: HeightCache,
 }
 
 impl ParagraphWidget {
     pub fn new(lines: Vec<Line<'static>>) -> Self {
-        Self {
-            lines,
-            cache: HeightCache::new(),
-        }
+        Self { lines }
     }
 
     pub fn from_text(text: String, theme: &Theme) -> Self {
@@ -109,81 +85,11 @@ impl ParagraphWidget {
             .collect();
         Self::new(lines)
     }
-
-    /// Create a paragraph with theme background applied
-    fn create_themed_paragraph(&self, theme: &Theme) -> Paragraph<'static> {
-        let bg_style = theme.style(Component::ChatListBackground);
-        Paragraph::new(self.lines.clone())
-            .wrap(Wrap { trim: false })
-            .style(bg_style)
-    }
 }
 
-impl ChatWidget for ParagraphWidget {
-    fn height(&mut self, mode: ViewMode, width: u16, _theme: &Theme) -> usize {
-        // Check cache first
-        if let Some(cached) = self.cache.get(mode, width) {
-            return cached;
-        }
-
-        // Calculate height based on line wrapping
-        let mut total_height = 0;
-        for line in &self.lines {
-            let line_width = line.width();
-            if line_width <= width as usize {
-                total_height += 1;
-            } else {
-                // Simple wrapping calculation
-                total_height += line_width.div_ceil(width as usize);
-            }
-        }
-
-        // Cache the result
-        self.cache.set(mode, width, total_height);
-        total_height
-    }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, _mode: ViewMode, theme: &Theme) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Create a paragraph with the lines and theme background
-        let paragraph = self.create_themed_paragraph(theme);
-
-        // Render into the exact area
-        paragraph.render(area, buf);
-    }
-
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        _mode: ViewMode,
-        theme: &Theme,
-        first_line: usize,
-    ) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        // Ensure we have lines to render
-        if first_line >= self.lines.len() {
-            return;
-        }
-
-        // Calculate the slice of lines to render
-        let end_line = (first_line + area.height as usize).min(self.lines.len());
-        let visible_lines = &self.lines[first_line..end_line];
-
-        // Create a paragraph with only the visible lines
-        let bg_style = theme.style(Component::ChatListBackground);
-        let paragraph = Paragraph::new(visible_lines.to_vec())
-            .wrap(Wrap { trim: false })
-            .style(bg_style);
-
-        // Render into the exact area
-        paragraph.render(area, buf);
+impl ChatRenderable for ParagraphWidget {
+    fn lines(&mut self, _width: u16, _mode: ViewMode, _theme: &Theme) -> &[Line<'static>] {
+        &self.lines
     }
 }
 
@@ -302,12 +208,12 @@ impl ChatBlock {
 
 /// Dynamic chat widget that can render any ChatBlock
 pub struct DynamicChatWidget {
-    inner: Box<dyn ChatWidget + Send + Sync>,
+    inner: Box<dyn ChatRenderable + Send + Sync>,
 }
 
 impl DynamicChatWidget {
     pub fn from_block(block: ChatBlock, _theme: &Theme) -> Self {
-        let inner: Box<dyn ChatWidget + Send + Sync> = match block {
+        let inner: Box<dyn ChatRenderable + Send + Sync> = match block {
             ChatBlock::Message(message) => Box::new(MessageWidget::new(message)),
             ChatBlock::ToolInteraction { call, result } => {
                 // Use the ToolFormatterWidget for tool interactions
@@ -320,25 +226,9 @@ impl DynamicChatWidget {
     }
 }
 
-impl ChatWidget for DynamicChatWidget {
-    fn height(&mut self, mode: ViewMode, width: u16, theme: &Theme) -> usize {
-        self.inner.height(mode, width, theme)
-    }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer, mode: ViewMode, theme: &Theme) {
-        self.inner.render(area, buf, mode, theme)
-    }
-
-    fn render_partial(
-        &mut self,
-        area: Rect,
-        buf: &mut Buffer,
-        mode: ViewMode,
-        theme: &Theme,
-        first_line: usize,
-    ) {
-        self.inner
-            .render_partial(area, buf, mode, theme, first_line);
+impl ChatRenderable for DynamicChatWidget {
+    fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
+        self.inner.lines(width, mode, theme)
     }
 }
 
@@ -347,83 +237,6 @@ mod tests {
     use super::*;
     use crate::tui::theme::Theme;
     use conductor_core::app::conversation::UserContent;
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
-
-    #[test]
-    fn test_paragraph_widget_height_calculation() {
-        let theme = Theme::default();
-        let mut widget = ParagraphWidget::from_text("Hello world".to_string(), &theme);
-
-        // Test with width that fits
-        assert_eq!(widget.height(ViewMode::Compact, 20, &theme), 1);
-
-        // Test with narrow width that requires wrapping
-        // "Hello world" is 11 characters, so with width 5, it would need at least 3 lines
-        assert_eq!(widget.height(ViewMode::Compact, 5, &theme), 3);
-
-        // Test cache hit
-        assert_eq!(widget.height(ViewMode::Compact, 20, &theme), 1);
-    }
-
-    #[test]
-    fn test_paragraph_widget_stays_in_bounds() {
-        let theme = Theme::default();
-        let mut widget = ParagraphWidget::from_text(
-            "This is a long line that should wrap when rendered in a narrow area".to_string(),
-            &theme,
-        );
-
-        // Create a test terminal
-        let backend = TestBackend::new(40, 10);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal
-            .draw(|f| {
-                let area = Rect::new(5, 2, 20, 3); // Bounded area
-                widget.render(area, f.buffer_mut(), ViewMode::Compact, &theme);
-            })
-            .unwrap();
-
-        // Check that nothing was rendered outside the bounds
-        let buffer = terminal.backend().buffer();
-
-        // Check areas outside the widget bounds are empty
-        for y in 0..10 {
-            for x in 0..40 {
-                if !(2..5).contains(&y) || !(5..25).contains(&x) {
-                    // This should be outside our render area
-                    let cell = &buffer[(x, y)];
-                    assert_eq!(
-                        cell.symbol(),
-                        " ",
-                        "Found content outside bounds at ({x}, {y})"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_height_cache_invalidation() {
-        let theme = Theme::default();
-        let mut widget = ParagraphWidget::from_text("Test text".to_string(), &theme);
-
-        // Initial calculation
-        let h1 = widget.height(ViewMode::Compact, 10, &theme);
-
-        // Should return cached value
-        let h2 = widget.height(ViewMode::Compact, 10, &theme);
-        assert_eq!(h1, h2);
-
-        // Different width should recalculate
-        let h3 = widget.height(ViewMode::Compact, 4, &theme);
-        // With width 4, "Test text" (9 chars) needs at least 3 lines
-        assert_eq!(h3, 3);
-
-        // Different mode with same width should use separate cache
-        let h4 = widget.height(ViewMode::Detailed, 10, &theme);
-        assert_eq!(h1, h4); // Same text, so same height
-    }
 
     #[test]
     fn test_chat_block_from_message_row() {
@@ -461,7 +274,7 @@ mod tests {
         let mut widget = DynamicChatWidget::from_block(block, &theme);
 
         // Test that it delegates correctly
-        let height = widget.height(ViewMode::Compact, 20, &theme);
+        let height = widget.lines(20, ViewMode::Compact, &theme).len();
         assert_eq!(height, 1);
     }
 }

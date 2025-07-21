@@ -4,7 +4,7 @@ use crate::tui::{
     model::ChatItem,
     theme::Theme,
     widgets::{
-        ChatBlock, ChatListState, ChatWidget, DynamicChatWidget, GutterWidget, RoleGlyph, ViewMode,
+        ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, Gutter, RoleGlyph, ViewMode,
     },
 };
 use conductor_core::app::conversation::{
@@ -61,9 +61,9 @@ struct RowMetrics {
 
 /// Widget item wrapper for height caching
 struct WidgetItem {
-    id: String,                                // Unique identifier for reuse tracking
-    item: FlattenedItem,                       // The flattened item
-    widget: Box<dyn ChatWidget + Send + Sync>, // Cached widget
+    id: String,                                    // Unique identifier for reuse tracking
+    item: FlattenedItem,                           // The flattened item
+    widget: Box<dyn ChatRenderable + Send + Sync>, // Cached widget
     cached_heights: HeightCache,
 }
 
@@ -326,7 +326,10 @@ impl ChatViewport {
                 .cached_heights
                 .get_height(self.state.view_mode)
                 .unwrap_or_else(|| {
-                    let height = item.widget.height(self.state.view_mode, area.width, theme);
+                    let height = item
+                        .widget
+                        .lines(area.width, self.state.view_mode, theme)
+                        .len();
                     item.cached_heights
                         .set_height(self.state.view_mode, height, area.width);
                     height
@@ -466,7 +469,6 @@ impl ChatViewport {
             return;
         }
 
-        // Clear the area with theme background
         if let Some(bg_color) = theme.get_background_color() {
             f.render_widget(ratatui::widgets::Clear, area);
             let background = ratatui::widgets::Block::default()
@@ -497,7 +499,6 @@ impl ChatViewport {
             }
         }
 
-        // Use ratatui Layout to compute rectangles
         let rects = Layout::vertical(constraints).split(area);
         let mut rect_iter = rects.iter();
 
@@ -506,20 +507,16 @@ impl ChatViewport {
             if let Some(rect) = rect_iter.next() {
                 let widget_item = &mut self.items[row.idx];
 
-                if row.first_visible_line > 0 || rect.height < row.render_h as u16 {
-                    // Partial rendering needed
-                    widget_item.widget.render_partial(
-                        *rect,
-                        f.buffer_mut(),
-                        self.state.view_mode,
-                        theme,
-                        row.first_visible_line,
-                    );
-                } else {
-                    // Full rendering
-                    widget_item
-                        .widget
-                        .render(*rect, f.buffer_mut(), self.state.view_mode, theme);
+                let lines = widget_item
+                    .widget
+                    .lines(rect.width, self.state.view_mode, theme);
+
+                let start = row.first_visible_line;
+                let end = (start + row.render_h).min(lines.len());
+                let buf = f.buffer_mut();
+                for (row_idx, line) in lines[start..end].iter().enumerate() {
+                    let y = rect.y + row_idx as u16;
+                    buf.set_line(rect.x, y, line, rect.width);
                 }
 
                 // Skip the spacer rect if present
@@ -537,7 +534,7 @@ fn create_widget_for_flattened_item(
     theme: &Theme,
     is_hovered: bool,
     spinner_state: usize,
-) -> Box<dyn ChatWidget + Send + Sync> {
+) -> Box<dyn ChatRenderable + Send + Sync> {
     use crate::tui::widgets::chat_widgets::{
         CommandResponseWidget, InFlightOperationWidget, SlashInputWidget, SystemNoticeWidget,
         format_app_command, format_command_response, get_spinner_char, row_widget::RowWidget,
@@ -555,7 +552,7 @@ fn create_widget_for_flattened_item(
             };
 
             // Create gutter widget
-            let gutter = GutterWidget::new(role).with_hover(is_hovered);
+            let gutter = Gutter::new(role).with_hover(is_hovered);
 
             // Create body widget
             let body = Box::new(DynamicChatWidget::from_block(chat_block, theme));
@@ -569,7 +566,7 @@ fn create_widget_for_flattened_item(
                 result: result.clone(),
             };
 
-            let mut gutter = GutterWidget::new(RoleGlyph::Tool).with_hover(is_hovered);
+            let mut gutter = Gutter::new(RoleGlyph::Tool).with_hover(is_hovered);
 
             // Show spinner if tool call is pending (i.e., no result yet)
             if result.is_none() {
@@ -585,12 +582,12 @@ fn create_widget_for_flattened_item(
                 ChatItem::SystemNotice {
                     level, text, ts, ..
                 } => {
-                    let gutter = GutterWidget::new(RoleGlyph::Meta).with_hover(is_hovered);
+                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(SystemNoticeWidget::new(*level, text.clone(), *ts));
                     Box::new(RowWidget::new(gutter, body))
                 }
                 ChatItem::CoreCmdResponse { cmd, resp, .. } => {
-                    let gutter = GutterWidget::new(RoleGlyph::Meta).with_hover(is_hovered);
+                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format_app_command(cmd),
                         format_command_response(resp),
@@ -598,7 +595,7 @@ fn create_widget_for_flattened_item(
                     Box::new(RowWidget::new(gutter, body))
                 }
                 ChatItem::InFlightOperation { label, .. } => {
-                    let gutter = GutterWidget::new(RoleGlyph::Meta)
+                    let gutter = Gutter::new(RoleGlyph::Meta)
                         .with_hover(is_hovered)
                         .with_spinner(get_spinner_char(spinner_state));
 
@@ -606,14 +603,14 @@ fn create_widget_for_flattened_item(
                     Box::new(RowWidget::new(gutter, body))
                 }
                 ChatItem::SlashInput { raw, .. } => {
-                    let gutter = GutterWidget::new(RoleGlyph::Meta).with_hover(is_hovered);
+                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(SlashInputWidget::new(raw.clone()));
                     Box::new(RowWidget::new(gutter, body))
                 }
                 ChatItem::TuiCommandResponse {
                     command, response, ..
                 } => {
-                    let gutter = GutterWidget::new(RoleGlyph::Meta).with_hover(is_hovered);
+                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format!("/{command}"),
                         response.clone(),
