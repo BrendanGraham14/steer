@@ -133,8 +133,10 @@ Provide a concise response based only on the content above.
 "#
     );
 
-    let messages = vec![crate::app::conversation::Message::User {
-        content: vec![crate::app::conversation::UserContent::Text { text: user_message }],
+    let messages = vec![crate::app::conversation::Message {
+        data: crate::app::conversation::MessageData::User {
+            content: vec![crate::app::conversation::UserContent::Text { text: user_message }],
+        },
         timestamp: crate::app::conversation::Message::current_timestamp(),
         id: crate::app::conversation::Message::generate_id(
             "user",

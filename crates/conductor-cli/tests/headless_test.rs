@@ -1,5 +1,5 @@
 use conductor_core::api::Model;
-use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
+use conductor_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 
 // This test requires real API keys and makes actual API calls
 // Run with: cargo test --test headless_test -- --ignored
@@ -10,10 +10,12 @@ async fn test_headless_mode_integration() {
 
     // Create a simple test message
     let timestamp = Message::current_timestamp();
-    let messages = vec![Message::User {
-        content: vec![UserContent::Text {
-            text: "What is 2+2?".to_string(),
-        }],
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What is 2+2?".to_string(),
+            }],
+        },
         timestamp,
         id: Message::generate_id("user", timestamp),
         parent_message_id: None,
@@ -28,12 +30,12 @@ async fn test_headless_mode_integration() {
 
     // First assert that we got an Assistant message
     assert!(
-        matches!(result.final_msg, Message::Assistant { .. }),
+        matches!(result.final_msg.data, MessageData::Assistant { .. }),
         "Expected Assistant message in response"
     );
 
     // Extract content safely
-    if let Message::Assistant { content, .. } = &result.final_msg {
+    if let MessageData::Assistant { content, .. } = &result.final_msg.data {
         // The response should contain the answer (4)
         let text_blocks: Vec<_> = content
             .iter()

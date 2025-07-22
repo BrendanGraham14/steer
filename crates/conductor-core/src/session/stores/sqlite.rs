@@ -13,7 +13,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::app::Message;
-use crate::app::conversation::{AssistantContent, UserContent};
+use crate::app::conversation::{AssistantContent, MessageData, UserContent};
 use crate::events::StreamEvent;
 // use crate::session::state::ToolVisibility;
 use crate::session::{
@@ -569,8 +569,8 @@ impl SessionStore for SqliteSessionStore {
         .map_err(|e| SessionStoreError::database(format!("Failed to get next sequence: {e}")))?;
 
         // Serialize the message based on its variant
-        let (role, content_json) = match message {
-            Message::User { content, .. } => {
+        let (role, content_json) = match &message.data {
+            MessageData::User { content, .. } => {
                 let json = serde_json::to_string(&content).map_err(|e| {
                     SessionStoreError::serialization(format!(
                         "Failed to serialize user content: {e}"
@@ -578,7 +578,7 @@ impl SessionStore for SqliteSessionStore {
                 })?;
                 ("user", json)
             }
-            Message::Assistant { content, .. } => {
+            MessageData::Assistant { content, .. } => {
                 let json = serde_json::to_string(&content).map_err(|e| {
                     SessionStoreError::serialization(format!(
                         "Failed to serialize assistant content: {e}"
@@ -586,7 +586,7 @@ impl SessionStore for SqliteSessionStore {
                 })?;
                 ("assistant", json)
             }
-            Message::Tool {
+            MessageData::Tool {
                 tool_use_id,
                 result,
                 ..
@@ -684,11 +684,11 @@ impl SessionStore for SqliteSessionStore {
                                 "Failed to deserialize user content: {e}"
                             ))
                         })?;
-                    Message::User {
-                        content,
+                    Message {
+                        data: MessageData::User { content },
                         timestamp: created_at.timestamp() as u64,
-                        id: id.clone(),
-                        parent_message_id: parent_message_id.clone(),
+                        id,
+                        parent_message_id,
                     }
                 }
                 "assistant" => {
@@ -698,11 +698,11 @@ impl SessionStore for SqliteSessionStore {
                                 "Failed to deserialize assistant content: {e}"
                             ))
                         })?;
-                    Message::Assistant {
-                        content,
+                    Message {
+                        data: MessageData::Assistant { content },
                         timestamp: created_at.timestamp() as u64,
-                        id: id.clone(),
-                        parent_message_id: parent_message_id.clone(),
+                        id,
+                        parent_message_id,
                     }
                 }
                 "tool" => {
@@ -717,9 +717,11 @@ impl SessionStore for SqliteSessionStore {
                                 "Failed to deserialize tool message: {e}"
                             ))
                         })?;
-                    Message::Tool {
-                        tool_use_id: stored.tool_use_id,
-                        result: stored.result,
+                    Message {
+                        data: MessageData::Tool {
+                            tool_use_id: stored.tool_use_id,
+                            result: stored.result,
+                        },
                         timestamp: created_at.timestamp() as u64,
                         id: id.clone(),
                         parent_message_id: parent_message_id.clone(),
@@ -1123,10 +1125,12 @@ mod tests {
         let config = create_test_session_config();
         let session = store.create_session(config).await.unwrap();
 
-        let message = Message::User {
-            content: vec![UserContent::Text {
-                text: "Hello".to_string(),
-            }],
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
+            },
             timestamp: 123456789,
             id: "msg1".to_string(),
             parent_message_id: None,
@@ -1233,10 +1237,12 @@ mod tests {
         // Add a MessageComplete event with Claude model
         let claude_model = Model::Claude3_5Sonnet20241022;
         let message_event = StreamEvent::MessageComplete {
-            message: Message::Assistant {
-                content: vec![AssistantContent::Text {
-                    text: "Hello from Claude".to_string(),
-                }],
+            message: Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::Text {
+                        text: "Hello from Claude".to_string(),
+                    }],
+                },
                 timestamp: 123456789,
                 id: "msg1".to_string(),
                 parent_message_id: None,

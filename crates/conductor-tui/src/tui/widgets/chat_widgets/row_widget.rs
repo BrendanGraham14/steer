@@ -62,7 +62,10 @@ impl ChatRenderable for RowWidget {
 
 #[cfg(test)]
 mod tests {
-    use conductor_core::app::{Message, conversation::AssistantContent};
+    use conductor_core::app::{
+        Message,
+        conversation::{AssistantContent, MessageData},
+    };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
     use super::RowWidget;
@@ -75,10 +78,12 @@ mod tests {
     fn test_row_widget_render_layout() {
         let theme = Theme::default();
         let gutter = Gutter::new(RoleGlyph::Assistant);
-        let message = Message::Assistant {
-            content: vec![AssistantContent::Text {
-                text: "Hello world\nHow are you?".to_string(),
-            }],
+        let message = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "Hello world\nHow are you?".to_string(),
+                }],
+            },
             id: "1".to_string(),
             parent_message_id: None,
             timestamp: 0,

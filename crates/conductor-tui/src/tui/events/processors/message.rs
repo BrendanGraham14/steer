@@ -46,10 +46,10 @@ impl EventProcessor for MessageEventProcessor {
                 for item in ctx.chat_store.iter_mut() {
                     if let ChatItemData::Message(message) = &mut item.data {
                         if message.id() == id {
-                            if let conductor_core::app::conversation::Message::Assistant {
+                            if let conductor_core::app::conversation::MessageData::Assistant {
                                 content: blocks,
                                 ..
-                            } = message
+                            } = &mut message.data
                             {
                                 blocks.clear();
                                 blocks.push(AssistantContent::Text { text: content });
@@ -74,10 +74,10 @@ impl EventProcessor for MessageEventProcessor {
                 for item in ctx.chat_store.iter_mut() {
                     if let ChatItemData::Message(message) = &mut item.data {
                         if message.id() == id {
-                            if let conductor_core::app::conversation::Message::Assistant {
+                            if let conductor_core::app::conversation::MessageData::Assistant {
                                 content: blocks,
                                 ..
-                            } = message
+                            } = &mut message.data
                             {
                                 if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
                                     text.push_str(&delta);
@@ -138,16 +138,11 @@ impl MessageEventProcessor {
         ctx.chat_store.active_message_id = Some(message_id.clone());
 
         // First, extract tool calls from Assistant messages to register them
-        if let conductor_core::app::Message::Assistant {
-            ref content,
-            ref id,
-            ..
-        } = message
-        {
+        if let conductor_core::app::MessageData::Assistant { ref content, .. } = message.data {
             tracing::debug!(
                 target: "tui.message_event",
                 "Processing Assistant message id={}",
-                id
+                message.id
             );
             for block in content {
                 if let AssistantContent::ToolCall { tool_call } = block {
@@ -174,7 +169,7 @@ impl MessageEventProcessor {
         if let Some(ref parent_id) = parent_id {
             let siblings = ctx.chat_store.find_by_parent(parent_id);
             let user_siblings = siblings.iter().filter(|item| {
-                matches!(&item.data, ChatItemData::Message(message) if matches!(message, conductor_core::app::Message::User { .. }))
+                matches!(&item.data, ChatItemData::Message(message) if matches!(&message.data, conductor_core::app::MessageData::User { .. }))
             }).count();
 
             // If there are multiple user messages with the same parent, we have a branch
@@ -189,7 +184,7 @@ impl MessageEventProcessor {
         } else {
             // Check for root-level branches (multiple messages with no parent)
             let root_messages = ctx.chat_store.iter().filter(|item| {
-                matches!(&item.data, ChatItemData::Message(message) if message.parent_message_id().is_none() && matches!(message, conductor_core::app::Message::User { .. }))
+                matches!(&item.data, ChatItemData::Message(message) if message.parent_message_id().is_none() && matches!(&message.data, conductor_core::app::MessageData::User { .. }))
             }).count();
 
             if root_messages > 1 {
@@ -218,7 +213,7 @@ mod tests {
     use crate::tui::widgets::ChatListState;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
+    use conductor_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
     use conductor_core::app::io::AppCommandSink;
     use conductor_core::error::Result;
     use conductor_tools::schema::ToolCall;
@@ -288,15 +283,17 @@ mod tests {
         };
 
         // Create a placeholder Tool message
-        let placeholder_msg = Message::Tool {
+        let placeholder_msg = Message {
+            data: MessageData::Tool {
+                tool_use_id: tool_id.clone(),
+                result: conductor_tools::ToolResult::External(
+                    conductor_tools::result::ExternalResult {
+                        tool_name: "unknown".to_string(),
+                        payload: "Pending...".to_string(),
+                    },
+                ),
+            },
             id: "tool_msg_id".to_string(),
-            tool_use_id: tool_id.clone(),
-            result: conductor_tools::ToolResult::External(
-                conductor_tools::result::ExternalResult {
-                    tool_name: "unknown".to_string(),
-                    payload: "Pending...".to_string(),
-                },
-            ),
             timestamp: chrono::Utc::now().timestamp() as u64,
             parent_message_id: None,
         };
@@ -319,9 +316,11 @@ mod tests {
             parameters: real_params.clone(),
         };
 
-        let assistant_message = Message::Assistant {
+        let assistant_message = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall { tool_call }],
+            },
             id: "msg_123".to_string(),
-            content: vec![AssistantContent::ToolCall { tool_call }],
             timestamp: 1234567890,
             parent_message_id: None,
         };
@@ -371,44 +370,52 @@ mod tests {
 
         // Simulate a real conversation flow with an edit
         // 1. User says hello
-        let msg1 = Message::User {
+        let msg1 = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
+            },
             id: "user_1".to_string(),
-            content: vec![UserContent::Text {
-                text: "Hello".to_string(),
-            }],
             timestamp: 1,
             parent_message_id: None,
         };
         ctx.chat_store.add_message(msg1);
 
         // 2. Assistant responds
-        let msg2 = Message::Assistant {
+        let msg2 = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "Hi there!".to_string(),
+                }],
+            },
             id: "assistant_1".to_string(),
-            content: vec![AssistantContent::Text {
-                text: "Hi there!".to_string(),
-            }],
             timestamp: 2,
             parent_message_id: Some("user_1".to_string()),
         };
         ctx.chat_store.add_message(msg2);
 
         // 3. User continues conversation
-        let msg3 = Message::User {
+        let msg3 = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "How are you?".to_string(),
+                }],
+            },
             id: "user_2".to_string(),
-            content: vec![UserContent::Text {
-                text: "How are you?".to_string(),
-            }],
             timestamp: 3,
             parent_message_id: Some("assistant_1".to_string()),
         };
         ctx.chat_store.add_message(msg3);
 
         // 4. Assistant responds again
-        let msg4 = Message::Assistant {
+        let msg4 = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "I'm doing well!".to_string(),
+                }],
+            },
             id: "assistant_2".to_string(),
-            content: vec![AssistantContent::Text {
-                text: "I'm doing well!".to_string(),
-            }],
             timestamp: 4,
             parent_message_id: Some("user_2".to_string()),
         };
@@ -418,11 +425,13 @@ mod tests {
 
         // 5. Now user edits their first message
         // This creates a new user message with the same parent as user_1 (None)
-        let edited_msg = Message::User {
+        let edited_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hi there!".to_string(),
+                }],
+            },
             id: "user_1_edited".to_string(),
-            content: vec![UserContent::Text {
-                text: "Hi there!".to_string(),
-            }],
             timestamp: 5,
             parent_message_id: None, // Same parent as original user_1
         };

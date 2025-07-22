@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::api::Model;
-use crate::app::conversation::UserContent;
+use crate::app::conversation::{MessageData, UserContent};
 use crate::app::{AppCommand, AppConfig, Message};
 use crate::config::LlmConfigProvider;
 use crate::error::{Error, Result};
@@ -179,8 +179,8 @@ impl OneShotRunner {
         let user_content = match init_msgs.last() {
             Some(message) => {
                 // Extract text content from the message
-                match message {
-                    Message::User { content, .. } => {
+                match &message.data {
+                    MessageData::User { content, .. } => {
                         let text_content = content.iter().find_map(|c| match c {
                             UserContent::Text { text } => Some(text.clone()),
                             _ => None,
@@ -288,7 +288,9 @@ impl OneShotRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
+    use crate::app::conversation::{
+        AssistantContent, Message, MessageData, ToolResult, UserContent,
+    };
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
@@ -336,10 +338,12 @@ mod tests {
         dotenv().ok();
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let messages = vec![Message::User {
-            content: vec![UserContent::Text {
-                text: "What is 2 + 2?".to_string(),
-            }],
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "What is 2 + 2?".to_string(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
             parent_message_id: None,
@@ -362,8 +366,8 @@ mod tests {
         println!("Ephemeral run succeeded: {:?}", result.final_msg);
 
         // Verify the response contains something reasonable
-        let content = match &result.final_msg {
-            Message::Assistant { content, .. } => content,
+        let content = match &result.final_msg.data {
+            MessageData::Assistant { content, .. } => content,
             _ => unreachable!("expected assistant message, got {:?}", result.final_msg),
         };
         let text_content = content.iter().find_map(|c| match c {
@@ -457,8 +461,8 @@ mod tests {
             Ok(run_result) => {
                 println!("Session run succeeded: {:?}", run_result.final_msg);
 
-                let content = match &run_result.final_msg {
-                    Message::Assistant { content, .. } => content,
+                let content = match &run_result.final_msg.data {
+                    MessageData::Assistant { content, .. } => content.clone(),
                     _ => unreachable!("expected assistant message, got {:?}", run_result.final_msg),
                 };
                 let text_content = content.iter().find_map(|c| match c {
@@ -538,12 +542,14 @@ mod tests {
     async fn test_run_ephemeral_non_text_message() {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let messages = vec![Message::Tool {
-            tool_use_id: "test".to_string(),
-            result: ToolResult::External(conductor_tools::result::ExternalResult {
-                tool_name: "test_tool".to_string(),
-                payload: "test".to_string(),
-            }),
+        let messages = vec![Message {
+            data: MessageData::Tool {
+                tool_use_id: "test".to_string(),
+                result: ToolResult::External(conductor_tools::result::ExternalResult {
+                    tool_name: "test_tool".to_string(),
+                    payload: "test".to_string(),
+                }),
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
             parent_message_id: None,
@@ -632,26 +638,32 @@ mod tests {
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
         let messages = vec![
-            Message::User {
-                content: vec![UserContent::Text {
-                    text: "What is 2+2? Don't give me the answer yet.".to_string(),
-                }],
+            Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: "What is 2+2? Don't give me the answer yet.".to_string(),
+                    }],
+                },
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
                 parent_message_id: None,
             },
-            Message::Assistant {
-                content: vec![AssistantContent::Text {
-                    text: "Ok, I'll give you the answer once you're ready.".to_string(),
-                }],
+            Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::Text {
+                        text: "Ok, I'll give you the answer once you're ready.".to_string(),
+                    }],
+                },
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("assistant", Message::current_timestamp()),
                 parent_message_id: Some("user_0".to_string()),
             },
-            Message::User {
-                content: vec![UserContent::Text {
-                    text: "I'm ready. What is the answer?".to_string(),
-                }],
+            Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: "I'm ready. What is the answer?".to_string(),
+                    }],
+                },
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
                 parent_message_id: Some("assistant_0".to_string()),
@@ -727,8 +739,8 @@ mod tests {
                 // Found the message, verify it's correct
                 let first_msg = &updated_state.messages[0];
                 assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
-                assert!(matches!(first_msg, Message::User { .. }));
-                let Message::User { content, .. } = first_msg else {
+                assert!(matches!(first_msg.data, MessageData::User { .. }));
+                let MessageData::User { content, .. } = &first_msg.data else {
                     unreachable!();
                 };
                 assert!(matches!(content.first(), Some(UserContent::Text { .. })));
@@ -805,8 +817,8 @@ mod tests {
         // The first message should be the user input we sent
         let first_msg = &state_after.messages[0];
         assert_eq!(first_msg.role(), crate::app::conversation::Role::User);
-        assert!(matches!(first_msg, Message::User { .. }));
-        let Message::User { content, .. } = first_msg else {
+        assert!(matches!(first_msg.data, MessageData::User { .. }));
+        let MessageData::User { content, .. } = &first_msg.data else {
             unreachable!();
         };
         assert!(matches!(content.first(), Some(UserContent::Text { .. })));
@@ -822,10 +834,12 @@ mod tests {
         dotenv().ok();
         let (session_manager, _temp_dir) = create_test_session_manager().await;
 
-        let messages = vec![Message::User {
-            content: vec![UserContent::Text {
-                text: "List the files in the current directory".to_string(),
-            }],
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "List the files in the current directory".to_string(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
             parent_message_id: None,
@@ -846,8 +860,8 @@ mod tests {
         println!("Ephemeral run with tools succeeded: {:?}", result.final_msg);
 
         // The response might be structured content with tool calls, which is expected
-        let has_content = match &result.final_msg {
-            Message::Assistant { content, .. } => {
+        let has_content = match &result.final_msg.data {
+            MessageData::Assistant { content, .. } => {
                 content.iter().any(|c| match c {
                     AssistantContent::Text { text } => !text.is_empty(),
                     _ => true, // Non-text blocks are also valid content
@@ -905,8 +919,8 @@ mod tests {
         println!("Second interaction: {:?}", result2.final_msg);
 
         // Verify the second response uses the context from the first
-        match &result2.final_msg {
-            Message::Assistant { content, .. } => {
+        match &result2.final_msg.data {
+            MessageData::Assistant { content, .. } => {
                 let text_content = content.iter().find_map(|c| match c {
                     AssistantContent::Text { text } => Some(text),
                     _ => None,

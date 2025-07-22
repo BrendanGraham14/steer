@@ -40,7 +40,7 @@ pub use cancellation::CancellationInfo;
 pub use command::AppCommand;
 pub use conductor_workspace::EnvironmentInfo;
 pub use context::OpContext;
-pub use conversation::{Conversation, Message};
+pub use conversation::{Conversation, Message, MessageData};
 pub use tool_executor::ToolExecutor;
 
 pub use agent_executor::{
@@ -366,7 +366,7 @@ impl App {
         drop(conversation_guard);
 
         // Emit event only for non-tool messages
-        if !matches!(message, Message::Tool { .. }) {
+        if !matches!(message.data, MessageData::Tool { .. }) {
             self.emit_event(AppEvent::MessageAdded {
                 message,
                 model: self.current_model,
@@ -400,10 +400,12 @@ impl App {
             conv.messages.last().map(|m| m.id().to_string())
         };
 
-        self.add_message(Message::User {
-            content: vec![UserContent::Text {
-                text: message.clone(),
-            }],
+        self.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: message.clone(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
             parent_message_id: parent_id,
@@ -875,9 +877,11 @@ impl App {
                     conv.messages.last().map(|m| m.id().to_string())
                 };
 
-                let cancelled_result = Message::Tool {
-                    tool_use_id: tool_call.id.clone(),
-                    result: ToolResult::Error(ToolError::Cancelled(tool_call.name.clone())),
+                let cancelled_result = Message {
+                    data: MessageData::Tool {
+                        tool_use_id: tool_call.id.clone(),
+                        result: ToolResult::Error(ToolError::Cancelled(tool_call.name.clone())),
+                    },
                     timestamp: Message::current_timestamp(),
                     id: Message::generate_id("tool", Message::current_timestamp()),
                     parent_message_id: parent_id,
@@ -908,14 +912,14 @@ impl App {
 
         // First pass: collect all tool results
         for message in &conversation.messages {
-            if let Message::Tool { tool_use_id, .. } = message {
+            if let MessageData::Tool { tool_use_id, .. } = &message.data {
                 tool_results.insert(tool_use_id.clone());
             }
         }
 
         // Second pass: find tool calls without results
         for message in &conversation.messages {
-            if let Message::Assistant { content, .. } = message {
+            if let MessageData::Assistant { content, .. } = &message.data {
                 for block in content {
                     if let AssistantContent::ToolCall { tool_call } = block {
                         if !tool_results.contains(&tool_call.id) {
@@ -939,10 +943,12 @@ impl App {
             .messages
             .last()
             .map(|m| m.id().to_string());
-        let message = Message::User {
-            content: vec![UserContent::Text {
-                text: content.to_string(),
-            }],
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: content.to_string(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
             parent_message_id: parent_id,
@@ -960,10 +966,12 @@ impl App {
             .messages
             .last()
             .map(|m| m.id().to_string());
-        let message = Message::Assistant {
-            content: vec![AssistantContent::Text {
-                text: content.to_string(),
-            }],
+        let message = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: content.to_string(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
             parent_message_id: parent_id,
@@ -1268,7 +1276,7 @@ async fn handle_app_command(
                         .messages
                         .iter()
                         .rev()
-                        .find(|m| matches!(m, Message::User { .. }))
+                        .find(|m| matches!(m.data, MessageData::User { .. }))
                         .cloned()
                 } else {
                     None
@@ -1535,7 +1543,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                     .messages
                     .iter()
                     .rev()
-                    .find(|m| matches!(m, Message::Assistant { .. }))
+                    .find(|m| matches!(m.data, MessageData::Assistant { .. }))
                     .map(|m| m.id().to_string())
             };
             if let Some(msg_id) = maybe_msg_id {
@@ -1672,10 +1680,12 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         conv.messages.last().map(|m| m.id().to_string())
                     };
 
-                    app.add_message(Message::Assistant {
-                        content: vec![AssistantContent::Text {
-                            text: format!("Dispatch Agent Result:\n{response_text}"),
-                        }],
+                    app.add_message(Message {
+                        data: MessageData::Assistant {
+                            content: vec![AssistantContent::Text {
+                                text: format!("Dispatch Agent Result:\n{response_text}"),
+                            }],
+                        },
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("assistant", Message::current_timestamp()),
                         parent_message_id: parent_id,
@@ -1719,13 +1729,15 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         conv.messages.last().map(|m| m.id().to_string())
                     };
 
-                    let message = Message::User {
-                        content: vec![UserContent::CommandExecution {
-                            command: command.clone(),
-                            stdout,
-                            stderr,
-                            exit_code,
-                        }],
+                    let message = Message {
+                        data: MessageData::User {
+                            content: vec![UserContent::CommandExecution {
+                                command: command.clone(),
+                                stdout,
+                                stderr,
+                                exit_code,
+                            }],
+                        },
                         timestamp: Message::current_timestamp(),
                         id: Message::generate_id("user", Message::current_timestamp()),
                         parent_message_id: parent_id,
@@ -1769,13 +1781,15 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         };
 
                         let error_message = format!("Error executing command: {e}");
-                        let message = Message::User {
-                            content: vec![UserContent::CommandExecution {
-                                command: command.clone(),
-                                stdout: String::new(),
-                                stderr: error_message.clone(),
-                                exit_code: -1,
-                            }],
+                        let message = Message {
+                            data: MessageData::User {
+                                content: vec![UserContent::CommandExecution {
+                                    command: command.clone(),
+                                    stdout: String::new(),
+                                    stderr: error_message.clone(),
+                                    exit_code: -1,
+                                }],
+                            },
                             timestamp: Message::current_timestamp(),
                             id: Message::generate_id("user", Message::current_timestamp()),
                             parent_message_id: parent_id,

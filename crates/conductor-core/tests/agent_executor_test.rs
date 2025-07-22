@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
     use conductor_core::api::{Client, Model};
-    use conductor_core::app::conversation::{AssistantContent, Message, Role, UserContent};
+    use conductor_core::app::conversation::{
+        AssistantContent, Message, MessageData, Role, UserContent,
+    };
     use conductor_core::app::{
         AgentEvent, AgentExecutor, AgentExecutorRunRequest, ApprovalDecision,
     };
@@ -23,18 +25,22 @@ mod tests {
         let timestamp = Message::current_timestamp();
 
         match role {
-            "user" => Message::User {
-                content: vec![UserContent::Text {
-                    text: content.to_string(),
-                }],
+            "user" => Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: content.to_string(),
+                    }],
+                },
                 timestamp,
                 id: Message::generate_id("user", timestamp),
                 parent_message_id: None,
             },
-            "assistant" => Message::Assistant {
-                content: vec![AssistantContent::Text {
-                    text: content.to_string(),
-                }],
+            "assistant" => Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::Text {
+                        text: content.to_string(),
+                    }],
+                },
                 timestamp,
                 id: Message::generate_id("assistant", timestamp),
                 parent_message_id: None,
@@ -89,9 +95,9 @@ mod tests {
         assert!(final_message_result.is_ok());
         let final_message = final_message_result.unwrap();
         assert_eq!(final_message.role(), Role::Assistant);
-        assert!(matches!(&final_message, Message::Assistant { .. }));
-        match &final_message {
-            Message::Assistant { content, .. } => {
+        assert!(matches!(&final_message.data, MessageData::Assistant { .. }));
+        match &final_message.data {
+            MessageData::Assistant { content, .. } => {
                 assert!(!content.is_empty());
             }
             _ => unreachable!(),
@@ -109,8 +115,8 @@ mod tests {
         }
         assert!(
             has_part
-                || match &final_message {
-                    Message::Assistant { content, .. } => !content.is_empty(),
+                || match &final_message.data {
+                    MessageData::Assistant { content, .. } => !content.is_empty(),
                     _ => false,
                 }
         ); // Ensure we received text either via parts or final message
@@ -187,9 +193,9 @@ mod tests {
         let final_message = final_message_result.unwrap();
         assert_eq!(final_message.role(), Role::Assistant);
         // Check if the response contains "Paris" (case-insensitive)
-        assert!(matches!(&final_message, Message::Assistant { .. }));
-        let response_text = match &final_message {
-            Message::Assistant { content, .. } => content
+        assert!(matches!(&final_message.data, MessageData::Assistant { .. }));
+        let response_text = match &final_message.data {
+            MessageData::Assistant { content, .. } => content
                 .iter()
                 .filter_map(|c| match c {
                     AssistantContent::Text { text } => Some(text.as_str()),
@@ -211,16 +217,18 @@ mod tests {
         let mut saw_final_text = false;
         while let Ok(Some(event)) = timeout(Duration::from_secs(5), event_rx.recv()).await {
             match event {
-                AgentEvent::AssistantMessageFinal(Message::Assistant { content, .. }) => {
-                    // Check if we have tool calls in the assistant content
-                    if content
-                        .iter()
-                        .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
-                    {
-                        saw_final_with_tool_call = true;
-                    } else {
-                        // If we have text without tool calls, consider it final text
-                        saw_final_text = true;
+                AgentEvent::AssistantMessageFinal(message) => {
+                    if let MessageData::Assistant { content, .. } = &message.data {
+                        // Check if we have tool calls in the assistant content
+                        if content
+                            .iter()
+                            .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
+                        {
+                            saw_final_with_tool_call = true;
+                        } else {
+                            // If we have text without tool calls, consider it final text
+                            saw_final_text = true;
+                        }
                     }
                 }
                 AgentEvent::ExecutingTool {

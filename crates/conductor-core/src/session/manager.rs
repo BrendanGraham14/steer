@@ -850,11 +850,11 @@ async fn update_session_state_for_event(
             store.append_message(session_id, message).await?;
 
             // Update tool call if this is a tool result
-            if let crate::app::conversation::Message::Tool {
+            if let crate::app::conversation::MessageData::Tool {
                 tool_use_id,
                 result,
                 ..
-            } = message
+            } = &message.data
             {
                 let stats = crate::session::ToolExecutionStats::success_typed(
                     serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
@@ -886,9 +886,11 @@ async fn update_session_state_for_event(
             let messages = store.get_messages(session_id, None).await?;
             let parent_id = messages.last().map(|m| m.id().to_string());
 
-            let tool_message = ConversationMessage::Tool {
-                tool_use_id: tool_call_id.clone(),
-                result: result.clone(),
+            let tool_message = ConversationMessage {
+                data: crate::app::conversation::MessageData::Tool {
+                    tool_use_id: tool_call_id.clone(),
+                    result: result.clone(),
+                },
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("Time went backwards")
@@ -915,9 +917,11 @@ async fn update_session_state_for_event(
                 tool_name: "unknown".to_string(), // We don't have the tool name here
                 message: error.clone(),
             };
-            let tool_message = ConversationMessage::Tool {
-                tool_use_id: tool_call_id.clone(),
-                result: crate::app::conversation::ToolResult::Error(tool_error),
+            let tool_message = ConversationMessage {
+                data: crate::app::conversation::MessageData::Tool {
+                    tool_use_id: tool_call_id.clone(),
+                    result: crate::app::conversation::ToolResult::Error(tool_error),
+                },
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("Time went backwards")
@@ -1107,10 +1111,12 @@ mod tests {
 
         // Simulate adding messages including tool calls and results
         // First, add a user message
-        let user_message = ConversationMessage::User {
-            content: vec![UserContent::Text {
-                text: "Read the file test.txt".to_string(),
-            }],
+        let user_message = ConversationMessage {
+            data: crate::app::conversation::MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Read the file test.txt".to_string(),
+                }],
+            },
             timestamp: 123456789,
             id: "user_1".to_string(),
             parent_message_id: None,
@@ -1122,19 +1128,21 @@ mod tests {
             .unwrap();
 
         // Add an assistant message with a tool call
-        let assistant_message = ConversationMessage::Assistant {
-            content: vec![
-                AssistantContent::Text {
-                    text: "I'll read that file for you.".to_string(),
-                },
-                AssistantContent::ToolCall {
-                    tool_call: ToolCall {
-                        id: "tool_call_1".to_string(),
-                        name: "read_file".to_string(),
-                        parameters: serde_json::json!({"path": "test.txt"}),
+        let assistant_message = ConversationMessage {
+            data: crate::app::conversation::MessageData::Assistant {
+                content: vec![
+                    AssistantContent::Text {
+                        text: "I'll read that file for you.".to_string(),
                     },
-                },
-            ],
+                    AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            id: "tool_call_1".to_string(),
+                            name: "read_file".to_string(),
+                            parameters: serde_json::json!({"path": "test.txt"}),
+                        },
+                    },
+                ],
+            },
             timestamp: 123456790,
             id: "assistant_1".to_string(),
             parent_message_id: Some("user_1".to_string()),
@@ -1177,16 +1185,18 @@ mod tests {
             .unwrap();
 
         // Also add a Tool message with the result
-        let tool_message = ConversationMessage::Tool {
-            tool_use_id: "tool_call_1".to_string(),
-            result: crate::app::conversation::ToolResult::FileContent(
-                conductor_tools::result::FileContentResult {
-                    content: "File contents: Hello, world!".to_string(),
-                    file_path: "test.txt".to_string(),
-                    line_count: 1,
-                    truncated: false,
-                },
-            ),
+        let tool_message = ConversationMessage {
+            data: crate::app::conversation::MessageData::Tool {
+                tool_use_id: "tool_call_1".to_string(),
+                result: crate::app::conversation::ToolResult::FileContent(
+                    conductor_tools::result::FileContentResult {
+                        content: "File contents: Hello, world!".to_string(),
+                        file_path: "test.txt".to_string(),
+                        line_count: 1,
+                        truncated: false,
+                    },
+                ),
+            },
             timestamp: 123456790,
             id: "tool_result_tool_call_1".to_string(),
             parent_message_id: Some("assistant_1".to_string()),
@@ -1198,10 +1208,12 @@ mod tests {
             .unwrap();
 
         // Add a follow-up assistant message
-        let followup_message = ConversationMessage::Assistant {
-            content: vec![AssistantContent::Text {
-                text: "The file contains: Hello, world!".to_string(),
-            }],
+        let followup_message = ConversationMessage {
+            data: crate::app::conversation::MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "The file contains: Hello, world!".to_string(),
+                }],
+            },
             timestamp: 123456791,
             id: "assistant_2".to_string(),
             parent_message_id: Some("assistant_1".to_string()),
@@ -1231,26 +1243,29 @@ mod tests {
         assert_eq!(tool_result_msg.role(), Role::Tool);
 
         // Verify the content structure
-        assert!(matches!(tool_result_msg, ConversationMessage::Tool { .. }));
-        match tool_result_msg {
-            ConversationMessage::Tool {
-                tool_use_id,
+        assert!(matches!(
+            &tool_result_msg.data,
+            crate::app::conversation::MessageData::Tool { .. }
+        ));
+        if let crate::app::conversation::MessageData::Tool {
+            tool_use_id,
+            result,
+            ..
+        } = &tool_result_msg.data
+        {
+            assert_eq!(tool_use_id, "tool_call_1");
+            assert!(matches!(
                 result,
-                ..
-            } => {
-                assert_eq!(tool_use_id, "tool_call_1");
-                assert!(matches!(
-                    result,
-                    crate::app::conversation::ToolResult::FileContent(_)
-                ));
-                match result {
-                    crate::app::conversation::ToolResult::FileContent(content) => {
-                        assert!(content.content.contains("Hello, world!"));
-                    }
-                    _ => unreachable!(),
+                crate::app::conversation::ToolResult::FileContent(_)
+            ));
+            match result {
+                crate::app::conversation::ToolResult::FileContent(content) => {
+                    assert!(content.content.contains("Hello, world!"));
                 }
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
+        } else {
+            panic!("Expected Tool message");
         }
 
         // Now test resuming the session - it should work without API errors
@@ -1284,29 +1299,35 @@ mod tests {
             .unwrap();
 
         // Add some messages directly to the store (simulating a conversation with branches)
-        let msg1 = ConversationMessage::User {
-            content: vec![UserContent::Text {
-                text: "Hello".to_string(),
-            }],
+        let msg1 = ConversationMessage {
+            data: crate::app::conversation::MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
+            },
             timestamp: 1000,
             id: "msg1".to_string(),
             parent_message_id: None,
         };
 
-        let msg2 = ConversationMessage::Assistant {
-            content: vec![AssistantContent::Text {
-                text: "Hi there!".to_string(),
-            }],
+        let msg2 = ConversationMessage {
+            data: crate::app::conversation::MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "Hi there!".to_string(),
+                }],
+            },
             timestamp: 2000,
             id: "msg2".to_string(),
             parent_message_id: Some("msg1".to_string()),
         };
 
         // Add a branch - edited version of msg1
-        let msg1_edited = ConversationMessage::User {
-            content: vec![UserContent::Text {
-                text: "Goodbye".to_string(),
-            }],
+        let msg1_edited = ConversationMessage {
+            data: crate::app::conversation::MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Goodbye".to_string(),
+                }],
+            },
             timestamp: 3000,
             id: "msg1_edited".to_string(),
             parent_message_id: None, // Same parent as original msg1
@@ -1364,8 +1385,8 @@ mod tests {
             .find(|m| m.id() == "msg1_edited")
             .expect("Edited message should exist");
 
-        match edited_msg {
-            ConversationMessage::User { content, .. } => {
+        match &edited_msg.data {
+            crate::app::conversation::MessageData::User { content, .. } => {
                 if let Some(UserContent::Text { text }) = content.first() {
                     assert_eq!(text, "Goodbye");
                 } else {

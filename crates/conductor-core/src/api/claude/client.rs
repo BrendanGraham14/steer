@@ -300,8 +300,8 @@ fn convert_messages(messages: Vec<AppMessage>) -> Result<Vec<ClaudeMessage>, Api
 }
 
 fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
-    match msg {
-        AppMessage::User { content, id, .. } => {
+    match &msg.data {
+        crate::app::conversation::MessageData::User { content, .. } => {
             // Convert UserContent to Claude format
             let combined_text = content
                 .iter()
@@ -328,10 +328,10 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 content: ClaudeMessageContent::Text {
                     content: combined_text,
                 },
-                id: Some(id),
+                id: Some(msg.id.clone()),
             })
         }
-        AppMessage::Assistant { content, id, .. } => {
+        crate::app::conversation::MessageData::Assistant { content, .. } => {
             // Convert AssistantContent to Claude blocks
             let claude_blocks: Vec<ClaudeContentBlock> = content
                 .iter()
@@ -404,22 +404,22 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 Ok(ClaudeMessage {
                     role: ClaudeMessageRole::Assistant,
                     content: claude_content,
-                    id: Some(id),
+                    id: Some(msg.id.clone()),
                 })
             } else {
                 debug!("No content blocks found: {:?}", content);
                 Err(ApiError::InvalidRequest {
                     provider: "anthropic".to_string(),
                     details: format!(
-                        "Assistant message ID {id} resulted in no valid content blocks"
+                        "Assistant message ID {} resulted in no valid content blocks",
+                        msg.id
                     ),
                 })
             }
         }
-        AppMessage::Tool {
+        crate::app::conversation::MessageData::Tool {
             tool_use_id,
             result,
-            id,
             ..
         } => {
             // Convert ToolResult to Claude format
@@ -439,7 +439,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
             };
 
             let claude_blocks = vec![ClaudeContentBlock::ToolResult {
-                tool_use_id,
+                tool_use_id: tool_use_id.clone(),
                 content: vec![ClaudeContentBlock::Text {
                     text: result_text,
                     cache_control: None,
@@ -455,7 +455,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 content: ClaudeMessageContent::StructuredContent {
                     content: ClaudeStructuredContent(claude_blocks),
                 },
-                id: Some(id),
+                id: Some(msg.id.clone()),
             })
         }
     }

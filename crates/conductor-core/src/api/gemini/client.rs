@@ -367,97 +367,97 @@ struct GeminiContentResponse {
 fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
     messages
         .into_iter()
-        .filter_map(|msg| {
-            match msg {
-                AppMessage::User { content, .. } => {
-                    let parts: Vec<GeminiRequestPart> = content
-                        .into_iter()
-                        .filter_map(|user_content| match user_content {
-                            UserContent::Text { text } => Some(GeminiRequestPart::Text { text }),
-                            UserContent::CommandExecution {
-                                command,
-                                stdout,
-                                stderr,
-                                exit_code,
-                            } => Some(GeminiRequestPart::Text {
-                                text: UserContent::format_command_execution_as_xml(
-                                    &command, &stdout, &stderr, exit_code,
-                                ),
-                            }),
-                            UserContent::AppCommand { .. } => {
-                                // Don't send app commands to the model - they're for local execution only
-                                None
-                            }
-                        })
-                        .collect();
-
-                    // Only include the message if it has content after filtering
-                    if parts.is_empty() {
-                        None
-                    } else {
-                        Some(GeminiContent {
-                            role: "user".to_string(),
-                            parts,
-                        })
-                    }
-                }
-                AppMessage::Assistant { content, .. } => {
-                    let parts: Vec<GeminiRequestPart> = content
-                        .into_iter()
-                        .filter_map(|assistant_content| match assistant_content {
-                            AssistantContent::Text { text } => {
-                                Some(GeminiRequestPart::Text { text })
-                            }
-                            AssistantContent::ToolCall { tool_call } => {
-                                Some(GeminiRequestPart::FunctionCall {
-                                    function_call: GeminiFunctionCall {
-                                        name: tool_call.name,
-                                        args: tool_call.parameters,
-                                    },
-                                })
-                            }
-                            AssistantContent::Thought { .. } => {
-                                // Gemini doesn't send thought blocks in requests
-                                None
-                            }
-                        })
-                        .collect();
-
-                    // Always include assistant messages (they should always have content)
-                    Some(GeminiContent {
-                        role: "model".to_string(),
-                        parts,
-                    })
-                }
-                AppMessage::Tool {
-                    tool_use_id,
-                    result,
-                    ..
-                } => {
-                    // Convert tool result to function response
-                    let result_value = match result {
-                        ToolResult::Error(e) => Value::String(format!("Error: {e}")),
-                        _ => {
-                            // For all other variants, try to serialize as JSON
-                            serde_json::to_value(&result)
-                                .unwrap_or_else(|_| Value::String(result.llm_format()))
+        .filter_map(|msg| match &msg.data {
+            crate::app::conversation::MessageData::User { content, .. } => {
+                let parts: Vec<GeminiRequestPart> = content
+                    .iter()
+                    .filter_map(|user_content| match user_content {
+                        UserContent::Text { text } => {
+                            Some(GeminiRequestPart::Text { text: text.clone() })
                         }
-                    };
+                        UserContent::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } => Some(GeminiRequestPart::Text {
+                            text: UserContent::format_command_execution_as_xml(
+                                command, stdout, stderr, *exit_code,
+                            ),
+                        }),
+                        UserContent::AppCommand { .. } => {
+                            // Don't send app commands to the model - they're for local execution only
+                            None
+                        }
+                    })
+                    .collect();
 
-                    let parts = vec![GeminiRequestPart::FunctionResponse {
-                        function_response: GeminiFunctionResponse {
-                            name: tool_use_id, // Use tool_use_id as function name
-                            response: GeminiResponseContent {
-                                content: result_value,
-                            },
-                        },
-                    }];
-
+                // Only include the message if it has content after filtering
+                if parts.is_empty() {
+                    None
+                } else {
                     Some(GeminiContent {
-                        role: "function".to_string(),
+                        role: "user".to_string(),
                         parts,
                     })
                 }
+            }
+            crate::app::conversation::MessageData::Assistant { content, .. } => {
+                let parts: Vec<GeminiRequestPart> = content
+                    .iter()
+                    .filter_map(|assistant_content| match assistant_content {
+                        AssistantContent::Text { text } => {
+                            Some(GeminiRequestPart::Text { text: text.clone() })
+                        }
+                        AssistantContent::ToolCall { tool_call } => {
+                            Some(GeminiRequestPart::FunctionCall {
+                                function_call: GeminiFunctionCall {
+                                    name: tool_call.name.clone(),
+                                    args: tool_call.parameters.clone(),
+                                },
+                            })
+                        }
+                        AssistantContent::Thought { .. } => {
+                            // Gemini doesn't send thought blocks in requests
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Always include assistant messages (they should always have content)
+                Some(GeminiContent {
+                    role: "model".to_string(),
+                    parts,
+                })
+            }
+            crate::app::conversation::MessageData::Tool {
+                tool_use_id,
+                result,
+                ..
+            } => {
+                // Convert tool result to function response
+                let result_value = match result {
+                    ToolResult::Error(e) => Value::String(format!("Error: {e}")),
+                    _ => {
+                        // For all other variants, try to serialize as JSON
+                        serde_json::to_value(result)
+                            .unwrap_or_else(|_| Value::String(result.llm_format()))
+                    }
+                };
+
+                let parts = vec![GeminiRequestPart::FunctionResponse {
+                    function_response: GeminiFunctionResponse {
+                        name: tool_use_id.clone(), // Use tool_use_id as function name
+                        response: GeminiResponseContent {
+                            content: result_value,
+                        },
+                    },
+                }];
+
+                Some(GeminiContent {
+                    role: "function".to_string(),
+                    parts,
+                })
             }
         })
         .collect()

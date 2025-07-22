@@ -1,4 +1,4 @@
-use conductor_core::app::conversation::{AppCommandType, AssistantContent};
+use conductor_core::app::conversation::{AppCommandType, AssistantContent, MessageData};
 use conductor_core::app::conversation::{Message, UserContent};
 use ratatui::text::{Line, Span};
 
@@ -36,8 +36,8 @@ impl ChatRenderable for MessageWidget {
         let max_width = width.saturating_sub(4) as usize; // Account for gutters
         let mut lines = Vec::new();
 
-        match &self.message {
-            Message::User { content, .. } => {
+        match &self.message.data {
+            MessageData::User { content, .. } => {
                 for user_content in content {
                     match user_content {
                         UserContent::Text { text } => {
@@ -141,7 +141,7 @@ impl ChatRenderable for MessageWidget {
                     }
                 }
             }
-            Message::Assistant { content, .. } => {
+            MessageData::Assistant { content, .. } => {
                 for block in content {
                     match block {
                         AssistantContent::Text { text } => {
@@ -207,7 +207,7 @@ impl ChatRenderable for MessageWidget {
                     }
                 }
             }
-            Message::Tool { .. } => {
+            MessageData::Tool { .. } => {
                 // Tools are rendered as part of ToolInteraction blocks
             }
         }
@@ -224,15 +224,17 @@ mod tests {
     use crate::tui::widgets::ChatRenderable;
     use crate::tui::widgets::ViewMode;
     use conductor_core::app::conversation::AssistantContent;
-    use conductor_core::app::conversation::{Message, UserContent};
+    use conductor_core::app::conversation::{Message, MessageData, UserContent};
 
     #[test]
     fn test_message_widget_user_text() {
         let theme = Theme::default();
-        let user_msg = Message::User {
-            content: vec![UserContent::Text {
-                text: "Hello, world!".to_string(),
-            }],
+        let user_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello, world!".to_string(),
+                }],
+            },
             timestamp: 0,
             id: "test-id".to_string(),
             parent_message_id: None,
@@ -252,10 +254,12 @@ mod tests {
     #[test]
     fn test_message_widget_assistant_text() {
         let theme = Theme::default();
-        let assistant_msg = Message::Assistant {
-            content: vec![AssistantContent::Text {
-                text: "Hello from assistant".to_string(),
-            }],
+        let assistant_msg = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "Hello from assistant".to_string(),
+                }],
+            },
             timestamp: 0,
             id: "test-id".to_string(),
             parent_message_id: None,
@@ -271,13 +275,15 @@ mod tests {
     #[test]
     fn test_message_widget_command_execution() {
         let theme = Theme::default();
-        let cmd_msg = Message::User {
-            content: vec![UserContent::CommandExecution {
-                command: "ls -la".to_string(),
-                stdout: "file1.txt\nfile2.txt".to_string(),
-                stderr: "".to_string(),
-                exit_code: 0,
-            }],
+        let cmd_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::CommandExecution {
+                    command: "ls -la".to_string(),
+                    stdout: "file1.txt\nfile2.txt".to_string(),
+                    stderr: "".to_string(),
+                    exit_code: 0,
+                }],
+            },
             timestamp: 0,
             id: "test-id".to_string(),
             parent_message_id: None,
@@ -298,10 +304,12 @@ mod tests {
         let theme = Theme::default();
 
         // Create a message with various Unicode characters
-        let unicode_msg = Message::User {
-            content: vec![UserContent::Text {
-                text: "Hello 你好 👋 café".to_string(),
-            }],
+        let unicode_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello 你好 👋 café".to_string(),
+                }],
+            },
             timestamp: 0,
             id: "test-unicode".to_string(),
             parent_message_id: None,
@@ -347,10 +355,12 @@ mod tests {
         let theme = Theme::default();
 
         // Create a message with wide characters (CJK takes 2 columns each)
-        let wide_msg = Message::User {
-            content: vec![UserContent::Text {
-                text: "A中B".to_string(), // A=1 col, 中=2 cols, B=1 col
-            }],
+        let wide_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "A中B".to_string(), // A=1 col, 中=2 cols, B=1 col
+                }],
+            },
             timestamp: 0,
             id: "test-wide".to_string(),
             parent_message_id: None,

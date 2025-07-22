@@ -197,69 +197,49 @@ pub enum AssistantContent {
     Thought { thought: ThoughtContent },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub timestamp: u64,
+    pub id: String,
+    pub parent_message_id: Option<String>,
+    pub data: MessageData,
+}
+
 /// A message in the conversation, with role-specific content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "lowercase")]
-pub enum Message {
+pub enum MessageData {
     User {
         content: Vec<UserContent>,
-        timestamp: u64,
-        id: String,
-        /// Links to the previous message in this branch (None for root messages)
-        parent_message_id: Option<String>,
     },
     Assistant {
         content: Vec<AssistantContent>,
-        timestamp: u64,
-        id: String,
-        parent_message_id: Option<String>,
     },
     Tool {
         tool_use_id: String,
         result: ToolResult,
-        timestamp: u64,
-        id: String,
-        parent_message_id: Option<String>,
     },
 }
 
 impl Message {
     pub fn role(&self) -> Role {
-        match self {
-            Message::User { .. } => Role::User,
-            Message::Assistant { .. } => Role::Assistant,
-            Message::Tool { .. } => Role::Tool,
+        match &self.data {
+            MessageData::User { .. } => Role::User,
+            MessageData::Assistant { .. } => Role::Assistant,
+            MessageData::Tool { .. } => Role::Tool,
         }
     }
 
     pub fn id(&self) -> &str {
-        match self {
-            Message::User { id, .. } => id,
-            Message::Assistant { id, .. } => id,
-            Message::Tool { id, .. } => id,
-        }
+        &self.id
     }
 
     pub fn timestamp(&self) -> u64 {
-        match self {
-            Message::User { timestamp, .. } => *timestamp,
-            Message::Assistant { timestamp, .. } => *timestamp,
-            Message::Tool { timestamp, .. } => *timestamp,
-        }
+        self.timestamp
     }
 
     pub fn parent_message_id(&self) -> Option<&str> {
-        match self {
-            Message::User {
-                parent_message_id, ..
-            } => parent_message_id.as_deref(),
-            Message::Assistant {
-                parent_message_id, ..
-            } => parent_message_id.as_deref(),
-            Message::Tool {
-                parent_message_id, ..
-            } => parent_message_id.as_deref(),
-        }
+        self.parent_message_id.as_deref()
     }
 
     /// Helper to get current timestamp
@@ -278,8 +258,8 @@ impl Message {
 
     /// Extract text content from the message
     pub fn extract_text(&self) -> String {
-        match self {
-            Message::User { content, .. } => content
+        match &self.data {
+            MessageData::User { content } => content
                 .iter()
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.clone()),
@@ -294,7 +274,7 @@ impl Message {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            Message::Assistant { content, .. } => content
+            MessageData::Assistant { content } => content
                 .iter()
                 .filter_map(|c| match c {
                     AssistantContent::Text { text } => Some(text.clone()),
@@ -302,14 +282,14 @@ impl Message {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            Message::Tool { result, .. } => result.llm_format(),
+            MessageData::Tool { result, .. } => result.llm_format(),
         }
     }
 
     /// Get a string representation of the message content
     pub fn content_string(&self) -> String {
-        match self {
-            Message::User { content, .. } => content
+        match &self.data {
+            MessageData::User { content } => content
                 .iter()
                 .map(|c| match c {
                     UserContent::Text { text } => text.clone(),
@@ -351,7 +331,7 @@ impl Message {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            Message::Assistant { content, .. } => content
+            MessageData::Assistant { content } => content
                 .iter()
                 .map(|c| match c {
                     AssistantContent::Text { text } => text.clone(),
@@ -364,7 +344,7 @@ impl Message {
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
-            Message::Tool { result, .. } => {
+            MessageData::Tool { result, .. } => {
                 // This is a simplified representation. The TUI will have a more detailed view.
                 let result_type = match result {
                     ToolResult::Search(_) => "Search Result",
@@ -526,9 +506,11 @@ impl Conversation {
 
     pub fn add_tool_result(&mut self, tool_use_id: String, message_id: String, result: ToolResult) {
         let parent_id = self.messages.last().map(|m| m.id().to_string());
-        self.add_message(Message::Tool {
-            tool_use_id,
-            result,
+        self.add_message(Message {
+            data: MessageData::Tool {
+                tool_use_id,
+                result,
+            },
             timestamp: Message::current_timestamp(),
             id: message_id,
             parent_message_id: parent_id,
@@ -538,7 +520,7 @@ impl Conversation {
     /// Find the tool name by its ID by searching through assistant messages with tool calls
     pub fn find_tool_name_by_id(&self, tool_id: &str) -> Option<String> {
         for message in self.messages.iter() {
-            if let Message::Assistant { content, .. } = message {
+            if let MessageData::Assistant { content, .. } = &message.data {
                 for content_block in content {
                     if let AssistantContent::ToolCall { tool_call } = content_block {
                         if tool_call.id == tool_id {
@@ -570,10 +552,12 @@ impl Conversation {
         let mut prompt_messages: Vec<Message> = thread.into_iter().cloned().collect();
         let last_msg_id = prompt_messages.last().map(|m| m.id().to_string());
 
-        prompt_messages.push(Message::User {
-            content: vec![UserContent::Text {
-                text: SUMMARY_PROMPT.to_string(),
-            }],
+        prompt_messages.push(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: SUMMARY_PROMPT.to_string(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
             parent_message_id: last_msg_id.clone(),
@@ -600,10 +584,12 @@ impl Conversation {
         let summary_id = Message::generate_id("user", timestamp);
 
         // Add the summary as a user message continuing the active thread
-        let summary_message = Message::User {
-            content: vec![UserContent::Text {
-                text: format!("[COMPACTED SUMMARY]\n\n{summary_text}"),
-            }],
+        let summary_message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: format!("[COMPACTED SUMMARY]\n\n{summary_text}"),
+                }],
+            },
             timestamp,
             id: summary_id.clone(),
             parent_message_id: last_msg_id, // Continue from the last message in the thread
@@ -628,7 +614,7 @@ impl Conversation {
         let message_to_edit = self.messages.iter().find(|m| m.id() == message_id)?;
 
         // Only allow editing user messages for now
-        if !matches!(message_to_edit, Message::User { .. }) {
+        if !matches!(&message_to_edit.data, MessageData::User { .. }) {
             return None;
         }
 
@@ -637,8 +623,10 @@ impl Conversation {
 
         // Create the new message as a branch from the same parent
         let new_message_id = Message::generate_id("user", Message::current_timestamp());
-        let edited_message = Message::User {
-            content: new_content,
+        let edited_message = Message {
+            data: MessageData::User {
+                content: new_content,
+            },
             timestamp: Message::current_timestamp(),
             id: new_message_id.clone(),
             parent_message_id: parent_id,
@@ -723,29 +711,35 @@ impl Conversation {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::conversation::{AssistantContent, Conversation, Message, UserContent};
+    use crate::app::conversation::{
+        AssistantContent, Conversation, Message, MessageData, UserContent,
+    };
 
     /// Helper function to create a user message for testing
     fn create_user_message(id: &str, parent_id: Option<&str>, content: &str) -> Message {
-        Message::User {
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: content.to_string(),
+                }],
+            },
+            timestamp: Message::current_timestamp(),
             id: id.to_string(),
             parent_message_id: parent_id.map(String::from),
-            content: vec![UserContent::Text {
-                text: content.to_string(),
-            }],
-            timestamp: Message::current_timestamp(),
         }
     }
 
     /// Helper function to create an assistant message for testing
     fn create_assistant_message(id: &str, parent_id: Option<&str>, content: &str) -> Message {
-        Message::Assistant {
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: content.to_string(),
+                }],
+            },
+            timestamp: Message::current_timestamp(),
             id: id.to_string(),
             parent_message_id: parent_id.map(String::from),
-            content: vec![AssistantContent::Text {
-                text: content.to_string(),
-            }],
-            timestamp: Message::current_timestamp(),
         }
     }
 
@@ -922,7 +916,7 @@ mod tests {
         // Extract the user messages
         let user_messages: Vec<String> = thread_messages
             .iter()
-            .filter(|m| matches!(m, Message::User { .. }))
+            .filter(|m| matches!(m.data, MessageData::User { .. }))
             .map(|m| m.extract_text())
             .collect();
 
