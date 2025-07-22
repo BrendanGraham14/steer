@@ -4,7 +4,7 @@
 //! including streaming message parts and message restoration.
 
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::model::ChatItem;
+use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::AssistantContent;
@@ -30,6 +30,7 @@ impl EventProcessor for MessageEventProcessor {
             AppEvent::MessageAdded { .. }
                 | AppEvent::MessageUpdated { .. }
                 | AppEvent::MessagePart { .. }
+                | AppEvent::ActiveMessageIdChanged { .. }
         )
     }
 
@@ -43,7 +44,7 @@ impl EventProcessor for MessageEventProcessor {
                 // Find the message in the chat store
                 let mut found = false;
                 for item in ctx.chat_store.iter_mut() {
-                    if let ChatItem::Message(message) = item {
+                    if let ChatItemData::Message(message) = &mut item.data {
                         if message.id() == id {
                             if let conductor_core::app::conversation::Message::Assistant {
                                 content: blocks,
@@ -71,7 +72,7 @@ impl EventProcessor for MessageEventProcessor {
                 // For streaming messages, append to existing text blocks
                 let mut found = false;
                 for item in ctx.chat_store.iter_mut() {
-                    if let ChatItem::Message(message) = item {
+                    if let ChatItemData::Message(message) = &mut item.data {
                         if message.id() == id {
                             if let conductor_core::app::conversation::Message::Assistant {
                                 content: blocks,
@@ -99,6 +100,21 @@ impl EventProcessor for MessageEventProcessor {
                 }
                 ProcessingResult::Handled
             }
+            AppEvent::ActiveMessageIdChanged { message_id } => {
+                tracing::debug!(
+                    target: "tui.message_event",
+                    "Active message ID changed to: {:?}",
+                    message_id
+                );
+
+                // Update the active message ID in the chat store
+                ctx.chat_store.active_message_id = message_id.clone();
+
+                // Mark messages as updated to trigger a viewport rebuild
+                *ctx.messages_updated = true;
+
+                ProcessingResult::Handled
+            }
             _ => ProcessingResult::NotHandled,
         }
     }
@@ -117,6 +133,9 @@ impl MessageEventProcessor {
         // Store message ID and parent for later branch detection
         let message_id = message.id().to_string();
         let parent_id = message.parent_message_id().map(|s| s.to_string());
+
+        // Update active_message_id to the newly added message
+        ctx.chat_store.active_message_id = Some(message_id.clone());
 
         // First, extract tool calls from Assistant messages to register them
         if let conductor_core::app::Message::Assistant {
@@ -155,7 +174,7 @@ impl MessageEventProcessor {
         if let Some(ref parent_id) = parent_id {
             let siblings = ctx.chat_store.find_by_parent(parent_id);
             let user_siblings = siblings.iter().filter(|item| {
-                matches!(item, ChatItem::Message(message) if matches!(message, conductor_core::app::Message::User { .. }))
+                matches!(&item.data, ChatItemData::Message(message) if matches!(message, conductor_core::app::Message::User { .. }))
             }).count();
 
             // If there are multiple user messages with the same parent, we have a branch
@@ -170,7 +189,7 @@ impl MessageEventProcessor {
         } else {
             // Check for root-level branches (multiple messages with no parent)
             let root_messages = ctx.chat_store.iter().filter(|item| {
-                matches!(item, ChatItem::Message(message) if message.parent_message_id().is_none() && matches!(message, conductor_core::app::Message::User { .. }))
+                matches!(&item.data, ChatItemData::Message(message) if message.parent_message_id().is_none() && matches!(message, conductor_core::app::Message::User { .. }))
             }).count();
 
             if root_messages > 1 {

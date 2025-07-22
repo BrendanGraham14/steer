@@ -100,11 +100,14 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.current_tool_approval = None;
 
                 // Add cancellation message to the UI
-                let chat_item = crate::tui::model::ChatItem::SystemNotice {
-                    id: crate::tui::model::generate_row_id(),
-                    level: crate::tui::model::NoticeLevel::Info,
-                    text: "Operation cancelled".to_string(),
-                    ts: time::OffsetDateTime::now_utc(),
+                let chat_item = crate::tui::model::ChatItem {
+                    parent_chat_item_id: None, // Will be set by push()
+                    data: crate::tui::model::ChatItemData::SystemNotice {
+                        id: crate::tui::model::generate_row_id(),
+                        level: crate::tui::model::NoticeLevel::Info,
+                        text: "Operation cancelled".to_string(),
+                        ts: time::OffsetDateTime::now_utc(),
+                    },
                 };
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
@@ -134,11 +137,14 @@ impl EventProcessor for ProcessingStateProcessor {
 
                 // Add in-flight operation row
                 let row_id = crate::tui::model::generate_row_id();
-                let chat_item = crate::tui::model::ChatItem::InFlightOperation {
-                    id: row_id.clone(),
-                    operation_id: id,
-                    label,
-                    ts: time::OffsetDateTime::now_utc(),
+                let chat_item = crate::tui::model::ChatItem {
+                    parent_chat_item_id: None, // Will be set by push()
+                    data: crate::tui::model::ChatItemData::InFlightOperation {
+                        id: row_id.clone(),
+                        operation_id: id,
+                        label,
+                        ts: time::OffsetDateTime::now_utc(),
+                    },
                 };
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
