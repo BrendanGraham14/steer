@@ -21,6 +21,8 @@ use crate::session::{
 pub struct RunOnceResult {
     /// The final assistant message after all tools have been executed
     pub final_msg: Message,
+    /// The session ID of the session that was used
+    pub session_id: String,
 }
 
 /// Orchestrates single non-interactive agent loop executions using the session system.
@@ -86,7 +88,6 @@ impl OneShotRunner {
         // 4. Process events to build the result (similar to TUI's event loop)
         let result = Self::process_events(event_rx, &session_id).await;
 
-        // Suspend the session before returning
         if let Err(e) = session_manager.suspend_session(&session_id).await {
             error!(session_id = %session_id, error = %e, "Failed to suspend session");
         } else {
@@ -219,22 +220,14 @@ impl OneShotRunner {
     ) -> Result<RunOnceResult> {
         use crate::app::AppEvent;
 
-        let mut assistant_message: Option<Message> = None;
-        let mut _current_assistant_id: Option<String> = None;
-
+        let mut messages = Vec::new();
         info!(session_id = %session_id, "Starting event processing loop");
 
         while let Some(event) = event_rx.recv().await {
             match event {
                 AppEvent::MessageAdded { message, model: _ } => {
                     info!(session_id = %session_id, role = ?message.role(), id = %message.id(), "MessageAdded event");
-
-                    if matches!(message.role(), crate::app::conversation::Role::Assistant) {
-                        _current_assistant_id = Some(message.id().to_string());
-                        assistant_message = Some(message);
-
-                        // Don't break yet - assistant might make tool calls
-                    }
+                    messages.push(message);
                 }
 
                 AppEvent::MessageUpdated { id, .. } => {
@@ -245,8 +238,8 @@ impl OneShotRunner {
                 AppEvent::ProcessingCompleted => {
                     info!(session_id = %session_id, "ProcessingCompleted event received");
                     // Check if we have an assistant message
-                    if assistant_message.is_some() {
-                        info!(session_id = %session_id, "Assistant response complete, exiting event loop");
+                    if !messages.is_empty() {
+                        info!(session_id = %session_id, "Final message received, exiting event loop");
                         break;
                     }
                 }
@@ -270,17 +263,18 @@ impl OneShotRunner {
         }
 
         // Return the result
-        match assistant_message {
-            Some(final_msg) => {
+        match messages.last() {
+            Some(_) => {
                 info!(
                     session_id = %session_id,
                     "Returning final result"
                 );
-                Ok(RunOnceResult { final_msg })
+                Ok(RunOnceResult {
+                    final_msg: messages.last().unwrap().clone(),
+                    session_id: session_id.to_string(),
+                })
             }
-            None => Err(Error::InvalidOperation(
-                "No assistant response received".to_string(),
-            )),
+            None => Err(Error::InvalidOperation("No message received".to_string())),
         }
     }
 }
