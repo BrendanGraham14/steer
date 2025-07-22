@@ -131,18 +131,11 @@ Usage notes:
 
         // Drain remaining events
         while let Ok(event) = event_rx.try_recv() {
-             match event {
-                 AgentEvent::AssistantMessagePart(text) => final_text.push_str(&text),
-                 AgentEvent::AssistantMessageFinal(msg) => {
-                     // Extract text if we haven't gotten it from parts
-                     if final_text.is_empty() {
-                         final_text = msg.extract_text();
-                     }
-                    // final_message_content = Some(msg)
-                 },
-                 // Ignore other events for this tool's purpose
-                 _ => {}
-             }
+            if let AgentEvent::MessageFinal(msg) = event {
+                if final_text.is_empty() {
+                    final_text = msg.extract_text();
+                }
+            }
         }
 
 

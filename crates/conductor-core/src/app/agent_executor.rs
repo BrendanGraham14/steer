@@ -1,6 +1,7 @@
 use crate::api::{ApiError, Client as ApiClient, Model};
 use crate::app::conversation::{Message, MessageData};
 use conductor_tools::{ToolCall, ToolError, ToolSchema, result::ToolResult as ConductorToolResult};
+use futures::{StreamExt, stream::FuturesUnordered};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,17 +19,11 @@ pub enum ApprovalDecision {
 
 #[derive(Debug)]
 pub enum AgentEvent {
-    AssistantMessagePart(String),
-    AssistantMessageFinal(Message),
+    MessageFinal(Message),
     ExecutingTool {
         tool_call_id: String,
         name: String,
         parameters: serde_json::Value,
-    },
-    ToolResultReceived {
-        tool_call_id: String,
-        message_id: String,
-        result: ConductorToolResult,
     },
 }
 
@@ -141,40 +136,52 @@ impl AgentExecutor {
 
             if tool_calls.is_empty() {
                 info!("LLM response received, no tool calls requested.");
-                debug!(target: "AgentExecutor::run_operation", "Sending AssistantMessageFinal event (no tool calls).");
                 event_sender
-                    .send(AgentEvent::AssistantMessageFinal(
-                        full_assistant_message.clone(),
-                    ))
+                    .send(AgentEvent::MessageFinal(full_assistant_message.clone()))
                     .await?;
                 debug!(target: "AgentExecutor::run_operation", "Operation finished successfully (no tool calls), returning final message.");
                 return Ok(full_assistant_message);
             } else {
                 info!(count = tool_calls.len(), "LLM requested tool calls.");
-                debug!(target: "AgentExecutor::run_operation", "Sending AssistantMessageFinal event (with tool calls).");
                 event_sender
-                    .send(AgentEvent::AssistantMessageFinal(
-                        full_assistant_message.clone(),
-                    ))
+                    .send(AgentEvent::MessageFinal(full_assistant_message.clone()))
                     .await?;
 
-                let tool_results_with_ids = self
-                    .handle_tool_calls(
-                        &tool_calls,
-                        &request.tool_approval_callback,
-                        &request.tool_execution_callback,
-                        &event_sender,
-                        &token,
-                    )
-                    .await?;
+                // Create concurrent futures for every tool call
+                let mut pending_tools: FuturesUnordered<_> = tool_calls
+                    .into_iter()
+                    .map(|call| {
+                        let event_sender_clone = event_sender.clone();
+                        let token_clone = token.clone();
+                        let approval_callback = &request.tool_approval_callback;
+                        let execution_callback = &request.tool_execution_callback;
 
-                if token.is_cancelled() {
-                    info!("Operation cancelled during or after tool handling.");
-                    return Err(AgentExecutorError::Cancelled);
-                }
+                        async move {
+                            let message_id = uuid::Uuid::new_v4().to_string();
+                            let call_id = call.id.clone();
 
-                // Add tool results to messages - one message per tool result
-                for (i, (tool_result, message_id)) in tool_results_with_ids.iter().enumerate() {
+                            // Handle single tool call
+                            let result = Self::handle_single_tool_call(
+                                call,
+                                approval_callback,
+                                execution_callback,
+                                &event_sender_clone,
+                                token_clone,
+                            )
+                            .await;
+
+                            (call_id, message_id, result)
+                        }
+                    })
+                    .collect();
+
+                // Pull results as they finish and emit events
+                while let Some((tool_call_id, message_id, result)) = pending_tools.next().await {
+                    if token.is_cancelled() {
+                        info!("Operation cancelled during tool handling.");
+                        return Err(AgentExecutorError::Cancelled);
+                    }
+
                     // Get parent info from the last message
                     let parent_id = if let Some(last_msg) = messages.last() {
                         last_msg.id().to_string()
@@ -184,18 +191,24 @@ impl AgentExecutor {
                         ));
                     };
 
-                    messages.push(Message {
+                    // Add tool result message
+                    let tool_message = Message {
                         data: MessageData::Tool {
-                            tool_use_id: tool_calls[i].id.clone(),
-                            result: tool_result.clone(),
+                            tool_use_id: tool_call_id,
+                            result,
                         },
                         timestamp: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
-                        id: message_id.clone(),
+                        id: message_id,
                         parent_message_id: Some(parent_id),
-                    });
+                    };
+
+                    messages.push(tool_message.clone());
+                    event_sender
+                        .send(AgentEvent::MessageFinal(tool_message))
+                        .await?;
                 }
 
                 debug!("Looping back to LLM with tool results.");
@@ -204,120 +217,84 @@ impl AgentExecutor {
     }
 
     #[instrument(
-        skip(
-            self,
-            tool_calls,
-            approval_callback,
-            execution_callback,
-            event_sender,
-            token
-        ),
-        name = "AgentExecutor::handle_tool_calls"
+        skip(tool_call, approval_callback, execution_callback, event_sender, token),
+        name = "AgentExecutor::handle_single_tool_call"
     )]
-    async fn handle_tool_calls<A, AFut, E, EFut>(
-        &self,
-        tool_calls: &[ToolCall],
+    async fn handle_single_tool_call<A, AFut, E, EFut>(
+        tool_call: ToolCall,
         approval_callback: &A,
         execution_callback: &E,
         event_sender: &mpsc::Sender<AgentEvent>,
-        token: &CancellationToken,
-    ) -> Result<Vec<(ConductorToolResult, String)>, AgentExecutorError>
+        token: CancellationToken,
+    ) -> ConductorToolResult
     where
         A: Fn(ToolCall) -> AFut + Send + Sync + 'static,
         AFut: Future<Output = Result<ApprovalDecision, ToolError>> + Send + 'static,
         E: Fn(ToolCall, CancellationToken) -> EFut + Send + Sync + 'static,
         EFut: Future<Output = Result<ConductorToolResult, ToolError>> + Send + 'static,
     {
-        info!("Processing tool calls with separate approval and execution callbacks.");
-        let futures: Vec<_> = tool_calls
-                    .iter()
-                    .map(|call| {
-                        // Clone necessary items for the async block
-                        let call_id = call.id.clone();
-                        let tool_name = call.name.clone();
-                        let event_sender_clone = event_sender.clone();
-                        let token_clone = token.clone();
+        let call_id = tool_call.id.clone();
+        let tool_name = tool_call.name.clone();
 
-                        async move {
-                            // First, check approval
-                            let approval_result = tokio::select! {
-                                biased;
-                                _ = token_clone.cancelled() => {
-                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool approval");
-                                    Err(ToolError::Cancelled(tool_name.clone()))
-                               }
-                                res = approval_callback(call.clone()) => res,
-                            };
+        // First, check approval
+        let approval_result = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool approval");
+                Err(ToolError::Cancelled(tool_name.clone()))
+            }
+            res = approval_callback(tool_call.clone()) => res,
+        };
 
-                            let message_id = uuid::Uuid::new_v4().to_string();
+        match approval_result {
+            Ok(ApprovalDecision::Approved) => {
+                debug!(tool_id=%call_id, tool_name=%tool_name, "Tool approved, executing");
 
-                            let tool_result = match approval_result {
-                                Ok(ApprovalDecision::Approved) => {
-                                    debug!(tool_id=%call_id, tool_name=%tool_name, "Tool approved, executing");
-
-                                    // Send ExecutingTool event for approved execution
-                                    if let Err(e) = event_sender_clone
-                                        .send(AgentEvent::ExecutingTool {
-                                            tool_call_id: call_id.clone(),
-                                            name: tool_name.clone(),
-                                            parameters: call.parameters.clone(),
-                                        })
-                                        .await
-                                    {
-                                        warn!(tool_id=%call_id, tool_name=%tool_name, "Failed to send ExecutingTool event: {}", e);
-                                    }
-
-                                    // Execute the tool
-                                    let execution_result = tokio::select! {
-                                        biased;
-                                        _ = token_clone.cancelled() => {
-                                            warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool execution");
-                                            Err(ToolError::Cancelled(tool_name.clone()))
-                                        }
-                                        res = execution_callback(call.clone(), token_clone.clone()) => res,
-                                    };
-
-                                    match execution_result {
-                                        Ok(output) => {
-                                            debug!(tool_id=%call_id, tool_name=%tool_name, "Tool executed successfully");
-                                            output
-                                        }
-                                        Err(e) => {
-                                            error!(tool_id=%call_id, tool_name=%tool_name, "Tool execution failed: {}", e);
-                                            ConductorToolResult::Error(e)
-                                        }
-                                    }
-                                }
-                                Ok(ApprovalDecision::Denied) => {
-                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Tool approval denied");
-                                    ConductorToolResult::Error(ToolError::DeniedByUser(tool_name.clone()))
-                                }
-                                Err(e @ ToolError::Cancelled(_)) => {
-                                    warn!(tool_id=%call_id, tool_name=%tool_name, "Tool approval cancelled: {}", e);
-                                    ConductorToolResult::Error(e)
-                                }
-                                Err(e) => {
-                                    error!(tool_id=%call_id, tool_name=%tool_name, "Tool approval failed: {}", e);
-                                    ConductorToolResult::Error(e)
-                                }
-                            };
-
-                            // Send the final result event (success, denied, cancelled, or other error)
-                            if let Err(e) = event_sender_clone
-                                .send(AgentEvent::ToolResultReceived {
-                                    tool_call_id: call_id.clone(),
-                                    message_id: message_id.clone(),
-                                    result: tool_result.clone(),
-                                })
-                                .await
-                            {
-                                error!("Failed to send ToolResultReceived event: {}", e);
-                            }
-                            (tool_result, message_id)
-                        }
+                // Send ExecutingTool event for approved execution
+                if let Err(e) = event_sender
+                    .send(AgentEvent::ExecutingTool {
+                        tool_call_id: call_id.clone(),
+                        name: tool_name.clone(),
+                        parameters: tool_call.parameters.clone(),
                     })
-                    .collect();
+                    .await
+                {
+                    warn!(tool_id=%call_id, tool_name=%tool_name, "Failed to send ExecutingTool event: {}", e);
+                }
 
-        Ok(futures::future::join_all(futures).await)
+                // Execute the tool
+                let execution_result = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        warn!(tool_id=%call_id, tool_name=%tool_name, "Cancellation detected during tool execution");
+                        Err(ToolError::Cancelled(tool_name.clone()))
+                    }
+                    res = execution_callback(tool_call, token.clone()) => res,
+                };
+
+                match execution_result {
+                    Ok(output) => {
+                        debug!(tool_id=%call_id, tool_name=%tool_name, "Tool executed successfully");
+                        output
+                    }
+                    Err(e) => {
+                        error!(tool_id=%call_id, tool_name=%tool_name, "Tool execution failed: {}", e);
+                        ConductorToolResult::Error(e)
+                    }
+                }
+            }
+            Ok(ApprovalDecision::Denied) => {
+                warn!(tool_id=%call_id, tool_name=%tool_name, "Tool approval denied");
+                ConductorToolResult::Error(ToolError::DeniedByUser(tool_name))
+            }
+            Err(e @ ToolError::Cancelled(_)) => {
+                warn!(tool_id=%call_id, tool_name=%tool_name, "Tool approval cancelled: {}", e);
+                ConductorToolResult::Error(e)
+            }
+            Err(e) => {
+                error!(tool_id=%call_id, tool_name=%tool_name, "Tool approval failed: {}", e);
+                ConductorToolResult::Error(e)
+            }
+        }
     }
 }

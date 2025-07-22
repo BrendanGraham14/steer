@@ -104,13 +104,11 @@ mod tests {
         }; // Should have *some* content
 
         // Check events (expect at least one part and one final)
-        let mut has_part = false;
+        let has_part = false;
         let mut has_final = false;
         while let Ok(Some(event)) = timeout(Duration::from_secs(1), event_rx.recv()).await {
-            match event {
-                AgentEvent::AssistantMessagePart(_) => has_part = true,
-                AgentEvent::AssistantMessageFinal(_) => has_final = true,
-                _ => {}
+            if let AgentEvent::MessageFinal(_) = event {
+                has_final = true
             }
         }
         assert!(
@@ -217,20 +215,40 @@ mod tests {
         let mut saw_final_text = false;
         while let Ok(Some(event)) = timeout(Duration::from_secs(5), event_rx.recv()).await {
             match event {
-                AgentEvent::AssistantMessageFinal(message) => {
-                    if let MessageData::Assistant { content, .. } = &message.data {
-                        // Check if we have tool calls in the assistant content
-                        if content
-                            .iter()
-                            .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
-                        {
-                            saw_final_with_tool_call = true;
-                        } else {
-                            // If we have text without tool calls, consider it final text
-                            saw_final_text = true;
+                AgentEvent::MessageFinal(message) => {
+                    match message.data {
+                        MessageData::Assistant { content, .. } => {
+                            if content
+                                .iter()
+                                .any(|c| matches!(c, AssistantContent::ToolCall { .. }))
+                            {
+                                saw_final_with_tool_call = true;
+                            } else {
+                                saw_final_text = true;
+                            }
                         }
+                        MessageData::Tool {
+                            tool_use_id,
+                            result,
+                        } => {
+                            println!(
+                                "Test: Received ToolResultReceived event with ID: {tool_use_id}, result: {result:?}"
+                            );
+
+                            // Check if we got the expected result
+                            if let ToolResult::External(ext_result) = &result {
+                                if ext_result.payload == "Paris" {
+                                    println!(
+                                        "Test: Matched correct tool result with output 'Paris'"
+                                    );
+                                    saw_tool_result = true;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
+
                 AgentEvent::ExecutingTool {
                     tool_call_id: _,
                     name,
@@ -240,25 +258,6 @@ mod tests {
                         saw_executing = true;
                     }
                 }
-                AgentEvent::ToolResultReceived {
-                    tool_call_id,
-                    result,
-                    message_id: _,
-                } => {
-                    // Log all tool results for debugging
-                    println!(
-                        "Test: Received ToolResultReceived event with ID: {tool_call_id}, result: {result:?}"
-                    );
-
-                    // Check if we got the expected result
-                    if let ToolResult::External(ext_result) = &result {
-                        if ext_result.payload == "Paris" {
-                            println!("Test: Matched correct tool result with output 'Paris'");
-                            saw_tool_result = true;
-                        }
-                    }
-                }
-                _ => {}
             }
         }
 
