@@ -1447,53 +1447,53 @@ async fn handle_slash_command(app: &mut App, command: AppCommandType) {
 // Handle agent events
 async fn handle_agent_event(app: &mut App, event: AgentEvent) {
     debug!(target: "handle_agent_event", "Handling event: {:?}", event);
+
     match event {
-        AgentEvent::AssistantMessagePart(delta) => {
-            // Find the ID of the last assistant message to append to
-            let maybe_msg_id = {
+        AgentEvent::MessageFinal(message) => match message.data {
+            MessageData::Tool {
+                ref tool_use_id,
+                ref result,
+            } => {
                 let conversation_guard = app.conversation.lock().await;
-                conversation_guard
-                    .messages
-                    .iter()
-                    .rev()
-                    .find(|m| matches!(m.data, MessageData::Assistant { .. }))
-                    .map(|m| m.id().to_string())
-            };
-            if let Some(msg_id) = maybe_msg_id {
-                app.emit_event(AppEvent::MessagePart { id: msg_id, delta });
-            } else {
-                warn!(target: "handle_agent_event", "Received MessagePart but no assistant message found to append to.");
-            }
-        }
-        AgentEvent::AssistantMessageFinal(app_message) => {
-            let msg_id = app_message.id().to_string();
-
-            // Add/Update message in conversation
-            let mut conversation_guard = app.conversation.lock().await;
-            if let Some(existing_msg) = conversation_guard
-                .messages
-                .iter_mut()
-                .find(|m| m.id() == msg_id)
-            {
-                // Replace the entire message
-                *existing_msg = app_message.clone();
+                let tool_name = conversation_guard
+                    .find_tool_name_by_id(tool_use_id)
+                    .unwrap_or_else(|| "unknown_tool".to_string());
                 drop(conversation_guard);
 
-                debug!(target: "handle_agent_event", "Updated existing message ID {} with final content.", msg_id);
+                let is_error = matches!(result, ToolResult::Error(_));
+                if is_error {
+                    if let conductor_tools::result::ToolResult::Error(e) = result {
+                        app.emit_event(AppEvent::ToolCallFailed {
+                            id: tool_use_id.clone(),
+                            name: tool_name.clone(),
+                            error: e.to_string(),
+                            model: app.current_model,
+                        });
+                    }
+                } else {
+                    app.emit_event(AppEvent::ToolCallCompleted {
+                        id: tool_use_id.clone(),
+                        name: tool_name.clone(),
+                        result: result.clone(),
+                        model: app.current_model,
+                    });
 
-                // Extract text content for the event
-                let content = app_message.extract_text();
-
-                app.emit_event(AppEvent::MessageUpdated {
-                    id: msg_id.clone(),
-                    content,
-                });
-            } else {
-                drop(conversation_guard);
-                app.add_message_from_data(app_message.data).await;
-                debug!(target: "handle_agent_event", "Added new final message ID {}.", msg_id);
+                    let mutating_tools =
+                        ["edit", "replace", "bash", "write_file", "multi_edit_file"];
+                    if mutating_tools.contains(&tool_name.as_str()) {
+                        app.emit_event(AppEvent::WorkspaceChanged);
+                        app.emit_workspace_files().await;
+                    }
+                }
+                app.add_message(message.clone()).await;
             }
-        }
+            MessageData::Assistant { .. } => {
+                app.add_message(message).await;
+            }
+            MessageData::User { .. } => {
+                warn!(target: "handle_agent_event", "Received MessageFinal for user message. This should not happen.");
+            }
+        },
         AgentEvent::ExecutingTool {
             tool_call_id,
             name,
@@ -1505,54 +1505,6 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 parameters,
                 model: app.current_model,
             });
-        }
-        AgentEvent::ToolResultReceived {
-            tool_call_id,
-
-            result,
-            ..
-        } => {
-            let tool_name = app
-                .conversation
-                .lock()
-                .await
-                .find_tool_name_by_id(&tool_call_id)
-                .unwrap_or_else(|| "unknown_tool".to_string());
-
-            let is_error = matches!(result, ToolResult::Error(_));
-
-            // Add result to conversation store
-            app.add_message_from_data(MessageData::Tool {
-                tool_use_id: tool_call_id.clone(),
-                result: result.clone(),
-            })
-            .await;
-
-            // Emit the corresponding AppEvent based on is_error flag
-            if is_error {
-                if let conductor_tools::result::ToolResult::Error(e) = result {
-                    app.emit_event(AppEvent::ToolCallFailed {
-                        id: tool_call_id,
-                        name: tool_name.clone(),
-                        error: e.to_string(),
-                        model: app.current_model,
-                    });
-                }
-            } else {
-                app.emit_event(AppEvent::ToolCallCompleted {
-                    id: tool_call_id,
-                    name: tool_name.clone(),
-                    result,
-                    model: app.current_model,
-                });
-
-                // Check if this was a mutating tool and emit WorkspaceChanged
-                let mutating_tools = ["edit", "replace", "bash", "write_file", "multi_edit_file"];
-                if mutating_tools.contains(&tool_name.as_str()) {
-                    app.emit_event(AppEvent::WorkspaceChanged);
-                    app.emit_workspace_files().await;
-                }
-            }
         }
     }
 }
