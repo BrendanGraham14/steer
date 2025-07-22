@@ -246,7 +246,6 @@ where
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn handle_event(&mut self, event: Event<'a>) {
         match event {
             Event::Start(tag) => self.start_tag(tag),

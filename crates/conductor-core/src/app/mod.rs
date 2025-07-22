@@ -1,14 +1,12 @@
 use crate::api::{Client as ApiClient, Model, ProviderKind, ToolCall};
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::ApprovalType;
-use crate::app::conversation::{
-    AppCommandType, AssistantContent, CompactResult, ToolResult, UserContent,
-};
+use crate::app::conversation::{AppCommandType, AssistantContent, CompactResult, UserContent};
 use crate::config::LlmConfigProvider;
 use crate::error::{Error, Result};
-use conductor_tools::ToolError;
 use conductor_tools::tools::BASH_TOOL_NAME;
 use conductor_tools::tools::bash::BashParams;
+use conductor_tools::{ToolError, ToolResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -70,7 +68,7 @@ pub enum AppEvent {
     },
     ToolCallCompleted {
         name: String,
-        result: conductor_tools::result::ToolResult,
+        result: ToolResult,
         id: String,
         model: Model,
     },
@@ -80,13 +78,16 @@ pub enum AppEvent {
         id: String,
         model: Model,
     },
-    ProcessingStarted,
-    ProcessingCompleted,
+
+    ProcessingStarted,   // Started processing a user message
+    ProcessingCompleted, // Completed processing a user message
+
     CommandResponse {
         command: conversation::AppCommandType,
         response: conversation::CommandResponse,
         id: String,
     },
+
     RequestToolApproval {
         name: String,
         parameters: serde_json::Value,
@@ -96,6 +97,7 @@ pub enum AppEvent {
         op_id: Option<uuid::Uuid>, // Operation ID if available
         info: CancellationInfo,
     },
+
     ModelChanged {
         model: Model,
     },
@@ -361,24 +363,28 @@ impl App {
 
     pub async fn add_message(&self, message: Message) {
         let mut conversation_guard = self.conversation.lock().await;
-        let changed = conversation_guard.add_message(message.clone());
-        let active_id = conversation_guard.active_message_id.clone();
-        drop(conversation_guard);
+        let message_id = message.id().to_string();
+        conversation_guard.add_message(message.clone());
+        self.emit_event(AppEvent::MessageAdded {
+            message,
+            model: self.current_model,
+        });
+        self.emit_event(AppEvent::ActiveMessageIdChanged {
+            message_id: Some(message_id),
+        });
+    }
 
-        // Emit event only for non-tool messages
-        if !matches!(message.data, MessageData::Tool { .. }) {
-            self.emit_event(AppEvent::MessageAdded {
-                message,
-                model: self.current_model,
-            });
-        }
+    pub async fn add_message_from_data(&self, message_data: MessageData) {
+        let mut conversation_guard = self.conversation.lock().await;
+        let message = conversation_guard.add_message_from_data(message_data);
 
-        // Emit event if active message ID changed
-        if changed {
-            self.emit_event(AppEvent::ActiveMessageIdChanged {
-                message_id: active_id,
-            });
-        }
+        self.emit_event(AppEvent::MessageAdded {
+            message: message.clone(),
+            model: self.current_model,
+        });
+        self.emit_event(AppEvent::ActiveMessageIdChanged {
+            message_id: Some(message.id().to_string()),
+        });
     }
 
     // Renamed from process_user_message to make it clear it starts an op
@@ -394,21 +400,10 @@ impl App {
         let op_context = OpContext::new();
         self.current_op_context = Some(op_context);
 
-        // Add user message
-        let parent_id = {
-            let conv = self.conversation.lock().await;
-            conv.messages.last().map(|m| m.id().to_string())
-        };
-
-        self.add_message(Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: message.clone(),
-                }],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("user", Message::current_timestamp()),
-            parent_message_id: parent_id,
+        self.add_message_from_data(MessageData::User {
+            content: vec![UserContent::Text {
+                text: message.clone(),
+            }],
         })
         .await;
 
@@ -644,14 +639,10 @@ impl App {
 
         match command {
             AppCommandType::Clear => {
-                let changed = self.conversation.lock().await.clear();
+                self.conversation.lock().await.clear();
                 self.approved_tools.write().await.clear(); // Also clear tool approvals
                 self.cached_system_prompt = None; // Clear cached system prompt
-
-                // Emit active message ID change event if it changed
-                if changed {
-                    self.emit_event(AppEvent::ActiveMessageIdChanged { message_id: None });
-                }
+                self.emit_event(AppEvent::ActiveMessageIdChanged { message_id: None });
 
                 Ok(Some(conversation::CommandResponse::Text(
                     "Conversation and tool approvals cleared.".to_string(),
@@ -872,23 +863,11 @@ impl App {
                   incomplete_tool_calls.len());
 
             for tool_call in incomplete_tool_calls {
-                let parent_id = {
-                    let conv = self.conversation.lock().await;
-                    conv.messages.last().map(|m| m.id().to_string())
-                };
-
-                let cancelled_result = Message {
-                    data: MessageData::Tool {
-                        tool_use_id: tool_call.id.clone(),
-                        result: ToolResult::Error(ToolError::Cancelled(tool_call.name.clone())),
-                    },
-                    timestamp: Message::current_timestamp(),
-                    id: Message::generate_id("tool", Message::current_timestamp()),
-                    parent_message_id: parent_id,
-                };
-
-                // Add the message using the standard add_message method to ensure proper event emission
-                self.add_message(cancelled_result.clone()).await;
+                self.add_message_from_data(MessageData::Tool {
+                    tool_use_id: tool_call.id.clone(),
+                    result: ToolResult::Error(ToolError::Cancelled(tool_call.name.clone())),
+                })
+                .await;
 
                 // Emit ToolCallFailed event so UI can render cancellation result
                 self.emit_event(AppEvent::ToolCallFailed {
@@ -933,75 +912,9 @@ impl App {
         tool_calls
     }
 
-    // Helper methods for testing
-    #[cfg(test)]
-    pub async fn add_user_message(&mut self, content: &str) -> Result<()> {
-        use crate::app::conversation::UserContent;
-        let conversation = self.conversation.clone();
-        let mut conversation_guard = conversation.lock().await;
-        let parent_id = conversation_guard
-            .messages
-            .last()
-            .map(|m| m.id().to_string());
-        let message = Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: content.to_string(),
-                }],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("user", Message::current_timestamp()),
-            parent_message_id: parent_id,
-        };
-        conversation_guard.add_message(message);
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub async fn add_assistant_message(&mut self, content: &str) -> Result<()> {
-        use crate::app::conversation::AssistantContent;
-        let conversation = self.conversation.clone();
-        let mut conversation_guard = conversation.lock().await;
-        let parent_id = conversation_guard
-            .messages
-            .last()
-            .map(|m| m.id().to_string());
-        let message = Message {
-            data: MessageData::Assistant {
-                content: vec![AssistantContent::Text {
-                    text: content.to_string(),
-                }],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("assistant", Message::current_timestamp()),
-            parent_message_id: parent_id,
-        };
-        conversation_guard.add_message(message);
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub async fn get_messages(&self) -> Vec<Message> {
-        let conversation_guard = self.conversation.lock().await;
-        conversation_guard
-            .get_thread_messages()
-            .into_iter()
-            .cloned()
-            .collect()
-    }
-
-    #[cfg(test)]
-    pub async fn edit_message(&mut self, message_id: &str, new_content: &str) -> Result<()> {
-        use crate::app::conversation::UserContent;
-        let conversation = self.conversation.clone();
-        let mut conversation_guard = conversation.lock().await;
-        conversation_guard.edit_message(
-            message_id,
-            vec![UserContent::Text {
-                text: new_content.to_string(),
-            }],
-        );
-        Ok(())
+    async fn get_active_message_id(&self) -> Option<String> {
+        let conv = self.conversation.lock().await;
+        conv.active_message_id.clone()
     }
 }
 
@@ -1577,7 +1490,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 });
             } else {
                 drop(conversation_guard);
-                app.add_message(app_message).await;
+                app.add_message_from_data(app_message.data).await;
                 debug!(target: "handle_agent_event", "Added new final message ID {}.", msg_id);
             }
         }
@@ -1595,8 +1508,9 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
         }
         AgentEvent::ToolResultReceived {
             tool_call_id,
-            message_id,
+
             result,
+            ..
         } => {
             let tool_name = app
                 .conversation
@@ -1605,14 +1519,14 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 .find_tool_name_by_id(&tool_call_id)
                 .unwrap_or_else(|| "unknown_tool".to_string());
 
-            let is_error = matches!(result, conductor_tools::result::ToolResult::Error(_));
+            let is_error = matches!(result, ToolResult::Error(_));
 
             // Add result to conversation store
-            app.conversation.lock().await.add_tool_result(
-                tool_call_id.clone(),
-                message_id.clone(),
-                result.clone(),
-            );
+            app.add_message_from_data(MessageData::Tool {
+                tool_use_id: tool_call_id.clone(),
+                result: result.clone(),
+            })
+            .await;
 
             // Emit the corresponding AppEvent based on is_error flag
             if is_error {
@@ -1675,20 +1589,11 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             match result {
                 Ok(response_text) => {
                     info!(target: "handle_task_outcome", "Dispatch agent successful.");
-                    let parent_id = {
-                        let conv = app.conversation.lock().await;
-                        conv.messages.last().map(|m| m.id().to_string())
-                    };
 
-                    app.add_message(Message {
-                        data: MessageData::Assistant {
-                            content: vec![AssistantContent::Text {
-                                text: format!("Dispatch Agent Result:\n{response_text}"),
-                            }],
-                        },
-                        timestamp: Message::current_timestamp(),
-                        id: Message::generate_id("assistant", Message::current_timestamp()),
-                        parent_message_id: parent_id,
+                    app.add_message_from_data(MessageData::Assistant {
+                        content: vec![AssistantContent::Text {
+                            text: format!("Dispatch Agent Result:\n{response_text}"),
+                        }],
                     })
                     .await;
                 }
@@ -1723,26 +1628,15 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                     // Parse the output to extract stdout/stderr/exit code
                     let (stdout, stderr, exit_code) = parse_bash_output(&output_str);
 
-                    // Add the command execution as a message
-                    let parent_id = {
-                        let conv = app.conversation.lock().await;
-                        conv.messages.last().map(|m| m.id().to_string())
-                    };
-
-                    let message = Message {
-                        data: MessageData::User {
-                            content: vec![UserContent::CommandExecution {
-                                command: command.clone(),
-                                stdout,
-                                stderr,
-                                exit_code,
-                            }],
-                        },
-                        timestamp: Message::current_timestamp(),
-                        id: Message::generate_id("user", Message::current_timestamp()),
-                        parent_message_id: parent_id,
-                    };
-                    app.add_message(message).await;
+                    app.add_message_from_data(MessageData::User {
+                        content: vec![UserContent::CommandExecution {
+                            command: command.clone(),
+                            stdout,
+                            stderr,
+                            exit_code,
+                        }],
+                    })
+                    .await;
 
                     // Emit Finished event
                     app.emit_event(AppEvent::Finished {
@@ -1775,11 +1669,7 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
                         });
                     } else {
                         // Add error as a command execution with error output
-                        let parent_id = {
-                            let conv = app.conversation.lock().await;
-                            conv.messages.last().map(|m| m.id().to_string())
-                        };
-
+                        let parent_id = app.get_active_message_id().await;
                         let error_message = format!("Error executing command: {e}");
                         let message = Message {
                             data: MessageData::User {

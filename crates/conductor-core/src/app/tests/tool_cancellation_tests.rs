@@ -4,7 +4,7 @@ mod tests {
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
         App, ToolExecutor,
-        conversation::{AssistantContent, Message, MessageData},
+        conversation::{AssistantContent, MessageData},
     };
     use crate::test_utils;
     use crate::tools::{BackendRegistry, LocalBackend};
@@ -70,23 +70,17 @@ mod tests {
             parameters: serde_json::json!({"param": "value"}),
         };
 
-        let assistant_msg = Message {
-            data: MessageData::Assistant {
-                content: vec![
-                    AssistantContent::Text {
-                        text: "I'll use a tool to help with that.".to_string(),
-                    },
-                    AssistantContent::ToolCall {
-                        tool_call: tool_call.clone(),
-                    },
-                ],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("assistant", Message::current_timestamp()),
-            parent_message_id: None,
-        };
-
-        app.add_message(assistant_msg).await;
+        app.add_message_from_data(MessageData::Assistant {
+            content: vec![
+                AssistantContent::Text {
+                    text: "I'll use a tool to help with that.".to_string(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: tool_call.clone(),
+                },
+            ],
+        })
+        .await;
 
         // Verify that we have an incomplete tool call
         {
@@ -159,34 +153,21 @@ mod tests {
             parameters: serde_json::json!({"param": "value"}),
         };
 
-        let assistant_msg = Message {
-            data: MessageData::Assistant {
-                content: vec![AssistantContent::ToolCall {
-                    tool_call: tool_call.clone(),
-                }],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("assistant", Message::current_timestamp()),
-            parent_message_id: None,
-        };
+        app.add_message_from_data(MessageData::Assistant {
+            content: vec![AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            }],
+        })
+        .await;
 
-        app.add_message(assistant_msg).await;
-
-        // Add a tool result for this tool call
-        let tool_result_msg = Message {
-            data: MessageData::Tool {
-                tool_use_id: "complete_tool_456".to_string(),
-                result: ToolResult::External(conductor_tools::result::ExternalResult {
-                    tool_name: "test_tool".to_string(),
-                    payload: "Tool completed successfully".to_string(),
-                }),
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("tool", Message::current_timestamp()),
-            parent_message_id: None,
-        };
-
-        app.add_message(tool_result_msg).await;
+        app.add_message_from_data(MessageData::Tool {
+            tool_use_id: "complete_tool_456".to_string(),
+            result: ToolResult::External(conductor_tools::result::ExternalResult {
+                tool_name: "test_tool".to_string(),
+                payload: "Tool completed successfully".to_string(),
+            }),
+        })
+        .await;
 
         // Verify that there are no incomplete tool calls
         {
@@ -241,26 +222,20 @@ mod tests {
             parameters: serde_json::json!({"path": "/some/file"}),
         };
 
-        let assistant_msg = Message {
-            data: MessageData::Assistant {
-                content: vec![
-                    AssistantContent::Text {
-                        text: "I'll use multiple tools.".to_string(),
-                    },
-                    AssistantContent::ToolCall {
-                        tool_call: tool_call_1.clone(),
-                    },
-                    AssistantContent::ToolCall {
-                        tool_call: tool_call_2.clone(),
-                    },
-                ],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("assistant", Message::current_timestamp()),
-            parent_message_id: None,
-        };
-
-        app.add_message(assistant_msg).await;
+        app.add_message_from_data(MessageData::Assistant {
+            content: vec![
+                AssistantContent::Text {
+                    text: "I'll use multiple tools.".to_string(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: tool_call_1.clone(),
+                },
+                AssistantContent::ToolCall {
+                    tool_call: tool_call_2.clone(),
+                },
+            ],
+        })
+        .await;
 
         // Inject cancelled tool results
         app.inject_cancelled_tool_results().await;
