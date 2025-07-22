@@ -1,6 +1,6 @@
 use crate::api::{Model, ToolCall};
 use crate::app::{
-    App, AppCommand, AppConfig, AppEvent, Conversation, Message as ConversationMessage,
+    App, AppCommand, AppConfig, AppEvent, Conversation, Message as ConversationMessage, MessageData,
 };
 use crate::error::{Error, Result};
 use crate::events::StreamEvent;
@@ -8,6 +8,7 @@ use crate::session::{
     Session, SessionConfig, SessionFilter, SessionInfo, SessionState, SessionStore,
     SessionStoreError, ToolCallUpdate,
 };
+use conductor_tools::ToolResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
@@ -918,9 +919,9 @@ async fn update_session_state_for_event(
                 message: error.clone(),
             };
             let tool_message = ConversationMessage {
-                data: crate::app::conversation::MessageData::Tool {
+                data: MessageData::Tool {
                     tool_use_id: tool_call_id.clone(),
-                    result: crate::app::conversation::ToolResult::Error(tool_error),
+                    result: ToolResult::Error(tool_error),
                 },
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -941,6 +942,7 @@ async fn update_session_state_for_event(
 mod tests {
     use super::*;
     use crate::api::ToolCall;
+    use crate::app::MessageData;
     use crate::app::conversation::{AssistantContent, Role, UserContent};
     use crate::session::stores::sqlite::SqliteSessionStore;
     use tempfile::TempDir;
@@ -1186,16 +1188,14 @@ mod tests {
 
         // Also add a Tool message with the result
         let tool_message = ConversationMessage {
-            data: crate::app::conversation::MessageData::Tool {
+            data: MessageData::Tool {
                 tool_use_id: "tool_call_1".to_string(),
-                result: crate::app::conversation::ToolResult::FileContent(
-                    conductor_tools::result::FileContentResult {
-                        content: "File contents: Hello, world!".to_string(),
-                        file_path: "test.txt".to_string(),
-                        line_count: 1,
-                        truncated: false,
-                    },
-                ),
+                result: ToolResult::FileContent(conductor_tools::result::FileContentResult {
+                    content: "File contents: Hello, world!".to_string(),
+                    file_path: "test.txt".to_string(),
+                    line_count: 1,
+                    truncated: false,
+                }),
             },
             timestamp: 123456790,
             id: "tool_result_tool_call_1".to_string(),

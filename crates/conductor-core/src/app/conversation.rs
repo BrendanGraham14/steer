@@ -469,52 +469,27 @@ impl Conversation {
         }
     }
 
-    pub fn add_message(&mut self, message: Message) -> bool {
-        let message_id = message.id().to_string();
-        let parent_id = message.parent_message_id();
-
-        // Update active_message_id:
-        // 1. If parent_id is None, this is a root message (start of new conversation)
-        // 2. If parent_id matches current active_message_id (or active is None and parent is last message),
-        //    we're continuing the current branch
-        let should_update_active = if let Some(ref active_id) = self.active_message_id {
-            // We're continuing the current branch if parent matches active
-            parent_id == Some(active_id.as_str())
-        } else {
-            // No active branch set - use last message semantics
-            parent_id.is_none() || parent_id == self.messages.last().map(|m| m.id())
-        };
-
-        let changed = if should_update_active || parent_id.is_none() {
-            self.active_message_id = Some(message_id);
-            true
-        } else {
-            false
-        };
-
+    pub fn add_message(&mut self, message: Message) {
+        self.active_message_id = Some(message.id().to_string());
         self.messages.push(message);
-        changed
     }
 
-    pub fn clear(&mut self) -> bool {
+    pub fn add_message_from_data(&mut self, message_data: MessageData) -> &Message {
+        debug!(target: "conversation::add_message", "Adding message: {:?}", message_data);
+        self.messages.push(Message {
+            data: message_data,
+            id: Message::generate_id("", Message::current_timestamp()),
+            timestamp: Message::current_timestamp(),
+            parent_message_id: self.active_message_id.clone(),
+        });
+        self.active_message_id = Some(self.messages.last().unwrap().id().to_string());
+        self.messages.last().unwrap()
+    }
+
+    pub fn clear(&mut self) {
         debug!(target:"conversation::clear", "Clearing conversation");
         self.messages.clear();
-        let changed = self.active_message_id.is_some();
         self.active_message_id = None;
-        changed
-    }
-
-    pub fn add_tool_result(&mut self, tool_use_id: String, message_id: String, result: ToolResult) {
-        let parent_id = self.messages.last().map(|m| m.id().to_string());
-        self.add_message(Message {
-            data: MessageData::Tool {
-                tool_use_id,
-                result,
-            },
-            timestamp: Message::current_timestamp(),
-            id: message_id,
-            parent_message_id: parent_id,
-        });
     }
 
     /// Find the tool name by its ID by searching through assistant messages with tool calls
@@ -1016,48 +991,11 @@ mod tests {
         // Add another branch from msg1
         let msg3 = create_user_message("msg3", Some("msg1"), "different question");
         conversation.add_message(msg3);
-        // Should NOT update active since we're not continuing from current active
-        assert_eq!(conversation.active_message_id, Some("msg2".to_string()));
+        assert_eq!(conversation.active_message_id, Some("msg3".to_string()));
 
         // Continue from active
-        let msg4 = create_user_message("msg4", Some("msg2"), "follow up");
+        let msg4 = create_user_message("msg4", Some("msg3"), "follow up");
         conversation.add_message(msg4);
         assert_eq!(conversation.active_message_id, Some("msg4".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_thread_aware_compaction() {
-        // This test would require mocking the API client
-        // For now, we'll test the logic without actually calling the API
-
-        let mut conversation = Conversation::new();
-
-        // Create a conversation with branches
-        for i in 0..12 {
-            let parent_id = if i == 0 {
-                None
-            } else {
-                Some(format!("msg{}", i - 1))
-            };
-            let msg = create_user_message(
-                &format!("msg{i}"),
-                parent_id.as_deref(),
-                &format!("message {i}"),
-            );
-            conversation.add_message(msg);
-        }
-
-        // Create a branch from message 5
-        let branch_msg = create_user_message("branch1", Some("msg5"), "branch message");
-        conversation.add_message(branch_msg);
-
-        // The active thread should still be the main branch
-        let thread = conversation.get_active_thread();
-        assert_eq!(thread.len(), 12);
-
-        // After compaction (mocked), original messages should still exist
-        // and active_message_id should point to the summary
-        let original_count = conversation.messages.len();
-        assert_eq!(original_count, 13); // 12 main + 1 branch
     }
 }

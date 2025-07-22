@@ -168,7 +168,7 @@ impl ChatViewport {
         self.state.view_mode = mode;
 
         // Apply filtering based on active_message_id
-        let filtered_items = if let Some(active_id) = &chat_store.active_message_id {
+        let filtered_items = if let Some(active_id) = &chat_store.active_message_id() {
             // Build lineage set by following parent_message_id chain
             let lineage = build_lineage_set(active_id, chat_store);
 
@@ -713,6 +713,7 @@ mod tests {
     use super::*;
     use crate::tui::model::NoticeLevel;
     use conductor_core::app::conversation::{Message, MessageData, UserContent};
+    use conductor_tools::result::ExternalResult;
     use ratatui::{Terminal, backend::TestBackend};
     use std::time::SystemTime;
 
@@ -1133,12 +1134,15 @@ mod tests {
 
         // Build lineage from C
         let lineage = build_lineage_set("C", &store);
-
-        assert!(lineage.contains("C"));
-        assert!(lineage.contains("B"));
-        assert!(lineage.contains("A"));
-        assert!(lineage.contains("root"));
-        assert_eq!(lineage.len(), 4);
+        assert_eq!(
+            lineage,
+            HashSet::from([
+                "C".to_string(),
+                "B".to_string(),
+                "A".to_string(),
+                "root".to_string(),
+            ])
+        );
     }
 
     #[test]
@@ -1157,9 +1161,7 @@ mod tests {
         });
 
         let lineage = build_lineage_set("single", &store);
-
-        assert!(lineage.contains("single"));
-        assert_eq!(lineage.len(), 1);
+        assert_eq!(lineage, HashSet::from(["single".to_string()]));
     }
 
     #[test]
@@ -1168,8 +1170,7 @@ mod tests {
 
         let lineage = build_lineage_set("nonexistent", &store);
 
-        assert!(lineage.contains("nonexistent"));
-        assert_eq!(lineage.len(), 1);
+        assert_eq!(lineage, HashSet::from(["nonexistent".to_string()]));
     }
 
     #[test]
@@ -1207,17 +1208,16 @@ mod tests {
         });
 
         let lineage = build_lineage_set("msg2", &store);
+        assert_eq!(
+            lineage,
+            HashSet::from(["msg2".to_string(), "msg1".to_string(),])
+        );
 
-        // msg1 and msg2 should be visible
-        let msg1 = store.get_by_id(&"msg1".to_string()).unwrap();
-        assert!(is_visible(msg1, &lineage, &store));
-
-        let msg2 = store.get_by_id(&"msg2".to_string()).unwrap();
-        assert!(is_visible(msg2, &lineage, &store));
-
-        // msg3 should NOT be visible (different branch)
-        let msg3 = store.get_by_id(&"msg3".to_string()).unwrap();
-        assert!(!is_visible(msg3, &lineage, &store));
+        let lineage = build_lineage_set("msg3", &store);
+        assert_eq!(
+            lineage,
+            HashSet::from(["msg3".to_string(), "msg1".to_string(),])
+        );
     }
 
     #[test]
@@ -1399,7 +1399,7 @@ mod tests {
         });
 
         // Add tool call attached to B
-        let tool_b = ChatItem {
+        let pending_tool_b = ChatItem {
             parent_chat_item_id: Some("B".to_string()),
             data: ChatItemData::PendingToolCall {
                 id: "tool_b".to_string(),
@@ -1411,7 +1411,24 @@ mod tests {
                 ts: time::OffsetDateTime::now_utc(),
             },
         };
-        store.push(tool_b.clone());
+        store.push(pending_tool_b.clone());
+
+        let tool_b_message = ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::Message(Message {
+                data: MessageData::Tool {
+                    tool_use_id: "call_b".to_string(),
+                    result: ToolResult::External(ExternalResult {
+                        tool_name: "tool_b".to_string(),
+                        payload: "".to_string(),
+                    }),
+                },
+                timestamp: 0,
+                id: "tool_b".to_string(),
+                parent_message_id: Some("B".to_string()),
+            }),
+        };
+        store.push(tool_b_message.clone());
 
         store.add_message(Message {
             data: MessageData::User {
@@ -1421,7 +1438,7 @@ mod tests {
             },
             id: "C".to_string(),
             timestamp: 1002,
-            parent_message_id: Some("A".to_string()),
+            parent_message_id: Some("tool_b".to_string()),
         });
 
         // Add tool call attached to C
@@ -1454,7 +1471,7 @@ mod tests {
             &lineage_b,
             &store
         ));
-        assert!(is_visible(&tool_b, &lineage_b, &store));
+        assert!(is_visible(&pending_tool_b, &lineage_b, &store));
 
         // Should NOT see: C, C's tool call
         assert!(!is_visible(
@@ -1466,6 +1483,16 @@ mod tests {
 
         // Test with active_message_id = C
         let lineage_c = build_lineage_set("C", &store);
+
+        assert_eq!(
+            lineage_c,
+            HashSet::from([
+                "A".to_string(),
+                "B".to_string(),
+                "tool_b".to_string(),
+                "C".to_string(),
+            ])
+        );
 
         // Should see: root notice, A, C, C's tool call
         assert!(is_visible(&root_notice, &lineage_c, &store));
@@ -1482,11 +1509,11 @@ mod tests {
         assert!(is_visible(&tool_c, &lineage_c, &store));
 
         // Should NOT see: B, B's tool call
-        assert!(!is_visible(
+        assert!(is_visible(
             store.get_by_id(&"B".to_string()).unwrap(),
             &lineage_c,
             &store
         ));
-        assert!(!is_visible(&tool_b, &lineage_c, &store));
+        assert!(is_visible(&pending_tool_b, &lineage_c, &store));
     }
 }

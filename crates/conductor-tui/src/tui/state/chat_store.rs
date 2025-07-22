@@ -4,7 +4,7 @@ use crate::tui::model::{ChatItem, ChatItemData, RowId};
 use conductor_core::app::conversation::{Message, MessageData};
 
 use indexmap::IndexMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Stable key for accessing chat items
@@ -27,7 +27,7 @@ pub struct ChatStore {
     /// Revision number for dirty tracking
     revision: u64,
     /// Currently active message ID (for branch filtering)
-    pub active_message_id: Option<String>,
+    active_message_id: Option<String>,
 }
 
 impl Default for ChatStore {
@@ -89,6 +89,17 @@ impl ChatStore {
         let key = ChatItemKey(self.next_key);
         self.next_key += 1;
         key
+    }
+
+    /// Set the active message ID
+    pub fn set_active_message_id(&mut self, id: Option<String>) {
+        self.active_message_id = id;
+        self.revision += 1;
+    }
+
+    /// Get the active message ID
+    pub fn active_message_id(&self) -> Option<&String> {
+        self.active_message_id.as_ref()
     }
 
     /// Push a new item and return its key
@@ -189,80 +200,6 @@ impl ChatStore {
     pub fn get_by_id(&self, id: &RowId) -> Option<&ChatItem> {
         let key = self.lookup(id)?;
         self.items.get(&key)
-    }
-
-    /// Retain only messages that are ancestors of the given message ID.
-    /// This traverses the parent_message_id chain backwards from the given message
-    /// and keeps only those messages in the lineage.
-    pub fn prune_to_message_lineage(&mut self, keep_message_id: &str) {
-        tracing::debug!(
-            target: "chat_store",
-            "Pruning to message lineage of: {}, current store size: {}",
-            keep_message_id, self.items.len()
-        );
-
-        let mut live_ids = HashSet::new();
-
-        // Build a map of message ID to message for quick lookups
-        let message_map: HashMap<String, &Message> = self
-            .items
-            .values()
-            .filter_map(|item| {
-                if let ChatItemData::Message(message) = &item.data {
-                    Some((message.id().to_string(), message))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Start from the given message and traverse backwards
-        let mut current_id = Some(keep_message_id.to_string());
-
-        while let Some(id) = current_id {
-            if live_ids.contains(&id) {
-                break; // Avoid cycles
-            }
-
-            if let Some(message) = message_map.get(&id) {
-                live_ids.insert(id.clone());
-                current_id = message.parent_message_id().map(|s| s.to_string());
-            } else {
-                tracing::warn!(
-                    target: "chat_store",
-                    "Message not found during lineage traversal: {}",
-                    id
-                );
-                break; // Message not found
-            }
-        }
-
-        tracing::debug!(
-            target: "chat_store",
-            "Keeping {} messages in lineage",
-            live_ids.len()
-        );
-
-        // Collect keys of messages to remove (those not in the lineage)
-        let keys_to_remove: Vec<ChatItemKey> = self
-            .items
-            .iter()
-            .filter_map(|(&key, item)| match &item.data {
-                ChatItemData::Message(message) if !live_ids.contains(message.id()) => Some(key),
-                _ => None,
-            })
-            .collect();
-
-        // Remove items that are not in the lineage
-        for key in keys_to_remove {
-            self.remove_by_key(key);
-        }
-
-        tracing::debug!(
-            target: "chat_store",
-            "After pruning, store size: {}",
-            self.items.len()
-        );
     }
 
     /// Find messages by parent ID
@@ -391,269 +328,5 @@ impl ChatStore {
         for m in msgs {
             self.add_message(m.clone());
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
-    use conductor_tools::schema::ToolCall;
-    use time::OffsetDateTime;
-
-    fn create_test_message(id: &str, parent_id: Option<&str>) -> Message {
-        Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: format!("Test message {id}"),
-                }],
-            },
-            id: id.to_string(),
-            timestamp: 1234567890,
-            parent_message_id: parent_id.map(|s| s.to_string()),
-        }
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_basic() {
-        let mut store = ChatStore::new();
-
-        // Create a simple linear chain: A -> B -> C
-        store.add_message(create_test_message("A", None));
-        store.add_message(create_test_message("B", Some("A")));
-        store.add_message(create_test_message("C", Some("B")));
-
-        assert_eq!(store.len(), 3);
-
-        // Prune to keep only the lineage of C
-        store.prune_to_message_lineage("C");
-
-        // All messages should be kept
-        assert_eq!(store.len(), 3);
-        assert!(store.get_by_id(&"A".to_string()).is_some());
-        assert!(store.get_by_id(&"B".to_string()).is_some());
-        assert!(store.get_by_id(&"C".to_string()).is_some());
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_with_branches() {
-        let mut store = ChatStore::new();
-
-        // Create a branching structure:
-        //       A
-        //      / \
-        //     B   D
-        //    /     \
-        //   C       E
-        store.add_message(create_test_message("A", None));
-        store.add_message(create_test_message("B", Some("A")));
-        store.add_message(create_test_message("C", Some("B")));
-        store.add_message(create_test_message("D", Some("A")));
-        store.add_message(create_test_message("E", Some("D")));
-
-        assert_eq!(store.len(), 5);
-
-        // Prune to keep only the lineage of C (A -> B -> C)
-        store.prune_to_message_lineage("C");
-
-        // Only A, B, C should remain
-        assert_eq!(store.len(), 3);
-        assert!(store.get_by_id(&"A".to_string()).is_some());
-        assert!(store.get_by_id(&"B".to_string()).is_some());
-        assert!(store.get_by_id(&"C".to_string()).is_some());
-        assert!(store.get_by_id(&"D".to_string()).is_none());
-        assert!(store.get_by_id(&"E".to_string()).is_none());
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_preserves_non_messages() {
-        let mut store = ChatStore::new();
-
-        // Add messages
-        store.add_message(create_test_message("A", None));
-        store.add_message(create_test_message("B", Some("A")));
-        store.add_message(create_test_message("C", Some("A"))); // Branch
-
-        // Add non-message items
-        let tool_call = ToolCall {
-            id: "tool1".to_string(),
-            name: "test_tool".to_string(),
-            parameters: serde_json::json!({}),
-        };
-        store.push(ChatItem {
-            parent_chat_item_id: None,
-            data: ChatItemData::PendingToolCall {
-                id: "pending_tool_1".to_string(),
-                tool_call,
-                ts: OffsetDateTime::now_utc(),
-            },
-        });
-
-        let operation_id = Uuid::new_v4();
-        store.push(ChatItem {
-            parent_chat_item_id: None,
-            data: ChatItemData::InFlightOperation {
-                id: format!("op_{operation_id}"),
-                operation_id,
-                label: "Test operation".to_string(),
-                ts: OffsetDateTime::now_utc(),
-            },
-        });
-
-        assert_eq!(store.len(), 5); // 3 messages + 2 other items
-
-        // Prune to keep only lineage of B
-        store.prune_to_message_lineage("B");
-
-        // Should have A, B, and the 2 non-message items
-        assert_eq!(store.len(), 4);
-        assert!(store.get_by_id(&"A".to_string()).is_some());
-        assert!(store.get_by_id(&"B".to_string()).is_some());
-        assert!(store.get_by_id(&"C".to_string()).is_none());
-
-        // Verify non-message items are preserved
-        assert!(store.get_pending_tool_key("tool1").is_some());
-        assert!(store.get_in_flight_op_key(&operation_id).is_some());
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_missing_parent() {
-        let mut store = ChatStore::new();
-
-        // Create messages with a missing parent
-        store.add_message(create_test_message("B", Some("A"))); // A doesn't exist
-        store.add_message(create_test_message("C", Some("B")));
-        store.add_message(create_test_message("D", None)); // Unrelated message
-
-        assert_eq!(store.len(), 3);
-
-        // Prune to keep only lineage of C
-        store.prune_to_message_lineage("C");
-
-        // Should keep B and C (stops at missing parent A)
-        assert_eq!(store.len(), 2);
-        assert!(store.get_by_id(&"B".to_string()).is_some());
-        assert!(store.get_by_id(&"C".to_string()).is_some());
-        assert!(store.get_by_id(&"D".to_string()).is_none());
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_nonexistent_message() {
-        let mut store = ChatStore::new();
-
-        store.add_message(create_test_message("A", None));
-        store.add_message(create_test_message("B", Some("A")));
-
-        assert_eq!(store.len(), 2);
-
-        // Try to prune to a non-existent message
-        store.prune_to_message_lineage("Z");
-
-        // Nothing should be kept (except non-message items if any)
-        assert_eq!(store.len(), 0);
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_complex_tree() {
-        let mut store = ChatStore::new();
-
-        // Create a more complex tree:
-        //         A
-        //       / | \
-        //      B  C  D
-        //     /       \
-        //    E         F
-        //   /           \
-        //  G             H
-        store.add_message(create_test_message("A", None));
-        store.add_message(create_test_message("B", Some("A")));
-        store.add_message(create_test_message("C", Some("A")));
-        store.add_message(create_test_message("D", Some("A")));
-        store.add_message(create_test_message("E", Some("B")));
-        store.add_message(create_test_message("F", Some("D")));
-        store.add_message(create_test_message("G", Some("E")));
-        store.add_message(create_test_message("H", Some("F")));
-
-        assert_eq!(store.len(), 8);
-
-        // Prune to keep only lineage of G (A -> B -> E -> G)
-        store.prune_to_message_lineage("G");
-
-        assert_eq!(store.len(), 4);
-        assert!(store.get_by_id(&"A".to_string()).is_some());
-        assert!(store.get_by_id(&"B".to_string()).is_some());
-        assert!(store.get_by_id(&"E".to_string()).is_some());
-        assert!(store.get_by_id(&"G".to_string()).is_some());
-
-        // Others should be removed
-        assert!(store.get_by_id(&"C".to_string()).is_none());
-        assert!(store.get_by_id(&"D".to_string()).is_none());
-        assert!(store.get_by_id(&"F".to_string()).is_none());
-        assert!(store.get_by_id(&"H".to_string()).is_none());
-    }
-
-    #[test]
-    fn test_prune_to_message_lineage_assistant_messages() {
-        let mut store = ChatStore::new();
-
-        // Mix of user and assistant messages
-        store.add_message(Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: "Hello".to_string(),
-                }],
-            },
-            id: "U1".to_string(),
-            timestamp: 1234567890,
-            parent_message_id: None,
-        });
-        store.active_message_id = Some("U1".to_string());
-
-        store.add_message(Message {
-            data: MessageData::Assistant {
-                content: vec![AssistantContent::Text {
-                    text: "Hi there!".to_string(),
-                }],
-            },
-            id: "A1".to_string(),
-            timestamp: 1234567891,
-            parent_message_id: Some("U1".to_string()),
-        });
-        store.active_message_id = Some("A1".to_string());
-
-        store.add_message(Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: "Another question".to_string(),
-                }],
-            },
-            id: "U2".to_string(),
-            timestamp: 1234567892,
-            parent_message_id: Some("A1".to_string()),
-        });
-        store.active_message_id = Some("U2".to_string());
-
-        // Branch from the first assistant message
-        store.add_message(Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: "Different question".to_string(),
-                }],
-            },
-            id: "U3".to_string(),
-            timestamp: 1234567893,
-            parent_message_id: Some("A1".to_string()),
-        });
-
-        assert_eq!(store.len(), 4);
-
-        // Prune to keep only lineage of U2
-        store.prune_to_message_lineage("U2");
-
-        assert_eq!(store.len(), 3);
-        assert!(store.get_by_id(&"U1".to_string()).is_some());
-        assert!(store.get_by_id(&"A1".to_string()).is_some());
-        assert!(store.get_by_id(&"U2".to_string()).is_some());
-        assert!(store.get_by_id(&"U3".to_string()).is_none());
     }
 }
