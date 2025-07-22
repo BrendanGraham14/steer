@@ -131,7 +131,13 @@ impl LlmConfigProvider {
         // For Anthropic: Check OAuth tokens first, then env vars, then stored API key
         match provider {
             ProviderKind::Anthropic => {
-                if self
+                // API key via env var > OAuth > stored API key
+                let anthropic_key = std::env::var("CLAUDE_API_KEY")
+                    .ok()
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+                if let Some(key) = anthropic_key {
+                    Ok(Some(ApiAuth::Key(key)))
+                } else if self
                     .storage
                     .get_credential("anthropic", crate::auth::CredentialType::AuthTokens)
                     .await?
@@ -139,14 +145,7 @@ impl LlmConfigProvider {
                 {
                     Ok(Some(ApiAuth::OAuth))
                 } else {
-                    // Check environment variables first (takes precedence over stored keys)
-                    let anthropic_key = std::env::var("CLAUDE_API_KEY")
-                        .ok()
-                        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-
-                    if let Some(key) = anthropic_key {
-                        Ok(Some(ApiAuth::Key(key)))
-                    } else {
+                    {
                         // Fall back to stored API key in keyring
                         if let Some(crate::auth::Credential::ApiKey { value }) = self
                             .storage
@@ -161,7 +160,7 @@ impl LlmConfigProvider {
                 }
             }
             ProviderKind::OpenAI => {
-                // For OpenAI: Check env var first, then stored API key
+                // API key via env var > stored API key
                 if let Ok(key) = std::env::var("OPENAI_API_KEY") {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Some(crate::auth::Credential::ApiKey { value }) = self
@@ -175,7 +174,7 @@ impl LlmConfigProvider {
                 }
             }
             ProviderKind::Google => {
-                // For Google/Gemini: Check env var first, then stored API key
+                // API key via env var > stored API key
                 if let Ok(key) = std::env::var("GEMINI_API_KEY") {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Some(crate::auth::Credential::ApiKey { value }) = self
@@ -189,7 +188,7 @@ impl LlmConfigProvider {
                 }
             }
             ProviderKind::XAI => {
-                // For xAI: Check env vars first (XAI_API_KEY or GROK_API_KEY), then stored API key
+                // API key via env var > stored API key
                 if let Ok(key) = std::env::var("XAI_API_KEY") {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Ok(key) = std::env::var("GROK_API_KEY") {
