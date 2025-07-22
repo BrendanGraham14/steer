@@ -30,12 +30,12 @@ async fn test_headless_mode_integration() {
 
     // First assert that we got an Assistant message
     assert!(
-        matches!(result.final_msg.data, MessageData::Assistant { .. }),
+        matches!(result.final_message.data, MessageData::Assistant { .. }),
         "Expected Assistant message in response"
     );
 
     // Extract content safely
-    if let MessageData::Assistant { content, .. } = &result.final_msg.data {
+    if let MessageData::Assistant { content, .. } = &result.final_message.data {
         // The response should contain the answer (4)
         let text_blocks: Vec<_> = content
             .iter()

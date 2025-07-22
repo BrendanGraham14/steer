@@ -20,7 +20,7 @@ use crate::session::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOnceResult {
     /// The final assistant message after all tools have been executed
-    pub final_msg: Message,
+    pub final_message: Message,
     /// The session ID of the session that was used
     pub session_id: String,
 }
@@ -270,7 +270,7 @@ impl OneShotRunner {
                     "Returning final result"
                 );
                 Ok(RunOnceResult {
-                    final_msg: messages.last().unwrap().clone(),
+                    final_message: messages.last().unwrap().clone(),
                     session_id: session_id.to_string(),
                 })
             }
@@ -356,13 +356,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert!(!result.final_msg.id().is_empty());
-        println!("Ephemeral run succeeded: {:?}", result.final_msg);
+        assert!(!result.final_message.id().is_empty());
+        println!("Ephemeral run succeeded: {:?}", result.final_message);
 
         // Verify the response contains something reasonable
-        let content = match &result.final_msg.data {
+        let content = match &result.final_message.data {
             MessageData::Assistant { content, .. } => content,
-            _ => unreachable!("expected assistant message, got {:?}", result.final_msg),
+            _ => unreachable!("expected assistant message, got {:?}", result.final_message),
         };
         let text_content = content.iter().find_map(|c| match c {
             AssistantContent::Text { text } => Some(text),
@@ -453,11 +453,14 @@ mod tests {
 
         match result {
             Ok(run_result) => {
-                println!("Session run succeeded: {:?}", run_result.final_msg);
+                println!("Session run succeeded: {:?}", run_result.final_message);
 
-                let content = match &run_result.final_msg.data {
+                let content = match &run_result.final_message.data {
                     MessageData::Assistant { content, .. } => content.clone(),
-                    _ => unreachable!("expected assistant message, got {:?}", run_result.final_msg),
+                    _ => unreachable!(
+                        "expected assistant message, got {:?}",
+                        run_result.final_message
+                    ),
                 };
                 let text_content = content.iter().find_map(|c| match c {
                     AssistantContent::Text { text } => Some(text),
@@ -673,7 +676,7 @@ mod tests {
             None,
         )
         .await;
-        let content = result.unwrap().final_msg.content_string();
+        let content = result.unwrap().final_message.content_string();
         assert!(content.contains("4"));
     }
 
@@ -850,11 +853,14 @@ mod tests {
         .await
         .expect("Ephemeral run with tools should succeed with valid API key");
 
-        assert!(!result.final_msg.id().is_empty());
-        println!("Ephemeral run with tools succeeded: {:?}", result.final_msg);
+        assert!(!result.final_message.id().is_empty());
+        println!(
+            "Ephemeral run with tools succeeded: {:?}",
+            result.final_message
+        );
 
         // The response might be structured content with tool calls, which is expected
-        let has_content = match &result.final_msg.data {
+        let has_content = match &result.final_message.data {
             MessageData::Assistant { content, .. } => {
                 content.iter().any(|c| match c {
                     AssistantContent::Text { text } => !text.is_empty(),
@@ -899,7 +905,7 @@ mod tests {
         .await
         .expect("First session run should succeed");
 
-        println!("First interaction: {:?}", result1.final_msg);
+        println!("First interaction: {:?}", result1.final_message);
 
         // Second interaction: test if context is preserved
         let result2 = OneShotRunner::run_in_session(
@@ -910,10 +916,10 @@ mod tests {
         .await
         .expect("Second session run should succeed");
 
-        println!("Second interaction: {:?}", result2.final_msg);
+        println!("Second interaction: {:?}", result2.final_message);
 
         // Verify the second response uses the context from the first
-        match &result2.final_msg.data {
+        match &result2.final_message.data {
             MessageData::Assistant { content, .. } => {
                 let text_content = content.iter().find_map(|c| match c {
                     AssistantContent::Text { text } => Some(text),
@@ -938,7 +944,10 @@ mod tests {
                 }
             }
             _ => {
-                unreachable!("expected assistant message, got {:?}", result2.final_msg);
+                unreachable!(
+                    "expected assistant message, got {:?}",
+                    result2.final_message
+                );
             }
         }
 
