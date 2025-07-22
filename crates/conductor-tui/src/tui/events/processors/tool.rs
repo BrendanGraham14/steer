@@ -4,7 +4,7 @@
 
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::model::ChatItem;
+use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 use conductor_core::app::conversation::ToolResult;
@@ -70,10 +70,13 @@ impl EventProcessor for ToolEventProcessor {
                 ctx.tool_registry.register_call(tool_call.clone());
 
                 // Add a pending tool call item
-                let pending = ChatItem::PendingToolCall {
-                    id: crate::tui::model::generate_row_id(),
-                    tool_call,
-                    ts: time::OffsetDateTime::now_utc(),
+                let pending = crate::tui::model::ChatItem {
+                    parent_chat_item_id: None, // Will be set by push()
+                    data: ChatItemData::PendingToolCall {
+                        id: crate::tui::model::generate_row_id(),
+                        tool_call,
+                        ts: time::OffsetDateTime::now_utc(),
+                    },
                 };
 
                 ctx.chat_store.add_pending_tool(pending);

@@ -5,7 +5,7 @@
 
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
+use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
 use conductor_core::app::AppEvent;
 
@@ -28,11 +28,14 @@ impl SystemEventProcessor {
         response: conductor_core::app::conversation::CommandResponse,
         ctx: &mut ProcessingContext,
     ) {
-        let chat_item = ChatItem::CoreCmdResponse {
-            id: generate_row_id(),
-            cmd: command,
-            resp: response,
-            ts: time::OffsetDateTime::now_utc(),
+        let chat_item = crate::tui::model::ChatItem {
+            parent_chat_item_id: None, // Will be set by push()
+            data: ChatItemData::CoreCmdResponse {
+                id: generate_row_id(),
+                cmd: command,
+                resp: response,
+                ts: time::OffsetDateTime::now_utc(),
+            },
         };
         ctx.chat_store.push(chat_item);
     }
@@ -70,11 +73,14 @@ impl EventProcessor for SystemEventProcessor {
             }
             AppEvent::Error { message } => {
                 // Add error as a system notice
-                let chat_item = ChatItem::SystemNotice {
-                    id: generate_row_id(),
-                    level: NoticeLevel::Error,
-                    text: message.clone(),
-                    ts: time::OffsetDateTime::now_utc(),
+                let chat_item = crate::tui::model::ChatItem {
+                    parent_chat_item_id: None, // Will be set by push()
+                    data: ChatItemData::SystemNotice {
+                        id: generate_row_id(),
+                        level: NoticeLevel::Error,
+                        text: message.clone(),
+                        ts: time::OffsetDateTime::now_utc(),
+                    },
                 };
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
-use crate::tui::model::ChatItem;
+use crate::tui::model::{ChatItem, NoticeLevel};
 use crate::tui::theme::Theme;
 use conductor_core::api::Model;
 use conductor_core::app::conversation::{AssistantContent, Message};
@@ -321,37 +321,78 @@ impl Tui {
             }
         }
 
-        // First pass: populate tool registry with tool calls from assistant messages
+        self.chat_store.ingest_messages(&messages);
+
+        // The rest of the tool registry population code remains the same
+        // Extract tool calls from assistant messages
         for message in &messages {
-            if let conductor_core::app::Message::Assistant { content, .. } = message {
-                for item in content {
-                    if let AssistantContent::ToolCall { tool_call } = item {
+            if let conductor_core::app::Message::Assistant { content, id, .. } = message {
+                debug!(
+                    target: "tui.restore",
+                    "Processing Assistant message id={}",
+                    id
+                );
+                for block in content {
+                    if let AssistantContent::ToolCall { tool_call } = block {
                         debug!(
                             target: "tui.restore",
-                            "Registering tool call: id={}, name={}, params={}",
-                            tool_call.id,
-                            tool_call.name,
-                            tool_call.parameters
+                            "Found ToolCall in Assistant message: id={}, name={}, params={}",
+                            tool_call.id, tool_call.name, tool_call.parameters
                         );
-                        self.tool_registry.upsert_call(tool_call.clone());
+
+                        // Register the tool call
+                        self.tool_registry.register_call(tool_call.clone());
                     }
                 }
             }
         }
 
-        // Debug dump the registry state after first pass
-        self.tool_registry.debug_dump("After first pass");
+        // Map tool results to their calls
+        for message in &messages {
+            if let conductor_core::app::Message::Tool { tool_use_id, .. } = message {
+                debug!(
+                    target: "tui.restore",
+                    "Updating registry with Tool result for id={}",
+                    tool_use_id
+                );
+                // Tool results are already handled by event processors
+            }
+        }
 
-        // Ingest all messages at once using the new ChatStore method
-        self.chat_store.ingest_messages(&messages);
-
-        info!(
-            "Finished restoring messages. TUI now has {} messages",
-            self.chat_store.len()
+        debug!(
+            target: "tui.restore",
+            "Tool registry state after restoration: {} calls registered",
+            self.tool_registry.metrics().completed_count
         );
+        info!("Successfully restored {} messages to TUI", message_count);
+    }
 
-        // Reset scroll to bottom after restoring messages
-        self.chat_viewport.state_mut().scroll_to_bottom();
+    /// Helper to push a system notice to the chat store
+    fn push_notice(&mut self, level: crate::tui::model::NoticeLevel, text: String) {
+        use crate::tui::model::{ChatItem, ChatItemData, generate_row_id};
+        self.chat_store.push(ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::SystemNotice {
+                id: generate_row_id(),
+                level,
+                text,
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        });
+    }
+
+    /// Helper to push a TUI command response to the chat store
+    fn push_tui_response(&mut self, command: String, response: String) {
+        use crate::tui::model::{ChatItem, ChatItemData, generate_row_id};
+        self.chat_store.push(ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::TuiCommandResponse {
+                id: generate_row_id(),
+                command,
+                response,
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        });
     }
 
     /// Load file list into cache
@@ -452,12 +493,15 @@ impl Tui {
                                         }
                                         Err(e) => {
                                             // Display error as a system notice
-                                            use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
-                                            self.chat_store.push(ChatItem::SystemNotice {
-                                                id: generate_row_id(),
-                                                level: NoticeLevel::Error,
-                                                text: e.to_string(),
-                                                ts: time::OffsetDateTime::now_utc(),
+                                            use crate::tui::model::{ChatItem, ChatItemData, NoticeLevel, generate_row_id};
+                                            self.chat_store.push(ChatItem {
+                                                parent_chat_item_id: None,
+                                                data: ChatItemData::SystemNotice {
+                                                    id: generate_row_id(),
+                                                    level: NoticeLevel::Error,
+                                                    text: e.to_string(),
+                                                    ts: time::OffsetDateTime::now_utc(),
+                                                },
                                             });
                                         }
                                     }
@@ -651,6 +695,7 @@ impl Tui {
                 layout.chat_area.width,
                 self.chat_viewport.state().view_mode,
                 &self.theme,
+                &self.chat_store,
             );
 
             let hovered_id = self
@@ -926,14 +971,7 @@ impl Tui {
                 })
                 .await
             {
-                use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
-                let notice = ChatItem::SystemNotice {
-                    id: generate_row_id(),
-                    level: NoticeLevel::Error,
-                    text: format!("Cannot edit message: {e}"),
-                    ts: time::OffsetDateTime::now_utc(),
-                };
-                self.chat_store.push(notice);
+                self.push_notice(NoticeLevel::Error, format!("Cannot edit message: {e}"));
             }
         } else {
             // Send regular message
@@ -942,14 +980,7 @@ impl Tui {
                 .send_command(AppCommand::ProcessUserInput(content))
                 .await
             {
-                use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
-                let notice = ChatItem::SystemNotice {
-                    id: generate_row_id(),
-                    level: NoticeLevel::Error,
-                    text: format!("Cannot send message: {e}"),
-                    ts: time::OffsetDateTime::now_utc(),
-                };
-                self.chat_store.push(notice);
+                self.push_notice(NoticeLevel::Error, format!("Cannot send message: {e}"));
             }
         }
         Ok(())
@@ -957,7 +988,7 @@ impl Tui {
 
     async fn handle_slash_command(&mut self, command_input: String) -> Result<()> {
         use crate::tui::commands::{AppCommand as TuiAppCommand, TuiCommand, TuiCommandType};
-        use crate::tui::model::{ChatItem, NoticeLevel, generate_row_id};
+        use crate::tui::model::NoticeLevel;
 
         // First check if it's a custom command in the registry
         let cmd_name = command_input
@@ -997,14 +1028,7 @@ impl Tui {
             Ok(cmd) => cmd,
             Err(e) => {
                 // Add error notice to chat
-                let error_msg = e.to_string();
-                let notice = ChatItem::SystemNotice {
-                    id: generate_row_id(),
-                    level: NoticeLevel::Error,
-                    text: error_msg,
-                    ts: time::OffsetDateTime::now_utc(),
-                };
-                self.chat_store.push(notice);
+                self.push_notice(NoticeLevel::Error, e.to_string());
                 return Ok(());
             }
         };
@@ -1024,23 +1048,16 @@ impl Tui {
                             .send_command(AppCommand::RequestWorkspaceFiles)
                             .await
                         {
-                            let notice = ChatItem::SystemNotice {
-                                id: generate_row_id(),
-                                level: NoticeLevel::Error,
-                                text: format!("Cannot reload files: {e}"),
-                                ts: time::OffsetDateTime::now_utc(),
-                            };
-                            self.chat_store.push(notice);
+                            self.push_notice(
+                                NoticeLevel::Error,
+                                format!("Cannot reload files: {e}"),
+                            );
                         } else {
-                            let response = ChatItem::TuiCommandResponse {
-                                id: generate_row_id(),
-                                command: TuiCommandType::ReloadFiles.command_name(),
-                                response:
-                                    "File cache cleared. Files will be reloaded on next access."
-                                        .to_string(),
-                                ts: time::OffsetDateTime::now_utc(),
-                            };
-                            self.chat_store.push(response);
+                            self.push_tui_response(
+                                TuiCommandType::ReloadFiles.command_name(),
+                                "File cache cleared. Files will be reloaded on next access."
+                                    .to_string(),
+                            );
                         }
                     }
                     TuiCommand::Theme(theme_name) => {
@@ -1050,22 +1067,16 @@ impl Tui {
                             match loader.load_theme(&name) {
                                 Ok(new_theme) => {
                                     self.theme = new_theme;
-                                    let response = ChatItem::TuiCommandResponse {
-                                        id: generate_row_id(),
-                                        command: TuiCommandType::Theme.command_name(),
-                                        response: format!("Theme changed to '{name}'"),
-                                        ts: time::OffsetDateTime::now_utc(),
-                                    };
-                                    self.chat_store.push(response);
+                                    self.push_tui_response(
+                                        TuiCommandType::Theme.command_name(),
+                                        format!("Theme changed to '{name}'"),
+                                    );
                                 }
                                 Err(e) => {
-                                    let notice = ChatItem::SystemNotice {
-                                        id: generate_row_id(),
-                                        level: NoticeLevel::Error,
-                                        text: format!("Failed to load theme '{name}': {e}"),
-                                        ts: time::OffsetDateTime::now_utc(),
-                                    };
-                                    self.chat_store.push(notice);
+                                    self.push_notice(
+                                        NoticeLevel::Error,
+                                        format!("Failed to load theme '{name}': {e}"),
+                                    );
                                 }
                             }
                         } else {
@@ -1077,13 +1088,10 @@ impl Tui {
                             } else {
                                 format!("Available themes:\n{}", themes.join("\n"))
                             };
-                            let response = ChatItem::TuiCommandResponse {
-                                id: generate_row_id(),
-                                command: TuiCommandType::Theme.command_name(),
-                                response: theme_list,
-                                ts: time::OffsetDateTime::now_utc(),
-                            };
-                            self.chat_store.push(response);
+                            self.push_tui_response(
+                                TuiCommandType::Theme.command_name(),
+                                theme_list,
+                            );
                         }
                     }
                     TuiCommand::Help(command_name) => {
@@ -1110,13 +1118,7 @@ impl Tui {
                             help_lines.join("\n")
                         };
 
-                        let notice = ChatItem::TuiCommandResponse {
-                            id: generate_row_id(),
-                            command: TuiCommandType::Help.command_name(),
-                            response: help_text,
-                            ts: time::OffsetDateTime::now_utc(),
-                        };
-                        self.chat_store.push(notice);
+                        self.push_tui_response(TuiCommandType::Help.command_name(), help_text);
                     }
                     TuiCommand::Auth => {
                         // Launch auth setup
@@ -1161,13 +1163,10 @@ impl Tui {
                         // Clear the mode stack to avoid returning to a pre-setup mode.
                         self.mode_stack.clear();
 
-                        let notice = ChatItem::TuiCommandResponse {
-                            id: generate_row_id(),
-                            command: TuiCommandType::Auth.to_string(),
-                            response: "Entering authentication setup mode...".to_string(),
-                            ts: time::OffsetDateTime::now_utc(),
-                        };
-                        self.chat_store.push(notice);
+                        self.push_tui_response(
+                            TuiCommandType::Auth.to_string(),
+                            "Entering authentication setup mode...".to_string(),
+                        );
                     }
                     TuiCommand::EditingMode(ref mode_name) => {
                         let response = match mode_name.as_deref() {
@@ -1198,13 +1197,7 @@ impl Tui {
                             }
                         };
 
-                        let notice = ChatItem::TuiCommandResponse {
-                            id: generate_row_id(),
-                            command: tui_cmd.as_command_str(),
-                            response,
-                            ts: time::OffsetDateTime::now_utc(),
-                        };
-                        self.chat_store.push(notice);
+                        self.push_tui_response(tui_cmd.as_command_str(), response);
                     }
                     TuiCommand::Custom(custom_cmd) => {
                         // Handle custom command based on its type
@@ -1228,13 +1221,7 @@ impl Tui {
                     .send_command(AppCommand::ExecuteCommand(core_cmd))
                     .await
                 {
-                    let notice = ChatItem::SystemNotice {
-                        id: generate_row_id(),
-                        level: NoticeLevel::Error,
-                        text: e.to_string(),
-                        ts: time::OffsetDateTime::now_utc(),
-                    };
-                    self.chat_store.push(notice);
+                    self.push_notice(NoticeLevel::Error, e.to_string());
                 }
             }
         }
@@ -1245,32 +1232,34 @@ impl Tui {
     /// Enter edit mode for a specific message
     fn enter_edit_mode(&mut self, message_id: &str) {
         // Find the message in the store
-        if let Some(crate::tui::model::ChatItem::Message(Message::User { content, .. })) =
-            self.chat_store.get_by_id(&message_id.to_string())
-        {
-            // Extract text content from user blocks
-            let text = content
-                .iter()
-                .filter_map(|block| match block {
-                    conductor_core::app::conversation::UserContent::Text { text } => {
-                        Some(text.as_str())
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+        if let Some(item) = self.chat_store.get_by_id(&message_id.to_string()) {
+            if let crate::tui::model::ChatItemData::Message(Message::User { content, .. }) =
+                &item.data
+            {
+                // Extract text content from user blocks
+                let text = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        conductor_core::app::conversation::UserContent::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-            // Set up textarea with the message content
-            self.input_panel_state
-                .set_content_from_lines(text.lines().collect::<Vec<_>>());
-            // Switch to appropriate mode based on editing preference
-            self.input_mode = match self.preferences.ui.editing_mode {
-                conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
-                conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
-            };
+                // Set up textarea with the message content
+                self.input_panel_state
+                    .set_content_from_lines(text.lines().collect::<Vec<_>>());
+                // Switch to appropriate mode based on editing preference
+                self.input_mode = match self.preferences.ui.editing_mode {
+                    conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
+                    conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
+                };
 
-            // Store the message ID we're editing
-            self.editing_message_id = Some(message_id.to_string());
+                // Store the message ID we're editing
+                self.editing_message_id = Some(message_id.to_string());
+            }
         }
     }
 
@@ -1279,7 +1268,7 @@ impl Tui {
         // Find the index of the message in the chat store
         let mut target_index = None;
         for (idx, item) in self.chat_store.items().enumerate() {
-            if let crate::tui::model::ChatItem::Message(message) = item {
+            if let crate::tui::model::ChatItemData::Message(message) = &item.data {
                 if message.id() == message_id {
                     target_index = Some(idx);
                     break;
@@ -1299,7 +1288,7 @@ impl Tui {
 
         // Populate the edit selection messages in the input panel state
         self.input_panel_state
-            .populate_edit_selection(self.chat_store.iter_items());
+            .populate_edit_selection(self.chat_store.iter_items().map(|item| &item.data));
 
         // Scroll to the hovered message if there is one
         if let Some(id) = self.input_panel_state.get_hovered_id() {

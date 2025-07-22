@@ -1,7 +1,8 @@
 //! ChatViewport - persistent chat list state with O(N) rebuild optimization
 
 use crate::tui::{
-    model::ChatItem,
+    model::{ChatItem, ChatItemData},
+    state::chat_store::ChatStore,
     theme::Theme,
     widgets::{
         ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, Gutter, RoleGlyph, ViewMode,
@@ -15,7 +16,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Flattened item types for 1:1 widget mapping
 #[derive(Debug, Clone)]
@@ -145,7 +146,14 @@ impl ChatViewport {
     }
 
     /// Diff raw ChatItems; rebuild only when dirty / width or mode changed.
-    pub fn rebuild(&mut self, raw: &Vec<&ChatItem>, width: u16, mode: ViewMode, theme: &Theme) {
+    pub fn rebuild(
+        &mut self,
+        raw: &Vec<&ChatItem>,
+        width: u16,
+        mode: ViewMode,
+        theme: &Theme,
+        chat_store: &ChatStore,
+    ) {
         // Check if we need to rebuild
         let width_changed = width != self.last_width;
         let mode_changed = mode != self.state.view_mode;
@@ -158,8 +166,23 @@ impl ChatViewport {
         self.last_width = width;
         self.state.view_mode = mode;
 
+        // Apply filtering based on active_message_id
+        let filtered_items = if let Some(active_id) = &chat_store.active_message_id {
+            // Build lineage set by following parent_message_id chain
+            let lineage = build_lineage_set(active_id, chat_store);
+
+            // Filter items to only show those in the lineage or attached to it
+            raw.iter()
+                .filter(|item| is_visible(item, &lineage, chat_store))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            // No active branch - show everything
+            raw.clone()
+        };
+
         // Flatten raw items into 1:1 widget items
-        let flattened = self.flatten_items(raw);
+        let flattened = self.flatten_items(&filtered_items);
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -204,11 +227,11 @@ impl ChatViewport {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
         raw.iter().for_each(|item| {
-            if let ChatItem::Message(Message::Tool {
+            if let ChatItemData::Message(Message::Tool {
                 tool_use_id,
                 result,
                 ..
-            }) = item
+            }) = &item.data
             {
                 tool_results.insert(tool_use_id.clone(), result.clone());
             }
@@ -217,8 +240,8 @@ impl ChatViewport {
         let mut flattened = Vec::new();
 
         for item in raw {
-            match item {
-                ChatItem::Message(row) => {
+            match &item.data {
+                ChatItemData::Message(row) => {
                     match &row {
                         Message::Assistant { content, .. } => {
                             // Check if there's any text content
@@ -277,8 +300,8 @@ impl ChatViewport {
                 }
                 _ => {
                     // Non-message items (system notices, etc.)
-                    match item {
-                        ChatItem::PendingToolCall { id, tool_call, .. } => {
+                    match &item.data {
+                        ChatItemData::PendingToolCall { id, tool_call, .. } => {
                             // Convert pending tool calls to ToolInteraction with no result
                             flattened.push(FlattenedItem::ToolInteraction {
                                 call: tool_call.clone(),
@@ -290,12 +313,12 @@ impl ChatViewport {
                             // Other meta items
                             flattened.push(FlattenedItem::Meta {
                                 item: (*item).clone(),
-                                id: match item {
-                                    ChatItem::SystemNotice { id, .. } => id.clone(),
-                                    ChatItem::CoreCmdResponse { id, .. } => id.clone(),
-                                    ChatItem::InFlightOperation { id, .. } => id.to_string(),
-                                    ChatItem::SlashInput { id, .. } => id.clone(),
-                                    ChatItem::TuiCommandResponse { id, .. } => id.clone(),
+                                id: match &item.data {
+                                    ChatItemData::SystemNotice { id, .. } => id.clone(),
+                                    ChatItemData::CoreCmdResponse { id, .. } => id.clone(),
+                                    ChatItemData::InFlightOperation { id, .. } => id.to_string(),
+                                    ChatItemData::SlashInput { id, .. } => id.clone(),
+                                    ChatItemData::TuiCommandResponse { id, .. } => id.clone(),
                                     _ => unreachable!(),
                                 },
                             });
@@ -443,8 +466,8 @@ impl ChatViewport {
             let needs_animation = match &widget_item.item {
                 FlattenedItem::ToolInteraction { result: None, .. } => true,
                 FlattenedItem::Meta { item, .. } => matches!(
-                    item,
-                    ChatItem::PendingToolCall { .. } | ChatItem::InFlightOperation { .. }
+                    &item.data,
+                    ChatItemData::PendingToolCall { .. } | ChatItemData::InFlightOperation { .. }
                 ),
                 _ => false,
             };
@@ -578,15 +601,15 @@ fn create_widget_for_flattened_item(
         }
         FlattenedItem::Meta { item, .. } => {
             // Delegate to the original function for meta items
-            match item {
-                ChatItem::SystemNotice {
+            match &item.data {
+                ChatItemData::SystemNotice {
                     level, text, ts, ..
                 } => {
                     let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(SystemNoticeWidget::new(*level, text.clone(), *ts));
                     Box::new(RowWidget::new(gutter, body))
                 }
-                ChatItem::CoreCmdResponse { cmd, resp, .. } => {
+                ChatItemData::CoreCmdResponse { cmd, resp, .. } => {
                     let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format_app_command(cmd),
@@ -594,7 +617,7 @@ fn create_widget_for_flattened_item(
                     ));
                     Box::new(RowWidget::new(gutter, body))
                 }
-                ChatItem::InFlightOperation { label, .. } => {
+                ChatItemData::InFlightOperation { label, .. } => {
                     let gutter = Gutter::new(RoleGlyph::Meta)
                         .with_hover(is_hovered)
                         .with_spinner(get_spinner_char(spinner_state));
@@ -602,12 +625,12 @@ fn create_widget_for_flattened_item(
                     let body = Box::new(InFlightOperationWidget::new(label.clone()));
                     Box::new(RowWidget::new(gutter, body))
                 }
-                ChatItem::SlashInput { raw, .. } => {
+                ChatItemData::SlashInput { raw, .. } => {
                     let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(SlashInputWidget::new(raw.clone()));
                     Box::new(RowWidget::new(gutter, body))
                 }
-                ChatItem::TuiCommandResponse {
+                ChatItemData::TuiCommandResponse {
                     command, response, ..
                 } => {
                     let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
@@ -635,25 +658,90 @@ pub fn format_command_response(resp: &CommandResponse) -> String {
     }
 }
 
+/// Build the lineage set by following parent_message_id chain backwards from active_message_id
+fn build_lineage_set(active_message_id: &str, chat_store: &ChatStore) -> HashSet<String> {
+    let mut lineage = HashSet::new();
+    let mut current = Some(active_message_id.to_string());
+
+    while let Some(id) = current {
+        lineage.insert(id.clone());
+
+        // Get the parent_message_id of the current message
+        current = chat_store.get_by_id(&id).and_then(|item| {
+            if let ChatItemData::Message(msg) = &item.data {
+                msg.parent_message_id().map(|s| s.to_string())
+            } else {
+                None
+            }
+        });
+    }
+
+    lineage
+}
+
+/// Check if a ChatItem should be visible based on the lineage set
+fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore) -> bool {
+    match &item.data {
+        // Messages are visible if they're in the lineage
+        ChatItemData::Message(msg) => lineage.contains(msg.id()),
+        // Non-message items are visible if they or any of their ancestors attach to the lineage
+        _ => {
+            // Root-level meta/tool rows (no parent) are always visible
+            if item.parent_chat_item_id.is_none() {
+                return true;
+            }
+
+            let mut current = item.parent_chat_item_id.as_deref();
+            while let Some(parent_id) = current {
+                if lineage.contains(parent_id) {
+                    return true;
+                }
+
+                // Check if this parent is a message - if so, we've already checked lineage
+                if let Some(parent_item) = chat_store.get_by_id(&parent_id.to_string()) {
+                    if matches!(parent_item.data, ChatItemData::Message(_)) {
+                        // If we reached a message and it's not in lineage, stop here
+                        return false;
+                    }
+                    // Otherwise continue walking up
+                    current = parent_item.parent_chat_item_id.as_deref();
+                } else {
+                    // Parent doesn't exist, stop
+                    break;
+                }
+            }
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::model::NoticeLevel;
     use conductor_core::app::conversation::{Message, UserContent};
     use ratatui::{Terminal, backend::TestBackend};
     use std::time::SystemTime;
 
     fn create_test_message(content: &str, id: &str) -> ChatItem {
-        ChatItem::Message(Message::User {
-            content: vec![UserContent::Text {
-                text: content.to_string(),
-            }],
-            timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            id: id.to_string(),
-            parent_message_id: None,
-        })
+        ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::Message(Message::User {
+                content: vec![UserContent::Text {
+                    text: content.to_string(),
+                }],
+                timestamp: SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                id: id.to_string(),
+                parent_message_id: None,
+            }),
+        }
+    }
+
+    fn create_test_chat_store() -> ChatStore {
+        ChatStore::default()
     }
 
     #[test]
@@ -686,11 +774,13 @@ mod tests {
                 let area = f.area();
 
                 // Rebuild viewport with messages
+                let chat_store = create_test_chat_store();
                 viewport.rebuild(
                     &messages.iter().collect(),
                     area.width,
                     ViewMode::Compact,
                     &theme,
+                    &chat_store,
                 );
 
                 // Render the viewport
@@ -759,7 +849,8 @@ mod tests {
                 let area = f.area();
 
                 // Rebuild viewport
-                viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme);
+                let chat_store = create_test_chat_store();
+                viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme, &chat_store);
 
                 // Measure visible rows
                 let _rows = viewport.measure_visible_rows(area, &theme);
@@ -845,7 +936,8 @@ mod tests {
             let area = f.area();
 
             // Rebuild viewport
-            viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme);
+            let chat_store = create_test_chat_store();
+            viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme, &chat_store);
 
             let _rows = viewport.measure_visible_rows(area, &theme);
             let total_height = viewport.state.total_content_height;
@@ -912,12 +1004,15 @@ mod tests {
         // Small viewport
         let area = Rect::new(0, 0, 80, 10);
 
+        let chat_store = create_test_chat_store();
+
         // Rebuild viewport
         viewport.rebuild(
             &messages.iter().collect(),
             area.width,
             ViewMode::Compact,
             &theme,
+            &chat_store,
         );
 
         // Scroll to top
@@ -953,12 +1048,15 @@ mod tests {
         // Small viewport
         let area = Rect::new(0, 0, 80, 10);
 
+        let chat_store = create_test_chat_store();
+
         // Rebuild viewport
         viewport.rebuild(
             &messages.iter().collect(),
             area.width,
             ViewMode::Compact,
             &theme,
+            &chat_store,
         );
 
         // Debug: print heights
@@ -995,5 +1093,388 @@ mod tests {
                 "First row should skip 5 lines"
             );
         }
+    }
+
+    #[test]
+    fn test_build_lineage_set_basic_chain() {
+        let mut store = create_test_chat_store();
+
+        // Create a chain: root -> A -> B -> C
+        store.add_message(Message::User {
+            id: "root".to_string(),
+            content: vec![UserContent::Text {
+                text: "Root message".to_string(),
+            }],
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        store.add_message(Message::Assistant {
+            id: "A".to_string(),
+            content: vec![],
+            timestamp: 1001,
+            parent_message_id: Some("root".to_string()),
+        });
+
+        store.add_message(Message::User {
+            id: "B".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message B".to_string(),
+            }],
+            timestamp: 1002,
+            parent_message_id: Some("A".to_string()),
+        });
+
+        store.add_message(Message::Assistant {
+            id: "C".to_string(),
+            content: vec![],
+            timestamp: 1003,
+            parent_message_id: Some("B".to_string()),
+        });
+
+        // Build lineage from C
+        let lineage = build_lineage_set("C", &store);
+
+        assert!(lineage.contains("C"));
+        assert!(lineage.contains("B"));
+        assert!(lineage.contains("A"));
+        assert!(lineage.contains("root"));
+        assert_eq!(lineage.len(), 4);
+    }
+
+    #[test]
+    fn test_build_lineage_set_single_message() {
+        let mut store = create_test_chat_store();
+
+        store.add_message(Message::User {
+            id: "single".to_string(),
+            content: vec![UserContent::Text {
+                text: "Single message".to_string(),
+            }],
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        let lineage = build_lineage_set("single", &store);
+
+        assert!(lineage.contains("single"));
+        assert_eq!(lineage.len(), 1);
+    }
+
+    #[test]
+    fn test_build_lineage_set_invalid_id() {
+        let store = create_test_chat_store();
+
+        let lineage = build_lineage_set("nonexistent", &store);
+
+        assert!(lineage.contains("nonexistent"));
+        assert_eq!(lineage.len(), 1);
+    }
+
+    #[test]
+    fn test_is_visible_message_in_lineage() {
+        let mut store = create_test_chat_store();
+
+        // Create messages
+        store.add_message(Message::User {
+            id: "msg1".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message 1".to_string(),
+            }],
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        store.add_message(Message::Assistant {
+            id: "msg2".to_string(),
+            content: vec![],
+            timestamp: 1001,
+            parent_message_id: Some("msg1".to_string()),
+        });
+
+        store.add_message(Message::User {
+            id: "msg3".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message 3".to_string(),
+            }],
+            timestamp: 1002,
+            parent_message_id: Some("msg1".to_string()), // Branch from msg1
+        });
+
+        let lineage = build_lineage_set("msg2", &store);
+
+        // msg1 and msg2 should be visible
+        let msg1 = store.get_by_id(&"msg1".to_string()).unwrap();
+        assert!(is_visible(msg1, &lineage, &store));
+
+        let msg2 = store.get_by_id(&"msg2".to_string()).unwrap();
+        assert!(is_visible(msg2, &lineage, &store));
+
+        // msg3 should NOT be visible (different branch)
+        let msg3 = store.get_by_id(&"msg3".to_string()).unwrap();
+        assert!(!is_visible(msg3, &lineage, &store));
+    }
+
+    #[test]
+    fn test_is_visible_root_meta_items() {
+        let mut store = create_test_chat_store();
+        let lineage = HashSet::new(); // Empty lineage
+
+        // Add root-level system notice
+        let notice = ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::SystemNotice {
+                id: "notice1".to_string(),
+                level: NoticeLevel::Info,
+                text: "System notice".to_string(),
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(notice.clone());
+
+        // Root-level items should always be visible
+        assert!(is_visible(&notice, &lineage, &store));
+    }
+
+    #[test]
+    fn test_is_visible_attached_meta_items() {
+        let mut store = create_test_chat_store();
+
+        // Create messages
+        store.add_message(Message::User {
+            id: "msg1".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message 1".to_string(),
+            }],
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        store.add_message(Message::User {
+            id: "msg2".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message 2".to_string(),
+            }],
+            timestamp: 1001,
+            parent_message_id: None,
+        });
+
+        // Add tool call attached to msg1
+        let tool_call1 = ChatItem {
+            parent_chat_item_id: Some("msg1".to_string()),
+            data: ChatItemData::PendingToolCall {
+                id: "tool1".to_string(),
+                tool_call: ToolCall {
+                    id: "call1".to_string(),
+                    name: "test_tool".to_string(),
+                    parameters: serde_json::Value::String("{}".to_string()),
+                },
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(tool_call1.clone());
+
+        // Add tool call attached to msg2
+        let tool_call2 = ChatItem {
+            parent_chat_item_id: Some("msg2".to_string()),
+            data: ChatItemData::PendingToolCall {
+                id: "tool2".to_string(),
+                tool_call: ToolCall {
+                    id: "call2".to_string(),
+                    name: "test_tool".to_string(),
+                    parameters: serde_json::Value::String("{}".to_string()),
+                },
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(tool_call2.clone());
+
+        // Build lineage from msg1
+        let lineage = build_lineage_set("msg1", &store);
+
+        // tool_call1 should be visible (attached to msg1)
+        assert!(is_visible(&tool_call1, &lineage, &store));
+
+        // tool_call2 should NOT be visible (attached to msg2 which is not in lineage)
+        assert!(!is_visible(&tool_call2, &lineage, &store));
+    }
+
+    #[test]
+    fn test_is_visible_nested_attachments() {
+        let mut store = create_test_chat_store();
+
+        // Create a message
+        store.add_message(Message::User {
+            id: "msg1".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message 1".to_string(),
+            }],
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        // Add a system notice attached to the message
+        let notice = ChatItem {
+            parent_chat_item_id: Some("msg1".to_string()),
+            data: ChatItemData::SystemNotice {
+                id: "notice1".to_string(),
+                level: NoticeLevel::Info,
+                text: "Notice attached to msg1".to_string(),
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(notice);
+
+        // Add another notice attached to the first notice (nested)
+        let nested_notice = ChatItem {
+            parent_chat_item_id: Some("notice1".to_string()),
+            data: ChatItemData::SystemNotice {
+                id: "notice2".to_string(),
+                level: NoticeLevel::Info,
+                text: "Notice attached to notice1".to_string(),
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(nested_notice.clone());
+
+        let lineage = build_lineage_set("msg1", &store);
+
+        // First notice should be visible (attached to msg1)
+        let notice1 = store.get_by_id(&"notice1".to_string()).unwrap();
+        assert!(
+            is_visible(notice1, &lineage, &store),
+            "notice1 should be visible"
+        );
+
+        // Nested notice should be visible through the chain
+        assert!(
+            is_visible(&nested_notice, &lineage, &store),
+            "nested_notice should be visible"
+        );
+    }
+
+    #[test]
+    fn test_branch_filtering_integration() {
+        let mut store = create_test_chat_store();
+
+        // Create root message A
+        store.add_message(Message::User {
+            id: "A".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message A".to_string(),
+            }],
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        // Add system notice (no parent)
+        let root_notice = ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::SystemNotice {
+                id: "notice_root".to_string(),
+                level: NoticeLevel::Info,
+                text: "Root notice".to_string(),
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(root_notice.clone());
+
+        // Create child message B (parent: A)
+        store.add_message(Message::Assistant {
+            id: "B".to_string(),
+            content: vec![],
+            timestamp: 1001,
+            parent_message_id: Some("A".to_string()),
+        });
+
+        // Add tool call attached to B
+        let tool_b = ChatItem {
+            parent_chat_item_id: Some("B".to_string()),
+            data: ChatItemData::PendingToolCall {
+                id: "tool_b".to_string(),
+                tool_call: ToolCall {
+                    id: "call_b".to_string(),
+                    name: "tool_b".to_string(),
+                    parameters: serde_json::Value::String("{}".to_string()),
+                },
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(tool_b.clone());
+
+        // Create branch message C (parent: A)
+        store.add_message(Message::User {
+            id: "C".to_string(),
+            content: vec![UserContent::Text {
+                text: "Message C".to_string(),
+            }],
+            timestamp: 1002,
+            parent_message_id: Some("A".to_string()),
+        });
+
+        // Add tool call attached to C
+        let tool_c = ChatItem {
+            parent_chat_item_id: Some("C".to_string()),
+            data: ChatItemData::PendingToolCall {
+                id: "tool_c".to_string(),
+                tool_call: ToolCall {
+                    id: "call_c".to_string(),
+                    name: "tool_c".to_string(),
+                    parameters: serde_json::Value::String("{}".to_string()),
+                },
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+        store.push(tool_c.clone());
+
+        // Test with active_message_id = B
+        let lineage_b = build_lineage_set("B", &store);
+
+        // Should see: root notice, A, B, B's tool call
+        assert!(is_visible(&root_notice, &lineage_b, &store));
+        assert!(is_visible(
+            store.get_by_id(&"A".to_string()).unwrap(),
+            &lineage_b,
+            &store
+        ));
+        assert!(is_visible(
+            store.get_by_id(&"B".to_string()).unwrap(),
+            &lineage_b,
+            &store
+        ));
+        assert!(is_visible(&tool_b, &lineage_b, &store));
+
+        // Should NOT see: C, C's tool call
+        assert!(!is_visible(
+            store.get_by_id(&"C".to_string()).unwrap(),
+            &lineage_b,
+            &store
+        ));
+        assert!(!is_visible(&tool_c, &lineage_b, &store));
+
+        // Test with active_message_id = C
+        let lineage_c = build_lineage_set("C", &store);
+
+        // Should see: root notice, A, C, C's tool call
+        assert!(is_visible(&root_notice, &lineage_c, &store));
+        assert!(is_visible(
+            store.get_by_id(&"A".to_string()).unwrap(),
+            &lineage_c,
+            &store
+        ));
+        assert!(is_visible(
+            store.get_by_id(&"C".to_string()).unwrap(),
+            &lineage_c,
+            &store
+        ));
+        assert!(is_visible(&tool_c, &lineage_c, &store));
+
+        // Should NOT see: B, B's tool call
+        assert!(!is_visible(
+            store.get_by_id(&"B".to_string()).unwrap(),
+            &lineage_c,
+            &store
+        ));
+        assert!(!is_visible(&tool_b, &lineage_c, &store));
     }
 }
