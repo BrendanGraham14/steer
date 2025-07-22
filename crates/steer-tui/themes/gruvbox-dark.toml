@@ -1,0 +1,166 @@
+# Gruvbox Dark Theme for Steer
+# A retro groove color scheme
+
+name = "Gruvbox Dark"
+
+# Color palette - Gruvbox Dark colors
+[palette]
+background = "#282828"
+foreground = "#ebdbb2"
+black = "#282828"
+red = "#cc241d"
+green = "#98971a"
+yellow = "#d79921"
+blue = "#458588"
+magenta = "#b16286"
+cyan = "#689d6a"
+white = "#a89984"
+bright_black = "#928374"
+bright_red = "#fb4934"
+bright_green = "#b8bb26"
+bright_yellow = "#fabd2f"
+bright_blue = "#83a598"
+bright_magenta = "#d3869b"
+bright_cyan = "#8ec07c"
+bright_white = "#ebdbb2"
+dark_gray = "#3c3836"
+gray = "#928374"
+comment = "#928374"
+bg0 = "#282828"
+bg0_h = "#1d2021"
+bg0_s = "#32302f"
+bg1 = "#3c3836"
+bg2 = "#504945"
+bg3 = "#665c54"
+bg4 = "#7c6f64"
+fg0 = "#fbf1c7"
+fg1 = "#ebdbb2"
+fg2 = "#d5c4a1"
+fg3 = "#bdae93"
+fg4 = "#a89984"
+orange = "#fe8019"
+bright_orange = "#d65d0e"
+gray_245 = "#928374"
+gray_244 = "#928374"
+bright_aqua = "#8ec07c"
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "fg2", bg = "bg1" }
+
+# Input panel
+input_panel_border = { fg = "bg3" }
+input_panel_border_active = { fg = "bright_blue" }
+input_panel_border_command = { fg = "bright_cyan" }
+input_panel_border_approval = { fg = "bright_red", bold = true }
+input_panel_border_error = { fg = "bright_red", bold = true }
+input_panel_label = { fg = "fg3" }
+input_panel_label_active = { fg = "bright_blue" }
+input_panel_label_command = { fg = "bright_cyan" }
+input_panel_label_confirm_exit = { fg = "bright_red" }
+
+# Chat list
+chat_list_border = { fg = "bg3" }
+user_message = { fg = "fg1" }
+user_message_role = { fg = "bright_green", bold = true }
+assistant_message = { fg = "fg1" }
+assistant_message_role = { fg = "bright_blue", bold = true }
+system_message = { fg = "gray" }
+system_message_role = { fg = "bright_yellow" }
+
+# Tool calls
+tool_call = { fg = "bright_cyan" }
+tool_call_border = { fg = "cyan" }
+tool_call_header = { fg = "bright_cyan" }
+tool_call_id = { fg = "gray" }
+tool_output = { fg = "fg1" }
+tool_success = { fg = "bright_green" }
+tool_error = { fg = "bright_red" }
+
+# Assistant thoughts
+thought_box = { fg = "gray" }
+thought_header = { fg = "gray" }
+thought_border = { fg = "bg3" }
+thought_text = { fg = "gray", italic = true }
+
+# Commands
+command_prompt = { fg = "bright_green", bold = true }
+command_text = { fg = "bright_cyan" }
+command_success = { fg = "bright_green" }
+command_error = { fg = "bright_red" }
+
+# General
+error_text = { fg = "bright_red" }
+error_bold = { fg = "bright_red", bold = true }
+dim_text = { fg = "gray" }
+selection_highlight = { fg = "bright_yellow", bold = true }
+placeholder_text = { fg = "gray", italic = true }
+
+# Model info
+model_info = { fg = "bright_magenta" }
+
+# Notices
+notice_info = { fg = "bright_blue" }
+notice_warn = { fg = "bright_yellow" }
+notice_error = { fg = "bright_red" }
+
+# Todo items
+todo_high = { fg = "bright_red" }
+todo_medium = { fg = "bright_orange" }
+todo_low = { fg = "bright_green" }
+todo_pending = { fg = "bright_blue" }
+todo_in_progress = { fg = "bright_yellow" }
+todo_completed = { fg = "bright_green" }
+
+# Code editing
+code_addition = { fg = "bright_green" }
+code_deletion = { fg = "bright_red" }
+code_file_path = { fg = "bright_orange" }
+
+# Popup
+popup_border = { fg = "fg4" }
+popup_selection = { fg = "fg0", bg = "bg2" }
+
+# Markdown
+markdown_h1 = { fg = "bright_blue" }
+markdown_h2 = { fg = "bright_blue" }
+markdown_h3 = { fg = "bright_blue" }
+markdown_h4 = { fg = "bright_cyan" }
+markdown_h5 = { fg = "bright_cyan" }
+markdown_h6 = { fg = "gray" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "bright_orange", bg = "bg1" }
+markdown_code_block = { }
+markdown_link = { fg = "bright_blue" }
+markdown_blockquote = { fg = "gray" }
+markdown_list_bullet = { fg = "gray" }
+markdown_list_number = { fg = "bright_blue" }
+markdown_table_border = { fg = "gray" }
+markdown_table_header = { fg = "bright_cyan", bold = true }
+markdown_table_cell = { fg = "fg1" }
+markdown_task_checked = { fg = "green" }
+markdown_task_unchecked = { fg = "gray" }
+# Setup UI
+setup_title = { fg = "bright_blue", bold = true }
+setup_border = { fg = "gray" }
+setup_border_active = { fg = "bright_blue" }
+setup_header = { fg = "bright_aqua", bold = true }
+setup_text = { fg = "fg1" }
+setup_highlight = { bg = "bg1", bold = true }
+setup_key_binding = { fg = "bright_green", bold = true }
+setup_provider_name = { fg = "fg1" }
+setup_provider_selected = { bg = "bg1", bold = true }
+setup_status_active = { fg = "bright_green" }
+setup_status_inactive = { fg = "bright_red" }
+setup_status_in_progress = { fg = "bright_yellow" }
+setup_success_icon = { fg = "bright_green", bold = true }
+setup_error_message = { fg = "bright_red" }
+setup_hint = { fg = "gray" }
+setup_url = { fg = "bright_aqua", underlined = true }
+setup_input_label = { fg = "fg1" }
+setup_input_value = { fg = "bright_yellow" }
+setup_big_text = { fg = "bright_blue", bold = true }

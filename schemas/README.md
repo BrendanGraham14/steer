@@ -1,6 +1,6 @@
-# JSON Schema for Conductor Session Configuration
+# JSON Schema for Steer Session Configuration
 
-This directory contains the JSON Schema for Conductor session configuration files.
+This directory contains the JSON Schema for Steer session configuration files.
 
 ## Usage
 
@@ -15,7 +15,7 @@ The schema is automatically linked in our example configuration files via the `$
 The schema is auto-generated from our Rust code. To regenerate it after making changes to the configuration structures:
 
 ```bash
-cargo run -p conductor-cli --bin schema-generator
+cargo run -p steer-cli --bin schema-generator
 ```
 
 This will write the updated schema to `schemas/session.schema.json`.

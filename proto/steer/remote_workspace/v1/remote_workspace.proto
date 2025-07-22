@@ -1,0 +1,143 @@
+syntax = "proto3";
+package steer.remote_workspace.v1;
+
+import "google/protobuf/timestamp.proto";
+import "steer/common/v1/common.proto";
+
+// Agent service for remote workspace tool execution
+service RemoteWorkspaceService {
+  // Execute a tool call on the agent
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+
+  // Get information about the agent and available tools
+  rpc GetAgentInfo(GetAgentInfoRequest) returns (GetAgentInfoResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Get detailed tool schemas including approval requirements
+  rpc GetToolSchemas(GetToolSchemasRequest) returns (GetToolSchemasResponse);
+
+  // Get tool approval requirements
+  rpc GetToolApprovalRequirements(GetToolApprovalRequirementsRequest) returns (GetToolApprovalRequirementsResponse);
+
+  // Get environment information for the remote workspace
+  rpc GetEnvironmentInfo(GetEnvironmentInfoRequest) returns (GetEnvironmentInfoResponse);
+
+  // List files in the workspace for fuzzy finding
+  rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
+}
+
+message ExecuteToolRequest {
+  string tool_call_id = 1;
+  string tool_name = 2;
+  string parameters_json = 3;
+  string context_json = 4;
+  optional uint64 timeout_ms = 5;
+}
+
+message ExecuteToolResponse {
+  bool success = 1;
+  
+  oneof result {
+    string string_result = 2;  // Legacy/simple tools
+    TypedToolResult typed_result = 3;  // External tools with JSON
+    steer.common.v1.SearchResult search_result = 4;
+    steer.common.v1.FileListResult file_list_result = 5;
+    steer.common.v1.FileContentResult file_content_result = 6;
+    steer.common.v1.EditResult edit_result = 7;
+    steer.common.v1.BashResult bash_result = 8;
+    steer.common.v1.GlobResult glob_result = 9;
+    steer.common.v1.TodoListResult todo_list_result = 10;
+    steer.common.v1.TodoWriteResult todo_write_result = 11;
+  }
+  
+  string error = 12;
+  google.protobuf.Timestamp started_at = 13;
+  google.protobuf.Timestamp completed_at = 14;
+  map<string, string> metadata = 15;
+}
+
+// Generic typed result for external tools
+message TypedToolResult {
+  bytes json_data = 1;  // JSON-encoded result implementing ToolOutput
+  string type_name = 2;  // Type name (e.g., "CustomSearchResult")
+  optional string summary = 3;  // Optional brief summary for display
+}
+
+// Request messages
+message GetAgentInfoRequest {}
+message GetAgentInfoResponse {
+  string version = 1;
+  repeated string supported_tools = 2;
+  map<string, string> metadata = 4;
+}
+
+message HealthRequest {}
+
+
+message HealthResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_SERVING = 1;
+  HEALTH_STATUS_NOT_SERVING = 2;
+  HEALTH_STATUS_SERVICE_UNKNOWN = 3;
+}
+
+message GetToolSchemasRequest {}
+
+// Tool schema information
+message ToolSchema {
+  string name = 1;
+  string description = 2;
+  string input_schema_json = 3;
+}
+
+// Response containing all tool schemas
+message GetToolSchemasResponse {
+  repeated ToolSchema tools = 1;
+}
+
+// Request for tool approval requirements
+message GetToolApprovalRequirementsRequest {
+  repeated string tool_names = 1;
+}
+
+// Response containing tool approval requirements
+message GetToolApprovalRequirementsResponse {
+  // Map from tool name to whether it requires approval
+  map<string, bool> approval_requirements = 1;
+}
+
+// Request for environment information
+message GetEnvironmentInfoRequest {
+  // Optional working directory override
+  optional string working_directory = 1;
+}
+
+// Response containing environment information
+message GetEnvironmentInfoResponse {
+  string working_directory = 1;
+  bool is_git_repo = 2;
+  string platform = 3;
+  string date = 4;
+  string directory_structure = 5;
+  optional string git_status = 6;
+  optional string readme_content = 7;
+  optional string claude_md_content = 8;
+}
+
+// File listing for fuzzy finder
+message ListFilesRequest {
+  string query = 1;        // optional fuzzy query (empty = full list)
+  uint32 max_results = 2;  // 0 = unlimited
+}
+
+message ListFilesResponse {
+  repeated string paths = 1; // workspace-relative paths
+}

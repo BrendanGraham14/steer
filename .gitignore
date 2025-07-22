@@ -28,4 +28,4 @@ Thumbs.db
 # Nix / Direnv
 /result*
 .direnv/
-.conductor-shell.nix
+.steer-shell.nix

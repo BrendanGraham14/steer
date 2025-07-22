@@ -1,0 +1,112 @@
+[package]
+name = "steer-cli"
+version.workspace = true
+edition.workspace = true
+description = "Command-line interface for Steer coding agent."
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "steer"
+path = "src/main.rs"
+
+[[bin]]
+name = "schema-generator"
+path = "src/bin/schema_generator.rs"
+
+
+[dependencies]
+# CLI framework
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# API client
+reqwest = { version = "0.12", features = [
+  "json",
+  "stream",
+  "rustls-tls",
+], default-features = false }
+tokio = { version = "1", features = ["full"] }
+async-stream = "0.3.5"
+futures = "0.3"
+futures-core = "0.3"
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_repr = "0.1"
+similar = { version = "2.5.0", features = ["inline"] }
+thiserror = "1.0"
+dirs = "5.0"
+colored = "2.0"
+home = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+dotenv = "0.15.0"
+hex = "0.4"
+
+# File manipulation
+glob = "0.3"
+regex = "1.9"
+tui-textarea = "*"
+uuid = { version = "1.8.0", features = ["v4"] }
+
+textwrap = "0.16"
+tokio-util = { version = "0.7.14", features = ["full"] }
+tui-markdown = "0.3.3"
+async-trait = "0.1.88"
+tracing = "0.1.41"
+once_cell = "1.21.3"
+syn = "2.0.101"
+quote = "1.0.40"
+proc-macro2 = "1.0.95"
+schemars = { version = "0.8", features = ["derive"] }
+
+steer-macros.workspace = true
+steer-proto.workspace = true
+steer-tools.workspace = true
+steer-core.workspace = true
+steer-grpc.workspace = true
+steer-tui = { workspace = true, optional = true }
+
+ignore = "0.4"
+globset = "0.4.16"
+tempfile = "3.19.1"
+
+rand = "0.8"
+strum_macros = "0.27.1"
+strum = { version = "0.27.1", features = ["derive"] }
+shell-words = "1.1.0"
+tracing-subscriber = { version = "0.3.19", features = [
+  "std",
+  "fmt",
+  "env-filter",
+] }
+tracing-appender = "0.2.3"
+
+prost-types = "0.13.5"
+
+tokio-stream = "0.1"
+gethostname = "0.5"
+tui-widgets = { version = "0.4.1", features = ["scrollview"] }
+lazy_static = "1.5.0"
+toml = "0.8.23"
+which = "8.0.0"
+eyre = "0.6.12"
+color-eyre = "0.6.5"
+open = "5.3.2"
+comfy-table = "7.1.4"
+rpassword = "7.4.0"
+zeroize = "1.8.1"
+
+[build-dependencies]
+
+[features]
+default = ["ui"]
+ui = ["steer-tui"]
+
+[dev-dependencies]
+tempfile = "3.19.1"

@@ -1,0 +1,177 @@
+# Tokyo Night Storm Theme for Steer
+# A clean, dark theme inspired by Tokyo Night
+
+name = "Tokyo Night Storm"
+
+# Color palette - Tokyo Night Storm colors
+[palette]
+background = "#24283b"
+foreground = "#c0caf5"
+black = "#1a1b26"
+red = "#f7768e"
+green = "#9ece6a"
+yellow = "#e0af68"
+blue = "#7aa2f7"
+magenta = "#bb9af7"
+cyan = "#7dcfff"
+white = "#a9b1d6"
+bright_black = "#414868"
+bright_red = "#ff9e64"
+bright_green = "#b9f27c"
+bright_yellow = "#e0af68"
+bright_blue = "#7aa2f7"
+bright_magenta = "#bb9af7"
+bright_cyan = "#7dcfff"
+bright_white = "#c0caf5"
+dark_gray = "#414868"
+gray = "#565f89"
+comment = "#565f89"
+storm_bg = "#24283b"
+storm_bg_dark = "#1f2335"
+storm_blue = "#7aa2f7"
+storm_bg_highlight = "#292e42"
+storm_terminal_black = "#414868"
+storm_fg = "#c0caf5"
+storm_fg_dark = "#a9b1d6"
+storm_fg_gutter = "#3b4261"
+storm_dark3 = "#545c7e"
+storm_dark5 = "#737aa2"
+storm_blue0 = "#3d59a1"
+storm_blue1 = "#2ac3de"
+storm_blue2 = "#0db9d7"
+storm_blue5 = "#89ddff"
+storm_blue6 = "#b4f9f8"
+storm_blue7 = "#394b70"
+storm_cyan = "#7dcfff"
+storm_green = "#9ece6a"
+storm_green1 = "#73daca"
+storm_green2 = "#41a6b5"
+storm_teal = "#1abc9c"
+storm_orange = "#ff9e64"
+storm_yellow = "#e0af68"
+storm_red = "#f7768e"
+storm_red1 = "#db4b4b"
+storm_magenta = "#bb9af7"
+storm_magenta2 = "#ff007c"
+storm_purple = "#9d7cd8"
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "storm_fg", bg = "storm_bg_dark" }
+
+# Input panel
+input_panel_border = { fg = "storm_fg_gutter" }
+input_panel_border_active = { fg = "storm_blue" }
+input_panel_border_command = { fg = "storm_cyan" }
+input_panel_border_approval = { fg = "storm_red", bold = true }
+input_panel_border_error = { fg = "storm_red1", bold = true }
+input_panel_label = { fg = "storm_fg_dark" }
+input_panel_label_active = { fg = "storm_blue" }
+input_panel_label_command = { fg = "storm_cyan" }
+input_panel_label_confirm_exit = { fg = "storm_red" }
+
+# Chat list
+chat_list_border = { fg = "storm_fg_gutter" }
+user_message = { fg = "storm_fg" }
+user_message_role = { fg = "storm_green", bold = true }
+assistant_message = { fg = "storm_fg" }
+assistant_message_role = { fg = "storm_blue", bold = true }
+system_message = { fg = "storm_dark5" }
+system_message_role = { fg = "storm_yellow" }
+
+# Tool calls
+tool_call = { fg = "storm_cyan" }
+tool_call_border = { fg = "storm_blue5" }
+tool_call_header = { fg = "storm_cyan" }
+tool_call_id = { fg = "storm_dark3" }
+tool_output = { fg = "storm_fg" }
+tool_success = { fg = "storm_green" }
+tool_error = { fg = "storm_red" }
+
+# Assistant thoughts
+thought_box = { fg = "storm_dark3" }
+thought_header = { fg = "storm_dark5" }
+thought_border = { fg = "storm_fg_gutter" }
+thought_text = { fg = "storm_dark5", italic = true }
+
+# Commands
+command_prompt = { fg = "storm_green", bold = true }
+command_text = { fg = "storm_cyan" }
+command_success = { fg = "storm_green" }
+command_error = { fg = "storm_red" }
+
+# General
+error_text = { fg = "storm_red" }
+error_bold = { fg = "storm_red", bold = true }
+dim_text = { fg = "storm_dark3" }
+selection_highlight = { fg = "storm_yellow", bold = true }
+placeholder_text = { fg = "storm_dark3", italic = true }
+
+# Model info
+model_info = { fg = "storm_purple" }
+
+# Notices
+notice_info = { fg = "storm_blue" }
+notice_warn = { fg = "storm_yellow" }
+notice_error = { fg = "storm_red" }
+
+# Todo items
+todo_high = { fg = "storm_red" }
+todo_medium = { fg = "storm_yellow" }
+todo_low = { fg = "storm_green" }
+todo_pending = { fg = "storm_blue" }
+todo_in_progress = { fg = "storm_orange" }
+todo_completed = { fg = "storm_green" }
+
+# Code editing
+code_addition = { fg = "storm_green" }
+code_deletion = { fg = "storm_red" }
+code_file_path = { fg = "storm_magenta" }
+
+# Popup
+popup_border = { fg = "storm_dark5" }
+popup_selection = { fg = "storm_yellow", bg = "storm_bg_highlight" }
+
+# Markdown
+markdown_h1 = { fg = "storm_blue" }
+markdown_h2 = { fg = "storm_blue" }
+markdown_h3 = { fg = "storm_blue" }
+markdown_h4 = { fg = "storm_purple" }
+markdown_h5 = { fg = "storm_purple" }
+markdown_h6 = { fg = "storm_dark5" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "storm_orange", bg = "storm_bg_dark" }
+markdown_code_block = { }
+markdown_link = { fg = "storm_blue" }
+markdown_blockquote = { fg = "storm_dark5" }
+markdown_list_bullet = { fg = "storm_terminal_black" }
+markdown_list_number = { fg = "storm_blue" }
+markdown_table_border = { fg = "storm_terminal_black" }
+markdown_table_header = { fg = "storm_cyan", bold = true }
+markdown_table_cell = { fg = "storm_fg" }
+markdown_task_checked = { fg = "storm_green" }
+markdown_task_unchecked = { fg = "storm_fg_dark" }
+# Setup UI
+setup_title = { fg = "storm_purple", bold = true }
+setup_border = { fg = "storm_dark3" }
+setup_border_active = { fg = "storm_purple" }
+setup_header = { fg = "cyan", bold = true }
+setup_text = { fg = "foreground" }
+setup_highlight = { bg = "storm_bg_highlight", bold = true }
+setup_key_binding = { fg = "green", bold = true }
+setup_provider_name = { fg = "foreground" }
+setup_provider_selected = { bg = "storm_bg_highlight", bold = true }
+setup_status_active = { fg = "green" }
+setup_status_inactive = { fg = "red" }
+setup_status_in_progress = { fg = "yellow" }
+setup_success_icon = { fg = "green", bold = true }
+setup_error_message = { fg = "red" }
+setup_hint = { fg = "storm_dark3" }
+setup_url = { fg = "cyan", underlined = true }
+setup_input_label = { fg = "foreground" }
+setup_input_value = { fg = "yellow" }
+setup_big_text = { fg = "storm_purple", bold = true }

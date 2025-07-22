@@ -1,10 +1,10 @@
-# Conductor - Architecture
+# Steer - Architecture
 
-This document outlines the architecture of Conductor, an AI-powered CLI assistant for software engineering tasks.
+This document outlines the architecture of Steer, an AI-powered CLI assistant for software engineering tasks.
 
 ## Overview
 
-Conductor implements a clean client/server architecture where all clients communicate through gRPC:
+Steer implements a clean client/server architecture where all clients communicate through gRPC:
 
 1. **Local Interactive**: Terminal UI connects to a localhost gRPC server
 2. **Remote Interactive**: Terminal UI connects to a remote gRPC server
@@ -24,7 +24,7 @@ graph TB
     TUI2[Terminal UI<br/>remote mode]
     HL[Headless Runner<br/>JSON output]
 
-    subgraph GRPC["gRPC Server (conductor-grpc)"]
+    subgraph GRPC["gRPC Server (steer-grpc)"]
         SM[Session Manager]
         S1[Session<br/>App + ID]
         S2[Session<br/>App + ID]
@@ -35,7 +35,7 @@ graph TB
         SM --> S3
     end
 
-    subgraph CORE["conductor-core"]
+    subgraph CORE["steer-core"]
         APP[Message processing<br/>Tool execution<br/>Event emission<br/>LLM orchestration<br/>Approval handling<br/>State management]
     end
 
@@ -50,7 +50,7 @@ graph TB
 
 ## Core Components
 
-### 1. Terminal UI (`conductor-tui`)
+### 1. Terminal UI (`steer-tui`)
 - **ratatui-based** terminal interface
 - Always communicates through gRPC (even in local mode)
 - Uses `GrpcClientAdapter` to translate between UI events and gRPC messages
@@ -58,8 +58,8 @@ graph TB
 - In local mode: connects to localhost gRPC server (random port)
 - In remote mode: connects to network gRPC server
 
-### 2. App Actor Loop (`conductor-core/src/app`)
-The heart of Conductor - an event-driven actor that:
+### 2. App Actor Loop (`steer-core/src/app`)
+The heart of Steer - an event-driven actor that:
 - Manages conversation state
 - Coordinates with LLM providers (Anthropic, OpenAI, Gemini)
 - Executes tools through `ToolExecutor`
@@ -71,13 +71,13 @@ Key structures:
 - `OpContext`: Tracks active operations and enables cancellation
 - `AgentExecutor`: Manages LLM API calls and streaming responses
 
-### 3. Session Manager (`conductor-core/src/session`)
+### 3. Session Manager (`steer-core/src/session`)
 - Multiplexes multiple App instances (sessions)
-- Persists conversations to SQLite (`~/.conductor/conductor.sqlite`)
+- Persists conversations to SQLite (`~/.steer/steer.sqlite`)
 - Handles session lifecycle (create, resume, delete)
 - Manages tool approval policies per session
 
-### 4. Tool System (`conductor-tools`, `conductor-core/src/tools`)
+### 4. Tool System (`steer-tools`, `steer-core/src/tools`)
 Tools are implemented as async functions that can:
 - Read/write files (`view`, `edit`, `replace`)
 - Search code (`grep`, `glob`)
@@ -91,7 +91,7 @@ Tool execution flow:
 4. Tool runs on selected backend (local, remote, container)
 5. Result returned to LLM as `Message::Tool`
 
-### 5. Workspace Abstraction (`conductor-core/src/workspace`)
+### 5. Workspace Abstraction (`steer-core/src/workspace`)
 
 Workspaces provide a unified interface for tool execution and environment information, abstracting over different execution contexts:
 
@@ -103,7 +103,7 @@ Workspaces provide a unified interface for tool execution and environment inform
    - Tools run in the same process
 
 2. **RemoteWorkspace**: Executes tools on a remote machine via gRPC
-   - Connects to a `conductor-remote-workspace` service
+   - Connects to a `steer-remote-workspace` service
    - Environment info fetched via RPC
    - Tools executed on the remote host
    - Supports authentication (basic auth, bearer tokens)
@@ -163,7 +163,7 @@ The gRPC protocol enables client/server separation using bidirectional streaming
 
 The gRPC server can run in two modes:
 
-1. **Standalone** (`conductor serve`):
+1. **Standalone** (`steer serve`):
    - Listens on a network port (default 50051)
    - Accepts connections from remote clients
    - Persistent across client connections
@@ -189,7 +189,7 @@ The server:
 - Handles session persistence
 - Manages concurrent sessions
 
-### Client Side (`conductor --remote`)
+### Client Side (`steer --remote`)
 ```mermaid
 graph TB
     subgraph CLIENT["Terminal UI"]
@@ -316,16 +316,16 @@ The difference between local and remote modes:
 ## File Structure
 
 ```
-conductor/
+steer/
 ├── crates/
-│   ├── conductor-cli/          # Command-line interface and main binary
-│   ├── conductor-core/         # Core domain logic (LLM APIs, session management)
-│   ├── conductor-grpc/         # gRPC server/client implementation
-│   ├── conductor-macros/       # Procedural macros for tool definitions
-│   ├── conductor-proto/        # Protocol buffer definitions and generated code
-│   ├── conductor-remote-workspace/  # gRPC service for remote tool execution
-│   ├── conductor-tools/        # Tool trait definitions and implementations
-│   └── conductor-tui/          # Terminal UI library (ratatui-based)
+│   ├── steer-cli/          # Command-line interface and main binary
+│   ├── steer-core/         # Core domain logic (LLM APIs, session management)
+│   ├── steer-grpc/         # gRPC server/client implementation
+│   ├── steer-macros/       # Procedural macros for tool definitions
+│   ├── steer-proto/        # Protocol buffer definitions and generated code
+│   ├── steer-remote-workspace/  # gRPC service for remote tool execution
+│   ├── steer-tools/        # Tool trait definitions and implementations
+│   └── steer-tui/          # Terminal UI library (ratatui-based)
 ├── migrations/                 # Database migration files
 ├── prompts/                    # System prompts for various models
 ├── proto/                      # Protocol buffer source files
@@ -338,14 +338,14 @@ The crates maintain a strict acyclic dependency graph:
 
 ```mermaid
 graph TD
-    proto[conductor-proto]
-    tools[conductor-tools]
-    macros[conductor-macros]
-    core[conductor-core]
-    grpc[conductor-grpc]
-    cli[conductor-cli]
-    remote[conductor-remote-workspace]
-    tui["conductor-tui<br/>(optional feature)"]
+    proto[steer-proto]
+    tools[steer-tools]
+    macros[steer-macros]
+    core[steer-core]
+    grpc[steer-grpc]
+    cli[steer-cli]
+    remote[steer-remote-workspace]
+    tui["steer-tui<br/>(optional feature)"]
     
     proto --> core
     tools --> core
@@ -360,7 +360,7 @@ graph TD
 ```
 
 Key principles:
-- **conductor-proto**: No dependencies on other conductor crates
-- **conductor-core**: Can import proto, tools, and macros, but NOT grpc
-- **conductor-grpc**: The ONLY crate that converts between core and proto types
+- **steer-proto**: No dependencies on other steer crates
+- **steer-core**: Can import proto, tools, and macros, but NOT grpc
+- **steer-grpc**: The ONLY crate that converts between core and proto types
 - **Client crates** (cli, tui): Must use grpc, never import core directly

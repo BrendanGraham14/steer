@@ -1,0 +1,21 @@
+[package]
+name = "steer-workspace-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Remote workspace client implementation for Steer"
+
+[dependencies]
+steer-workspace.workspace = true
+steer-proto.workspace = true
+steer-tools.workspace = true
+
+tonic = { version = "0.12", features = ["tls"] }
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync", "time"] }
+tracing = "0.1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.140"
