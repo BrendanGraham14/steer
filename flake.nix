@@ -1,5 +1,5 @@
 {
-  description = "Conductor - AI-powered CLI assistant for software engineering";
+  description = "Steer - AI-powered CLI assistant for software engineering";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -135,22 +135,22 @@
       in
       {
         packages = {
-          default = self.packages.${system}.conductor-cli;
+          default = self.packages.${system}.steer-cli;
 
-          conductor-cli = mkCrateCrane {
-            name = "conductor-cli";
+          steer-cli = mkCrateCrane {
+            name = "steer-cli";
           };
 
-          conductor-remote-workspace = mkCrateCrane {
-            name = "conductor-remote-workspace";
+          steer-remote-workspace = mkCrateCrane {
+            name = "steer-remote-workspace";
           };
 
           # Build all crates at once (useful for CI)
-          conductor-workspace = craneLib.buildPackage (
+          steer-workspace = craneLib.buildPackage (
             commonArgs
             // {
               inherit cargoArtifacts;
-              pname = "conductor-workspace";
+              pname = "steer-workspace";
             }
           );
         };
@@ -164,10 +164,10 @@
               # This shellHook is executed only in interactive shells
               if [ -n "$PS1" ]; then
                 # Source project-specific shell configuration if it exists
-                [ -f ".conductor-shell.nix" ] && source .conductor-shell.nix
+                [ -f ".steer-shell.nix" ] && source .steer-shell.nix
                 
                 echo ""
-                echo "Welcome to Conductor development shell!"
+                echo "Welcome to Steer development shell!"
                 echo "Run 'just' to see available tasks."
               fi
             '';
@@ -192,23 +192,23 @@
         };
 
         apps = {
-          default = self.apps.${system}.conductor;
+          default = self.apps.${system}.steer;
 
-          conductor = {
+          steer = {
             type = "app";
-            program = "${self.packages.${system}.conductor-cli}/bin/conductor";
+            program = "${self.packages.${system}.steer-cli}/bin/steer";
           };
 
           remote-workspace = {
             type = "app";
-            program = "${self.packages.${system}.conductor-remote-workspace}/bin/conductor-remote-workspace";
+            program = "${self.packages.${system}.steer-remote-workspace}/bin/steer-remote-workspace";
           };
         };
 
         # CI checks using crane
         checks = {
           # Run clippy on the crate
-          conductor-clippy = craneLib.cargoClippy (
+          steer-clippy = craneLib.cargoClippy (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -217,12 +217,12 @@
           );
 
           # Check formatting
-          conductor-fmt = craneLib.cargoFmt {
+          steer-fmt = craneLib.cargoFmt {
             src = craneLib.cleanCargoSource ./.;
           };
 
           # Run tests
-          conductor-tests = craneLib.cargoTest (
+          steer-tests = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -230,14 +230,14 @@
           );
 
           # Audit dependencies
-          conductor-audit = craneLib.cargoAudit {
+          steer-audit = craneLib.cargoAudit {
             src = craneLib.cleanCargoSource ./.;
             advisory-db = rust-advisory-db;
             cargoAuditExtraArgs = "--ignore RUSTSEC-2023-0071";
           };
 
           # Check documentation
-          conductor-doc = craneLib.cargoDoc (
+          steer-doc = craneLib.cargoDoc (
             commonArgs
             // {
               inherit cargoArtifacts;
@@ -245,7 +245,7 @@
           );
 
           # Build all packages to ensure they compile
-          conductor-build = self.packages.${system}.conductor-workspace;
+          steer-build = self.packages.${system}.steer-workspace;
         };
       }
     );

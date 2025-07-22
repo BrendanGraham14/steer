@@ -1,0 +1,19 @@
+[package]
+name = "steer-proto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Protobuf definitions for Steer coding agent"
+
+[lints]
+workspace = true
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"

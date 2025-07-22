@@ -7,5 +7,5 @@ lint:
     - STANDARD
   ignore_only:
     SERVICE_SUFFIX:
-      - conductor/agent/v1/agent.proto
-      - conductor/remote_workspace/v1/remote_workspace.proto
+      - steer/agent/v1/agent.proto
+      - steer/remote_workspace/v1/remote_workspace.proto

@@ -1,0 +1,46 @@
+[package]
+name = "steer-remote-workspace"
+version.workspace = true
+edition.workspace = true
+description = "Remote workspace server for Steer."
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "steer-remote-workspace"
+path = "src/main.rs"
+
+[dependencies]
+# Core async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+
+# CLI framework
+clap = { version = "4.4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# gRPC
+steer-grpc.workspace = true
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# Utilities
+
+gethostname = "0.5"
+serde_json = "1.0"
+
+# Shared crates
+steer-tools.workspace = true
+fuzzy-matcher = "0.3.7"
+ignore = "0.4.23"
+tokio-stream = "0.1.17"
+steer-proto = { version = "0.1.0", path = "../steer-proto" }
+steer-workspace = { version = "0.1.0", path = "../steer-workspace" }

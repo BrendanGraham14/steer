@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Conductor Session Configuration",
-  "description": "Configuration file for Conductor sessions, including workspace settings, tool configurations, and AI behavior customization.",
+  "title": "Steer Session Configuration",
+  "description": "Configuration file for Steer sessions, including workspace settings, tool configurations, and AI behavior customization.",
   "type": "object",
   "properties": {
     "$schema": {

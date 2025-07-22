@@ -1,6 +1,6 @@
-# Conductor
+# Steer
 
-Conductor is an AI-powered CLI assistant for software engineering tasks. It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
+Steer is an AI-powered CLI assistant for software engineering tasks. It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
 
 ---
 
@@ -9,19 +9,19 @@ Conductor is an AI-powered CLI assistant for software engineering tasks. It prov
 ### Using Cargo
 
 ```bash
-cargo install --git ssh://git@github.com/brendangraham14/conductor conductor-cli --locked
+cargo install --git ssh://git@github.com/brendangraham14/steer steer-cli --locked
 ```
 
 ### Using Nix
 
-If you have Nix installed, you can run Conductor directly:
+If you have Nix installed, you can run Steer directly:
 
 ```bash
-# Run conductor without installing
-nix run github:brendangraham14/conductor
+# Run steer without installing
+nix run github:brendangraham14/steer
 
 # Or install it into your profile
-nix profile install github:brendangraham14/conductor
+nix profile install github:brendangraham14/steer
 ```
 
 ### Prerequisites
@@ -36,39 +36,39 @@ nix profile install github:brendangraham14/conductor
 
 ```bash
 # Start an interactive chat in the current directory
-conductor
+steer
 
 # Work inside a different directory
-conductor --directory /path/to/project
+steer --directory /path/to/project
 
 # Start with a session configuration file
-conductor --session-config config.toml
+steer --session-config config.toml
 
 # Point the client at a remote gRPC server instead of running locally
-conductor --remote 127.0.0.1:50051
+steer --remote 127.0.0.1:50051
 ```
 
 ### Headless one-shot mode
 
 ```bash
 # Read prompt from stdin and return a single JSON response
-echo "What is 2+2?" | conductor headless
+echo "What is 2+2?" | steer headless
 
-# Provide a JSON file containing `Vec<Message>` in the Conductor message format
-conductor headless --messages-json /tmp/messages.json --model gemini-pro
+# Provide a JSON file containing `Vec<Message>` in the Steer message format
+steer headless --messages-json /tmp/messages.json --model gemini-pro
 
 # Run inside an existing session (keeps history / tool approvals)
-conductor headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
+steer headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
 
 # Supply a custom session configuration (tool approvals, MCP backends, etc.)
-conductor headless --session-config config.toml < prompt.txt
+steer headless --session-config config.toml < prompt.txt
 ```
 
 ### Authentication
 
 ```bash
-# Launch Conductor and follow the first-run setup wizard
-conductor
+# Launch Steer and follow the first-run setup wizard
+steer
 
 # Re-run the wizard any time inside the chat
 /auth
@@ -78,26 +78,26 @@ conductor
 
 ```bash
 # Start a standalone server (default 127.0.0.1:50051)
-conductor server --port 50051
+steer server --port 50051
 
 # Connect to an already running server
-conductor tui --remote 192.168.1.10:50051
+steer tui --remote 192.168.1.10:50051
 ```
 
 ### Session management
 
 ```bash
 # List saved sessions
-conductor session list --limit 20
+steer session list --limit 20
 
 # Delete a session
-conductor session delete <SESSION_ID> --force
+steer session delete <SESSION_ID> --force
 
 # Create a new session with a config file
-conductor session create --session-config config.toml
+steer session create --session-config config.toml
 
 # Create with overrides
-conductor session create --session-config config.toml --system-prompt "Custom prompt"
+steer session create --session-config config.toml --system-prompt "Custom prompt"
 ```
 
 ### Session Configuration Files
@@ -152,7 +152,7 @@ See the `examples/` directory for more configuration examples.
 
 ### MCP Transport Options
 
-Conductor supports multiple transport types for connecting to MCP servers:
+Steer supports multiple transport types for connecting to MCP servers:
 
 #### Stdio Transport (Default)
 For MCP servers that communicate via standard input/output:
@@ -201,7 +201,7 @@ transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-K
 
 ## Notifications
 
-Conductor provides context-aware notifications with different sounds for different events:
+Steer provides context-aware notifications with different sounds for different events:
 
 ### Notification Types
 
@@ -233,21 +233,21 @@ export CONDUCTOR_NOTIFICATION_DESKTOP=false
 
 ## Authentication
 
-Conductor supports multiple methods for providing credentials.
+Steer supports multiple methods for providing credentials.
 
 ### Interactive Setup
 
-The first time you start Conductor it should launch a setup wizard. If it does not, you may trigger it from the chat with the `/auth` command.
+The first time you start Steer it should launch a setup wizard. If it does not, you may trigger it from the chat with the `/auth` command.
 
 All providers (Anthropic, OpenAI, Gemini, xAI) support API key authentication.
  
-For Claude Pro/Max users, Conductor also supports authenticating via OAuth. **Note**: If OAuth tokens and an API key are saved for Anthropic, the OAuth token takes precedence.
+For Claude Pro/Max users, Steer also supports authenticating via OAuth. **Note**: If OAuth tokens and an API key are saved for Anthropic, the OAuth token takes precedence.
 
 Credentials are stored securely using the OS-native keyring.
 
 ### Environment Variables
 
-Conductor will detect the following environment variables:
+Steer will detect the following environment variables:
 
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`

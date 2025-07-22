@@ -1,0 +1,172 @@
+# Catppuccin Mocha Theme for Steer
+# A warm, dark pastel theme
+
+name = "Catppuccin Mocha"
+
+# Syntax highlighting theme from syntect
+[syntax]
+syntect_theme = "base16-ocean.dark"
+
+# Color palette - Catppuccin Mocha colors
+[palette]
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+black = "#11111b"
+red = "#f38ba8"
+green = "#a6e3a1"
+yellow = "#f9e2af"
+blue = "#89b4fa"
+magenta = "#f5c2e7"
+cyan = "#94e2d5"
+white = "#cdd6f4"
+bright_black = "#45475a"
+bright_red = "#eba0ac"
+bright_green = "#94e2d5"
+bright_yellow = "#fab387"
+bright_blue = "#89dceb"
+bright_magenta = "#cba6f7"
+bright_cyan = "#94e2d5"
+bright_white = "#f4f4f5"
+dark_gray = "#313244"
+gray = "#6c7086"
+comment = "#7f849c"
+surface0 = "#313244"
+surface1 = "#45475a"
+surface2 = "#585b70"
+overlay0 = "#6c7086"
+overlay1 = "#7f849c"
+overlay2 = "#9399b2"
+subtext0 = "#a6adc8"
+subtext1 = "#bac2de"
+peach = "#fab387"
+rosewater = "#f5e0dc"
+flamingo = "#f2cdcd"
+pink = "#f5c2e7"
+mauve = "#cba6f7"
+lavender = "#b4befe"
+sapphire = "#74c7ec"
+sky = "#89dceb"
+teal = "#94e2d5"
+maroon = "#eba0ac"
+
+# Component styles
+[components]
+# Status bar
+status_bar = { fg = "subtext1", bg = "surface0" }
+
+# Input panel
+input_panel_border = { fg = "surface2" }
+input_panel_border_active = { fg = "lavender" }
+input_panel_border_command = { fg = "sapphire" }
+input_panel_border_approval = { fg = "red", bold = true }
+input_panel_border_error = { fg = "red", bold = true }
+input_panel_label = { fg = "subtext1" }
+input_panel_label_active = { fg = "lavender" }
+input_panel_label_command = { fg = "sapphire" }
+input_panel_label_confirm_exit = { fg = "red" }
+
+# Chat list
+chat_list_border = { fg = "surface2" }
+user_message = { fg = "foreground" }
+user_message_role = { fg = "green", bold = true }
+assistant_message = { fg = "foreground" }
+assistant_message_role = { fg = "blue", bold = true }
+system_message = { fg = "overlay1" }
+system_message_role = { fg = "yellow" }
+
+# Tool calls
+tool_call = { fg = "sapphire" }
+tool_call_border = { fg = "sapphire" }
+tool_call_header = { fg = "sapphire" }
+tool_call_id = { fg = "overlay0" }
+tool_output = { fg = "foreground" }
+tool_success = { fg = "green" }
+tool_error = { fg = "red" }
+
+# Assistant thoughts
+thought_box = { fg = "overlay0" }
+thought_header = { fg = "overlay1" }
+thought_border = { fg = "surface2" }
+thought_text = { fg = "overlay2", italic = true }
+
+# Commands
+command_prompt = { fg = "green", bold = true }
+command_text = { fg = "sapphire" }
+command_success = { fg = "green" }
+command_error = { fg = "red" }
+
+# General
+error_text = { fg = "red" }
+error_bold = { fg = "red", bold = true }
+dim_text = { fg = "overlay0" }
+selection_highlight = { fg = "yellow", bold = true }
+placeholder_text = { fg = "overlay0", italic = true }
+
+# Model info
+model_info = { fg = "mauve" }
+
+# Notices
+notice_info = { fg = "blue" }
+notice_warn = { fg = "yellow" }
+notice_error = { fg = "red" }
+
+# Todo items
+todo_high = { fg = "red" }
+todo_medium = { fg = "yellow" }
+todo_low = { fg = "green" }
+todo_pending = { fg = "blue" }
+todo_in_progress = { fg = "yellow" }
+todo_completed = { fg = "green" }
+
+# Code editing
+code_addition = { fg = "green" }
+code_deletion = { fg = "red" }
+code_file_path = { fg = "peach" }
+
+# Popup
+popup_border = { fg = "overlay2" }
+popup_selection = { fg = "yellow", bg = "surface1" }
+
+# Markdown
+markdown_h1 = { fg = "blue" }
+markdown_h2 = { fg = "blue" }
+markdown_h3 = { fg = "blue" }
+markdown_h4 = { fg = "lavender" }
+markdown_h5 = { fg = "lavender" }
+markdown_h6 = { fg = "subtext0" }
+markdown_paragraph = { }
+markdown_bold = { }
+markdown_italic = { }
+markdown_strikethrough = { }
+markdown_code = { fg = "pink", bg = "surface0" }
+markdown_code_block = { }
+markdown_link = { fg = "sky" }
+markdown_blockquote = { fg = "overlay2" }
+markdown_list_bullet = { fg = "overlay1" }
+markdown_list_number = { fg = "lavender" }
+markdown_table_border = { fg = "surface2" }
+markdown_table_header = { fg = "blue", bold = true }
+markdown_table_cell = { fg = "foreground" }
+markdown_task_checked = { fg = "green" }
+markdown_task_unchecked = { fg = "overlay1" }
+
+# Setup UI
+setup_title = { fg = "lavender", bold = true }
+setup_border = { fg = "surface2" }
+setup_border_active = { fg = "lavender" }
+setup_header = { fg = "blue", bold = true }
+setup_text = { fg = "foreground" }
+setup_highlight = { bg = "surface1", bold = true }
+setup_key_binding = { fg = "green", bold = true }
+setup_provider_name = { fg = "foreground" }
+setup_provider_selected = { bg = "surface1", bold = true }
+setup_status_active = { fg = "green" }
+setup_status_inactive = { fg = "red" }
+setup_status_in_progress = { fg = "yellow" }
+setup_success_icon = { fg = "green", bold = true }
+setup_error_message = { fg = "red" }
+setup_hint = { fg = "overlay0" }
+setup_url = { fg = "sky", underlined = true }
+setup_input_label = { fg = "subtext1" }
+setup_input_value = { fg = "peach" }
+setup_big_text = { fg = "lavender", bold = true }

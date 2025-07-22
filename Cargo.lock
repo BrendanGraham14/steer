@@ -803,327 +803,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "conductor-cli"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "async-trait",
- "chrono",
- "clap",
- "color-eyre",
- "colored",
- "comfy-table",
- "conductor-core",
- "conductor-grpc",
- "conductor-macros",
- "conductor-proto",
- "conductor-tools",
- "conductor-tui",
- "dirs 5.0.1",
- "dotenv",
- "eyre",
- "futures",
- "futures-core",
- "futures-util",
- "gethostname",
- "glob",
- "globset",
- "hex",
- "home",
- "ignore",
- "lazy_static",
- "once_cell",
- "open",
- "proc-macro2",
- "prost-types",
- "quote",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "rpassword",
- "schemars",
- "serde",
- "serde_json",
- "serde_repr",
- "shell-words",
- "similar",
- "strum 0.27.1",
- "strum_macros 0.27.1",
- "syn",
- "tempfile",
- "textwrap",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "toml 0.8.23",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tui-markdown",
- "tui-textarea",
- "tui-widgets",
- "uuid",
- "which",
- "zeroize",
-]
-
-[[package]]
-name = "conductor-core"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "async-stream",
- "async-trait",
- "axum 0.8.4",
- "base64",
- "chrono",
- "colored",
- "conductor-macros",
- "conductor-proto",
- "conductor-tools",
- "conductor-workspace",
- "conductor-workspace-client",
- "dirs 5.0.1",
- "dotenv",
- "futures",
- "futures-core",
- "futures-util",
- "fuzzy-matcher",
- "gethostname",
- "glob",
- "globset",
- "hex",
- "hkdf",
- "home",
- "hyper",
- "hyper-util",
- "ignore",
- "keyring",
- "lazy_static",
- "nix",
- "once_cell",
- "open",
- "prost",
- "prost-types",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "serde_repr",
- "serde_urlencoded",
- "sha2",
- "shell-words",
- "similar",
- "sqlx",
- "strum 0.27.1",
- "strum_macros 0.27.1",
- "tempfile",
- "textwrap",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "toml 0.9.2",
- "tonic",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "whoami",
- "zeroize",
-]
-
-[[package]]
-name = "conductor-grpc"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "async-trait",
- "chrono",
- "conductor-core",
- "conductor-proto",
- "conductor-tools",
- "futures",
- "proptest",
- "prost",
- "prost-types",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tonic",
- "tower 0.5.2",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "conductor-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "conductor-proto"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-types",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
-name = "conductor-remote-workspace"
-version = "0.1.0"
-dependencies = [
- "clap",
- "conductor-grpc",
- "conductor-proto",
- "conductor-tools",
- "conductor-workspace",
- "fuzzy-matcher",
- "gethostname",
- "ignore",
- "prost",
- "prost-types",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tonic",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "conductor-tools"
-version = "0.1.0"
-dependencies = [
- "ast-grep-core",
- "ast-grep-language",
- "async-trait",
- "chrono",
- "conductor-macros",
- "dirs 6.0.0",
- "glob",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
- "hex",
- "ignore",
- "once_cell",
- "regex",
- "reqwest",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "conductor-tui"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "clap",
- "conductor-core",
- "conductor-grpc",
- "conductor-proto",
- "conductor-tools",
- "directories",
- "fuzzy-matcher",
- "http",
- "indexmap 2.10.0",
- "itertools 0.12.1",
- "lazy_static",
- "notify-rust",
- "once_cell",
- "open",
- "process-wrap",
- "pulldown-cmark 0.9.6",
- "ratatui",
- "regex",
- "serde",
- "serde_json",
- "similar",
- "strum 0.27.1",
- "strum_macros 0.27.1",
- "syntect",
- "tempfile",
- "textwrap",
- "thiserror 2.0.12",
- "time",
- "tokio",
- "tokio-stream",
- "toml 0.8.23",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "tui-big-text",
- "tui-textarea",
- "tui-widgets",
- "ulid",
- "unicode-width 0.2.0",
- "uuid",
-]
-
-[[package]]
-name = "conductor-workspace"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "conductor-proto",
- "conductor-tools",
- "fuzzy-matcher",
- "gethostname",
- "gix",
- "ignore",
- "prost",
- "prost-types",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "tokio-util",
- "tonic",
- "tracing",
-]
-
-[[package]]
-name = "conductor-workspace-client"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "conductor-proto",
- "conductor-tools",
- "conductor-workspace",
- "serde",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
- "tonic",
- "tracing",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5311,6 +4990,327 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "steer-cli"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "colored",
+ "comfy-table",
+ "dirs 5.0.1",
+ "dotenv",
+ "eyre",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "gethostname",
+ "glob",
+ "globset",
+ "hex",
+ "home",
+ "ignore",
+ "lazy_static",
+ "once_cell",
+ "open",
+ "proc-macro2",
+ "prost-types",
+ "quote",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "rpassword",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "shell-words",
+ "similar",
+ "steer-core",
+ "steer-grpc",
+ "steer-macros",
+ "steer-proto",
+ "steer-tools",
+ "steer-tui",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "syn",
+ "tempfile",
+ "textwrap",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tui-markdown",
+ "tui-textarea",
+ "tui-widgets",
+ "uuid",
+ "which",
+ "zeroize",
+]
+
+[[package]]
+name = "steer-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "async-stream",
+ "async-trait",
+ "axum 0.8.4",
+ "base64",
+ "chrono",
+ "colored",
+ "dirs 5.0.1",
+ "dotenv",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "fuzzy-matcher",
+ "gethostname",
+ "glob",
+ "globset",
+ "hex",
+ "hkdf",
+ "home",
+ "hyper",
+ "hyper-util",
+ "ignore",
+ "keyring",
+ "lazy_static",
+ "nix",
+ "once_cell",
+ "open",
+ "prost",
+ "prost-types",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "serde_urlencoded",
+ "sha2",
+ "shell-words",
+ "similar",
+ "sqlx",
+ "steer-macros",
+ "steer-proto",
+ "steer-tools",
+ "steer-workspace",
+ "steer-workspace-client",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "tempfile",
+ "textwrap",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml 0.9.2",
+ "tonic",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+ "whoami",
+ "zeroize",
+]
+
+[[package]]
+name = "steer-grpc"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "chrono",
+ "futures",
+ "proptest",
+ "prost",
+ "prost-types",
+ "serde_json",
+ "steer-core",
+ "steer-proto",
+ "steer-tools",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tower 0.5.2",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "steer-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "steer-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
+name = "steer-remote-workspace"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "fuzzy-matcher",
+ "gethostname",
+ "ignore",
+ "prost",
+ "prost-types",
+ "serde_json",
+ "steer-grpc",
+ "steer-proto",
+ "steer-tools",
+ "steer-workspace",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "steer-tools"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "async-trait",
+ "chrono",
+ "dirs 6.0.0",
+ "glob",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "hex",
+ "ignore",
+ "once_cell",
+ "regex",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "steer-macros",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "steer-tui"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "clap",
+ "directories",
+ "fuzzy-matcher",
+ "http",
+ "indexmap 2.10.0",
+ "itertools 0.12.1",
+ "lazy_static",
+ "notify-rust",
+ "once_cell",
+ "open",
+ "process-wrap",
+ "pulldown-cmark 0.9.6",
+ "ratatui",
+ "regex",
+ "serde",
+ "serde_json",
+ "similar",
+ "steer-core",
+ "steer-grpc",
+ "steer-proto",
+ "steer-tools",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "syntect",
+ "tempfile",
+ "textwrap",
+ "thiserror 2.0.12",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "toml 0.8.23",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "tui-big-text",
+ "tui-textarea",
+ "tui-widgets",
+ "ulid",
+ "unicode-width 0.2.0",
+ "uuid",
+]
+
+[[package]]
+name = "steer-workspace"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "fuzzy-matcher",
+ "gethostname",
+ "gix",
+ "ignore",
+ "prost",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "steer-proto",
+ "steer-tools",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
+name = "steer-workspace-client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "steer-proto",
+ "steer-tools",
+ "steer-workspace",
+ "thiserror 2.0.12",
+ "tokio",
+ "tonic",
+ "tracing",
+]
 
 [[package]]
 name = "streaming-iterator"

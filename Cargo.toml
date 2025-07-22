@@ -7,19 +7,19 @@ version = "0.1.0"
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/brendangraham14/conductor"
+repository = "https://github.com/brendangraham14/steer"
 
 [workspace.dependencies]
-conductor-cli = { version = "0.1.0", path = "crates/conductor-cli" }
-conductor-core = { version = "0.1.0", path = "crates/conductor-core" }
-conductor-grpc = { version = "0.1.0", path = "crates/conductor-grpc" }
-conductor-macros = { version = "0.1.0", path = "crates/conductor-macros" }
-conductor-proto = { version = "0.1.0", path = "crates/conductor-proto" }
-conductor-remote-workspace = { version = "0.1.0", path = "crates/conductor-remote-workspace" }
-conductor-tools = { version = "0.1.0", path = "crates/conductor-tools" }
-conductor-tui = { version = "0.1.0", path = "crates/conductor-tui" }
-conductor-workspace = { version = "0.1.0", path = "crates/conductor-workspace" }
-conductor-workspace-client = { version = "0.1.0", path = "crates/conductor-workspace-client" }
+steer-cli = { version = "0.1.0", path = "crates/steer-cli" }
+steer-core = { version = "0.1.0", path = "crates/steer-core" }
+steer-grpc = { version = "0.1.0", path = "crates/steer-grpc" }
+steer-macros = { version = "0.1.0", path = "crates/steer-macros" }
+steer-proto = { version = "0.1.0", path = "crates/steer-proto" }
+steer-remote-workspace = { version = "0.1.0", path = "crates/steer-remote-workspace" }
+steer-tools = { version = "0.1.0", path = "crates/steer-tools" }
+steer-tui = { version = "0.1.0", path = "crates/steer-tui" }
+steer-workspace = { version = "0.1.0", path = "crates/steer-workspace" }
+steer-workspace-client = { version = "0.1.0", path = "crates/steer-workspace-client" }
 
 [workspace.lints.rust]
 unused_must_use = "deny"

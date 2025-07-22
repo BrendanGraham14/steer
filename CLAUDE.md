@@ -2,7 +2,7 @@
 
 just check        # Quick compilation check without building
 just test         # Run all tests with all features
-just run          # Run conductor CLI (can add args like: just run --help)
+just run          # Run steer CLI (can add args like: just run --help)
 just build        # Build the project with all features
 just ci           # Run all checks (fmt, clippy, test)
 just fix          # Auto-fix issues and format code
@@ -10,7 +10,7 @@ just fix          # Auto-fix issues and format code
 # Other useful commands:
 # just              # Show all available commands
 # just release      # Build release version
-# just test-package conductor-core  # Test specific package
+# just test-package steer-core  # Test specific package
 # just test-specific test_name      # Run specific test
 # just fmt          # Format code
 # just clippy       # Run clippy linting
@@ -20,10 +20,10 @@ just fix          # Auto-fix issues and format code
 # nix develop       # Enter development shell
 # nix build         # Build the project with Nix (uses crane for better caching)
 # nix flake check   # Run all checks
-# nix run           # Run conductor directly
-# nix build .#conductor-cli              # Build just the CLI
-# nix build .#conductor-remote-workspace # Build just the remote workspace
-# nix build .#conductor-workspace        # Build all crates at once
+# nix run           # Run steer directly
+# nix build .#steer-cli              # Build just the CLI
+# nix build .#steer-remote-workspace # Build just the remote workspace
+# nix build .#steer-workspace        # Build all crates at once
 
 
 # Commits
@@ -51,7 +51,7 @@ Follow the conventional commits format.
 
 **IMPORTANT**: Never use `anyhow` for error handling in this codebase. All errors must be well-typed using `thiserror`.
 
-The conductor-core crate uses typed errors with `thiserror`. The main error type is `crate::error::Error` which contains variants for all core error types:
+The steer-core crate uses typed errors with `thiserror`. The main error type is `crate::error::Error` which contains variants for all core error types:
 - `Api(ApiError)` - For API-related errors
 - `Session(SessionError)` - For session management errors  
 - `Tool(ToolError)` - For tool execution errors
@@ -67,16 +67,16 @@ Each module typically defines its own error type (e.g., `ApiError`, `SessionErro
 # Crate Architecture (Polylith-style)
 
 All crates are organized under the `crates/` directory following a polylith-style architecture:
-- `crates/conductor-proto/` - Protocol buffer definitions and generated code
-- `crates/conductor-core/` - Core domain logic (LLM APIs, session management, tool execution backends)
-- `crates/conductor-grpc/` - gRPC server/client implementation
-- `crates/conductor-cli/` - Command-line interface and main binary
-- `crates/conductor-tui/` - Terminal UI library (ratatui-based)
-- `crates/conductor-tools/` - Tool trait definitions and implementations
-- `crates/conductor-macros/` - Procedural macros for tool definitions
-- `crates/conductor-workspace/` - Workspace trait and local workspace implementation (provider)
-- `crates/conductor-workspace-client/` - Remote workspace client implementation (consumer)
-- `crates/conductor-remote-workspace/` - gRPC service for remote workspace operations
+- `crates/steer-proto/` - Protocol buffer definitions and generated code
+- `crates/steer-core/` - Core domain logic (LLM APIs, session management, tool execution backends)
+- `crates/steer-grpc/` - gRPC server/client implementation
+- `crates/steer-cli/` - Command-line interface and main binary
+- `crates/steer-tui/` - Terminal UI library (ratatui-based)
+- `crates/steer-tools/` - Tool trait definitions and implementations
+- `crates/steer-macros/` - Procedural macros for tool definitions
+- `crates/steer-workspace/` - Workspace trait and local workspace implementation (provider)
+- `crates/steer-workspace-client/` - Remote workspace client implementation (consumer)
+- `crates/steer-remote-workspace/` - gRPC service for remote workspace operations
 
 ## Nix Development Environment
 
@@ -84,16 +84,16 @@ The project includes a Nix flake for reproducible development environments. To p
 
 1. **Using nix-direnv** (recommended): Install with `nix profile install nixpkgs#nix-direnv`, then `direnv allow`. This preserves your parent shell environment.
 
-2. **Custom shell config**: Copy `.conductor-shell.nix.example` to `.conductor-shell.nix` and customize it with your preferred aliases and configurations.
+2. **Custom shell config**: Copy `.steer-shell.nix.example` to `.steer-shell.nix` and customize it with your preferred aliases and configurations.
 
 3. **Direct sourcing**: The flake's shellHook automatically sources your `.zshrc`/`.bashrc` to preserve aliases.
 
 ## Dependency Graph
 The crates must maintain a strict acyclic dependency graph:
 ```
-conductor-tools → conductor-workspace → conductor-core → conductor-grpc → clients (tui, cli, etc.)
+steer-tools → steer-workspace → steer-core → steer-grpc → clients (tui, cli, etc.)
          ↓                                      ↑
-conductor-macros                   conductor-workspace-client
+steer-macros                   steer-workspace-client
 ```
 
 Key principles:
@@ -103,57 +103,57 @@ Key principles:
 
 ## Crate Responsibilities
 
-### conductor-proto
+### steer-proto
 - ONLY contains .proto files and tonic-generated code
 - Defines the stable wire protocol
 - No business logic whatsoever
 
-### conductor-workspace
+### steer-workspace
 - Defines the Workspace trait for environment and filesystem operations
 - Provides LocalWorkspace implementation
 - NO tool execution logic - purely environment/filesystem focused
 - Exports EnvironmentInfo, WorkspaceConfig types
 
-### conductor-workspace-client
+### steer-workspace-client
 - RemoteWorkspace client implementation
-- Depends on conductor-workspace for trait definitions
-- Uses gRPC to communicate with conductor-remote-workspace service
+- Depends on steer-workspace for trait definitions
+- Uses gRPC to communicate with steer-remote-workspace service
 
-### conductor-core
+### steer-core
 - Pure domain logic (LLM APIs, session management, validation)
 - Tool execution backends (LocalBackend, McpBackend)
 - MUST NOT:
-  - Import conductor-grpc
+  - Import steer-grpc
   - Return or accept proto types in public APIs
   - Know about networking, UI, or transport concerns
-- CAN import conductor-proto for basic type definitions only
-- Imports conductor-workspace for workspace operations
+- CAN import steer-proto for basic type definitions only
+- Imports steer-workspace for workspace operations
 - Exports domain types (Message, SessionConfig) and traits (AppCommandSink, AppEventSource)
 
-### conductor-grpc
+### steer-grpc
 - Network transport layer only
 - The ONLY crate that knows about both core types and proto types
 - Contains ALL conversions between core domain types ↔ proto messages
 - Conversion functions must be pub(crate), never public
 - Implements gRPC server/client that wrap core functionality
 
-### conductor-remote-workspace
+### steer-remote-workspace
 - gRPC service implementing remote workspace operations
 - Wraps a LocalWorkspace to expose it over the network
 - Used by RemoteWorkspace clients
 
-### Client crates (conductor-tui, etc.)
-- MUST go through conductor-grpc, never directly access conductor-core
+### Client crates (steer-tui, etc.)
+- MUST go through steer-grpc, never directly access steer-core
 - Even "local" mode should use an in-memory gRPC channel
 - No special treatment - all clients are equal
 
 ## Important Rules
 
-1. **No proto types in core**: If you see `conductor_proto::` in conductor-core outside of basic imports, it's a violation
-2. **All conversions in grpc**: Any function converting between core and proto types belongs in conductor-grpc
+1. **No proto types in core**: If you see `steer_proto::` in steer-core outside of basic imports, it's a violation
+2. **All conversions in grpc**: Any function converting between core and proto types belongs in steer-grpc
 3. **No in-process shortcuts**: Clients must always use the gRPC interface, even for local operations
 4. **Clean boundaries**: Each crate has a single, clear responsibility
 5. **Path references**: When referencing files outside crates (e.g., `include_str!`), remember to account for the extra directory level: `../../` becomes `../../../` or `../../../../`
 6. **Workspace vs Tools**: Workspace handles environment/filesystem, backends handle tool execution - never mix these concerns
-7. **Provider/Consumer split**: Workspace trait provider (conductor-workspace) is separate from remote consumer (conductor-workspace-client)
+7. **Provider/Consumer split**: Workspace trait provider (steer-workspace) is separate from remote consumer (steer-workspace-client)
 

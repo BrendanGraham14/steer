@@ -26,7 +26,7 @@ release:
     cargo build --release --all-features
 
 run *args:
-    cargo run --bin conductor -- {{args}}
+    cargo run --bin steer -- {{args}}
 
 clean:
     cargo clean
@@ -38,10 +38,10 @@ ci:
     nix flake check
 
 schema-gen:
-    cargo run -p conductor-cli --bin schema-generator
+    cargo run -p steer-cli --bin schema-generator
 
 test-specific test_name:
     cargo test --all-features {{test_name}}
 
 test-mcp:
-    cargo test -p conductor-core --lib --all-features mcp_backend
+    cargo test -p steer-core --lib --all-features mcp_backend
