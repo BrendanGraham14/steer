@@ -1,6 +1,6 @@
 //! ChatStore - storage for the new ChatItem model
 
-use crate::tui::model::{ChatItem, RowId};
+use crate::tui::model::{ChatItem, ChatItemData, RowId};
 use conductor_core::app::conversation::Message;
 
 use indexmap::IndexMap;
@@ -26,6 +26,8 @@ pub struct ChatStore {
     in_flight_op_keys: HashMap<Uuid, ChatItemKey>,
     /// Revision number for dirty tracking
     revision: u64,
+    /// Currently active message ID (for branch filtering)
+    pub active_message_id: Option<String>,
 }
 
 impl Default for ChatStore {
@@ -37,6 +39,7 @@ impl Default for ChatStore {
             pending_tool_keys: HashMap::new(),
             in_flight_op_keys: HashMap::new(),
             revision: 0,
+            active_message_id: None,
         }
     }
 }
@@ -89,23 +92,28 @@ impl ChatStore {
     }
 
     /// Push a new item and return its key
-    pub fn push(&mut self, item: ChatItem) -> ChatItemKey {
+    pub fn push(&mut self, mut item: ChatItem) -> ChatItemKey {
         let id = item.id().to_string();
         let key = self.generate_key();
 
+        // For non-message items without a parent, set parent_chat_item_id to active_message_id
+        if !matches!(item.data, ChatItemData::Message(_)) && item.parent_chat_item_id.is_none() {
+            item.parent_chat_item_id = self.active_message_id.clone();
+        }
+
         // Track transient items for fast lookups
-        match &item {
-            ChatItem::PendingToolCall { tool_call, .. } => {
+        match &item.data {
+            ChatItemData::PendingToolCall { tool_call, .. } => {
                 self.pending_tool_keys.insert(tool_call.id.clone(), key);
             }
-            ChatItem::InFlightOperation { operation_id, .. } => {
+            ChatItemData::InFlightOperation { operation_id, .. } => {
                 self.in_flight_op_keys.insert(*operation_id, key);
             }
-            ChatItem::CoreCmdResponse { .. }
-            | ChatItem::SystemNotice { .. }
-            | ChatItem::Message(_)
-            | ChatItem::SlashInput { .. }
-            | ChatItem::TuiCommandResponse { .. } => {}
+            ChatItemData::CoreCmdResponse { .. }
+            | ChatItemData::SystemNotice { .. }
+            | ChatItemData::Message(_)
+            | ChatItemData::SlashInput { .. }
+            | ChatItemData::TuiCommandResponse { .. } => {}
         }
 
         self.items.insert(key, item);
@@ -116,7 +124,10 @@ impl ChatStore {
 
     /// Add a message row
     pub fn add_message(&mut self, message: Message) -> ChatItemKey {
-        self.push(ChatItem::Message(message))
+        self.push(ChatItem {
+            parent_chat_item_id: None, // Messages have their own parent_message_id
+            data: ChatItemData::Message(message),
+        })
     }
 
     /// Add a pending tool call
@@ -139,11 +150,11 @@ impl ChatStore {
             self.id_to_key.remove(item.id());
 
             // Remove from transient tracking maps
-            match &item {
-                ChatItem::PendingToolCall { tool_call, .. } => {
+            match &item.data {
+                ChatItemData::PendingToolCall { tool_call, .. } => {
                     self.pending_tool_keys.remove(&tool_call.id);
                 }
-                ChatItem::InFlightOperation { operation_id, .. } => {
+                ChatItemData::InFlightOperation { operation_id, .. } => {
                     self.in_flight_op_keys.remove(operation_id);
                 }
                 _ => {}
@@ -197,7 +208,7 @@ impl ChatStore {
             .items
             .values()
             .filter_map(|item| {
-                if let ChatItem::Message(message) = item {
+                if let ChatItemData::Message(message) = &item.data {
                     Some((message.id().to_string(), message))
                 } else {
                     None
@@ -236,8 +247,8 @@ impl ChatStore {
         let keys_to_remove: Vec<ChatItemKey> = self
             .items
             .iter()
-            .filter_map(|(&key, item)| match item {
-                ChatItem::Message(message) if !live_ids.contains(message.id()) => Some(key),
+            .filter_map(|(&key, item)| match &item.data {
+                ChatItemData::Message(message) if !live_ids.contains(message.id()) => Some(key),
                 _ => None,
             })
             .collect();
@@ -259,7 +270,7 @@ impl ChatStore {
         self.items
             .values()
             .filter(|item| {
-                if let ChatItem::Message(message) = item {
+                if let ChatItemData::Message(message) = &item.data {
                     message.parent_message_id() == Some(parent_id)
                 } else {
                     false
@@ -293,7 +304,7 @@ impl ChatStore {
         self.items
             .values()
             .filter_map(|item| {
-                if let ChatItem::Message(message) = item {
+                if let ChatItemData::Message(message) = &item.data {
                     Some(message)
                 } else {
                     None
@@ -306,7 +317,7 @@ impl ChatStore {
     pub fn has_pending_tools(&self) -> bool {
         self.items
             .values()
-            .any(|item| matches!(item, ChatItem::PendingToolCall { .. }))
+            .any(|item| matches!(item.data, ChatItemData::PendingToolCall { .. }))
     }
 
     /// Get user messages for edit history
@@ -315,7 +326,7 @@ impl ChatStore {
             .values()
             .enumerate()
             .filter_map(|(idx, item)| {
-                if let ChatItem::Message(message) = item {
+                if let ChatItemData::Message(message) = &item.data {
                     if matches!(message, Message::User { .. }) {
                         Some((idx, message))
                     } else {
@@ -467,18 +478,24 @@ mod tests {
             name: "test_tool".to_string(),
             parameters: serde_json::json!({}),
         };
-        store.push(ChatItem::PendingToolCall {
-            id: "pending_tool_1".to_string(),
-            tool_call,
-            ts: OffsetDateTime::now_utc(),
+        store.push(ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::PendingToolCall {
+                id: "pending_tool_1".to_string(),
+                tool_call,
+                ts: OffsetDateTime::now_utc(),
+            },
         });
 
         let operation_id = Uuid::new_v4();
-        store.push(ChatItem::InFlightOperation {
-            id: format!("op_{operation_id}"),
-            operation_id,
-            label: "Test operation".to_string(),
-            ts: OffsetDateTime::now_utc(),
+        store.push(ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::InFlightOperation {
+                id: format!("op_{operation_id}"),
+                operation_id,
+                label: "Test operation".to_string(),
+                ts: OffsetDateTime::now_utc(),
+            },
         });
 
         assert_eq!(store.len(), 5); // 3 messages + 2 other items
@@ -586,6 +603,7 @@ mod tests {
             timestamp: 1234567890,
             parent_message_id: None,
         });
+        store.active_message_id = Some("U1".to_string());
 
         store.add_message(Message::Assistant {
             id: "A1".to_string(),
@@ -595,6 +613,7 @@ mod tests {
             timestamp: 1234567891,
             parent_message_id: Some("U1".to_string()),
         });
+        store.active_message_id = Some("A1".to_string());
 
         store.add_message(Message::User {
             id: "U2".to_string(),
@@ -604,6 +623,7 @@ mod tests {
             timestamp: 1234567892,
             parent_message_id: Some("A1".to_string()),
         });
+        store.active_message_id = Some("U2".to_string());
 
         // Branch from the first assistant message
         store.add_message(Message::User {

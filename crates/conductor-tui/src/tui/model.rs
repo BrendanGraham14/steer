@@ -20,7 +20,7 @@ pub enum NoticeLevel {
 
 /// All rows that can appear in the scrollback panel
 #[derive(Debug, Clone)]
-pub enum ChatItem {
+pub enum ChatItemData {
     /// Conversation message
     Message(Message),
 
@@ -70,46 +70,47 @@ pub enum ChatItem {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct ChatItem {
+    pub parent_chat_item_id: Option<RowId>,
+    pub data: ChatItemData,
+}
+
 impl ChatItem {
     /// Get the unique identifier for this chat item
     pub fn id(&self) -> &str {
-        match self {
-            ChatItem::Message(row) => row.id(),
-            ChatItem::PendingToolCall { id, .. } => id,
-            ChatItem::SlashInput { id, .. } => id,
-            ChatItem::CoreCmdResponse { id, .. } => id,
-            ChatItem::SystemNotice { id, .. } => id,
-            ChatItem::TuiCommandResponse { id, .. } => id,
-            ChatItem::InFlightOperation { id, .. } => id,
+        match &self.data {
+            ChatItemData::Message(row) => row.id(),
+            ChatItemData::PendingToolCall { id, .. } => id,
+            ChatItemData::SlashInput { id, .. } => id,
+            ChatItemData::CoreCmdResponse { id, .. } => id,
+            ChatItemData::SystemNotice { id, .. } => id,
+            ChatItemData::TuiCommandResponse { id, .. } => id,
+            ChatItemData::InFlightOperation { id, .. } => id,
         }
     }
 
     /// Get the timestamp for this chat item
     pub fn timestamp(&self) -> OffsetDateTime {
-        match self {
-            ChatItem::Message(_row) => {
-                // Convert from chrono to time crate
-                // For now, use current time as placeholder - this should be updated
-                // when Message includes a timestamp field
-                OffsetDateTime::now_utc()
+        match &self.data {
+            ChatItemData::Message(message) => {
+                OffsetDateTime::from_unix_timestamp(message.timestamp() as i64).unwrap()
             }
-            ChatItem::PendingToolCall { ts, .. } => *ts,
-            ChatItem::SlashInput { ts, .. } => *ts,
-            ChatItem::CoreCmdResponse { ts, .. } => *ts,
-            ChatItem::SystemNotice { ts, .. } => *ts,
-            ChatItem::TuiCommandResponse { ts, .. } => *ts,
-            ChatItem::InFlightOperation { ts, .. } => *ts,
+            ChatItemData::PendingToolCall { ts, .. } => *ts,
+            ChatItemData::SlashInput { ts, .. } => *ts,
+            ChatItemData::CoreCmdResponse { ts, .. } => *ts,
+            ChatItemData::SystemNotice { ts, .. } => *ts,
+            ChatItemData::TuiCommandResponse { ts, .. } => *ts,
+            ChatItemData::InFlightOperation { ts, .. } => *ts,
         }
     }
 
-    /// Check if this is a conversation message
-    pub fn is_message(&self) -> bool {
-        matches!(self, ChatItem::Message(_))
-    }
-
-    /// Check if this is a meta row (not part of conversation)
-    pub fn is_meta(&self) -> bool {
-        !self.is_message()
+    /// Get the parent message ID for filtering
+    pub fn parent_message_id(&self) -> Option<&str> {
+        match &self.data {
+            ChatItemData::Message(msg) => msg.parent_message_id(),
+            _ => None,
+        }
     }
 }
 

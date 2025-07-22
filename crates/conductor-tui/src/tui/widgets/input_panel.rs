@@ -13,7 +13,7 @@ use conductor_tools::schema::ToolCall;
 
 use crate::tui::InputMode;
 use crate::tui::get_spinner_char;
-use crate::tui::model::ChatItem;
+use crate::tui::model::ChatItemData;
 use crate::tui::state::file_cache::FileCache;
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderMode};
@@ -318,10 +318,13 @@ impl InputPanelState {
     }
 
     /// Populate edit selection messages from chat store
-    pub fn populate_edit_selection<'a>(&mut self, chat_items: impl Iterator<Item = &'a ChatItem>) {
+    pub fn populate_edit_selection<'a>(
+        &mut self,
+        chat_items: impl Iterator<Item = &'a ChatItemData>,
+    ) {
         self.edit_selection_messages = chat_items
             .filter_map(|item| {
-                if let ChatItem::Message(row) = item {
+                if let ChatItemData::Message(row) = item {
                     if let Message::User { content, .. } = &row {
                         // Extract text content from user blocks
                         let text = content
@@ -868,7 +871,7 @@ impl StatefulWidget for InputPanel<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::model::ChatItem;
+    use crate::tui::model::ChatItemData;
 
     #[test]
     fn test_input_panel_state_default() {
@@ -976,7 +979,7 @@ mod tests {
 
         // Create test chat items
         let chat_items = vec![
-            ChatItem::Message(Message::User {
+            ChatItemData::Message(Message::User {
                 id: "user1".to_string(),
                 content: vec![UserContent::Text {
                     text: "First user message".to_string(),
@@ -984,13 +987,13 @@ mod tests {
                 timestamp: 123,
                 parent_message_id: None,
             }),
-            ChatItem::Message(Message::Assistant {
+            ChatItemData::Message(Message::Assistant {
                 id: "assistant1".to_string(),
                 content: vec![],
                 timestamp: 124,
                 parent_message_id: None,
             }),
-            ChatItem::Message(Message::User {
+            ChatItemData::Message(Message::User {
                 id: "user2".to_string(),
                 content: vec![UserContent::Text {
                     text: "Second user message".to_string(),
