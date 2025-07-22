@@ -1533,7 +1533,6 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             // Clear the context
             debug!(target: "handle_task_outcome", "Clearing OpContext for completed standard operation.");
             app.current_op_context = None;
-            app.emit_event(AppEvent::ProcessingCompleted);
         }
         TaskOutcome::DispatchAgentResult { result } => {
             info!(target: "handle_task_outcome", "Dispatch agent operation task completed.");
@@ -1560,7 +1559,6 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
             // Clear context and stop thinking immediately for dispatch operations
             debug!(target: "handle_task_outcome", "Clearing OpContext and signaling ProcessingCompleted for dispatch operation.");
             app.current_op_context = None;
-            app.emit_event(AppEvent::ProcessingCompleted);
         }
         TaskOutcome::BashCommandComplete {
             op_id,
