@@ -1,6 +1,6 @@
 use conductor_core::api::ApiError;
 use conductor_core::api::{Client, Model};
-use conductor_core::app::conversation::{AssistantContent, Message, UserContent};
+use conductor_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 use conductor_core::test_utils;
 use conductor_tools::result::{ExternalResult, ToolResult};
 use conductor_tools::{InputSchema, ToolCall, ToolSchema as Tool};
@@ -30,10 +30,12 @@ async fn test_api_basic() {
 
     // Create the simple message once
     let timestamp = Message::current_timestamp();
-    let messages = vec![Message::User {
-        content: vec![UserContent::Text {
-            text: "What is 2+2?".to_string(),
-        }],
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What is 2+2?".to_string(),
+            }],
+        },
         timestamp,
         id: Message::generate_id("user", timestamp),
         parent_message_id: None,
@@ -152,12 +154,14 @@ async fn test_api_with_tools() {
 
             // Create a message that will use a tool
             let timestamp = Message::current_timestamp();
-            let messages = vec![Message::User {
-                content: vec![UserContent::Text {
-                    text: format!(
-                        "Please list the files in {pwd_display} using the LS tool" // Use cloned path string
-                    ),
-                }],
+            let messages = vec![Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: format!(
+                            "Please list the files in {pwd_display} using the LS tool" // Use cloned path string
+                        ),
+                    }],
+                },
                 timestamp,
                 id: Message::generate_id("user", timestamp),
                 parent_message_id: None,
@@ -290,41 +294,50 @@ async fn test_api_with_tool_response() {
             let ts2 = ts1 + 1;
             let ts3 = ts2 + 1;
             let messages = vec![
-                Message::User {
-                    content: vec![UserContent::Text {
-                        text: "Please list the files in the current directory using the LS tool"
-                            .to_string(),
-                    }],
+                Message {
+                    data: MessageData::User {
+                        content: vec![UserContent::Text {
+                            text:
+                                "Please list the files in the current directory using the LS tool"
+                                    .to_string(),
+                        }],
+                    },
                     timestamp: ts1,
                     id: Message::generate_id("user", ts1),
                     parent_message_id: None,
                 },
-                Message::Assistant {
-                    content: vec![AssistantContent::ToolCall {
-                        tool_call: ToolCall {
-                            id: tool_use_id.clone(),
-                            name: "ls".to_string(),
-                            parameters: serde_json::json!({ "path": "." }),
-                        },
-                    }],
+                Message {
+                    data: MessageData::Assistant {
+                        content: vec![AssistantContent::ToolCall {
+                            tool_call: ToolCall {
+                                id: tool_use_id.clone(),
+                                name: "ls".to_string(),
+                                parameters: serde_json::json!({ "path": "." }),
+                            },
+                        }],
+                    },
                     timestamp: ts2,
                     id: Message::generate_id("assistant", ts2),
                     parent_message_id: Some(Message::generate_id("user", ts1)),
                 },
-                Message::Tool {
-                    tool_use_id: tool_use_id.clone(),
-                    result: ToolResult::External(ExternalResult {
-                        tool_name: "ls".to_string(),
-                        payload: "foo.txt, bar.rs".to_string(),
-                    }),
+                Message {
+                    data: MessageData::Tool {
+                        tool_use_id: tool_use_id.clone(),
+                        result: ToolResult::External(ExternalResult {
+                            tool_name: "ls".to_string(),
+                            payload: "foo.txt, bar.rs".to_string(),
+                        }),
+                    },
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
                     parent_message_id: Some(Message::generate_id("assistant", ts2)),
                 },
-                Message::User {
-                    content: vec![UserContent::Text {
-                        text: "What was the name of the rust file?".to_string(),
-                    }],
+                Message {
+                    data: MessageData::User {
+                        content: vec![UserContent::Text {
+                            text: "What was the name of the rust file?".to_string(),
+                        }],
+                    },
                     timestamp: ts3 + 1,
                     id: Message::generate_id("user", ts3 + 1),
                     parent_message_id: Some(Message::generate_id("tool", ts3)),
@@ -402,10 +415,12 @@ async fn test_gemini_system_instructions() {
     let client = Client::new_with_provider(provider);
 
     let timestamp = Message::current_timestamp();
-    let messages = vec![Message::User {
-        content: vec![UserContent::Text {
-            text: "What's your name?".to_string(),
-        }],
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What's your name?".to_string(),
+            }],
+        },
         timestamp,
         id: Message::generate_id("user", timestamp),
         parent_message_id: None,
@@ -451,41 +466,49 @@ async fn test_gemini_api_tool_result_error() {
     let ts2 = ts1 + 1;
     let ts3 = ts2 + 1;
     let messages = vec![
-        Message::User {
-            content: vec![UserContent::Text {
-                text: "Please list the files in the current directory using the LS tool"
-                    .to_string(),
-            }],
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Please list the files in the current directory using the LS tool"
+                        .to_string(),
+                }],
+            },
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
             parent_message_id: None,
         },
-        Message::Assistant {
-            content: vec![AssistantContent::ToolCall {
-                tool_call: ToolCall {
-                    id: "tool-use-id-error".to_string(),
-                    name: "ls".to_string(),
-                    parameters: serde_json::json!({ "path": "." }),
-                },
-            }],
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: "tool-use-id-error".to_string(),
+                        name: "ls".to_string(),
+                        parameters: serde_json::json!({ "path": "." }),
+                    },
+                }],
+            },
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
             parent_message_id: Some(Message::generate_id("user", ts1)),
         },
-        Message::Tool {
-            tool_use_id: "tool-use-id-error".to_string(),
-            result: ToolResult::Error(conductor_tools::ToolError::Execution {
-                tool_name: "ls".to_string(),
-                message: "Error executing command".to_string(),
-            }),
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: "tool-use-id-error".to_string(),
+                result: ToolResult::Error(conductor_tools::ToolError::Execution {
+                    tool_name: "ls".to_string(),
+                    message: "Error executing command".to_string(),
+                }),
+            },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
-        Message::User {
-            content: vec![UserContent::Text {
-                text: "Okay, thank you.".to_string(),
-            }],
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Okay, thank you.".to_string(),
+                }],
+            },
             timestamp: ts3 + 1,
             id: Message::generate_id("user", ts3 + 1),
             parent_message_id: Some(Message::generate_id("tool", ts3)),
@@ -556,10 +579,12 @@ async fn test_gemini_api_complex_tool_schema() {
     };
 
     let timestamp = Message::current_timestamp();
-    let messages = vec![Message::User {
-        content: vec![UserContent::Text {
-            text: "What is the weather today?".to_string(), // A simple message, doesn't need to invoke the tool
-        }],
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What is the weather today?".to_string(), // A simple message, doesn't need to invoke the tool
+            }],
+        },
         timestamp,
         id: Message::generate_id("user", timestamp),
         parent_message_id: None,
@@ -606,40 +631,48 @@ async fn test_gemini_api_tool_result_json() {
     let ts2 = ts1 + 1;
     let ts3 = ts2 + 1;
     let messages = vec![
-        Message::User {
-            content: vec![UserContent::Text {
-                text: "Run the file listing tool.".to_string(),
-            }],
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Run the file listing tool.".to_string(),
+                }],
+            },
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
             parent_message_id: None,
         },
-        Message::Assistant {
-            content: vec![AssistantContent::ToolCall {
-                tool_call: ToolCall {
-                    id: "tool-use-id-json".to_string(),
-                    name: "list_files".to_string(),
-                    parameters: serde_json::json!({}), // Empty input for simplicity
-                },
-            }],
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: "tool-use-id-json".to_string(),
+                        name: "list_files".to_string(),
+                        parameters: serde_json::json!({}), // Empty input for simplicity
+                    },
+                }],
+            },
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
             parent_message_id: Some(Message::generate_id("user", ts1)),
         },
-        Message::Tool {
-            tool_use_id: "tool-use-id-json".to_string(),
-            result: ToolResult::External(ExternalResult {
-                tool_name: "list_files".to_string(),
-                payload: json_result_string,
-            }),
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: "tool-use-id-json".to_string(),
+                result: ToolResult::External(ExternalResult {
+                    tool_name: "list_files".to_string(),
+                    payload: json_result_string,
+                }),
+            },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
-        Message::User {
-            content: vec![UserContent::Text {
-                text: "Thanks for the list.".to_string(),
-            }],
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Thanks for the list.".to_string(),
+                }],
+            },
             timestamp: ts3 + 1,
             id: Message::generate_id("user", ts3 + 1),
             parent_message_id: Some(Message::generate_id("tool", ts3)),
@@ -676,61 +709,71 @@ async fn test_gemini_api_with_multiple_tool_responses() {
     let ts3 = ts2 + 1;
     let ts4 = ts3 + 1;
     let messages = vec![
-        Message::User {
-            content: vec![UserContent::Text {
-                text: "Please list files in '.' and check the weather in 'SF'".to_string(),
-            }],
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Please list files in '.' and check the weather in 'SF'".to_string(),
+                }],
+            },
             timestamp: ts1,
             id: Message::generate_id("user", ts1),
             parent_message_id: None,
         },
         // Assistant makes two tool calls
-        Message::Assistant {
-            content: vec![
-                AssistantContent::ToolCall {
-                    tool_call: ToolCall {
-                        id: "tool-use-id-1".to_string(),
-                        name: "ls".to_string(),
-                        parameters: serde_json::json!({ "path": "." }),
+        Message {
+            data: MessageData::Assistant {
+                content: vec![
+                    AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            id: "tool-use-id-1".to_string(),
+                            name: "ls".to_string(),
+                            parameters: serde_json::json!({ "path": "." }),
+                        },
                     },
-                },
-                AssistantContent::ToolCall {
-                    tool_call: ToolCall {
-                        id: "tool-use-id-2".to_string(),
-                        name: "get_weather".to_string(),
-                        parameters: serde_json::json!({ "location": "SF" }),
+                    AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            id: "tool-use-id-2".to_string(),
+                            name: "get_weather".to_string(),
+                            parameters: serde_json::json!({ "location": "SF" }),
+                        },
                     },
-                },
-            ],
+                ],
+            },
             timestamp: ts2,
             id: Message::generate_id("assistant", ts2),
             parent_message_id: Some(Message::generate_id("user", ts1)),
         },
         // Provide results for both tool calls
-        Message::Tool {
-            tool_use_id: "tool-use-id-1".to_string(),
-            result: ToolResult::External(ExternalResult {
-                tool_name: "ls".to_string(),
-                payload: "file1.rs, file2.toml".to_string(),
-            }),
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: "tool-use-id-1".to_string(),
+                result: ToolResult::External(ExternalResult {
+                    tool_name: "ls".to_string(),
+                    payload: "file1.rs, file2.toml".to_string(),
+                }),
+            },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
-        Message::Tool {
-            tool_use_id: "tool-use-id-2".to_string(),
-            result: ToolResult::External(ExternalResult {
-                tool_name: "get_weather".to_string(),
-                payload: "Sunny, 20C".to_string(),
-            }),
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: "tool-use-id-2".to_string(),
+                result: ToolResult::External(ExternalResult {
+                    tool_name: "get_weather".to_string(),
+                    payload: "Sunny, 20C".to_string(),
+                }),
+            },
             timestamp: ts4,
             id: Message::generate_id("tool", ts4),
             parent_message_id: Some(Message::generate_id("assistant", ts2)),
         },
-        Message::User {
-            content: vec![UserContent::Text {
-                text: "Got it, thanks!".to_string(),
-            }],
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Got it, thanks!".to_string(),
+                }],
+            },
             timestamp: ts4 + 1,
             id: Message::generate_id("user", ts4 + 1),
             parent_message_id: Some(Message::generate_id("tool", ts4)),
@@ -807,44 +850,52 @@ async fn test_api_with_cancelled_tool_execution() {
             let ts3 = ts2 + 1;
             let ts4 = ts3 + 1;
             let messages = vec![
-                Message::User {
-                    content: vec![UserContent::Text {
-                        text: "Please list the files in the current directory".to_string(),
-                    }],
+                Message {
+                    data: MessageData::User {
+                        content: vec![UserContent::Text {
+                            text: "Please list the files in the current directory".to_string(),
+                        }],
+                    },
                     timestamp: ts1,
                     id: Message::generate_id("user", ts1),
                     parent_message_id: None,
                 },
                 // Assistant requests a tool call
-                Message::Assistant {
-                    content: vec![AssistantContent::ToolCall {
-                        tool_call: ToolCall {
-                            id: tool_call_id.clone(),
-                            name: "ls".to_string(),
-                            parameters: serde_json::json!({ "path": "." }),
-                        },
-                    }],
+                Message {
+                    data: MessageData::Assistant {
+                        content: vec![AssistantContent::ToolCall {
+                            tool_call: ToolCall {
+                                id: tool_call_id.clone(),
+                                name: "ls".to_string(),
+                                parameters: serde_json::json!({ "path": "." }),
+                            },
+                        }],
+                    },
                     timestamp: ts2,
                     id: Message::generate_id("assistant", ts2),
                     parent_message_id: Some(Message::generate_id("user", ts1)),
                 },
                 // Tool execution was cancelled - this is what inject_cancelled_tool_results would add
-                Message::Tool {
-                    tool_use_id: tool_call_id.clone(),
-                    result: ToolResult::External(ExternalResult {
-                        tool_name: "ls".to_string(),
-                        payload: "Tool execution was cancelled by user before completion."
-                            .to_string(),
-                    }),
+                Message {
+                    data: MessageData::Tool {
+                        tool_use_id: tool_call_id.clone(),
+                        result: ToolResult::External(ExternalResult {
+                            tool_name: "ls".to_string(),
+                            payload: "Tool execution was cancelled by user before completion."
+                                .to_string(),
+                        }),
+                    },
                     timestamp: ts3,
                     id: Message::generate_id("tool", ts3),
                     parent_message_id: Some(Message::generate_id("assistant", ts2)),
                 },
                 // User continues the conversation
-                Message::User {
-                    content: vec![UserContent::Text {
-                        text: "No problem, can you tell me about Rust instead?".to_string(),
-                    }],
+                Message {
+                    data: MessageData::User {
+                        content: vec![UserContent::Text {
+                            text: "No problem, can you tell me about Rust instead?".to_string(),
+                        }],
+                    },
                     timestamp: ts4,
                     id: Message::generate_id("user", ts4),
                     parent_message_id: Some(Message::generate_id("tool", ts3)),

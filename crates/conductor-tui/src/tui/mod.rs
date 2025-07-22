@@ -13,7 +13,7 @@ use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel};
 use crate::tui::theme::Theme;
 use conductor_core::api::Model;
-use conductor_core::app::conversation::{AssistantContent, Message};
+use conductor_core::app::conversation::{AssistantContent, Message, MessageData};
 use conductor_core::app::io::{AppCommandSink, AppEventSource};
 use conductor_core::app::{AppCommand, AppEvent};
 use conductor_tools::schema::ToolCall;
@@ -312,7 +312,7 @@ impl Tui {
 
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
-            if let conductor_core::app::Message::Tool { tool_use_id, .. } = message {
+            if let conductor_core::app::MessageData::Tool { tool_use_id, .. } = &message.data {
                 debug!(
                     target: "tui.restore",
                     "Found Tool message with tool_use_id={}",
@@ -326,11 +326,11 @@ impl Tui {
         // The rest of the tool registry population code remains the same
         // Extract tool calls from assistant messages
         for message in &messages {
-            if let conductor_core::app::Message::Assistant { content, id, .. } = message {
+            if let conductor_core::app::MessageData::Assistant { content, .. } = &message.data {
                 debug!(
                     target: "tui.restore",
                     "Processing Assistant message id={}",
-                    id
+                    message.id()
                 );
                 for block in content {
                     if let AssistantContent::ToolCall { tool_call } = block {
@@ -349,7 +349,7 @@ impl Tui {
 
         // Map tool results to their calls
         for message in &messages {
-            if let conductor_core::app::Message::Tool { tool_use_id, .. } = message {
+            if let conductor_core::app::MessageData::Tool { tool_use_id, .. } = &message.data {
                 debug!(
                     target: "tui.restore",
                     "Updating registry with Tool result for id={}",
@@ -1233,32 +1233,32 @@ impl Tui {
     fn enter_edit_mode(&mut self, message_id: &str) {
         // Find the message in the store
         if let Some(item) = self.chat_store.get_by_id(&message_id.to_string()) {
-            if let crate::tui::model::ChatItemData::Message(Message::User { content, .. }) =
-                &item.data
-            {
-                // Extract text content from user blocks
-                let text = content
-                    .iter()
-                    .filter_map(|block| match block {
-                        conductor_core::app::conversation::UserContent::Text { text } => {
-                            Some(text.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+            if let crate::tui::model::ChatItemData::Message(message) = &item.data {
+                if let MessageData::User { content, .. } = &message.data {
+                    // Extract text content from user blocks
+                    let text = content
+                        .iter()
+                        .filter_map(|block| match block {
+                            conductor_core::app::conversation::UserContent::Text { text } => {
+                                Some(text.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
 
-                // Set up textarea with the message content
-                self.input_panel_state
-                    .set_content_from_lines(text.lines().collect::<Vec<_>>());
-                // Switch to appropriate mode based on editing preference
-                self.input_mode = match self.preferences.ui.editing_mode {
-                    conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
-                    conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
-                };
+                    // Set up textarea with the message content
+                    self.input_panel_state
+                        .set_content_from_lines(text.lines().collect::<Vec<_>>());
+                    // Switch to appropriate mode based on editing preference
+                    self.input_mode = match self.preferences.ui.editing_mode {
+                        conductor_core::preferences::EditingMode::Simple => InputMode::Simple,
+                        conductor_core::preferences::EditingMode::Vim => InputMode::VimInsert,
+                    };
 
-                // Store the message ID we're editing
-                self.editing_message_id = Some(message_id.to_string());
+                    // Store the message ID we're editing
+                    self.editing_message_id = Some(message_id.to_string());
+                }
             }
         }
     }
@@ -1522,7 +1522,7 @@ mod tests {
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
     use conductor_core::app::AppEvent;
-    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::conversation::{AssistantContent, Message, MessageData};
     use conductor_core::app::io::{AppCommandSink, AppEventSource};
     use conductor_core::error::Result;
     use serde_json::json;
@@ -1583,26 +1583,30 @@ mod tests {
             }),
         };
 
-        let assistant_msg = Message::Assistant {
+        let assistant_msg = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: tool_call.clone(),
+                }],
+            },
             id: "msg_assistant".to_string(),
-            content: vec![AssistantContent::ToolCall {
-                tool_call: tool_call.clone(),
-            }],
             timestamp: 1234567890,
             parent_message_id: None,
         };
 
-        let tool_msg = Message::Tool {
+        let tool_msg = Message {
+            data: MessageData::Tool {
+                tool_use_id: tool_id.clone(),
+                result: conductor_tools::ToolResult::FileContent(
+                    conductor_tools::result::FileContentResult {
+                        file_path: "/test/file.rs".to_string(),
+                        content: "file content here".to_string(),
+                        line_count: 1,
+                        truncated: false,
+                    },
+                ),
+            },
             id: "msg_tool".to_string(),
-            tool_use_id: tool_id.clone(),
-            result: conductor_tools::ToolResult::FileContent(
-                conductor_tools::result::FileContentResult {
-                    file_path: "/test/file.rs".to_string(),
-                    content: "file content here".to_string(),
-                    line_count: 1,
-                    truncated: false,
-                },
-            ),
             timestamp: 1234567891,
             parent_message_id: Some("msg_assistant".to_string()),
         };
@@ -1646,26 +1650,30 @@ mod tests {
         };
 
         // Tool result comes first (unusual but possible)
-        let tool_msg = Message::Tool {
+        let tool_msg = Message {
+            data: MessageData::Tool {
+                tool_use_id: tool_id.clone(),
+                result: conductor_tools::ToolResult::FileContent(
+                    conductor_tools::result::FileContentResult {
+                        file_path: "/another/file.rs".to_string(),
+                        content: "file content".to_string(),
+                        line_count: 1,
+                        truncated: false,
+                    },
+                ),
+            },
             id: "msg_tool".to_string(),
-            tool_use_id: tool_id.clone(),
-            result: conductor_tools::ToolResult::FileContent(
-                conductor_tools::result::FileContentResult {
-                    file_path: "/another/file.rs".to_string(),
-                    content: "file content".to_string(),
-                    line_count: 1,
-                    truncated: false,
-                },
-            ),
             timestamp: 1234567890,
             parent_message_id: None,
         };
 
-        let assistant_msg = Message::Assistant {
+        let assistant_msg = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: tool_call.clone(),
+                }],
+            },
             id: "msg_456".to_string(),
-            content: vec![AssistantContent::ToolCall {
-                tool_call: tool_call.clone(),
-            }],
             timestamp: 1234567891,
             parent_message_id: None,
         };

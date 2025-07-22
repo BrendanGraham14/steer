@@ -6,7 +6,7 @@
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::chat_list_state::ViewMode;
 use crate::tui::widgets::chat_widgets::message_widget::MessageWidget;
-use conductor_core::app::conversation::{AssistantContent, Message};
+use conductor_core::app::conversation::{AssistantContent, Message, MessageData};
 use conductor_tools::{ToolCall, ToolResult};
 use ratatui::text::{Line, Span};
 
@@ -108,11 +108,11 @@ pub enum ChatBlock {
 impl ChatBlock {
     /// Create ChatBlocks from a MessageRow, handling coupled tool calls and results
     pub fn from_message_row(message: &Message, all_messages: &[&Message]) -> Vec<ChatBlock> {
-        match message {
-            Message::User { .. } => {
+        match &message.data {
+            MessageData::User { .. } => {
                 vec![ChatBlock::Message(message.clone())]
             }
-            Message::Assistant { content, .. } => {
+            MessageData::Assistant { content, .. } => {
                 let mut blocks = vec![];
                 let mut has_text = false;
                 let mut tool_calls = vec![];
@@ -143,11 +143,11 @@ impl ChatBlock {
                 for tool_call in tool_calls {
                     // Find the corresponding tool result
                     let result = all_messages.iter().find_map(|msg_row| {
-                        if let Message::Tool {
+                        if let MessageData::Tool {
                             tool_use_id,
                             result,
                             ..
-                        } = &msg_row
+                        } = &msg_row.data
                         {
                             if tool_use_id == &tool_call.id {
                                 Some(result.clone())
@@ -167,14 +167,14 @@ impl ChatBlock {
 
                 blocks
             }
-            Message::Tool {
+            MessageData::Tool {
                 tool_use_id,
                 result,
                 ..
             } => {
                 // Check if this tool result has a corresponding tool call in the assistant messages
                 let has_corresponding_call = all_messages.iter().any(|msg_row| {
-                    if let Message::Assistant { content, .. } = &msg_row {
+                    if let MessageData::Assistant { content, .. } = &msg_row.data {
                         content.iter().any(|block| {
                             if let AssistantContent::ToolCall { tool_call } = block {
                                 tool_call.id == *tool_use_id
@@ -240,10 +240,12 @@ mod tests {
 
     #[test]
     fn test_chat_block_from_message_row() {
-        let user_msg = Message::User {
-            content: vec![UserContent::Text {
-                text: "Test".to_string(),
-            }],
+        let user_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Test".to_string(),
+                }],
+            },
             timestamp: 0,
             id: "test-id".to_string(),
             parent_message_id: None,
@@ -261,10 +263,12 @@ mod tests {
     #[test]
     fn test_dynamic_chat_widget() {
         let theme = Theme::default();
-        let user_msg = Message::User {
-            content: vec![UserContent::Text {
-                text: "Test message".to_string(),
-            }],
+        let user_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Test message".to_string(),
+                }],
+            },
             timestamp: 0,
             id: "test-id".to_string(),
             parent_message_id: None,

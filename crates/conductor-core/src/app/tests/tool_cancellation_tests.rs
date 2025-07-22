@@ -4,7 +4,7 @@ mod tests {
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
         App, ToolExecutor,
-        conversation::{AssistantContent, Message},
+        conversation::{AssistantContent, Message, MessageData},
     };
     use crate::test_utils;
     use crate::tools::{BackendRegistry, LocalBackend};
@@ -70,15 +70,17 @@ mod tests {
             parameters: serde_json::json!({"param": "value"}),
         };
 
-        let assistant_msg = Message::Assistant {
-            content: vec![
-                AssistantContent::Text {
-                    text: "I'll use a tool to help with that.".to_string(),
-                },
-                AssistantContent::ToolCall {
-                    tool_call: tool_call.clone(),
-                },
-            ],
+        let assistant_msg = Message {
+            data: MessageData::Assistant {
+                content: vec![
+                    AssistantContent::Text {
+                        text: "I'll use a tool to help with that.".to_string(),
+                    },
+                    AssistantContent::ToolCall {
+                        tool_call: tool_call.clone(),
+                    },
+                ],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
             parent_message_id: None,
@@ -108,12 +110,12 @@ mod tests {
 
             // Check the tool result message
             let tool_result_msg = &messages[1];
-            assert!(matches!(tool_result_msg, Message::Tool { .. }));
-            if let Message::Tool {
+            assert!(matches!(tool_result_msg.data, MessageData::Tool { .. }));
+            if let MessageData::Tool {
                 tool_use_id,
                 result,
                 ..
-            } = tool_result_msg
+            } = &tool_result_msg.data
             {
                 assert_eq!(tool_use_id, "test_tool_123");
                 assert!(matches!(result, ToolResult::Error(ToolError::Cancelled(_))));
@@ -157,10 +159,12 @@ mod tests {
             parameters: serde_json::json!({"param": "value"}),
         };
 
-        let assistant_msg = Message::Assistant {
-            content: vec![AssistantContent::ToolCall {
-                tool_call: tool_call.clone(),
-            }],
+        let assistant_msg = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: tool_call.clone(),
+                }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
             parent_message_id: None,
@@ -169,12 +173,14 @@ mod tests {
         app.add_message(assistant_msg).await;
 
         // Add a tool result for this tool call
-        let tool_result_msg = Message::Tool {
-            tool_use_id: "complete_tool_456".to_string(),
-            result: ToolResult::External(conductor_tools::result::ExternalResult {
-                tool_name: "test_tool".to_string(),
-                payload: "Tool completed successfully".to_string(),
-            }),
+        let tool_result_msg = Message {
+            data: MessageData::Tool {
+                tool_use_id: "complete_tool_456".to_string(),
+                result: ToolResult::External(conductor_tools::result::ExternalResult {
+                    tool_name: "test_tool".to_string(),
+                    payload: "Tool completed successfully".to_string(),
+                }),
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("tool", Message::current_timestamp()),
             parent_message_id: None,
@@ -235,18 +241,20 @@ mod tests {
             parameters: serde_json::json!({"path": "/some/file"}),
         };
 
-        let assistant_msg = Message::Assistant {
-            content: vec![
-                AssistantContent::Text {
-                    text: "I'll use multiple tools.".to_string(),
-                },
-                AssistantContent::ToolCall {
-                    tool_call: tool_call_1.clone(),
-                },
-                AssistantContent::ToolCall {
-                    tool_call: tool_call_2.clone(),
-                },
-            ],
+        let assistant_msg = Message {
+            data: MessageData::Assistant {
+                content: vec![
+                    AssistantContent::Text {
+                        text: "I'll use multiple tools.".to_string(),
+                    },
+                    AssistantContent::ToolCall {
+                        tool_call: tool_call_1.clone(),
+                    },
+                    AssistantContent::ToolCall {
+                        tool_call: tool_call_2.clone(),
+                    },
+                ],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("assistant", Message::current_timestamp()),
             parent_message_id: None,
@@ -270,11 +278,11 @@ mod tests {
             let mut found_tool_2 = false;
 
             for message in &messages[1..] {
-                if let Message::Tool {
+                if let MessageData::Tool {
                     tool_use_id,
                     result,
                     ..
-                } = message
+                } = &message.data
                 {
                     if tool_use_id == "tool_1" {
                         found_tool_1 = true;

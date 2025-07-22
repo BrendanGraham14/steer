@@ -8,6 +8,7 @@ use crate::tui::{
         ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, Gutter, RoleGlyph, ViewMode,
     },
 };
+use conductor_core::app::MessageData;
 use conductor_core::app::conversation::{
     AssistantContent, CommandResponse, CompactResult, Message,
 };
@@ -227,13 +228,15 @@ impl ChatViewport {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
         raw.iter().for_each(|item| {
-            if let ChatItemData::Message(Message::Tool {
-                tool_use_id,
-                result,
-                ..
-            }) = &item.data
-            {
-                tool_results.insert(tool_use_id.clone(), result.clone());
+            if let ChatItemData::Message(message) = &item.data {
+                if let MessageData::Tool {
+                    tool_use_id,
+                    result,
+                    ..
+                } = &message.data
+                {
+                    tool_results.insert(tool_use_id.clone(), result.clone());
+                }
             }
         });
 
@@ -242,8 +245,8 @@ impl ChatViewport {
         for item in raw {
             match &item.data {
                 ChatItemData::Message(row) => {
-                    match &row {
-                        Message::Assistant { content, .. } => {
+                    match &row.data {
+                        MessageData::Assistant { content, .. } => {
                             // Check if there's any text content
                             let has_text_content = content.iter().any(|block| match block {
                                 AssistantContent::Text { text } => !text.trim().is_empty(),
@@ -276,24 +279,14 @@ impl ChatViewport {
                                 }
                             }
                         }
-                        Message::Tool { .. } => {
+                        MessageData::Tool { .. } => {
                             // Skip - they should always be coupled with a tool call
                         }
-                        Message::User {
-                            content,
-                            timestamp,
-                            id,
-                            parent_message_id,
-                        } => {
+                        MessageData::User { .. } => {
                             // User messages and others
                             flattened.push(FlattenedItem::MessageText {
-                                message: Message::User {
-                                    content: content.clone(),
-                                    timestamp: *timestamp,
-                                    id: id.clone(),
-                                    parent_message_id: parent_message_id.clone(),
-                                },
-                                id: id.clone(),
+                                message: row.clone(),
+                                id: row.id().to_string(),
                             });
                         }
                     }
@@ -568,10 +561,10 @@ fn create_widget_for_flattened_item(
             let chat_block = ChatBlock::Message(message.clone());
 
             // Determine role glyph from message type
-            let role = match message {
-                Message::User { .. } => RoleGlyph::User,
-                Message::Assistant { .. } => RoleGlyph::Assistant,
-                Message::Tool { .. } => RoleGlyph::Tool,
+            let role = match &message.data {
+                MessageData::User { .. } => RoleGlyph::User,
+                MessageData::Assistant { .. } => RoleGlyph::Assistant,
+                MessageData::Tool { .. } => RoleGlyph::Tool,
             };
 
             // Create gutter widget
@@ -719,17 +712,19 @@ fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore
 mod tests {
     use super::*;
     use crate::tui::model::NoticeLevel;
-    use conductor_core::app::conversation::{Message, UserContent};
+    use conductor_core::app::conversation::{Message, MessageData, UserContent};
     use ratatui::{Terminal, backend::TestBackend};
     use std::time::SystemTime;
 
     fn create_test_message(content: &str, id: &str) -> ChatItem {
         ChatItem {
             parent_chat_item_id: None,
-            data: ChatItemData::Message(Message::User {
-                content: vec![UserContent::Text {
-                    text: content.to_string(),
-                }],
+            data: ChatItemData::Message(Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: content.to_string(),
+                    }],
+                },
                 timestamp: SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap()
@@ -1100,34 +1095,38 @@ mod tests {
         let mut store = create_test_chat_store();
 
         // Create a chain: root -> A -> B -> C
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Root message".to_string(),
+                }],
+            },
             id: "root".to_string(),
-            content: vec![UserContent::Text {
-                text: "Root message".to_string(),
-            }],
             timestamp: 1000,
             parent_message_id: None,
         });
 
-        store.add_message(Message::Assistant {
+        store.add_message(Message {
+            data: MessageData::Assistant { content: vec![] },
             id: "A".to_string(),
-            content: vec![],
             timestamp: 1001,
             parent_message_id: Some("root".to_string()),
         });
 
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message B".to_string(),
+                }],
+            },
             id: "B".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message B".to_string(),
-            }],
             timestamp: 1002,
             parent_message_id: Some("A".to_string()),
         });
 
-        store.add_message(Message::Assistant {
+        store.add_message(Message {
+            data: MessageData::Assistant { content: vec![] },
             id: "C".to_string(),
-            content: vec![],
             timestamp: 1003,
             parent_message_id: Some("B".to_string()),
         });
@@ -1146,11 +1145,13 @@ mod tests {
     fn test_build_lineage_set_single_message() {
         let mut store = create_test_chat_store();
 
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Single message".to_string(),
+                }],
+            },
             id: "single".to_string(),
-            content: vec![UserContent::Text {
-                text: "Single message".to_string(),
-            }],
             timestamp: 1000,
             parent_message_id: None,
         });
@@ -1176,27 +1177,31 @@ mod tests {
         let mut store = create_test_chat_store();
 
         // Create messages
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message 1".to_string(),
+                }],
+            },
             id: "msg1".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message 1".to_string(),
-            }],
             timestamp: 1000,
             parent_message_id: None,
         });
 
-        store.add_message(Message::Assistant {
+        store.add_message(Message {
+            data: MessageData::Assistant { content: vec![] },
             id: "msg2".to_string(),
-            content: vec![],
             timestamp: 1001,
             parent_message_id: Some("msg1".to_string()),
         });
 
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message 3".to_string(),
+                }],
+            },
             id: "msg3".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message 3".to_string(),
-            }],
             timestamp: 1002,
             parent_message_id: Some("msg1".to_string()), // Branch from msg1
         });
@@ -1241,20 +1246,24 @@ mod tests {
         let mut store = create_test_chat_store();
 
         // Create messages
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message 1".to_string(),
+                }],
+            },
             id: "msg1".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message 1".to_string(),
-            }],
             timestamp: 1000,
             parent_message_id: None,
         });
 
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message 2".to_string(),
+                }],
+            },
             id: "msg2".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message 2".to_string(),
-            }],
             timestamp: 1001,
             parent_message_id: None,
         });
@@ -1304,11 +1313,13 @@ mod tests {
         let mut store = create_test_chat_store();
 
         // Create a message
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message 1".to_string(),
+                }],
+            },
             id: "msg1".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message 1".to_string(),
-            }],
             timestamp: 1000,
             parent_message_id: None,
         });
@@ -1357,12 +1368,13 @@ mod tests {
     fn test_branch_filtering_integration() {
         let mut store = create_test_chat_store();
 
-        // Create root message A
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message A".to_string(),
+                }],
+            },
             id: "A".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message A".to_string(),
-            }],
             timestamp: 1000,
             parent_message_id: None,
         });
@@ -1379,10 +1391,9 @@ mod tests {
         };
         store.push(root_notice.clone());
 
-        // Create child message B (parent: A)
-        store.add_message(Message::Assistant {
+        store.add_message(Message {
+            data: MessageData::Assistant { content: vec![] },
             id: "B".to_string(),
-            content: vec![],
             timestamp: 1001,
             parent_message_id: Some("A".to_string()),
         });
@@ -1402,12 +1413,13 @@ mod tests {
         };
         store.push(tool_b.clone());
 
-        // Create branch message C (parent: A)
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Message C".to_string(),
+                }],
+            },
             id: "C".to_string(),
-            content: vec![UserContent::Text {
-                text: "Message C".to_string(),
-            }],
             timestamp: 1002,
             parent_message_id: Some("A".to_string()),
         });

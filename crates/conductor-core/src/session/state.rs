@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api::Model;
-use crate::app::Message;
+use crate::app::{Message, MessageData};
 use crate::config::LlmConfigProvider;
 use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
 use conductor_tools::tools::read_only_workspace_tools;
@@ -543,15 +543,15 @@ impl SessionState {
     fn extract_tool_calls_from_message(&self, message: &Message) -> Vec<String> {
         let mut tool_call_ids = Vec::new();
 
-        match message {
-            Message::Assistant { content, .. } => {
+        match &message.data {
+            MessageData::Assistant { content, .. } => {
                 for c in content {
                     if let crate::app::conversation::AssistantContent::ToolCall { tool_call } = c {
                         tool_call_ids.push(tool_call.id.clone());
                     }
                 }
             }
-            Message::Tool { tool_use_id, .. } => {
+            MessageData::Tool { tool_use_id, .. } => {
                 tool_call_ids.push(tool_use_id.clone());
             }
             _ => {}
@@ -746,7 +746,7 @@ impl From<&Session> for SessionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{Message, UserContent};
+    use crate::app::conversation::{Message, MessageData, UserContent};
     use conductor_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 
     #[test]
@@ -795,10 +795,12 @@ mod tests {
         assert!(state.validate().is_ok());
 
         // Add a message
-        let message = Message::User {
-            content: vec![UserContent::Text {
-                text: "Hello".to_string(),
-            }],
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
+            },
             timestamp: 123456789,
             id: "msg1".to_string(),
             parent_message_id: None,

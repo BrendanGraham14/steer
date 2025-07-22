@@ -1,5 +1,5 @@
 use crate::api::{ApiError, Client as ApiClient, Model};
-use crate::app::conversation::Message;
+use crate::app::conversation::{Message, MessageData};
 use conductor_tools::{ToolCall, ToolError, ToolSchema, result::ToolResult as ConductorToolResult};
 use std::future::Future;
 use std::sync::Arc;
@@ -125,8 +125,10 @@ impl AgentExecutor {
                 ));
             };
 
-            let full_assistant_message = Message::Assistant {
-                content: completion_response.content,
+            let full_assistant_message = Message {
+                data: MessageData::Assistant {
+                    content: completion_response.content,
+                },
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -182,9 +184,11 @@ impl AgentExecutor {
                         ));
                     };
 
-                    messages.push(Message::Tool {
-                        tool_use_id: tool_calls[i].id.clone(),
-                        result: tool_result.clone(),
+                    messages.push(Message {
+                        data: MessageData::Tool {
+                            tool_use_id: tool_calls[i].id.clone(),
+                            result: tool_result.clone(),
+                        },
                         timestamp: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .unwrap()

@@ -95,10 +95,12 @@ impl EventProcessor for ToolEventProcessor {
                 ctx.chat_store.remove_pending_tool(&id);
 
                 // Create a complete tool message
-                let tool_msg = conductor_core::app::conversation::Message::Tool {
+                let tool_msg = conductor_core::app::conversation::Message {
+                    data: conductor_core::app::conversation::MessageData::Tool {
+                        tool_use_id: id.clone(),
+                        result: result.clone(),
+                    },
                     id: crate::tui::model::generate_row_id(),
-                    tool_use_id: id.clone(),
-                    result: result.clone(),
                     timestamp: chrono::Utc::now().timestamp() as u64,
                     parent_message_id: None,
                 };
@@ -119,13 +121,15 @@ impl EventProcessor for ToolEventProcessor {
                 ctx.chat_store.remove_pending_tool(&id);
 
                 // Create a complete tool message with error
-                let tool_msg = conductor_core::app::conversation::Message::Tool {
+                let tool_msg = conductor_core::app::conversation::Message {
+                    data: conductor_core::app::conversation::MessageData::Tool {
+                        tool_use_id: id.clone(),
+                        result: ToolResult::Error(ToolError::Execution {
+                            tool_name: name.clone(),
+                            message: error.clone(),
+                        }),
+                    },
                     id: crate::tui::model::generate_row_id(),
-                    tool_use_id: id.clone(),
-                    result: ToolResult::Error(ToolError::Execution {
-                        tool_name: name.clone(),
-                        message: error.clone(),
-                    }),
                     timestamp: chrono::Utc::now().timestamp() as u64,
                     parent_message_id: None,
                 };
@@ -186,7 +190,7 @@ mod tests {
     use crate::tui::widgets::ChatListState;
     use async_trait::async_trait;
     use conductor_core::app::AppCommand;
-    use conductor_core::app::conversation::{AssistantContent, Message};
+    use conductor_core::app::conversation::{AssistantContent, Message, MessageData};
     use conductor_core::app::io::AppCommandSink;
     use conductor_core::error::Result;
     use conductor_tools::schema::ToolCall;
@@ -258,11 +262,13 @@ mod tests {
         };
 
         // 1. Assistant message first - populates registry with full params
-        let assistant = Message::Assistant {
+        let assistant = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: full_call.clone(),
+                }],
+            },
             id: "a1".to_string(),
-            content: vec![AssistantContent::ToolCall {
-                tool_call: full_call.clone(),
-            }],
             timestamp: 0,
             parent_message_id: None,
         };

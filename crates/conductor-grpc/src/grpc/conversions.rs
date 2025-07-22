@@ -3,7 +3,7 @@ use conductor_core::api::ToolCall;
 use conductor_core::app::command::ApprovalType;
 use conductor_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, CompactResult,
-    Message as ConversationMessage, ThoughtContent, UserContent,
+    Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
 use conductor_core::app::{
     AppCommand, AppEvent, BashError, CompactError, Operation, OperationOutcome,
@@ -309,13 +309,8 @@ fn proto_to_tool_error(
 
 /// Convert internal Message to protobuf
 pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, ConversionError> {
-    let (message_variant, created_at) = match &message {
-        ConversationMessage::User {
-            content,
-            timestamp,
-            id: _,
-            parent_message_id,
-        } => {
+    let (message_variant, created_at) = match &message.data {
+        MessageData::User { content, .. } => {
             let user_msg = proto::UserMessage {
                 content: content.iter().map(|user_content| match user_content {
                     UserContent::Text { text } => proto::UserContent {
@@ -376,17 +371,12 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                         }
                     }
                 }).collect(),
-                timestamp: *timestamp,
-                parent_message_id: parent_message_id.clone(),
+                timestamp: message.timestamp,
+                parent_message_id: message.parent_message_id.clone(),
             };
-            (proto::message::Message::User(user_msg), *timestamp)
+            (proto::message::Message::User(user_msg), message.timestamp)
         }
-        ConversationMessage::Assistant {
-            content,
-            timestamp,
-            id: _,
-            parent_message_id,
-        } => {
+        MessageData::Assistant { content, .. } => {
             let assistant_msg = proto::AssistantMessage {
                 content: content
                     .iter()
@@ -434,29 +424,27 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
                         }
                     })
                     .collect(),
-                timestamp: *timestamp,
-                parent_message_id: parent_message_id.clone(),
+                timestamp: message.timestamp,
+                parent_message_id: message.parent_message_id.clone(),
             };
             (
                 proto::message::Message::Assistant(assistant_msg),
-                *timestamp,
+                message.timestamp,
             )
         }
-        ConversationMessage::Tool {
+        MessageData::Tool {
             tool_use_id,
             result,
-            timestamp,
-            id: _,
-            parent_message_id,
+            ..
         } => {
             let proto_result = conductor_tools_result_to_proto(result)?;
             let tool_msg = proto::ToolMessage {
                 tool_use_id: tool_use_id.clone(),
                 result: Some(proto_result),
-                timestamp: *timestamp,
-                parent_message_id: parent_message_id.clone(),
+                timestamp: message.timestamp,
+                parent_message_id: message.parent_message_id.clone(),
             };
-            (proto::message::Message::Tool(tool_msg), *timestamp)
+            (proto::message::Message::Tool(tool_msg), message.timestamp)
         }
     };
 
@@ -934,8 +922,8 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                     })
                 })
                 .collect();
-            Ok(ConversationMessage::User {
-                content,
+            Ok(ConversationMessage {
+                data: MessageData::User { content },
                 timestamp: user_msg.timestamp,
                 id: proto_msg.id,
                 parent_message_id: user_msg.parent_message_id,
@@ -983,8 +971,8 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
                     })
                 })
                 .collect();
-            Ok(ConversationMessage::Assistant {
-                content,
+            Ok(ConversationMessage {
+                data: MessageData::Assistant { content },
                 timestamp: assistant_msg.timestamp,
                 id: proto_msg.id,
                 parent_message_id: assistant_msg.parent_message_id,
@@ -993,9 +981,11 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
         message::Message::Tool(tool_msg) => {
             if let Some(proto_result) = tool_msg.result {
                 let tool_result = proto_to_conductor_tools_result(proto_result)?;
-                Ok(ConversationMessage::Tool {
-                    tool_use_id: tool_msg.tool_use_id,
-                    result: tool_result,
+                Ok(ConversationMessage {
+                    data: MessageData::Tool {
+                        tool_use_id: tool_msg.tool_use_id,
+                        result: tool_result,
+                    },
                     timestamp: tool_msg.timestamp,
                     id: proto_msg.id,
                     parent_message_id: tool_msg.parent_message_id,

@@ -1,7 +1,7 @@
 //! ChatStore - storage for the new ChatItem model
 
 use crate::tui::model::{ChatItem, ChatItemData, RowId};
-use conductor_core::app::conversation::Message;
+use conductor_core::app::conversation::{Message, MessageData};
 
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -327,7 +327,7 @@ impl ChatStore {
             .enumerate()
             .filter_map(|(idx, item)| {
                 if let ChatItemData::Message(message) = &item.data {
-                    if matches!(message, Message::User { .. }) {
+                    if matches!(&message.data, MessageData::User { .. }) {
                         Some((idx, message))
                     } else {
                         None
@@ -402,11 +402,13 @@ mod tests {
     use time::OffsetDateTime;
 
     fn create_test_message(id: &str, parent_id: Option<&str>) -> Message {
-        Message::User {
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: format!("Test message {id}"),
+                }],
+            },
             id: id.to_string(),
-            content: vec![UserContent::Text {
-                text: format!("Test message {id}"),
-            }],
             timestamp: 1234567890,
             parent_message_id: parent_id.map(|s| s.to_string()),
         }
@@ -595,42 +597,50 @@ mod tests {
         let mut store = ChatStore::new();
 
         // Mix of user and assistant messages
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
+            },
             id: "U1".to_string(),
-            content: vec![UserContent::Text {
-                text: "Hello".to_string(),
-            }],
             timestamp: 1234567890,
             parent_message_id: None,
         });
         store.active_message_id = Some("U1".to_string());
 
-        store.add_message(Message::Assistant {
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "Hi there!".to_string(),
+                }],
+            },
             id: "A1".to_string(),
-            content: vec![AssistantContent::Text {
-                text: "Hi there!".to_string(),
-            }],
             timestamp: 1234567891,
             parent_message_id: Some("U1".to_string()),
         });
         store.active_message_id = Some("A1".to_string());
 
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Another question".to_string(),
+                }],
+            },
             id: "U2".to_string(),
-            content: vec![UserContent::Text {
-                text: "Another question".to_string(),
-            }],
             timestamp: 1234567892,
             parent_message_id: Some("A1".to_string()),
         });
         store.active_message_id = Some("U2".to_string());
 
         // Branch from the first assistant message
-        store.add_message(Message::User {
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Different question".to_string(),
+                }],
+            },
             id: "U3".to_string(),
-            content: vec![UserContent::Text {
-                text: "Different question".to_string(),
-            }],
             timestamp: 1234567893,
             parent_message_id: Some("A1".to_string()),
         });

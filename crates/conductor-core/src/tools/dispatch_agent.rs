@@ -6,7 +6,7 @@ use crate::{
     api::Model,
     app::{
         ApprovalDecision, ToolExecutor,
-        conversation::{Message, UserContent},
+        conversation::{Message, MessageData, UserContent},
     },
     config::LlmConfigProvider,
 };
@@ -90,8 +90,10 @@ Usage notes:
             };
 
         // --- Prepare for AgentExecutor ---
-        let initial_messages = vec![Message::User {
-            content: vec![UserContent::Text { text: params.prompt }],
+        let initial_messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text { text: params.prompt }],
+            },
             timestamp: Message::current_timestamp(),
             id: Message::generate_id("user", Message::current_timestamp()),
             parent_message_id: None,

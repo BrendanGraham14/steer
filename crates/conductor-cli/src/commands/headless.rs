@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use conductor_core::api::Model;
-use conductor_core::app::conversation::{Message, UserContent};
+use conductor_core::app::conversation::{Message, MessageData, UserContent};
 
 pub struct HeadlessCommand {
     pub model: Option<Model>,
@@ -50,8 +50,10 @@ impl Command for HeadlessCommand {
                 Err(e) => return Err(eyre!("Failed to read from stdin: {}", e)),
             }
             // Create a single user message from stdin content
-            vec![Message::User {
-                content: vec![UserContent::Text { text: buffer }],
+            vec![Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text { text: buffer }],
+                },
                 timestamp: Message::current_timestamp(),
                 id: Message::generate_id("user", Message::current_timestamp()),
                 parent_message_id: None,
@@ -98,8 +100,8 @@ impl Command for HeadlessCommand {
                     ));
                 }
 
-                let message = match &messages[0] {
-                    Message::User { content, .. } => {
+                let message = match &messages[0].data {
+                    MessageData::User { content, .. } => {
                         // Extract text from the first UserContent block
                         match content.first() {
                             Some(UserContent::Text { text }) => text.clone(),

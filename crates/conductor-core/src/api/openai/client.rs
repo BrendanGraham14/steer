@@ -335,8 +335,8 @@ impl OpenAIClient {
 
         // Convert our messages to OpenAI format
         for message in messages {
-            match message {
-                AppMessage::User { content, .. } => {
+            match &message.data {
+                crate::app::conversation::MessageData::User { content, .. } => {
                     // Convert UserContent to text
                     let combined_text = content
                         .iter()
@@ -366,7 +366,7 @@ impl OpenAIClient {
                         });
                     }
                 }
-                AppMessage::Assistant { content, .. } => {
+                crate::app::conversation::MessageData::Assistant { content, .. } => {
                     // Convert AssistantContent to OpenAI format
                     let mut text_parts = Vec::new();
                     let mut tool_calls = Vec::new();
@@ -412,7 +412,7 @@ impl OpenAIClient {
                         name: None,
                     });
                 }
-                AppMessage::Tool {
+                crate::app::conversation::MessageData::Tool {
                     tool_use_id,
                     result,
                     ..
@@ -432,7 +432,7 @@ impl OpenAIClient {
 
                     openai_messages.push(OpenAIMessage::Tool {
                         content: OpenAIContent::String(content_text),
-                        tool_call_id: tool_use_id,
+                        tool_call_id: tool_use_id.clone(),
                         name: None,
                     });
                 }

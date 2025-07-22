@@ -8,7 +8,7 @@ use ratatui::widgets::{
 };
 use tui_textarea::{Input, TextArea};
 
-use conductor_core::app::conversation::{Message, UserContent};
+use conductor_core::app::conversation::{MessageData, UserContent};
 use conductor_tools::schema::ToolCall;
 
 use crate::tui::InputMode;
@@ -325,7 +325,7 @@ impl InputPanelState {
         self.edit_selection_messages = chat_items
             .filter_map(|item| {
                 if let ChatItemData::Message(row) = item {
-                    if let Message::User { content, .. } = &row {
+                    if let MessageData::User { content, .. } = &row.data {
                         // Extract text content from user blocks
                         let text = content
                             .iter()
@@ -870,6 +870,8 @@ impl StatefulWidget for InputPanel<'_> {
 
 #[cfg(test)]
 mod tests {
+    use conductor_core::app::Message;
+
     use super::*;
     use crate::tui::model::ChatItemData;
 
@@ -979,25 +981,29 @@ mod tests {
 
         // Create test chat items
         let chat_items = vec![
-            ChatItemData::Message(Message::User {
+            ChatItemData::Message(Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: "First user message".to_string(),
+                    }],
+                },
                 id: "user1".to_string(),
-                content: vec![UserContent::Text {
-                    text: "First user message".to_string(),
-                }],
                 timestamp: 123,
                 parent_message_id: None,
             }),
-            ChatItemData::Message(Message::Assistant {
+            ChatItemData::Message(Message {
+                data: MessageData::Assistant { content: vec![] },
                 id: "assistant1".to_string(),
-                content: vec![],
                 timestamp: 124,
                 parent_message_id: None,
             }),
-            ChatItemData::Message(Message::User {
+            ChatItemData::Message(Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: "Second user message".to_string(),
+                    }],
+                },
                 id: "user2".to_string(),
-                content: vec![UserContent::Text {
-                    text: "Second user message".to_string(),
-                }],
                 timestamp: 125,
                 parent_message_id: None,
             }),

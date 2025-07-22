@@ -5,7 +5,7 @@ use super::conversions::*;
 use conductor_core::api::ToolCall;
 use conductor_core::app::command::ApprovalType;
 use conductor_core::app::conversation::{
-    AppCommandType, AssistantContent, CommandResponse, Message as ConversationMessage,
+    AppCommandType, AssistantContent, CommandResponse, Message as ConversationMessage, MessageData,
     ThoughtContent, UserContent,
 };
 use conductor_core::app::{
@@ -176,9 +176,24 @@ prop_compose! {
         result in arb_tool_result(),
     ) -> ConversationMessage {
         match variant {
-            0 => ConversationMessage::User { content: user_content, timestamp, id, parent_message_id: None },
-            1 => ConversationMessage::Assistant { content: assistant_content, timestamp, id, parent_message_id: None },
-            _ => ConversationMessage::Tool { tool_use_id, result, timestamp, id, parent_message_id: None },
+            0 => ConversationMessage {
+                data: MessageData::User { content: user_content },
+                timestamp,
+                id,
+                parent_message_id: None,
+            },
+            1 => ConversationMessage {
+                data: MessageData::Assistant { content: assistant_content },
+                timestamp,
+                id,
+                parent_message_id: None,
+            },
+            _ => ConversationMessage {
+                data: MessageData::Tool { tool_use_id, result },
+                timestamp,
+                id,
+                parent_message_id: None,
+            },
         }
     }
 }
@@ -419,8 +434,8 @@ proptest! {
         prop_assert_eq!(roundtrip.id(), message.id());
         prop_assert_eq!(roundtrip.timestamp(), message.timestamp());
 
-        match (&message, &roundtrip) {
-            (ConversationMessage::User { content: c1, .. }, ConversationMessage::User { content: c2, .. }) => {
+        match (&message.data, &roundtrip.data) {
+            (MessageData::User { content: c1, .. }, MessageData::User { content: c2, .. }) => {
                 prop_assert_eq!(c1.len(), c2.len());
                 for (a, b) in c1.iter().zip(c2.iter()) {
                     match (a, b) {
@@ -447,7 +462,7 @@ proptest! {
                     }
                 }
             }
-            (ConversationMessage::Assistant { content: c1, .. }, ConversationMessage::Assistant { content: c2, .. }) => {
+            (MessageData::Assistant { content: c1, .. }, MessageData::Assistant { content: c2, .. }) => {
                 prop_assert_eq!(c1.len(), c2.len());
                 for (a, b) in c1.iter().zip(c2.iter()) {
                     match (a, b) {
@@ -479,8 +494,8 @@ proptest! {
                     }
                 }
             }
-            (ConversationMessage::Tool { tool_use_id: id1, result: r1, .. },
-             ConversationMessage::Tool { tool_use_id: id2, result: r2, .. }) => {
+            (MessageData::Tool { tool_use_id: id1, result: r1, .. },
+             MessageData::Tool { tool_use_id: id2, result: r2, .. }) => {
                 prop_assert_eq!(id1, id2);
                 match (r1, r2) {
                     (ToolResult::External(ext1), ToolResult::External(ext2)) => {
