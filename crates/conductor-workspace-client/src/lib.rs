@@ -6,11 +6,11 @@ use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
 use conductor_proto::remote_workspace::v1::{
-    remote_workspace_service_client::RemoteWorkspaceServiceClient, ExecuteToolRequest,
-    ExecuteToolResponse, GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
+    ExecuteToolRequest, ExecuteToolResponse, GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
     GetToolApprovalRequirementsRequest, GetToolSchemasRequest, ListFilesRequest,
+    remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
-use conductor_tools::{result::ToolResult, ToolCall, ToolSchema};
+use conductor_tools::{ToolCall, ToolSchema, result::ToolResult};
 use conductor_workspace::{
     EnvironmentInfo, RemoteAuth, Result, Workspace, WorkspaceError, WorkspaceMetadata,
     WorkspaceType,
