@@ -45,7 +45,7 @@ dirs = "5.0"
 colored = "2.0"
 home = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
-dotenv = "0.15.0"
+dotenvy = "0.15"
 hex = "0.4"
 
 # File manipulation

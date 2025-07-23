@@ -1,5 +1,5 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use std::sync::Arc;
 use steer_core::api::Model;
 use steer_core::app::{App, AppConfig, AppEvent, ToolExecutor};

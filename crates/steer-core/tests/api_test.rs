@@ -1,4 +1,4 @@
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use serde_json::json;
 use std::sync::Arc;
 use steer_core::api::ApiError;

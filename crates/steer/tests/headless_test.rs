@@ -6,7 +6,7 @@ use steer_core::app::conversation::{AssistantContent, Message, MessageData, User
 #[tokio::test]
 #[ignore]
 async fn test_headless_mode_integration() {
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
 
     // Create a simple test message
     let timestamp = Message::current_timestamp();
