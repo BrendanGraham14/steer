@@ -19,3 +19,6 @@ syn = { version = "2.0", features = [
 ] } # Need full feature for parsing functions
 quote = "1.0"
 proc-macro2 = "1.0"
+
+[dev-dependencies]
+schemars = { version = "1.0", features = ["derive"] }

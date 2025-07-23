@@ -8,16 +8,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut schema = schema_for!(PartialSessionConfig);
 
     // Add schema metadata
-    if let Some(metadata) = schema.schema.metadata.as_mut() {
-        metadata.title = Some("Steer Session Configuration".to_string());
-        metadata.description = Some("Configuration file for Steer sessions, including workspace settings, tool configurations, and AI behavior customization.".to_string());
-    } else {
-        schema.schema.metadata = Some(Box::new(schemars::schema::Metadata {
-            title: Some("Steer Session Configuration".to_string()),
-            description: Some("Configuration file for Steer sessions, including workspace settings, tool configurations, and AI behavior customization.".to_string()),
-            ..Default::default()
-        }));
-    }
+    schema.ensure_object().insert(
+        "title".to_string(),
+        serde_json::json!("Steer Session Configuration"),
+    );
+    schema.ensure_object().insert("description".to_string(), serde_json::json!("Configuration file for Steer sessions, including workspace settings, tool configurations, and AI behavior customization."));
 
     // Convert to pretty-printed JSON
     let json = serde_json::to_string_pretty(&schema)?;

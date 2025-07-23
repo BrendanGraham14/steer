@@ -4,7 +4,7 @@
 pub mod test_servers {
     use rmcp::handler::server::tool::Parameters;
     use rmcp::schemars;
-    use rmcp::{Error, ServerHandler, model::CallToolResult, tool_handler, tool_router};
+    use rmcp::{ErrorData, ServerHandler, model::CallToolResult, tool_handler, tool_router};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -50,7 +50,7 @@ pub mod test_servers {
         async fn echo(
             &self,
             Parameters(EchoRequest { message }): Parameters<EchoRequest>,
-        ) -> Result<CallToolResult, Error> {
+        ) -> Result<CallToolResult, ErrorData> {
             // Increment call count
             {
                 let mut count = self.call_count.lock().await;
@@ -65,7 +65,7 @@ pub mod test_servers {
         async fn add(
             &self,
             Parameters(AddRequest { a, b }): Parameters<AddRequest>,
-        ) -> Result<CallToolResult, Error> {
+        ) -> Result<CallToolResult, ErrorData> {
             // Increment call count
             {
                 let mut count = self.call_count.lock().await;
@@ -77,7 +77,7 @@ pub mod test_servers {
         }
 
         #[rmcp::tool(description = "Get the number of times tools have been called")]
-        async fn get_call_count(&self) -> Result<CallToolResult, Error> {
+        async fn get_call_count(&self) -> Result<CallToolResult, ErrorData> {
             let count = self.call_count.lock().await;
             Ok(CallToolResult::success(vec![rmcp::model::Content::text(
                 format!("{}", *count),

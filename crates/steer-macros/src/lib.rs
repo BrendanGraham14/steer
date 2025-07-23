@@ -393,34 +393,11 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
 
             fn input_schema(&self) -> &'static #schema_path {
                 static SCHEMA: ::once_cell::sync::Lazy<#schema_path> = ::once_cell::sync::Lazy::new(|| {
-                    let settings = schemars::r#gen::SchemaSettings::draft07().with(|s| {
+                    let settings = schemars::generate::SchemaSettings::draft07().with(|s| {
                         s.inline_subschemas = true;
                     });
                     let schema_gen = settings.into_generator();
-                    // Use into_root_schema_for to get the full schema including definitions
-                    let root_schema = schema_gen.into_root_schema_for::<#params_struct_name>();
-
-                    // Extract properties and required fields directly from the schema object within the root schema
-                    let (props, required) = if let Some(obj) = &root_schema.schema.object {
-                        (
-                            obj.properties.clone(),
-                            obj.required.clone(),
-                        )
-                    } else {
-                         (Default::default(), Default::default())
-                    };
-
-                    let properties: ::serde_json::Map<String, ::serde_json::Value> = props.into_iter().map(|(k, schema_obj)| {
-                        // Convert the Schema object (which might be a reference) to JSON value
-                        let val = ::serde_json::to_value(schema_obj).unwrap_or(::serde_json::Value::Null);
-                         (k, val)
-                    }).collect();
-
-                    #schema_path {
-                        properties: properties,
-                        required: required.into_iter().collect(),
-                        schema_type: "object".to_string(), // Assume top-level is always object for tool params
-                    }
+                    schema_gen.into_root_schema_for::<#params_struct_name>().into()
                 });
                 &SCHEMA
             }
@@ -448,4 +425,44 @@ fn tool_impl(input: TokenStream, is_external: bool) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_macro_expansion() {
+        // This test verifies that the tool! macro can parse input correctly
+        // and that our schemars 1.0 integration is working at the parsing level
+
+        let input = quote! {
+            TestTool {
+                params: TestParams,
+                output: TestResult,
+                variant: Test,
+                description: "A test tool",
+                name: "test_tool",
+                require_approval: false,
+            }
+
+            async fn run(tool: &TestTool, params: TestParams, context: &dyn crate::ToolExecutionContext) -> Result<TestResult, crate::ToolError> {
+                Ok(TestResult {
+                    output: format!("{}: {}", params.message, params.count),
+                })
+            }
+        };
+
+        // Parse the input as if it were a macro invocation
+        let parsed: ToolDefinition = syn::parse2(input).unwrap();
+
+        // Verify basic fields are parsed correctly
+        assert_eq!(parsed.tool_name.to_string(), "TestTool");
+        assert_eq!(parsed.name.value(), "test_tool");
+        assert!(!parsed.require_approval.value);
+        assert_eq!(parsed.variant.to_string(), "Test");
+
+        // Verify the run function was parsed
+        assert_eq!(parsed.run_function.sig.ident.to_string(), "run");
+    }
 }
