@@ -289,7 +289,7 @@ mod tests {
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
     use crate::test_utils;
-    use dotenv::dotenv;
+    use dotenvy::dotenv;
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::time::Duration;

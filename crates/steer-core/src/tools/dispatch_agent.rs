@@ -181,7 +181,7 @@ Notes:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dotenv::dotenv;
+    use dotenvy::dotenv;
     use steer_workspace::local::LocalWorkspace;
 
     #[tokio::test]
