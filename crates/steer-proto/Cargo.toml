@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Protobuf definitions for Steer coding agent"
+include = ["src/**/*", "build.rs", "proto/**/*.proto", "Cargo.toml"]
 
 [lints]
 workspace = true

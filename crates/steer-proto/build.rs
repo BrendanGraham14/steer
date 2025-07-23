@@ -5,12 +5,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")?;
     let manifest_path = PathBuf::from(manifest_dir);
 
-    // Navigate to the proto directory from the crate root
-    let proto_dir = manifest_path
-        .parent() // crates/
-        .and_then(|p| p.parent()) // workspace root
-        .map(|p| p.join("proto"))
-        .expect("Failed to find proto directory");
+    // Use the proto directory within the crate
+    let proto_dir = manifest_path.join("proto");
 
     println!("cargo:rerun-if-changed={}", proto_dir.display());
 
