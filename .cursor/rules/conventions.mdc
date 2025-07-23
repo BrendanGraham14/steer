@@ -1,7 +1,0 @@
----
-description:
-globs:
-alwaysApply: true
----
-- Prefer to use well-typed errors vs. stringifying them into anyhow errors
-- Algebraic data types are useful. Use them where appropriate to write more ergonomic, well-typed programs.
