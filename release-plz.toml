@@ -1,0 +1,5 @@
+[workspace]
+
+dependencies_update = true
+git_tag_enable = true
+git_release_enable = false
