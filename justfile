@@ -45,3 +45,24 @@ test-specific test_name:
 
 test-mcp:
     cargo test -p steer-core --lib --all-features mcp_backend
+
+# Open the most recently modified log file in ~/.steer
+log:
+    #!/bin/bash
+    latest_file=$(ls -t ~/.steer/*.log 2>/dev/null | grep -E '/[0-9]{8}_[0-9]{6}\.log$' | head -1)
+    if [ -z "$latest_file" ]; then
+        echo "No log files matching pattern YYYYMMDD_HHMMSS.log found in ~/.steer"
+        exit 1
+    fi
+    less "$latest_file"
+
+# Open the most recently created log file in ~/.steer
+log-created:
+    #!/bin/bash
+    # On macOS, use stat -f "%B %N" to get birth time
+    latest_file=$(find ~/.steer -name "*.log" -type f | grep -E '/[0-9]{8}_[0-9]{6}\.log$' | while read f; do stat -f "%B %N" "$f"; done | sort -n | tail -1 | cut -d' ' -f2-)
+    if [ -z "$latest_file" ]; then
+        echo "No log files matching pattern YYYYMMDD_HHMMSS.log found in ~/.steer"
+        exit 1
+    fi
+    less "$latest_file"
