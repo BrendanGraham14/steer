@@ -1,7 +1,6 @@
 pub mod anthropic;
 pub mod api_key;
 pub mod error;
-pub mod inspect;
 pub mod registry;
 pub mod storage;
 

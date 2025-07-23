@@ -175,7 +175,9 @@ impl LlmConfigProvider {
             }
             ProviderKind::Google => {
                 // API key via env var > stored API key
-                if let Ok(key) = std::env::var("GEMINI_API_KEY") {
+                if let Ok(key) =
+                    std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY"))
+                {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                     .storage
@@ -189,9 +191,9 @@ impl LlmConfigProvider {
             }
             ProviderKind::XAI => {
                 // API key via env var > stored API key
-                if let Ok(key) = std::env::var("XAI_API_KEY") {
-                    Ok(Some(ApiAuth::Key(key)))
-                } else if let Ok(key) = std::env::var("GROK_API_KEY") {
+                if let Ok(key) =
+                    std::env::var("XAI_API_KEY").or_else(|_| std::env::var("GROK_API_KEY"))
+                {
                     Ok(Some(ApiAuth::Key(key)))
                 } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                     .storage

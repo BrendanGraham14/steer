@@ -30,6 +30,7 @@ use steer_core::api::Model;
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 use steer_core::app::io::{AppCommandSink, AppEventSource};
 use steer_core::app::{AppCommand, AppEvent};
+use steer_core::config::LlmConfigProvider;
 use steer_tools::schema::ToolCall;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -1129,14 +1130,9 @@ impl Tui {
                                     "Failed to create auth storage: {e}"
                                 ))
                             })?;
-                        let auth_providers =
-                            steer_core::auth::inspect::get_authenticated_providers(&auth_storage)
-                                .await
-                                .map_err(|e| {
-                                    crate::error::Error::Generic(format!(
-                                        "Failed to check auth: {e}"
-                                    ))
-                                })?;
+                        let auth_providers = LlmConfigProvider::new(Arc::new(auth_storage))
+                            .available_providers()
+                            .await?;
 
                         let mut provider_status = std::collections::HashMap::new();
                         for provider in [
@@ -1447,26 +1443,21 @@ pub async fn run_tui(
         tui.restore_messages(messages);
     }
 
+    let auth_storage = steer_core::auth::DefaultAuthStorage::new()
+        .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?;
+    let auth_providers = LlmConfigProvider::new(Arc::new(auth_storage))
+        .available_providers()
+        .await
+        .map_err(|e| Error::Generic(format!("Failed to check auth: {e}")))?;
+
     let should_run_setup = force_setup
         || (!steer_core::preferences::Preferences::config_path()
             .map(|p| p.exists())
             .unwrap_or(false)
-            && steer_core::auth::inspect::get_authenticated_providers(
-                &steer_core::auth::DefaultAuthStorage::new()
-                    .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?,
-            )
-            .await
-            .unwrap_or_default()
-            .is_empty());
+            && auth_providers.is_empty());
 
     // Initialize setup state if first run or forced
     if should_run_setup {
-        let auth_storage = steer_core::auth::DefaultAuthStorage::new()
-            .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?;
-        let auth_providers = steer_core::auth::inspect::get_authenticated_providers(&auth_storage)
-            .await
-            .map_err(|e| Error::Generic(format!("Failed to check auth: {e}")))?;
-
         let mut provider_status = std::collections::HashMap::new();
         for provider in [
             steer_core::api::ProviderKind::Anthropic,
