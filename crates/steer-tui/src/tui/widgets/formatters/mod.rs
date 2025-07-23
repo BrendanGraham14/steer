@@ -17,8 +17,7 @@ pub mod grep;
 pub mod helpers;
 pub mod ls;
 pub mod replace;
-pub mod todo_read;
-pub mod todo_write;
+pub mod todo;
 pub mod view;
 
 // Import the formatters
@@ -34,8 +33,7 @@ use self::grep::GrepFormatter;
 use self::ls::LsFormatter;
 use self::replace::ReplaceFormatter;
 
-use self::todo_read::TodoReadFormatter;
-use self::todo_write::TodoWriteFormatter;
+use self::todo::{TodoReadFormatter, TodoWriteFormatter};
 use self::view::ViewFormatter;
 
 /// Trait for formatting tool calls and results
