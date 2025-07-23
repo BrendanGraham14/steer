@@ -6,7 +6,7 @@ resolver = "3"
 version = "0.1.0"
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 edition = "2024"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 repository = "https://github.com/brendangraham14/steer"
 
 [workspace.dependencies]
