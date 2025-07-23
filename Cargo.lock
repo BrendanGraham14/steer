@@ -5057,7 +5057,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steer"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5122,7 +5122,7 @@ dependencies = [
 
 [[package]]
 name = "steer-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -5191,7 +5191,7 @@ dependencies = [
 
 [[package]]
 name = "steer-grpc"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5216,7 +5216,7 @@ dependencies = [
 
 [[package]]
 name = "steer-macros"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5226,7 +5226,7 @@ dependencies = [
 
 [[package]]
 name = "steer-proto"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "prost",
  "prost-types",
@@ -5236,7 +5236,7 @@ dependencies = [
 
 [[package]]
 name = "steer-remote-workspace"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "clap",
  "fuzzy-matcher",
@@ -5259,7 +5259,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tools"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -5290,7 +5290,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tui"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5338,7 +5338,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5362,7 +5362,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace-client"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "serde",
