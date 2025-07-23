@@ -55,7 +55,7 @@ impl SqliteSessionStore {
             })?;
 
         // Run migrations
-        sqlx::migrate!("../../migrations/sqlite")
+        sqlx::migrate!("migrations/sqlite")
             .run(&pool)
             .await
             .map_err(|e| SessionStoreError::Migration {
