@@ -77,68 +77,6 @@
         {
           "type": "object",
           "required": [
-            "endpoint",
-            "name",
-            "tool_filter",
-            "type"
-          ],
-          "properties": {
-            "auth": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/RemoteAuth"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "endpoint": {
-              "type": "string"
-            },
-            "name": {
-              "type": "string"
-            },
-            "tool_filter": {
-              "$ref": "#/definitions/ToolFilter"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "remote"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "image",
-            "runtime",
-            "tool_filter",
-            "type"
-          ],
-          "properties": {
-            "image": {
-              "type": "string"
-            },
-            "runtime": {
-              "$ref": "#/definitions/ContainerRuntime"
-            },
-            "tool_filter": {
-              "$ref": "#/definitions/ToolFilter"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "container"
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
             "server_name",
             "tool_filter",
             "transport",
@@ -165,11 +103,11 @@
       ]
     },
     "ContainerRuntime": {
-      "description": "Container runtime configuration",
+      "description": "Container runtime to use",
       "type": "string",
       "enum": [
-        "Docker",
-        "Podman"
+        "docker",
+        "podman"
       ]
     },
     "McpTransport": {
