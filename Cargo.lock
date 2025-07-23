@@ -5108,7 +5108,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tui-markdown",
- "tui-textarea",
  "tui-widgets",
  "uuid",
  "which",
