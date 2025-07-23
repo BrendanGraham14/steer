@@ -14,9 +14,6 @@ pub struct Preferences {
     pub ui: UiPreferences,
 
     #[serde(default)]
-    pub keybindings: KeyBindings,
-
-    #[serde(default)]
     pub tools: ToolPreferences,
 }
 
@@ -35,13 +32,6 @@ pub struct UiPreferences {
 pub struct NotificationPreferences {
     pub sound: bool,
     pub desktop: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct KeyBindings {
-    pub cancel: Option<String>,
-    pub model_selection: Option<String>,
-    pub clear: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
