@@ -129,10 +129,10 @@ impl NotificationConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
         Self {
-            enable_sound: std::env::var("CONDUCTOR_NOTIFICATION_SOUND")
+            enable_sound: std::env::var("STEER_NOTIFICATION_SOUND")
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
-            enable_desktop_notification: std::env::var("CONDUCTOR_NOTIFICATION_DESKTOP")
+            enable_desktop_notification: std::env::var("STEER_NOTIFICATION_DESKTOP")
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
         }

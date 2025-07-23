@@ -57,7 +57,7 @@ pub struct Cli {
     pub system_prompt: Option<String>,
 
     /// Path to the session database file (defaults to ~/.steer/sessions.db)
-    #[arg(long, env = "CONDUCTOR_SESSION_DB", hide = true)]
+    #[arg(long, env = "STEER_SESSION_DB", hide = true)]
     pub session_db: Option<PathBuf>,
 
     /// Path to session configuration file (TOML format) for new sessions

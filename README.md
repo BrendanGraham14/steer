@@ -223,10 +223,10 @@ Both sound and desktop notifications are enabled by default. To disable:
 
 ```bash
 # Disable sound notifications
-export CONDUCTOR_NOTIFICATION_SOUND=false
+export STEER_NOTIFICATION_SOUND=false
 
 # Disable desktop notifications
-export CONDUCTOR_NOTIFICATION_DESKTOP=false
+export STEER_NOTIFICATION_DESKTOP=false
 ```
 
 ---

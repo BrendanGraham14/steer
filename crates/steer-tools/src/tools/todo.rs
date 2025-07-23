@@ -53,7 +53,7 @@ fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
 
 // Helper function to get the todo file path
 fn get_todo_file_path() -> Result<PathBuf, std::io::Error> {
-    let workspace_id = match std::env::var("CONDUCTOR_WORKSPACE_ID") {
+    let workspace_id = match std::env::var("STEER_WORKSPACE_ID") {
         Ok(id) => id,
         Err(_) => {
             // Fallback: Use a hex-encoded string of the current directory path
