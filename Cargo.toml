@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 edition = "2024"
 license = "AGPL-3.0-or-later"
