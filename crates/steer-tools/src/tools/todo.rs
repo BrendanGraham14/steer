@@ -2,9 +2,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use strum::Display;
 
 // Define TodoStatus enum
-#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema, Hash, Display)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
     Pending,
@@ -13,7 +14,9 @@ pub enum TodoStatus {
 }
 
 // Define TodoPriority enum
-#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, Ord, PartialOrd, JsonSchema)]
+#[derive(
+    Deserialize, Serialize, Debug, Clone, Eq, PartialEq, Ord, PartialOrd, JsonSchema, Hash, Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoPriority {
     High = 0,
@@ -22,7 +25,7 @@ pub enum TodoPriority {
 }
 
 // Define TodoItem struct
-#[derive(Deserialize, Serialize, Debug, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Clone, JsonSchema, Hash)]
 pub struct TodoItem {
     /// Content of the todo item
     pub content: String,
@@ -32,6 +35,13 @@ pub struct TodoItem {
     pub priority: TodoPriority,
     /// Unique ID for the todo item
     pub id: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoWriteFileOperation {
+    Created,
+    Modified,
 }
 
 // Define TodoList type
@@ -80,17 +90,24 @@ fn read_todos() -> Result<TodoList, std::io::Error> {
 }
 
 // Helper function to write todos to file
-fn write_todos(todos: &TodoList) -> Result<(), std::io::Error> {
+fn write_todos(todos: &TodoList) -> Result<TodoWriteFileOperation, std::io::Error> {
     let file_path = get_todo_file_path()?;
+    let file_existed = file_path.exists();
+
     let content = serde_json::to_string_pretty(todos)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    fs::write(&file_path, content)
+    fs::write(&file_path, content)?;
+
+    Ok(if file_existed {
+        TodoWriteFileOperation::Modified
+    } else {
+        TodoWriteFileOperation::Created
+    })
 }
 
 pub mod read {
     use super::read_todos;
-    use super::{TodoPriority, TodoStatus};
-    use crate::result::{TodoItem as TodoItemResult, TodoListResult};
+    use crate::result::TodoListResult;
     use crate::{ExecutionContext, ToolError};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -135,35 +152,18 @@ Usage:
                 return Err(ToolError::Cancelled(TODO_READ_TOOL_NAME.to_string()));
             }
 
-            // Read the todos
             let todos = read_todos().map_err(|e| ToolError::io(TODO_READ_TOOL_NAME, e.to_string()))?;
-
-            // Convert to result format
-            let result_todos = todos.into_iter().map(|todo| TodoItemResult {
-                id: todo.id,
-                content: todo.content,
-                status: match todo.status {
-                    TodoStatus::Pending => "pending".to_string(),
-                    TodoStatus::InProgress => "in_progress".to_string(),
-                    TodoStatus::Completed => "completed".to_string(),
-                },
-                priority: match todo.priority {
-                    TodoPriority::High => "high".to_string(),
-                    TodoPriority::Medium => "medium".to_string(),
-                    TodoPriority::Low => "low".to_string(),
-                },
-            }).collect();
-
             Ok(TodoListResult {
-                todos: result_todos,
+                todos,
             })
         }
     }
 }
 
 pub mod write {
-    use super::{TodoList, TodoPriority, TodoStatus, write_todos};
-    use crate::result::{TodoItem as TodoItemResult, TodoWriteResult};
+    use super::{TodoList, write_todos};
+    use crate::result::TodoWriteResult;
+    use crate::tools::todo::TodoWriteFileOperation;
     use crate::{ExecutionContext, ToolError};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -344,25 +344,9 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
             // Write the new todos
             write_todos(&params.todos).map_err(|e| ToolError::io(TODO_WRITE_TOOL_NAME, e.to_string()))?;
 
-            // Convert to result format
-            let result_todos = params.todos.into_iter().map(|todo| TodoItemResult {
-                id: todo.id,
-                content: todo.content,
-                status: match todo.status {
-                    TodoStatus::Pending => "pending".to_string(),
-                    TodoStatus::InProgress => "in_progress".to_string(),
-                    TodoStatus::Completed => "completed".to_string(),
-                },
-                priority: match todo.priority {
-                    TodoPriority::High => "high".to_string(),
-                    TodoPriority::Medium => "medium".to_string(),
-                    TodoPriority::Low => "low".to_string(),
-                },
-            }).collect();
-
             Ok(TodoWriteResult {
-                todos: result_todos,
-                operation: "modified".to_string(),
+                todos: params.todos,
+                operation: TodoWriteFileOperation::Created,
             })
         }
     }

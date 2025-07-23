@@ -1,4 +1,7 @@
-use crate::error::ToolError;
+use crate::{
+    error::ToolError,
+    tools::todo::{TodoItem, TodoWriteFileOperation},
+};
 use serde::{Deserialize, Serialize};
 
 /// Core enum for all tool results
@@ -114,20 +117,11 @@ pub struct GlobResult {
 pub struct TodoListResult {
     pub todos: Vec<TodoItem>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TodoItem {
-    pub id: String,
-    pub content: String,
-    pub status: String,
-    pub priority: String,
-}
-
 /// Result for todo write operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoWriteResult {
     pub todos: Vec<TodoItem>,
-    pub operation: String, // e.g., "modified", "created"
+    pub operation: TodoWriteFileOperation,
 }
 
 // Newtype wrappers to avoid conflicting From impls
@@ -258,7 +252,7 @@ impl ToolResult {
                     "No todos found.".to_string()
                 } else {
                     format!(
-                        "Remember to continue to use update and read from the todo list as you make progress. Here is the current list:\n{}",
+                        "Remember to continue to update and read from the todo list as you make progress. Here is the current list:\n{}",
                         serde_json::to_string_pretty(&r.todos)
                             .unwrap_or_else(|_| "Failed to format todos".to_string())
                     )
@@ -266,7 +260,7 @@ impl ToolResult {
             }
             ToolResult::TodoWrite(r) => {
                 format!(
-                    "Todos have been {} successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}",
+                    "Todos have been {:?} successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}",
                     r.operation,
                     serde_json::to_string_pretty(&r.todos)
                         .unwrap_or_else(|_| "Failed to format todos".to_string())

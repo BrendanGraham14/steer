@@ -10,7 +10,11 @@ use steer_proto::remote_workspace::v1::{
     GetToolApprovalRequirementsRequest, GetToolSchemasRequest, ListFilesRequest,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
-use steer_tools::{ToolCall, ToolSchema, result::ToolResult};
+use steer_tools::{
+    ToolCall, ToolSchema,
+    result::ToolResult,
+    tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation},
+};
 use steer_workspace::{
     EnvironmentInfo, RemoteAuth, Result, Workspace, WorkspaceError, WorkspaceMetadata,
     WorkspaceType,
@@ -37,7 +41,7 @@ fn convert_tool_response(response: ExecuteToolResponse) -> Result<ToolResult> {
     use steer_proto::remote_workspace::v1::execute_tool_response::Result as ProtoResult;
     use steer_tools::result::{
         BashResult, EditResult, ExternalResult, FileContentResult, FileEntry, FileListResult,
-        GlobResult, SearchMatch, SearchResult, TodoItem, TodoListResult, TodoWriteResult,
+        GlobResult, SearchMatch, SearchResult, TodoListResult, TodoWriteResult,
     };
 
     match response.result {
@@ -114,12 +118,7 @@ fn convert_tool_response(response: ExecuteToolResponse) -> Result<ToolResult> {
             let todos = proto_result
                 .todos
                 .into_iter()
-                .map(|t| TodoItem {
-                    id: t.id,
-                    content: t.content,
-                    status: t.status,
-                    priority: t.priority,
-                })
+                .map(convert_proto_to_todo_item)
                 .collect();
 
             Ok(ToolResult::TodoRead(TodoListResult { todos }))
@@ -128,17 +127,17 @@ fn convert_tool_response(response: ExecuteToolResponse) -> Result<ToolResult> {
             let todos = proto_result
                 .todos
                 .into_iter()
-                .map(|t| TodoItem {
-                    id: t.id,
-                    content: t.content,
-                    status: t.status,
-                    priority: t.priority,
-                })
+                .map(convert_proto_to_todo_item)
                 .collect();
 
             Ok(ToolResult::TodoWrite(TodoWriteResult {
                 todos,
-                operation: proto_result.operation,
+                operation: convert_proto_to_todo_write_file_operation(
+                    steer_proto::common::v1::TodoWriteFileOperation::try_from(
+                        proto_result.operation,
+                    )
+                    .unwrap_or(steer_proto::common::v1::TodoWriteFileOperation::OperationUnset),
+                ),
             }))
         }
         _ => Err(WorkspaceError::ToolExecution(
@@ -353,7 +352,6 @@ impl Workspace for RemoteWorkspace {
             )));
         }
 
-        // Convert the response to ToolResult
         convert_tool_response(response)
     }
 
@@ -409,6 +407,41 @@ impl Workspace for RemoteWorkspace {
             .get(tool_name)
             .copied()
             .ok_or_else(|| WorkspaceError::ToolExecution(format!("Unknown tool: {tool_name}")))
+    }
+}
+
+fn convert_proto_to_todo_item(item: steer_proto::common::v1::TodoItem) -> TodoItem {
+    TodoItem {
+        id: item.id.clone(),
+        content: item.content.clone(),
+        status: match steer_proto::common::v1::TodoStatus::try_from(item.status) {
+            Ok(steer_proto::common::v1::TodoStatus::Pending) => TodoStatus::Pending,
+            Ok(steer_proto::common::v1::TodoStatus::InProgress) => TodoStatus::InProgress,
+            Ok(steer_proto::common::v1::TodoStatus::Completed) => TodoStatus::Completed,
+            Ok(steer_proto::common::v1::TodoStatus::StatusUnset) => TodoStatus::Pending,
+            Err(_) => TodoStatus::Pending,
+        },
+        priority: match steer_proto::common::v1::TodoPriority::try_from(item.priority) {
+            Ok(steer_proto::common::v1::TodoPriority::High) => TodoPriority::High,
+            Ok(steer_proto::common::v1::TodoPriority::Medium) => TodoPriority::Medium,
+            Ok(steer_proto::common::v1::TodoPriority::Low) => TodoPriority::Low,
+            Ok(steer_proto::common::v1::TodoPriority::PriorityUnset) => TodoPriority::Low,
+            Err(_) => TodoPriority::Low,
+        },
+    }
+}
+
+fn convert_proto_to_todo_write_file_operation(
+    operation: steer_proto::common::v1::TodoWriteFileOperation,
+) -> TodoWriteFileOperation {
+    match operation {
+        steer_proto::common::v1::TodoWriteFileOperation::Created => TodoWriteFileOperation::Created,
+        steer_proto::common::v1::TodoWriteFileOperation::Modified => {
+            TodoWriteFileOperation::Modified
+        }
+        steer_proto::common::v1::TodoWriteFileOperation::OperationUnset => {
+            TodoWriteFileOperation::Created
+        }
     }
 }
 

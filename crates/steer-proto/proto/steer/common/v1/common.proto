@@ -69,15 +69,35 @@ message TodoListResult {
   repeated TodoItem todos = 1;
 }
 
+enum TodoWriteFileOperation {
+  OPERATION_UNSET = 0;
+  CREATED = 1;
+  MODIFIED = 2;
+}
+
 // Todo write result
 message TodoWriteResult {
   repeated TodoItem todos = 1;
-  string operation = 2;  // e.g., "modified", "created"
+  TodoWriteFileOperation operation = 2;
+}
+
+enum TodoStatus {
+  STATUS_UNSET = 0;
+  PENDING = 1;
+  IN_PROGRESS = 2;
+  COMPLETED = 3;
+}
+
+enum TodoPriority {
+  PRIORITY_UNSET = 0;
+  HIGH = 1;
+  MEDIUM = 2;
+  LOW = 3;
 }
 
 message TodoItem {
   string id = 1;
   string content = 2;
-  string status = 3;  // "pending", "in_progress", "completed"
-  string priority = 4;  // "high", "medium", "low"
+  TodoStatus status = 3;
+  TodoPriority priority = 4;
 }

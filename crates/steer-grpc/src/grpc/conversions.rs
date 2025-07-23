@@ -13,6 +13,7 @@ use steer_core::session::state::{
 };
 use steer_proto::agent::v1 as proto;
 use steer_proto::common::v1 as common;
+use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 
 /// Convert steer_tools ToolResult to protobuf
 fn steer_tools_result_to_proto(
@@ -76,29 +77,11 @@ fn steer_tools_result_to_proto(
             pattern: r.pattern.clone(),
         }),
         CoreResult::TodoRead(r) => ProtoResult::TodoRead(common::TodoListResult {
-            todos: r
-                .todos
-                .iter()
-                .map(|t| common::TodoItem {
-                    id: t.id.clone(),
-                    content: t.content.clone(),
-                    status: t.status.clone(),
-                    priority: t.priority.clone(),
-                })
-                .collect(),
+            todos: r.todos.iter().map(convert_todo_item_to_proto).collect(),
         }),
         CoreResult::TodoWrite(r) => ProtoResult::TodoWrite(common::TodoWriteResult {
-            todos: r
-                .todos
-                .iter()
-                .map(|t| common::TodoItem {
-                    id: t.id.clone(),
-                    content: t.content.clone(),
-                    status: t.status.clone(),
-                    priority: t.priority.clone(),
-                })
-                .collect(),
-            operation: r.operation.clone(),
+            todos: r.todos.iter().map(convert_todo_item_to_proto).collect(),
+            operation: convert_todo_write_file_operation_to_proto(&r.operation) as i32,
         }),
         CoreResult::Fetch(r) => ProtoResult::Fetch(proto::FetchResult {
             url: r.url.clone(),
@@ -233,26 +216,19 @@ fn proto_to_steer_tools_result(
             todos: r
                 .todos
                 .into_iter()
-                .map(|t| TodoItem {
-                    id: t.id,
-                    content: t.content,
-                    status: t.status,
-                    priority: t.priority,
-                })
+                .map(convert_proto_to_todo_item)
                 .collect(),
         }),
         ProtoResult::TodoWrite(r) => ToolResult::TodoWrite(TodoWriteResult {
             todos: r
                 .todos
                 .into_iter()
-                .map(|t| TodoItem {
-                    id: t.id,
-                    content: t.content,
-                    status: t.status,
-                    priority: t.priority,
-                })
+                .map(convert_proto_to_todo_item)
                 .collect(),
-            operation: r.operation,
+            operation: convert_proto_to_todo_write_file_operation(
+                steer_proto::common::v1::TodoWriteFileOperation::try_from(r.operation)
+                    .unwrap_or(steer_proto::common::v1::TodoWriteFileOperation::OperationUnset),
+            ),
         }),
         ProtoResult::Fetch(r) => ToolResult::Fetch(FetchResult {
             url: r.url,
@@ -1662,4 +1638,61 @@ pub fn convert_app_command_to_client_message(
         session_id: session_id.to_string(),
         message: Some(msg),
     }))
+}
+
+pub fn convert_todo_item_to_proto(item: &TodoItem) -> common::TodoItem {
+    common::TodoItem {
+        id: item.id.clone(),
+        content: item.content.clone(),
+        status: match item.status {
+            TodoStatus::Pending => common::TodoStatus::Pending as i32,
+            TodoStatus::InProgress => common::TodoStatus::InProgress as i32,
+            TodoStatus::Completed => common::TodoStatus::Completed as i32,
+        },
+        priority: match item.priority {
+            TodoPriority::High => common::TodoPriority::High as i32,
+            TodoPriority::Medium => common::TodoPriority::Medium as i32,
+            TodoPriority::Low => common::TodoPriority::Low as i32,
+        },
+    }
+}
+
+pub fn convert_proto_to_todo_item(item: common::TodoItem) -> TodoItem {
+    TodoItem {
+        id: item.id.clone(),
+        content: item.content.clone(),
+        status: match steer_proto::common::v1::TodoStatus::try_from(item.status) {
+            Ok(steer_proto::common::v1::TodoStatus::Pending) => TodoStatus::Pending,
+            Ok(steer_proto::common::v1::TodoStatus::InProgress) => TodoStatus::InProgress,
+            Ok(steer_proto::common::v1::TodoStatus::Completed) => TodoStatus::Completed,
+            Ok(steer_proto::common::v1::TodoStatus::StatusUnset) => TodoStatus::Pending,
+            Err(_) => TodoStatus::Pending,
+        },
+        priority: match steer_proto::common::v1::TodoPriority::try_from(item.priority) {
+            Ok(steer_proto::common::v1::TodoPriority::High) => TodoPriority::High,
+            Ok(steer_proto::common::v1::TodoPriority::Medium) => TodoPriority::Medium,
+            Ok(steer_proto::common::v1::TodoPriority::Low) => TodoPriority::Low,
+            Ok(steer_proto::common::v1::TodoPriority::PriorityUnset) => TodoPriority::Low,
+            Err(_) => TodoPriority::Low,
+        },
+    }
+}
+
+pub fn convert_proto_to_todo_write_file_operation(
+    operation: common::TodoWriteFileOperation,
+) -> TodoWriteFileOperation {
+    match operation {
+        common::TodoWriteFileOperation::Created => TodoWriteFileOperation::Created,
+        common::TodoWriteFileOperation::Modified => TodoWriteFileOperation::Modified,
+        common::TodoWriteFileOperation::OperationUnset => TodoWriteFileOperation::Created,
+    }
+}
+
+pub fn convert_todo_write_file_operation_to_proto(
+    operation: &TodoWriteFileOperation,
+) -> common::TodoWriteFileOperation {
+    match operation {
+        TodoWriteFileOperation::Created => common::TodoWriteFileOperation::Created,
+        TodoWriteFileOperation::Modified => common::TodoWriteFileOperation::Modified,
+    }
 }

@@ -23,8 +23,12 @@ use steer_proto::common::v1::{
     BashResult as ProtoBashResult, ColumnRange as ProtoColumnRange, EditResult as ProtoEditResult,
     FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
     FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult,
-    SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult, TodoItem as ProtoTodoItem,
+    SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult,
     TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
+};
+
+use steer_grpc::grpc::conversions::{
+    convert_todo_item_to_proto, convert_todo_write_file_operation_to_proto,
 };
 
 /// Agent service implementation that executes tools locally
@@ -185,12 +189,7 @@ impl RemoteWorkspaceService {
                 let proto_todos = todo_list
                     .todos
                     .iter()
-                    .map(|t| ProtoTodoItem {
-                        id: t.id.clone(),
-                        content: t.content.clone(),
-                        status: t.status.clone(),
-                        priority: t.priority.clone(),
-                    })
+                    .map(convert_todo_item_to_proto)
                     .collect();
 
                 Some(ProtoResult::TodoListResult(ProtoTodoListResult {
@@ -202,17 +201,14 @@ impl RemoteWorkspaceService {
                 let proto_todos = todo_write_result
                     .todos
                     .iter()
-                    .map(|t| ProtoTodoItem {
-                        id: t.id.clone(),
-                        content: t.content.clone(),
-                        status: t.status.clone(),
-                        priority: t.priority.clone(),
-                    })
+                    .map(convert_todo_item_to_proto)
                     .collect();
 
                 Some(ProtoResult::TodoWriteResult(ProtoTodoWriteResult {
                     todos: proto_todos,
-                    operation: todo_write_result.operation.clone(),
+                    operation: convert_todo_write_file_operation_to_proto(
+                        &todo_write_result.operation,
+                    ) as i32,
                 }))
             }
 
