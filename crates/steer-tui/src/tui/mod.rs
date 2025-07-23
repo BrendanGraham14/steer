@@ -1300,10 +1300,6 @@ fn get_spinner_char(state: usize) -> &'static str {
     SPINNER_CHARS[state % SPINNER_CHARS.len()]
 }
 
-// -------------------------------------------------------------------------------------------------
-// Public API for backward compatibility with steer-cli
-// -------------------------------------------------------------------------------------------------
-
 /// Free function for best-effort terminal cleanup (raw mode, alt screen, mouse, etc.)
 pub fn cleanup_terminal() {
     use ratatui::crossterm::{

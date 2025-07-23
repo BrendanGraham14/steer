@@ -135,10 +135,10 @@
       in
       {
         packages = {
-          default = self.packages.${system}.steer-cli;
+          default = self.packages.${system}.steer;
 
-          steer-cli = mkCrateCrane {
-            name = "steer-cli";
+          steer = mkCrateCrane {
+            name = "steer";
           };
 
           steer-remote-workspace = mkCrateCrane {
@@ -196,7 +196,7 @@
 
           steer = {
             type = "app";
-            program = "${self.packages.${system}.steer-cli}/bin/steer";
+            program = "${self.packages.${system}.steer}/bin/steer";
           };
 
           remote-workspace = {

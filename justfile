@@ -38,7 +38,7 @@ ci:
     nix flake check
 
 schema-gen:
-    cargo run -p steer-cli --bin schema-generator
+    cargo run -p steer --bin schema-generator
 
 test-specific test_name:
     cargo test --all-features {{test_name}}

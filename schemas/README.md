@@ -14,8 +14,8 @@ The schema is automatically linked in our example configuration files via the `$
 
 The schema is auto-generated from our Rust code. To regenerate it after making changes to the configuration structures:
 
-```bash
-cargo run -p steer-cli --bin schema-generator
+```bash     
+cargo run -p steer --bin schema-generator
 ```
 
 This will write the updated schema to `schemas/session.schema.json`.

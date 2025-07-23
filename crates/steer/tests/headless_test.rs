@@ -24,7 +24,7 @@ async fn test_headless_mode_integration() {
     // Load config from environment is handled internally by run_once
 
     // Call run_once - note: new signature doesn't take config or timeout
-    let result = steer_cli::run_once(messages, Model::Claude3_7Sonnet20250219)
+    let result = steer::run_once(messages, Model::Claude3_7Sonnet20250219)
         .await
         .expect("run_once should succeed");
 

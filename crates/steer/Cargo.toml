@@ -1,5 +1,5 @@
 [package]
-name = "steer-cli"
+name = "steer"
 version.workspace = true
 edition.workspace = true
 description = "Command-line interface for Steer coding agent."

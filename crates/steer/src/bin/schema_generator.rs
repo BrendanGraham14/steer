@@ -1,7 +1,7 @@
 use schemars::schema_for;
 use std::fs;
 use std::path::Path;
-use steer_cli::session_config::PartialSessionConfig;
+use steer::session_config::PartialSessionConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate the JSON schema for PartialSessionConfig

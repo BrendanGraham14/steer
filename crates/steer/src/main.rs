@@ -2,11 +2,11 @@ use clap::Parser;
 use eyre::Result;
 
 use std::path::PathBuf;
-use steer_cli::cli::{Cli, Commands};
-use steer_cli::commands::{
+use steer::cli::{Cli, Commands};
+use steer::commands::{
     Command, headless::HeadlessCommand, serve::ServeCommand, session::SessionCommand,
 };
-use steer_cli::session_config::{SessionConfigLoader, SessionConfigOverrides};
+use steer::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use steer_core::api::Model;
 
 /// Parameters for running the TUI
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load .env file if it exists
-    steer_cli::cli::config::load_env()?;
+    steer::cli::config::load_env()?;
 
     // Initialize tracing (level configured via RUST_LOG env var)
     steer_core::utils::tracing::init_tracing()?;
@@ -122,8 +122,8 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Preferences { action } => {
-            use steer_cli::cli::args::PreferencesCommands;
-            use steer_cli::commands::preferences::{PreferencesAction, PreferencesCommand};
+            use steer::cli::args::PreferencesCommands;
+            use steer::commands::preferences::{PreferencesAction, PreferencesCommand};
             let cmd = PreferencesCommand {
                 action: match action {
                     PreferencesCommands::Show => PreferencesAction::Show,

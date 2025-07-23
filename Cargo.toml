@@ -10,7 +10,7 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/brendangraham14/steer"
 
 [workspace.dependencies]
-steer-cli = { version = "0.1.0", path = "crates/steer-cli" }
+steer = { version = "0.1.0", path = "crates/steer" }
 steer-core = { version = "0.1.0", path = "crates/steer-core" }
 steer-grpc = { version = "0.1.0", path = "crates/steer-grpc" }
 steer-macros = { version = "0.1.0", path = "crates/steer-macros" }

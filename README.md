@@ -9,7 +9,7 @@ Steer is an AI-powered CLI assistant for software engineering tasks. It provides
 ### Using Cargo
 
 ```bash
-cargo install --git ssh://git@github.com/brendangraham14/steer steer-cli --locked
+cargo install steer
 ```
 
 ### Using Nix

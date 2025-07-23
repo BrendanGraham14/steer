@@ -21,7 +21,7 @@ just fix          # Auto-fix issues and format code
 # nix build         # Build the project with Nix (uses crane for better caching)
 # nix flake check   # Run all checks
 # nix run           # Run steer directly
-# nix build .#steer-cli              # Build just the CLI
+# nix build .#steer                  # Build just the CLI
 # nix build .#steer-remote-workspace # Build just the remote workspace
 # nix build .#steer-workspace        # Build all crates at once
 
@@ -70,7 +70,7 @@ All crates are organized under the `crates/` directory following a polylith-styl
 - `crates/steer-proto/` - Protocol buffer definitions and generated code
 - `crates/steer-core/` - Core domain logic (LLM APIs, session management, tool execution backends)
 - `crates/steer-grpc/` - gRPC server/client implementation
-- `crates/steer-cli/` - Command-line interface and main binary
+- `crates/steer/` - Command-line interface and main binary
 - `crates/steer-tui/` - Terminal UI library (ratatui-based)
 - `crates/steer-tools/` - Tool trait definitions and implementations
 - `crates/steer-macros/` - Procedural macros for tool definitions
