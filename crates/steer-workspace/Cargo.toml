@@ -13,8 +13,8 @@ workspace = true
 [dependencies]
 async-trait = "0.1.88"
 chrono = "0.4.41"
-steer-proto = { version = "0.1.0", path = "../steer-proto" }
-steer-tools = { version = "0.1.0", path = "../steer-tools" }
+steer-proto.workspace = true
+steer-tools.workspace = true
 fuzzy-matcher = "0.3.7"
 gix = { version = "0.73", default-features = false, features = [
     "status",

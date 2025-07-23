@@ -42,5 +42,5 @@ steer-tools.workspace = true
 fuzzy-matcher = "0.3.7"
 ignore = "0.4.23"
 tokio-stream = "0.1.17"
-steer-proto = { version = "0.1.0", path = "../steer-proto" }
-steer-workspace = { version = "0.1.0", path = "../steer-workspace" }
+steer-proto.workspace = true
+steer-workspace.workspace = true
