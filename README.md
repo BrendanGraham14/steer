@@ -1,10 +1,12 @@
 # Steer
 
-Steer is an AI-powered CLI assistant for software engineering tasks. It provides an interactive terminal chat UI, a fully automated headless mode, and a gRPC server that lets other processes talk to the agent.
+Steer is an AI coding agent written in rust.
+
+It includes a TUI, supports headless execution, and exposes a gRPC interface for programmatic usage.
 
 ---
 
-## Installation
+## Install
 
 ### Using Cargo
 
@@ -24,12 +26,6 @@ nix run github:brendangraham14/steer
 nix profile install github:brendangraham14/steer
 ```
 
-### Prerequisites
-
-- **Nix (Optional)**: For Nix-based development, [Nix](https://nixos.org/download.html) (version 2.18 or newer) is required.
-- **Direnv (Optional)**: For automatic shell environment loading with Nix, [direnv](https://direnv.net/docs/installation.html) is recommended.
-- **macOS**: Xcode Command Line Tools are required for some build dependencies.
-
 ---
 
 ## Quick start
@@ -48,14 +44,14 @@ steer --session-config config.toml
 steer --remote 127.0.0.1:50051
 ```
 
-### Headless one-shot mode
+### Headless mode
 
 ```bash
 # Read prompt from stdin and return a single JSON response
 echo "What is 2+2?" | steer headless
 
 # Provide a JSON file containing `Vec<Message>` in the Steer message format
-steer headless --messages-json /tmp/messages.json --model gemini-pro
+steer headless --messages-json /tmp/messages.json
 
 # Run inside an existing session (keeps history / tool approvals)
 steer headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
