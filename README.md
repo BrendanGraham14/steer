@@ -14,12 +14,9 @@ It includes a TUI, supports headless execution, and exposes a gRPC interface for
 cargo install steer
 ```
 
----
-
 ## Quick start
 
 ```bash
-# Start an interactive chat in the current directory
 steer
 ```
 
