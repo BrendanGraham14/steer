@@ -118,12 +118,8 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                         };
 
                         // Process the first message
-                        if let Err(e) = handle_client_message(
-                            &session_manager,
-                            client_message,
-                            llm_config_provider.clone(),
-                        )
-                        .await
+                        if let Err(e) =
+                            handle_client_message(&session_manager, client_message).await
                         {
                             error!("Error handling first client message: {}", e);
                             let _ = tx
@@ -198,12 +194,8 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                             warn!("Failed to touch session {}: {}", session_id, e);
                         }
 
-                        if let Err(e) = handle_client_message(
-                            &session_manager,
-                            client_message,
-                            llm_config_provider.clone(),
-                        )
-                        .await
+                        if let Err(e) =
+                            handle_client_message(&session_manager, client_message).await
                         {
                             error!("Error handling client message: {}", e);
                             let _ = tx
@@ -722,7 +714,6 @@ async fn try_resume_session(
 async fn handle_client_message(
     session_manager: &SessionManager,
     client_message: StreamSessionRequest,
-    _llm_config_provider: steer_core::config::LlmConfigProvider,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     debug!(
         "Handling client message for session: {}",
