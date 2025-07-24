@@ -225,7 +225,6 @@ impl Tui {
     /// Create a new TUI instance
     pub async fn new(
         command_sink: Arc<dyn AppCommandSink>,
-        _event_source: Arc<dyn AppEventSource>,
         current_model: Model,
         session_id: String,
         theme: Option<Theme>,
@@ -249,13 +248,6 @@ impl Tui {
             .size()
             .map(|s| (s.width, s.height))
             .unwrap_or((80, 24));
-
-        // Request current conversation
-        let messages = Self::get_current_conversation(_event_source).await?;
-        info!(
-            "Received {} messages from current conversation",
-            messages.len()
-        );
 
         // Load preferences
         let preferences = steer_core::preferences::Preferences::load()
@@ -299,9 +291,6 @@ impl Tui {
             mode_stack: VecDeque::new(),
             last_revision: 0,
         };
-
-        // Restore messages using the public method
-        tui.restore_messages(messages);
 
         Ok(tui)
     }
@@ -948,13 +937,6 @@ impl Tui {
         }
     }
 
-    async fn get_current_conversation(
-        _event_source: Arc<dyn AppEventSource>,
-    ) -> Result<Vec<Message>> {
-        // For now, just return empty - conversation will be restored by the app
-        Ok(Vec::new())
-    }
-
     async fn send_message(&mut self, content: String) -> Result<()> {
         // Handle slash commands
         if content.starts_with('/') {
@@ -1428,7 +1410,6 @@ pub async fn run_tui(
     let event_rx = client.subscribe().await;
     let mut tui = Tui::new(
         client.clone() as std::sync::Arc<dyn AppCommandSink>,
-        client.clone() as std::sync::Arc<dyn AppEventSource>,
         model,
         session_id,
         theme.clone(),
@@ -1550,10 +1531,9 @@ mod tests {
         let _guard = TerminalCleanupGuard;
         // Create a TUI instance for testing
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
         let model = steer_core::api::Model::Claude3_5Sonnet20241022;
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, event_source, model, session_id, None)
+        let mut tui = Tui::new(command_sink, model, session_id, None)
             .await
             .unwrap();
 
@@ -1617,10 +1597,9 @@ mod tests {
         let _guard = TerminalCleanupGuard;
         // Test edge case where Tool result arrives before Assistant message
         let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
-        let event_source = Arc::new(MockEventSource) as Arc<dyn AppEventSource>;
         let model = steer_core::api::Model::Claude3_5Sonnet20241022;
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, event_source, model, session_id, None)
+        let mut tui = Tui::new(command_sink, model, session_id, None)
             .await
             .unwrap();
 
