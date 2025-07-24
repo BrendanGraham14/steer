@@ -33,15 +33,6 @@ nix profile install github:brendangraham14/steer
 ```bash
 # Start an interactive chat in the current directory
 steer
-
-# Work inside a different directory
-steer --directory /path/to/project
-
-# Start with a session configuration file
-steer --session-config config.toml
-
-# Point the client at a remote gRPC server instead of running locally
-steer --remote 127.0.0.1:50051
 ```
 
 ### Headless mode
