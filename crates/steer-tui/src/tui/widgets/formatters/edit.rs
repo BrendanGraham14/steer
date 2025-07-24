@@ -1,95 +1,16 @@
 use super::{ToolFormatter, helpers::*};
 use crate::tui::theme::{Component, Theme};
+use crate::tui::widgets::diff::{DiffMode, DiffWidget, diff_summary};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 use serde_json::Value;
-use similar::{Algorithm, ChangeTag, TextDiff};
 use std::path::Path;
 use steer_core::app::conversation::ToolResult;
 use steer_tools::tools::edit::{EditParams, multi_edit::MultiEditParams};
 
 pub struct EditFormatter;
-
-// Helper for detailed diffs
-fn render_detailed_diff(
-    old_string: &str,
-    new_string: &str,
-    wrap_width: usize,
-    theme: &Theme,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let diff = TextDiff::configure()
-        .algorithm(Algorithm::Myers)
-        .diff_lines(old_string, new_string);
-
-    for change in diff.iter_all_changes() {
-        let (prefix, style) = match change.tag() {
-            ChangeTag::Delete => ("-", theme.style(Component::CodeDeletion)),
-            ChangeTag::Insert => ("+", theme.style(Component::CodeAddition)),
-            ChangeTag::Equal => (" ", theme.style(Component::DimText)),
-        };
-
-        let content = change.value().trim_end();
-
-        // Only show a limited context for unchanged lines
-        if change.tag() == ChangeTag::Equal {
-            // Skip most unchanged lines, just show a few for context
-            continue;
-        }
-
-        // Wrap long lines
-        let wrapped_lines = textwrap::wrap(content, wrap_width.saturating_sub(2));
-        if wrapped_lines.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled(prefix, style),
-                Span::styled(" ", style),
-            ]));
-        } else {
-            for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
-                if i == 0 {
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix, style),
-                        Span::styled(format!(" {wrapped_line}"), style),
-                    ]));
-                } else {
-                    // Continuation lines
-                    lines.push(Line::from(vec![
-                        Span::styled("  ", style),
-                        Span::styled(wrapped_line.to_string(), style),
-                    ]));
-                }
-            }
-        }
-    }
-
-    // Limit the number of diff lines shown
-    const MAX_DIFF_LINES: usize = 20;
-    if lines.len() > MAX_DIFF_LINES {
-        let truncated_count = lines.len() - MAX_DIFF_LINES;
-        lines.truncate(MAX_DIFF_LINES);
-        lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
-        lines.push(Line::from(Span::styled(
-            format!("... ({truncated_count} more lines in diff)"),
-            theme
-                .style(Component::DimText)
-                .add_modifier(Modifier::ITALIC),
-        )));
-    }
-
-    lines
-}
-
-// Helper to show short context
-fn show_short_context(text: &str, max_len: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.len() <= max_len {
-        trimmed.to_string()
-    } else {
-        format!("{}...", &trimmed[..max_len.saturating_sub(3)])
-    }
-}
 
 // Extract info for single edit
 fn extract_edit_info(result: &Option<ToolResult>, old_string: &str, new_string: &str) -> String {
@@ -219,23 +140,25 @@ impl ToolFormatter for EditFormatter {
                     // File creation or insertion
                     lines.push(Line::from(vec![
                         Span::styled("+ Insert: ", theme.style(Component::CodeAddition)),
-                        Span::raw(show_short_context(&edit.new_string, 60)),
+                        Span::raw(diff_summary(&edit.old_string, &edit.new_string, 60).1),
                     ]));
                 } else if edit.new_string.is_empty() {
                     // Deletion
                     lines.push(Line::from(vec![
                         Span::styled("- Delete: ", theme.style(Component::CodeDeletion)),
-                        Span::raw(show_short_context(&edit.old_string, 60)),
+                        Span::raw(diff_summary(&edit.old_string, &edit.new_string, 60).0),
                     ]));
                 } else {
-                    // Replacement
+                    // Replacement - show a mini diff
+                    let (old_preview, new_preview) =
+                        diff_summary(&edit.old_string, &edit.new_string, 60);
                     lines.push(Line::from(vec![
                         Span::styled("- ", theme.style(Component::CodeDeletion)),
-                        Span::raw(show_short_context(&edit.old_string, 60)),
+                        Span::raw(old_preview),
                     ]));
                     lines.push(Line::from(vec![
                         Span::styled("+ ", theme.style(Component::CodeAddition)),
-                        Span::raw(show_short_context(&edit.new_string, 60)),
+                        Span::raw(new_preview),
                     ]));
                 }
             }
@@ -275,7 +198,7 @@ impl ToolFormatter for EditFormatter {
                     theme.style(Component::DimText),
                 )));
                 let search_preview =
-                    show_short_context(&params.old_string, wrap_width.saturating_sub(2));
+                    diff_summary(&params.old_string, "", wrap_width.saturating_sub(2)).0;
                 for line in search_preview.lines() {
                     lines.push(Line::from(Span::raw(format!("  {line}"))));
                 }
@@ -283,12 +206,11 @@ impl ToolFormatter for EditFormatter {
 
             // Show detailed diff if we have room
             if !params.old_string.is_empty() || !params.new_string.is_empty() {
-                lines.extend(render_detailed_diff(
-                    &params.old_string,
-                    &params.new_string,
-                    wrap_width,
-                    theme,
-                ));
+                let diff_widget = DiffWidget::new(&params.old_string, &params.new_string, theme)
+                    .with_wrap_width(wrap_width)
+                    .with_max_lines(20)
+                    .with_mode(DiffMode::Split);
+                lines.extend(diff_widget.lines());
             }
 
             // Show result if available
@@ -309,7 +231,7 @@ impl ToolFormatter for EditFormatter {
         lines
     }
 
-    fn approval(&self, params: &Value, _wrap_width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    fn approval(&self, params: &Value, wrap_width: usize, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         // Try parsing as MultiEditParams first
@@ -339,23 +261,19 @@ impl ToolFormatter for EditFormatter {
                         .add_modifier(Modifier::ITALIC),
                 )));
 
-                // Show a very brief diff preview
-                if !edit.old_string.is_empty() {
-                    lines.push(Line::from(vec![
-                        Span::styled("  - ", theme.style(Component::CodeDeletion)),
-                        Span::styled(
-                            show_short_context(&edit.old_string, 60),
-                            theme.style(Component::CodeDeletion),
-                        ),
-                    ]));
+                // Show a diff preview with context
+                let diff_widget = DiffWidget::new(&edit.old_string, &edit.new_string, theme)
+                    .with_wrap_width(wrap_width.saturating_sub(4)) // Account for indentation
+                    .with_max_lines(6) // Limited preview per edit
+                    .with_context_radius(1) // Minimal context for approval view
+                    .with_mode(DiffMode::Split);
+
+                // Indent the diff lines
+                for line in diff_widget.lines() {
+                    let mut indented_spans = vec![Span::raw("  ")];
+                    indented_spans.extend(line.spans);
+                    lines.push(Line::from(indented_spans));
                 }
-                lines.push(Line::from(vec![
-                    Span::styled("  + ", theme.style(Component::CodeAddition)),
-                    Span::styled(
-                        show_short_context(&edit.new_string, 60),
-                        theme.style(Component::CodeAddition),
-                    ),
-                ]));
             }
 
             if params.edits.len() > MAX_PREVIEW_EDITS {
@@ -381,31 +299,17 @@ impl ToolFormatter for EditFormatter {
                 Span::styled(file_name.to_string(), Style::default()),
             ]));
 
-            // Show brief diff preview
-            if params.old_string.is_empty() {
-                lines.push(Line::from(vec![
-                    Span::styled("  + ", theme.style(Component::CodeAddition)),
-                    Span::styled(
-                        show_short_context(&params.new_string, 80),
-                        theme.style(Component::CodeAddition),
-                    ),
-                ]));
-            } else {
-                // Show brief before/after
-                lines.push(Line::from(vec![
-                    Span::styled("  - ", theme.style(Component::CodeDeletion)),
-                    Span::styled(
-                        show_short_context(&params.old_string, 70),
-                        theme.style(Component::CodeDeletion),
-                    ),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::styled("  + ", theme.style(Component::CodeAddition)),
-                    Span::styled(
-                        show_short_context(&params.new_string, 70),
-                        theme.style(Component::CodeAddition),
-                    ),
-                ]));
+            // Show brief diff preview with proper context
+            let diff_widget = DiffWidget::new(&params.old_string, &params.new_string, theme)
+                .with_wrap_width(wrap_width.saturating_sub(2))
+                .with_max_lines(10) // Show up to 10 lines of diff
+                .with_context_radius(2)
+                .with_mode(DiffMode::Split); // Show 2 lines of context
+
+            for line in diff_widget.lines() {
+                let mut indented_spans = vec![Span::raw("  ")];
+                indented_spans.extend(line.spans);
+                lines.push(Line::from(indented_spans));
             }
         } else {
             return vec![Line::from(Span::styled(

@@ -1,6 +1,7 @@
 pub mod chat_list_state;
 pub mod chat_widgets;
 pub mod clipping;
+pub mod diff;
 pub mod formatters;
 pub mod fuzzy_finder;
 pub mod input_panel;
