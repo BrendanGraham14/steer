@@ -3,11 +3,11 @@ mod tests {
     use crate::api::Model;
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
-        App, ToolExecutor,
+        App,
         conversation::{AssistantContent, MessageData},
     };
     use crate::test_utils;
-    use crate::tools::{BackendRegistry, LocalBackend};
+    use crate::tools::{BackendRegistry, LocalBackend, ToolExecutor};
     use crate::workspace::Workspace;
     use std::sync::Arc;
     use steer_tools::{ToolCall, ToolError, result::ToolResult};

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
-use crate::tui::model::{ChatItem, NoticeLevel};
+use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
@@ -375,7 +375,7 @@ impl Tui {
     }
 
     /// Helper to push a TUI command response to the chat store
-    fn push_tui_response(&mut self, command: String, response: String) {
+    fn push_tui_response(&mut self, command: String, response: TuiCommandResponse) {
         use crate::tui::model::{ChatItem, ChatItemData, generate_row_id};
         self.chat_store.push(ChatItem {
             parent_chat_item_id: None,
@@ -1041,8 +1041,10 @@ impl Tui {
                         } else {
                             self.push_tui_response(
                                 TuiCommandType::ReloadFiles.command_name(),
-                                "File cache cleared. Files will be reloaded on next access."
-                                    .to_string(),
+                                TuiCommandResponse::Text(
+                                    "File cache cleared. Files will be reloaded on next access."
+                                        .to_string(),
+                                ),
                             );
                         }
                     }
@@ -1055,7 +1057,7 @@ impl Tui {
                                     self.theme = new_theme;
                                     self.push_tui_response(
                                         TuiCommandType::Theme.command_name(),
-                                        format!("Theme changed to '{name}'"),
+                                        TuiCommandResponse::Theme { name: name.clone() },
                                     );
                                 }
                                 Err(e) => {
@@ -1069,14 +1071,9 @@ impl Tui {
                             // List available themes
                             let loader = theme::ThemeLoader::new();
                             let themes = loader.list_themes();
-                            let theme_list = if themes.is_empty() {
-                                "No themes found.".to_string()
-                            } else {
-                                format!("Available themes:\n{}", themes.join("\n"))
-                            };
                             self.push_tui_response(
                                 TuiCommandType::Theme.command_name(),
-                                theme_list,
+                                TuiCommandResponse::ListThemes(themes),
                             );
                         }
                     }
@@ -1104,7 +1101,10 @@ impl Tui {
                             help_lines.join("\n")
                         };
 
-                        self.push_tui_response(TuiCommandType::Help.command_name(), help_text);
+                        self.push_tui_response(
+                            TuiCommandType::Help.command_name(),
+                            TuiCommandResponse::Text(help_text),
+                        );
                     }
                     TuiCommand::Auth => {
                         // Launch auth setup
@@ -1146,17 +1146,16 @@ impl Tui {
 
                         self.push_tui_response(
                             TuiCommandType::Auth.to_string(),
-                            "Entering authentication setup mode...".to_string(),
+                            TuiCommandResponse::Text(
+                                "Entering authentication setup mode...".to_string(),
+                            ),
                         );
                     }
                     TuiCommand::EditingMode(ref mode_name) => {
                         let response = match mode_name.as_deref() {
                             None => {
                                 // Show current mode
-                                let mode_str = match self.preferences.ui.editing_mode {
-                                    steer_core::preferences::EditingMode::Simple => "simple",
-                                    steer_core::preferences::EditingMode::Vim => "vim",
-                                };
+                                let mode_str = self.preferences.ui.editing_mode.to_string();
                                 format!("Current editing mode: {mode_str}")
                             }
                             Some("simple") => {
@@ -1178,7 +1177,17 @@ impl Tui {
                             }
                         };
 
-                        self.push_tui_response(tui_cmd.as_command_str(), response);
+                        self.push_tui_response(
+                            tui_cmd.as_command_str(),
+                            TuiCommandResponse::Text(response),
+                        );
+                    }
+                    TuiCommand::Mcp => {
+                        let servers = self.client.get_mcp_servers().await?;
+                        self.push_tui_response(
+                            tui_cmd.as_command_str(),
+                            TuiCommandResponse::ListMcpServers(servers),
+                        );
                     }
                     TuiCommand::Custom(custom_cmd) => {
                         // Handle custom command based on its type

@@ -349,6 +349,7 @@ impl SessionStore for SqliteSessionStore {
             last_event_sequence: last_sequence.unwrap_or(0) as u64,
             metadata: Default::default(),
             active_message_id,
+            mcp_servers: Default::default(), // Transient field, rebuilt on activation
         };
 
         Ok(Some(Session {

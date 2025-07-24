@@ -32,8 +32,8 @@ impl SystemEventProcessor {
             parent_chat_item_id: None, // Will be set by push()
             data: ChatItemData::CoreCmdResponse {
                 id: generate_row_id(),
-                cmd: command,
-                resp: response,
+                command,
+                response,
                 ts: time::OffsetDateTime::now_utc(),
             },
         };

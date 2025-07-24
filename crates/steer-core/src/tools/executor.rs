@@ -1,5 +1,5 @@
 use crate::config::LlmConfigProvider;
-use crate::error::{Error, Result};
+use crate::tools::error::Result;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error, instrument};
@@ -9,7 +9,7 @@ use crate::app::validation::{ValidationContext, ValidatorRegistry};
 use crate::tools::{BackendRegistry, ExecutionContext};
 use crate::workspace::Workspace;
 use steer_tools::ToolSchema;
-use steer_tools::{ToolError, result::ToolResult};
+use steer_tools::result::ToolResult;
 
 /// Manages the execution of tools called by the AI model
 #[derive(Clone)]
@@ -68,27 +68,13 @@ impl ToolExecutor {
         // First check if it's a workspace tool
         let workspace_tools = self.workspace.available_tools().await;
         if workspace_tools.iter().any(|t| t.name == tool_name) {
-            return self
-                .workspace
-                .requires_approval(tool_name)
-                .await
-                .map_err(|e| {
-                    Error::Tool(steer_tools::ToolError::InternalError(format!(
-                        "Failed to check approval requirement: {e}"
-                    )))
-                });
+            return Ok(self.workspace.requires_approval(tool_name).await?);
         }
 
         // Otherwise check external backends
         match self.backend_registry.get_backend_for_tool(tool_name) {
-            Some(backend) => backend.requires_approval(tool_name).await.map_err(|e| {
-                Error::Tool(steer_tools::ToolError::InternalError(format!(
-                    "Failed to check approval requirement: {e}"
-                )))
-            }),
-            None => Err(Error::Tool(steer_tools::ToolError::UnknownTool(
-                tool_name.to_string(),
-            ))),
+            Some(backend) => Ok(backend.requires_approval(tool_name).await?),
+            None => Err(steer_tools::ToolError::UnknownTool(tool_name.to_string()).into()),
         }
     }
 
@@ -139,10 +125,12 @@ impl ToolExecutor {
                 let validation_result = validator
                     .validate(tool_call, &validation_context)
                     .await
-                    .map_err(|e| ToolError::InternalError(format!("Validation failed: {e}")))?;
+                    .map_err(|e| {
+                        steer_tools::ToolError::InternalError(format!("Validation failed: {e}"))
+                    })?;
 
                 if !validation_result.allowed {
-                    return Err(ToolError::InternalError(
+                    return Err(steer_tools::ToolError::InternalError(
                         validation_result
                             .reason
                             .unwrap_or_else(|| "Tool execution was denied".to_string()),
@@ -194,7 +182,7 @@ impl ToolExecutor {
                     tool_name,
                     tool_id
                 );
-                ToolError::UnknownTool(tool_name.clone())
+                steer_tools::ToolError::UnknownTool(tool_name.clone())
             })?;
 
         debug!(
@@ -262,7 +250,7 @@ impl ToolExecutor {
                     tool_name,
                     tool_id
                 );
-                ToolError::UnknownTool(tool_name.clone())
+                steer_tools::ToolError::UnknownTool(tool_name.clone())
             })?;
 
         debug!(
@@ -289,6 +277,8 @@ impl ToolExecutor {
         workspace
             .execute_tool(tool_call, tools_context)
             .await
-            .map_err(|e| ToolError::InternalError(format!("Workspace execution failed: {e}")))
+            .map_err(|e| {
+                steer_tools::ToolError::InternalError(format!("Workspace execution failed: {e}"))
+            })
     }
 }

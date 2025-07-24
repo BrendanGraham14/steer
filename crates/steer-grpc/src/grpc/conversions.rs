@@ -1,4 +1,5 @@
 use crate::grpc::error::ConversionError;
+use chrono::{DateTime, Utc};
 use std::time::Duration;
 use steer_core::api::ToolCall;
 use steer_core::app::command::ApprovalType;
@@ -127,16 +128,6 @@ fn tool_error_to_proto(error: &steer_tools::error::ToolError) -> proto::ToolErro
         ToolError::InternalError(msg) => ErrorType::InternalError(msg.clone()),
         ToolError::Io { tool_name, message } => ErrorType::Io(proto::IoError {
             tool_name: tool_name.clone(),
-            message: message.clone(),
-        }),
-        ToolError::Serialization(msg) => ErrorType::Serialization(msg.clone()),
-        ToolError::Http(msg) => ErrorType::Http(msg.clone()),
-        ToolError::Regex(msg) => ErrorType::Regex(msg.clone()),
-        ToolError::McpConnectionFailed {
-            server_name,
-            message,
-        } => ErrorType::McpConnectionFailed(proto::McpConnectionFailedError {
-            server_name: server_name.clone(),
             message: message.clone(),
         }),
     };
@@ -269,13 +260,6 @@ fn proto_to_tool_error(
         ErrorType::InternalError(msg) => ToolError::InternalError(msg),
         ErrorType::Io(e) => ToolError::Io {
             tool_name: e.tool_name,
-            message: e.message,
-        },
-        ErrorType::Serialization(msg) => ToolError::Serialization(msg),
-        ErrorType::Http(msg) => ToolError::Http(msg),
-        ErrorType::Regex(msg) => ToolError::Regex(msg),
-        ErrorType::McpConnectionFailed(e) => ToolError::McpConnectionFailed {
-            server_name: e.server_name,
             message: e.message,
         },
     })
@@ -1695,4 +1679,165 @@ pub fn convert_todo_write_file_operation_to_proto(
         TodoWriteFileOperation::Created => common::TodoWriteFileOperation::Created,
         TodoWriteFileOperation::Modified => common::TodoWriteFileOperation::Modified,
     }
+}
+
+pub fn mcp_server_info_to_proto(
+    info: steer_core::session::state::McpServerInfo,
+) -> proto::McpServerInfo {
+    use steer_core::session::state::McpConnectionState;
+
+    proto::McpServerInfo {
+        server_name: info.server_name,
+        transport: Some(mcp_transport_to_proto(&info.transport)),
+        state: Some(match info.state {
+            McpConnectionState::Connecting => proto::McpConnectionState {
+                state: Some(proto::mcp_connection_state::State::Connecting(
+                    proto::McpConnecting {},
+                )),
+            },
+            McpConnectionState::Connected { tool_names } => proto::McpConnectionState {
+                state: Some(proto::mcp_connection_state::State::Connected(
+                    proto::McpConnected { tool_names },
+                )),
+            },
+            McpConnectionState::Failed { error } => proto::McpConnectionState {
+                state: Some(proto::mcp_connection_state::State::Failed(
+                    proto::McpFailed { error },
+                )),
+            },
+        }),
+        last_updated: Some(prost_types::Timestamp {
+            seconds: info.last_updated.timestamp(),
+            nanos: info.last_updated.timestamp_subsec_nanos() as i32,
+        }),
+    }
+}
+
+fn mcp_transport_to_proto(transport: &steer_core::tools::McpTransport) -> proto::McpTransportInfo {
+    use steer_core::tools::McpTransport;
+
+    proto::McpTransportInfo {
+        transport: Some(match transport {
+            McpTransport::Stdio { command, args } => {
+                proto::mcp_transport_info::Transport::Stdio(proto::McpStdioTransport {
+                    command: command.clone(),
+                    args: args.clone(),
+                })
+            }
+            McpTransport::Tcp { host, port } => {
+                proto::mcp_transport_info::Transport::Tcp(proto::McpTcpTransport {
+                    host: host.clone(),
+                    port: *port as u32,
+                })
+            }
+            McpTransport::Unix { path } => {
+                proto::mcp_transport_info::Transport::Unix(proto::McpUnixTransport {
+                    path: path.clone(),
+                })
+            }
+            McpTransport::Sse { url, headers } => {
+                proto::mcp_transport_info::Transport::Sse(proto::McpSseTransport {
+                    url: url.clone(),
+                    headers: headers.clone().unwrap_or_default(),
+                })
+            }
+            McpTransport::Http { url, headers } => {
+                proto::mcp_transport_info::Transport::Http(proto::McpHttpTransport {
+                    url: url.clone(),
+                    headers: headers.clone().unwrap_or_default(),
+                })
+            }
+        }),
+    }
+}
+
+pub fn proto_to_mcp_server_info(
+    proto: proto::McpServerInfo,
+) -> Result<steer_core::session::state::McpServerInfo, ConversionError> {
+    use steer_core::session::state::McpConnectionState;
+
+    let transport = proto
+        .transport
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "transport".to_string(),
+        })?;
+    let transport = proto_to_mcp_transport(transport)?;
+
+    let state = proto.state.ok_or_else(|| ConversionError::MissingField {
+        field: "state".to_string(),
+    })?;
+    let state = match state.state {
+        Some(proto::mcp_connection_state::State::Connecting(_)) => McpConnectionState::Connecting,
+        Some(proto::mcp_connection_state::State::Connected(connected)) => {
+            McpConnectionState::Connected {
+                tool_names: connected.tool_names,
+            }
+        }
+        Some(proto::mcp_connection_state::State::Failed(failed)) => McpConnectionState::Failed {
+            error: failed.error,
+        },
+        None => {
+            return Err(ConversionError::MissingField {
+                field: "state.state".to_string(),
+            });
+        }
+    };
+
+    let last_updated = proto
+        .last_updated
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "last_updated".to_string(),
+        })?;
+    let last_updated =
+        DateTime::<Utc>::from_timestamp(last_updated.seconds, last_updated.nanos as u32)
+            .ok_or_else(|| ConversionError::InvalidData {
+                message: "Invalid timestamp".to_string(),
+            })?;
+
+    Ok(steer_core::session::state::McpServerInfo {
+        server_name: proto.server_name,
+        transport,
+        state,
+        last_updated,
+    })
+}
+
+fn proto_to_mcp_transport(
+    proto: proto::McpTransportInfo,
+) -> Result<steer_core::tools::McpTransport, ConversionError> {
+    use steer_core::tools::McpTransport;
+
+    let transport = proto
+        .transport
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "transport".to_string(),
+        })?;
+
+    Ok(match transport {
+        proto::mcp_transport_info::Transport::Stdio(stdio) => McpTransport::Stdio {
+            command: stdio.command,
+            args: stdio.args,
+        },
+        proto::mcp_transport_info::Transport::Tcp(tcp) => McpTransport::Tcp {
+            host: tcp.host,
+            port: tcp.port as u16,
+        },
+        proto::mcp_transport_info::Transport::Unix(unix) => McpTransport::Unix { path: unix.path },
+        proto::mcp_transport_info::Transport::Sse(sse) => McpTransport::Sse {
+            url: sse.url,
+            headers: if sse.headers.is_empty() {
+                None
+            } else {
+                Some(sse.headers)
+            },
+        },
+        proto::mcp_transport_info::Transport::Http(http) => McpTransport::Http {
+            url: http.url,
+            headers: if http.headers.is_empty() {
+                None
+            } else {
+                Some(http.headers)
+            },
+        },
+    })
 }

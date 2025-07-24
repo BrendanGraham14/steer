@@ -25,6 +25,9 @@ service AgentService {
 
   // List files in the workspace for fuzzy finding
   rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
+
+  // Get MCP server connection status
+  rpc GetMcpServers(GetMcpServersRequest) returns (GetMcpServersResponse);
 }
 
 // Client to server messages in the bidirectional stream
@@ -496,10 +499,6 @@ message ToolError {
     string denied_by_user = 6;
     string internal_error = 7;
     IoError io = 8;
-    string serialization = 9;
-    string http = 10;
-    string regex = 11;
-    McpConnectionFailedError mcp_connection_failed = 12;
   }
 }
 
@@ -820,4 +819,74 @@ message BashError {
 
 message CompactError {
   string message = 1;
+}
+
+// MCP server status messages
+message GetMcpServersRequest {
+  string session_id = 1;
+}
+
+message GetMcpServersResponse {
+  repeated McpServerInfo servers = 1;
+}
+
+message McpServerInfo {
+  string server_name = 1;
+  McpTransportInfo transport = 2;
+  McpConnectionState state = 3;
+  google.protobuf.Timestamp last_updated = 4;
+}
+
+message McpTransportInfo {
+  oneof transport {
+    McpStdioTransport stdio = 1;
+    McpTcpTransport tcp = 2;
+    McpUnixTransport unix = 3;
+    McpSseTransport sse = 4;
+    McpHttpTransport http = 5;
+  }
+}
+
+message McpStdioTransport {
+  string command = 1;
+  repeated string args = 2;
+}
+
+message McpTcpTransport {
+  string host = 1;
+  uint32 port = 2;
+}
+
+message McpUnixTransport {
+  string path = 1;
+}
+
+message McpSseTransport {
+  string url = 1;
+  map<string, string> headers = 2;
+}
+
+message McpHttpTransport {
+  string url = 1;
+  map<string, string> headers = 2;
+}
+
+message McpConnectionState {
+  oneof state {
+    McpConnecting connecting = 1;
+    McpConnected connected = 2;
+    McpFailed failed = 3;
+  }
+}
+
+message McpConnecting {
+  // No fields needed
+}
+
+message McpConnected {
+  repeated string tool_names = 1;
+}
+
+message McpFailed {
+  string error = 1;
 }

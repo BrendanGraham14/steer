@@ -1,10 +1,9 @@
-// Re-export workspace types from steer-workspace crate
+use steer_workspace::WorkspaceError;
 pub use steer_workspace::{
     EnvironmentInfo, RemoteAuth, Workspace, WorkspaceConfig, WorkspaceMetadata, WorkspaceType,
 };
 
-// Create type aliases for backwards compatibility with session state
-use crate::error::{Result, WorkspaceError};
+use crate::error::Result;
 use std::sync::Arc;
 
 /// Create a workspace from configuration

@@ -8,8 +8,9 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use crate::grpc::conversions::{
-    convert_app_command_to_client_message, proto_to_message, server_event_to_app_event,
-    session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
+    convert_app_command_to_client_message, proto_to_mcp_server_info, proto_to_message,
+    server_event_to_app_event, session_tool_config_to_proto, tool_approval_policy_to_proto,
+    workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 
@@ -18,11 +19,11 @@ type GrpcResult<T> = std::result::Result<T, GrpcError>;
 use steer_core::app::conversation::Message;
 use steer_core::app::io::{AppCommandSink, AppEventSource};
 use steer_core::app::{AppCommand, AppEvent};
-use steer_core::session::SessionConfig;
+use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
-    GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState, StreamSessionRequest,
-    SubscribeRequest, agent_service_client::AgentServiceClient,
+    GetMcpServersRequest, GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState,
+    StreamSessionRequest, SubscribeRequest, agent_service_client::AgentServiceClient,
     stream_session_request::Message as StreamSessionRequestType,
 };
 
@@ -444,6 +445,39 @@ impl AgentClient {
         if let Some(session_id) = &*self.session_id.lock().await {
             info!("GrpcClientAdapter shut down for session: {}", session_id);
         }
+    }
+
+    pub async fn get_mcp_servers(&self) -> GrpcResult<Vec<McpServerInfo>> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(GetMcpServersRequest {
+            session_id: session_id.clone(),
+        });
+
+        let response = self
+            .client
+            .lock()
+            .await
+            .get_mcp_servers(request)
+            .await
+            .map_err(Box::new)?;
+
+        let servers = response
+            .into_inner()
+            .servers
+            .into_iter()
+            .filter_map(|s| proto_to_mcp_server_info(s).ok())
+            .collect();
+
+        Ok(servers)
     }
 }
 

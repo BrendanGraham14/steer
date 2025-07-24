@@ -29,6 +29,8 @@ pub enum TuiCommand {
     Help(Option<String>),
     /// Switch editing mode
     EditingMode(Option<String>),
+    /// Show MCP server connection status
+    Mcp,
     /// Custom user-defined command
     Custom(CustomCommand),
 }
@@ -43,6 +45,7 @@ pub enum TuiCommandType {
     Auth,
     Help,
     EditingMode,
+    Mcp,
 }
 
 impl TuiCommandType {
@@ -54,6 +57,7 @@ impl TuiCommandType {
             TuiCommandType::Auth => self.to_string(),
             TuiCommandType::Help => self.to_string(),
             TuiCommandType::EditingMode => self.to_string(),
+            TuiCommandType::Mcp => self.to_string(),
         }
     }
 
@@ -65,6 +69,7 @@ impl TuiCommandType {
             TuiCommandType::Auth => "Manage authentication settings",
             TuiCommandType::Help => "Show help information",
             TuiCommandType::EditingMode => "Switch between editing modes (simple/vim)",
+            TuiCommandType::Mcp => "Show MCP server connection status",
         }
     }
 
@@ -76,6 +81,7 @@ impl TuiCommandType {
             TuiCommandType::Auth => format!("/{}", self.command_name()),
             TuiCommandType::Help => format!("/{} [command]", self.command_name()),
             TuiCommandType::EditingMode => format!("/{} [simple|vim]", self.command_name()),
+            TuiCommandType::Mcp => format!("/{}", self.command_name()),
         }
     }
 }
@@ -169,6 +175,7 @@ impl TuiCommand {
                         let mode_name = parts.get(1).map(|s| s.to_string());
                         Ok(TuiCommand::EditingMode(mode_name))
                     }
+                    TuiCommandType::Mcp => Ok(TuiCommand::Mcp),
                 };
             }
         }
@@ -193,6 +200,7 @@ impl TuiCommand {
             TuiCommand::EditingMode(Some(mode)) => {
                 format!("{} {}", TuiCommandType::EditingMode.command_name(), mode)
             }
+            TuiCommand::Mcp => TuiCommandType::Mcp.command_name().to_string(),
             TuiCommand::Custom(cmd) => cmd.name().to_string(),
         }
     }
@@ -278,6 +286,10 @@ mod tests {
         assert!(matches!(
             AppCommand::parse("/theme gruvbox").unwrap(),
             AppCommand::Tui(TuiCommand::Theme(Some(_)))
+        ));
+        assert!(matches!(
+            AppCommand::parse("/mcp").unwrap(),
+            AppCommand::Tui(TuiCommand::Mcp)
         ));
     }
 

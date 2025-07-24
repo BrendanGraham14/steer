@@ -2,6 +2,7 @@
 //!
 //! This module provides the ToolBackend implementation for MCP servers.
 
+use crate::tools::mcp::error::McpError;
 use async_trait::async_trait;
 use rmcp::transport::ConfigureCommandExt;
 use schemars::JsonSchema;
@@ -71,7 +72,7 @@ impl McpBackend {
         server_name: String,
         transport: McpTransport,
         tool_filter: ToolFilter,
-    ) -> Result<Self, ToolError> {
+    ) -> Result<Self, McpError> {
         info!(
             "Creating MCP backend '{}' with transport: {:?}",
             server_name, transport
@@ -87,10 +88,10 @@ impl McpBackend {
                     .spawn()
                     .map_err(|e| {
                         error!("Failed to create MCP process: {}", e);
-                        ToolError::mcp_connection_failed(
-                            &server_name,
-                            format!("Failed to create MCP process: {e}"),
-                        )
+                        McpError::ConnectionFailed {
+                            server_name: server_name.clone(),
+                            message: format!("Failed to create MCP process: {e}"),
+                        }
                     })?;
 
                 if let Some(stderr) = stderr {
@@ -117,10 +118,10 @@ impl McpBackend {
 
                 ().serve(transport).await.map_err(|e| {
                     error!("Failed to serve MCP: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to serve MCP: {e}"),
-                    )
+                    McpError::ServeFailed {
+                        transport: "stdio".to_string(),
+                        message: format!("Failed to serve MCP: {e}"),
+                    }
                 })?
             }
             McpTransport::Tcp { host, port } => {
@@ -128,36 +129,36 @@ impl McpBackend {
                     .await
                     .map_err(|e| {
                         error!("Failed to connect to TCP MCP server: {}", e);
-                        ToolError::mcp_connection_failed(
-                            &server_name,
-                            format!("Failed to connect to {host}:{port} - {e}"),
-                        )
+                        McpError::ConnectionFailed {
+                            server_name: server_name.clone(),
+                            message: format!("Failed to connect to {host}:{port} - {e}"),
+                        }
                     })?;
 
                 ().serve(stream).await.map_err(|e| {
                     error!("Failed to serve MCP over TCP: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to serve MCP over TCP: {e}"),
-                    )
+                    McpError::ServeFailed {
+                        transport: "tcp".to_string(),
+                        message: format!("Failed to serve MCP over TCP: {e}"),
+                    }
                 })?
             }
             #[cfg(unix)]
             McpTransport::Unix { path } => {
                 let stream = UnixStream::connect(path).await.map_err(|e| {
                     error!("Failed to connect to Unix socket MCP server: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to connect to Unix socket {path} - {e}"),
-                    )
+                    McpError::ConnectionFailed {
+                        server_name: server_name.clone(),
+                        message: format!("Failed to connect to Unix socket {path} - {e}"),
+                    }
                 })?;
 
                 ().serve(stream).await.map_err(|e| {
                     error!("Failed to serve MCP over Unix socket: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to serve MCP over Unix socket: {e}"),
-                    )
+                    McpError::ServeFailed {
+                        transport: "unix".to_string(),
+                        message: format!("Failed to serve MCP over Unix socket: {e}"),
+                    }
                 })?
             }
             McpTransport::Sse { url, headers } => {
@@ -170,18 +171,18 @@ impl McpBackend {
 
                 let transport = SseClientTransport::start(url.clone()).await.map_err(|e| {
                     error!("Failed to start SSE transport: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to start SSE transport: {e}"),
-                    )
+                    McpError::ConnectionFailed {
+                        server_name: server_name.clone(),
+                        message: format!("Failed to start SSE transport: {e}"),
+                    }
                 })?;
 
                 ().serve(transport).await.map_err(|e| {
                     error!("Failed to serve MCP over SSE: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to serve MCP over SSE: {e}"),
-                    )
+                    McpError::ServeFailed {
+                        transport: "sse".to_string(),
+                        message: format!("Failed to serve MCP over SSE: {e}"),
+                    }
                 })?
             }
             McpTransport::Http { url, headers } => {
@@ -196,10 +197,10 @@ impl McpBackend {
 
                 ().serve(transport).await.map_err(|e| {
                     error!("Failed to serve MCP over HTTP: {}", e);
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to serve MCP over HTTP: {e}"),
-                    )
+                    McpError::ServeFailed {
+                        transport: "http".to_string(),
+                        message: format!("Failed to serve MCP over HTTP: {e}"),
+                    }
                 })?
             }
         };
@@ -213,17 +214,11 @@ impl McpBackend {
         let tool_list =
             tokio::time::timeout(list_tools_timeout, client.list_tools(Default::default()))
                 .await
-                .map_err(|_| {
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        "Timeout listing tools".to_string(),
-                    )
+                .map_err(|_| McpError::ListToolsTimeout {
+                    server_name: server_name.clone(),
                 })?
-                .map_err(|e| {
-                    ToolError::mcp_connection_failed(
-                        &server_name,
-                        format!("Failed to list tools: {e}"),
-                    )
+                .map_err(|e| McpError::ListToolsFailed {
+                    message: format!("Failed to list tools: {e}"),
                 })?;
 
         // Process the tools

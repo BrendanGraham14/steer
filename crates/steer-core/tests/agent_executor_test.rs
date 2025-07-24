@@ -9,7 +9,6 @@ mod tests {
     };
     use steer_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest, ApprovalDecision};
     use steer_core::test_utils;
-    use steer_core::tools::ToolError;
     use steer_tools::{
         InputSchema, ToolCall, ToolSchema as Tool,
         result::{ExternalResult, ToolResult},
@@ -159,13 +158,13 @@ mod tests {
                         payload: "Paris".to_string(),
                     }))
                 } else {
-                    Err(ToolError::Execution {
+                    Err(steer_tools::ToolError::Execution {
                         tool_name: call.name.clone(),
                         message: format!("Unexpected country: {input_country:?}"),
                     })
                 }
             } else {
-                Err(ToolError::UnknownTool(call.name.clone()))
+                Err(steer_tools::ToolError::UnknownTool(call.name.clone()))
             }
         };
 

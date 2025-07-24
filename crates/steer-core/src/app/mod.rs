@@ -22,11 +22,9 @@ mod agent_executor;
 pub mod cancellation;
 pub mod command;
 pub mod context;
-pub mod context_util;
 pub mod conversation;
 pub mod io;
 
-mod tool_executor;
 pub mod validation;
 
 #[cfg(test)]
@@ -39,7 +37,6 @@ pub use command::AppCommand;
 pub use context::OpContext;
 pub use conversation::{Conversation, Message, MessageData};
 pub use steer_workspace::EnvironmentInfo;
-pub use tool_executor::ToolExecutor;
 
 pub use agent_executor::{
     AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
@@ -170,7 +167,7 @@ impl Default for AppConfig {
 pub struct App {
     pub config: AppConfig,
     pub conversation: Arc<Mutex<Conversation>>,
-    pub tool_executor: Arc<ToolExecutor>,
+    pub tool_executor: Arc<crate::tools::ToolExecutor>,
     pub api_client: ApiClient,
     agent_executor: AgentExecutor,
     event_sender: mpsc::Sender<AppEvent>,
@@ -203,7 +200,7 @@ impl App {
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
         workspace: Arc<dyn crate::workspace::Workspace>,
-        tool_executor: Arc<ToolExecutor>,
+        tool_executor: Arc<crate::tools::ToolExecutor>,
         session_config: Option<crate::session::state::SessionConfig>,
         conversation: Conversation,
     ) -> Result<Self> {
@@ -246,7 +243,7 @@ impl App {
         event_tx: mpsc::Sender<AppEvent>,
         initial_model: Model,
         workspace: Arc<dyn crate::workspace::Workspace>,
-        tool_executor: Arc<ToolExecutor>,
+        tool_executor: Arc<crate::tools::ToolExecutor>,
         session_config: Option<crate::session::state::SessionConfig>,
     ) -> Result<Self> {
         let conversation = Conversation::new();
@@ -1354,7 +1351,7 @@ async fn handle_app_command(
                     command: command.clone(),
                     timeout: None,
                 })
-                .map_err(|e| ToolError::Serialization(e.to_string()))?,
+                .map_err(|e| Error::BashCommandError(e.to_string()))?,
             };
 
             // Clone necessary values for the spawned task
