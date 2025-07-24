@@ -8,22 +8,10 @@ It includes a TUI, supports headless execution, and exposes a gRPC interface for
 
 ## Install
 
-### Using Cargo
+### Cargo
 
 ```bash
 cargo install steer
-```
-
-### Using Nix
-
-If you have Nix installed, you can run Steer directly:
-
-```bash
-# Run steer without installing
-nix run github:brendangraham14/steer
-
-# Or install it into your profile
-nix profile install github:brendangraham14/steer
 ```
 
 ---
@@ -141,31 +129,31 @@ See the `examples/` directory for more configuration examples.
 
 Steer supports multiple transport types for connecting to MCP servers:
 
-#### Stdio Transport (Default)
+#### Stdio
 For MCP servers that communicate via standard input/output:
 ```toml
 transport = { type = "stdio", command = "python", args = ["-m", "mcp_server"] }
 ```
 
-#### TCP Transport
+#### TCP
 For MCP servers listening on a TCP port:
 ```toml
 transport = { type = "tcp", host = "127.0.0.1", port = 3000 }
 ```
 
-#### Unix Socket Transport
+#### Unix Socket
 For MCP servers using Unix domain sockets (Unix/macOS only):
 ```toml
 transport = { type = "unix", path = "/tmp/mcp.sock" }
 ```
 
-#### SSE Transport
+#### SSE
 For MCP servers using Server-Sent Events:
 ```toml
 transport = { type = "sse", url = "http://localhost:3000/events", headers = { "Authorization" = "Bearer token" } }
 ```
 
-#### HTTP Transport
+#### HTTP
 For MCP servers using streamable HTTP:
 ```toml
 transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-Key" = "secret" } }
@@ -192,28 +180,20 @@ Steer provides context-aware notifications with different sounds for different e
 
 ### Notification Types
 
-1. **Processing Complete** ✅
-   - Sound: Pleasant completion tone (Glass on macOS, message-new-instant on Linux)
-   - When: Assistant finishes processing your request
-
-2. **Tool Approval** ⚠️
-   - Sound: Attention-getting alert (Ping on macOS, dialog-warning on Linux)
-   - When: A tool needs your approval (e.g., `bash`, `edit_file`)
-
-3. **Error** ❌
-   - Sound: Error tone (Basso on macOS, dialog-error on Linux)
-   - When: An error occurs during processing
+| Notification Type | When |
+|---|---|
+| **Processing Complete** | Assistant finishes processing your request |
+| **Tool Approval** | A tool needs your approval (e.g., `bash`, `edit_file`) |
+| **Error** | An error occurs during processing |
 
 ### Configuration
 
-Both sound and desktop notifications are enabled by default. To disable:
+Both sound and desktop notifications are enabled by default. To disable either of them, edit the configuration via `steer preferences edit`:
 
-```bash
-# Disable sound notifications
-export STEER_NOTIFICATION_SOUND=false
-
-# Disable desktop notifications
-export STEER_NOTIFICATION_DESKTOP=false
+```toml
+[ui.notifications]
+sound = true
+desktop = true
 ```
 
 ---
@@ -224,7 +204,7 @@ Steer supports multiple methods for providing credentials.
 
 ### Interactive Setup
 
-The first time you start Steer it should launch a setup wizard. If it does not, you may trigger it from the chat with the `/auth` command.
+The first time you start Steer it should launch a setup wizard. The auth flow can also be triggered via the `/auth` command.
 
 All providers (Anthropic, OpenAI, Gemini, xAI) support API key authentication.
  
@@ -234,11 +214,11 @@ Credentials are stored securely using the OS-native keyring.
 
 ### Environment Variables
 
-Steer will detect the following environment variables:
+Steer can also load credentials via environment variables. It will detect the following environment variables:
 
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`
-* `GEMINI_API_KEY`
+* `GOOGLE_API_KEY` or `GEMINI_API_KEY`
 * `XAI_API_KEY` or `GROK_API_KEY` 
 
 Environment variables take precedence over stored credentials.
@@ -247,9 +227,8 @@ Environment variables take precedence over stored credentials.
 
 ## Tool approval system
 
-Read-only tools run automatically ( `view`, `grep`, `ls`, `glob`, `fetch`, `todo.read` ).  Mutating tools ( `edit`, `replace`, `bash`, etc.) ask for confirmation the first time; choose **always** to remember the decision for the rest of the session.
+Read-only tools run automatically ( `view`, `grep`, `ls`, `glob`, `fetch`, `todo.read` ).  Mutating tools ( `edit`, `replace`, `bash`, etc.) require approval on first use, with the option to remember the decision for the rest of the session.
 
-Headless mode pre-approves every built-in tool for convenience.
 
 ### Bash Command Approval
 

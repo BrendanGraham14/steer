@@ -7,7 +7,7 @@ mod tests {
     use crate::config::LlmConfigProvider;
     use crate::session::state::{BackendConfig, SessionConfig, ToolFilter};
     use crate::tools::execution_context::ExecutionContext;
-    use crate::tools::mcp::test_servers::test_servers::TestMcpService;
+    use crate::tools::mcp::test_servers::{TestMcpService, start_http_server, start_sse_server};
     use crate::tools::{McpBackend, McpTransport, ToolBackend};
     use rmcp::service::ServiceExt;
     use std::collections::HashMap;
@@ -308,8 +308,6 @@ mod tests {
             .with_env_filter("debug")
             .try_init();
 
-        use crate::tools::mcp::test_servers::test_servers::start_sse_server;
-
         // Start an SSE test server
         // Find an available port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -401,8 +399,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_sse_backend_with_headers() {
-        use crate::tools::mcp::test_servers::test_servers::start_sse_server;
-
         // Start an SSE test server
         // Find an available port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -472,8 +468,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_http_backend_in_session_config() {
-        use crate::tools::mcp::test_servers::test_servers::start_http_server;
-
         // Start an HTTP test server
         // Find an available port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -562,8 +556,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_http_backend_with_headers() {
-        use crate::tools::mcp::test_servers::test_servers::start_http_server;
-
         // Start an HTTP test server
         // Find an available port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
