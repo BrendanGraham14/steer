@@ -27,7 +27,7 @@ use steer_proto::agent::v1::{
 };
 
 /// Adapter that bridges TUI's AppCommand/AppEvent interface with gRPC streaming
-pub struct GrpcClientAdapter {
+pub struct AgentClient {
     client: Mutex<AgentServiceClient<Channel>>,
     session_id: Mutex<Option<String>>,
     command_tx: Mutex<Option<mpsc::Sender<StreamSessionRequest>>>,
@@ -35,7 +35,7 @@ pub struct GrpcClientAdapter {
     stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl GrpcClientAdapter {
+impl AgentClient {
     /// Connect to a gRPC server
     pub async fn connect(addr: &str) -> GrpcResult<Self> {
         info!("Connecting to gRPC server at {}", addr);
@@ -66,13 +66,6 @@ impl GrpcClientAdapter {
             stream_handle: Mutex::new(None),
             event_rx: Mutex::new(None),
         })
-    }
-
-    /// Convenience constructor: spin up a localhost gRPC server and return a ready client.
-    pub async fn local(default_model: steer_core::api::Model) -> GrpcResult<Self> {
-        use crate::local_server::setup_local_grpc;
-        let (channel, _server_handle) = setup_local_grpc(default_model, None).await?;
-        Self::from_channel(channel).await
     }
 
     /// Create a new session on the server
@@ -455,7 +448,7 @@ impl GrpcClientAdapter {
 }
 
 #[async_trait]
-impl AppCommandSink for GrpcClientAdapter {
+impl AppCommandSink for AgentClient {
     async fn send_command(&self, command: AppCommand) -> Result<()> {
         self.send_command(command)
             .await
@@ -464,7 +457,7 @@ impl AppCommandSink for GrpcClientAdapter {
 }
 
 #[async_trait]
-impl AppEventSource for GrpcClientAdapter {
+impl AppEventSource for AgentClient {
     async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
         // This is a blocking operation in a trait that doesn't support async
         // We need to use block_on here

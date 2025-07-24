@@ -83,12 +83,12 @@ impl Command for ListSessionCommand {
 
 impl ListSessionCommand {
     async fn handle_remote(&self) -> Result<()> {
-        use steer_grpc::GrpcClientAdapter;
+        use steer_grpc::AgentClient;
 
         let remote_addr = self.remote.as_ref().unwrap();
 
         // Connect to the gRPC server
-        let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
+        let client = AgentClient::connect(remote_addr).await.map_err(|e| {
             eyre!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,

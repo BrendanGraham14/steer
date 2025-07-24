@@ -75,10 +75,10 @@ impl Command for ShowSessionCommand {
 
 impl ShowSessionCommand {
     async fn handle_remote(&self, remote_addr: &str) -> Result<()> {
-        use steer_grpc::GrpcClientAdapter;
+        use steer_grpc::AgentClient;
 
         // Connect to the gRPC server
-        let client = GrpcClientAdapter::connect(remote_addr).await.map_err(|e| {
+        let client = AgentClient::connect(remote_addr).await.map_err(|e| {
             eyre!(
                 "Failed to connect to remote server at {}: {}",
                 remote_addr,

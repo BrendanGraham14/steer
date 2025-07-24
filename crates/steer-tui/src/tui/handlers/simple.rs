@@ -41,7 +41,7 @@ impl Tui {
                     // Single ESC - cancel operation if processing, otherwise just record for double-tap
                     self.double_tap_tracker.record_key(KeyCode::Esc);
                     if self.is_processing {
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::CancelProcessing)
                             .await?;
                     }
@@ -68,7 +68,7 @@ impl Tui {
                     if content.starts_with('!') && content.len() > 1 {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::ExecuteBashCommand { command })
                             .await?;
                     } else if content.starts_with('/') {
@@ -135,7 +135,7 @@ impl Tui {
 
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_processing {
-                    self.command_sink
+                    self.client
                         .send_command(AppCommand::CancelProcessing)
                         .await?;
                 } else {

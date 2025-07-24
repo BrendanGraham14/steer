@@ -191,7 +191,6 @@ async fn main() -> Result<()> {
 
 #[cfg(feature = "ui")]
 async fn run_tui_local(params: TuiParams) -> Result<()> {
-    use std::sync::Arc;
     use steer_grpc::local_server;
 
     let mut session_id = params.session_id;
@@ -208,7 +207,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
             .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
 
     // Create gRPC client
-    let client = steer_grpc::GrpcClientAdapter::from_channel(channel)
+    let client = steer_grpc::AgentClient::from_channel(channel)
         .await
         .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
 
@@ -259,7 +258,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
 
     // Run TUI with the client
     tui::run_tui(
-        Arc::new(client),
+        client,
         session_id,
         params.model,
         params.directory.clone(),
@@ -273,13 +272,12 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
 
 #[cfg(feature = "ui")]
 async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
-    use std::sync::Arc;
-    use steer_grpc::GrpcClientAdapter;
+    use steer_grpc::AgentClient;
 
     let mut session_id = params.session_id;
 
     // Connect to remote server
-    let client = GrpcClientAdapter::connect(&params.remote_addr)
+    let client = AgentClient::connect(&params.remote_addr)
         .await
         .map_err(|e| eyre::eyre!("Failed to connect to remote server: {}", e))?;
 
@@ -329,7 +327,7 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
 
     // Run TUI with the client
     tui::run_tui(
-        Arc::new(client),
+        client,
         session_id,
         params.model,
         params.directory.clone(),

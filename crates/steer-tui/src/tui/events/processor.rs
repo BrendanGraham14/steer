@@ -5,13 +5,12 @@
 //! into a pipeline for modular event handling.
 
 use async_trait::async_trait;
-use std::sync::Arc;
 
 use crate::tui::state::{ChatStore, ToolCallRegistry};
 use crate::tui::widgets::ChatListState;
 use steer_core::api::Model;
 use steer_core::app::AppEvent;
-use steer_core::app::io::AppCommandSink;
+use steer_grpc::AgentClient;
 use steer_tools::schema::ToolCall;
 
 /// Result of processing an event
@@ -39,7 +38,7 @@ pub struct ProcessingContext<'a> {
     /// Tool call registry for tracking tool lifecycle
     pub tool_registry: &'a mut ToolCallRegistry,
     /// Command sink for dispatching app commands
-    pub command_sink: &'a Arc<dyn AppCommandSink>,
+    pub client: &'a AgentClient,
     /// Current processing state
     pub is_processing: &'a mut bool,
     /// Current progress message being displayed

@@ -28,9 +28,9 @@ use ratatui::crossterm::{
 use ratatui::{Frame, Terminal};
 use steer_core::api::Model;
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-use steer_core::app::io::{AppCommandSink, AppEventSource};
 use steer_core::app::{AppCommand, AppEvent};
 use steer_core::config::LlmConfigProvider;
+use steer_grpc::AgentClient;
 use steer_tools::schema::ToolCall;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -61,6 +61,9 @@ mod chat_viewport;
 mod events;
 mod handlers;
 mod ui_layout;
+
+#[cfg(test)]
+mod test_utils;
 
 /// How often to update the spinner animation (when processing)
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
@@ -121,7 +124,7 @@ pub struct Tui {
     /// The ID of the message being edited (if any)
     editing_message_id: Option<String>,
     /// Handle to send commands to the app
-    command_sink: Arc<dyn AppCommandSink>,
+    client: AgentClient,
     /// Are we currently processing a request?
     is_processing: bool,
     /// Progress message to show while processing
@@ -224,7 +227,7 @@ impl Tui {
     }
     /// Create a new TUI instance
     pub async fn new(
-        command_sink: Arc<dyn AppCommandSink>,
+        client: AgentClient,
         current_model: Model,
         session_id: String,
         theme: Option<Theme>,
@@ -261,7 +264,7 @@ impl Tui {
         };
 
         // Create TUI with restored messages
-        let mut tui = Self {
+        let tui = Self {
             terminal,
             terminal_size,
             input_mode,
@@ -269,7 +272,7 @@ impl Tui {
                 session_id.clone(),
             ),
             editing_message_id: None,
-            command_sink,
+            client,
             is_processing: false,
             progress_message: None,
             spinner_state: 0,
@@ -390,7 +393,7 @@ impl Tui {
         // Request workspace files from the server
         info!(target: "tui.file_cache", "Requesting workspace files for session {}", self.session_id);
         if let Err(e) = self
-            .command_sink
+            .client
             .send_command(AppCommand::RequestWorkspaceFiles)
             .await
         {
@@ -901,7 +904,7 @@ impl Tui {
             chat_store: &mut self.chat_store,
             chat_list_state: self.chat_viewport.state_mut(),
             tool_registry: &mut self.tool_registry,
-            command_sink: &self.command_sink,
+            client: &self.client,
             is_processing: &mut self.is_processing,
             progress_message: &mut self.progress_message,
             spinner_state: &mut self.spinner_state,
@@ -947,7 +950,7 @@ impl Tui {
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
             // Send edit command which creates a new branch
             if let Err(e) = self
-                .command_sink
+                .client
                 .send_command(AppCommand::EditMessage {
                     message_id: message_id_to_edit,
                     new_content: content,
@@ -959,7 +962,7 @@ impl Tui {
         } else {
             // Send regular message
             if let Err(e) = self
-                .command_sink
+                .client
                 .send_command(AppCommand::ProcessUserInput(content))
                 .await
             {
@@ -994,9 +997,9 @@ impl Tui {
                                 prompt, ..
                             } => {
                                 // Forward prompt directly as user input to avoid recursive slash handling
-                                self.command_sink
+                                self.client
                                     .send_command(AppCommand::ProcessUserInput(prompt))
-                                    .await?;
+                                    .await?
                             } // Future custom command types can be handled here
                         }
                     }
@@ -1027,7 +1030,7 @@ impl Tui {
                         info!(target: "tui.slash_command", "Cleared file cache, will reload on next access");
                         // Request workspace files again
                         if let Err(e) = self
-                            .command_sink
+                            .client
                             .send_command(AppCommand::RequestWorkspaceFiles)
                             .await
                         {
@@ -1184,7 +1187,7 @@ impl Tui {
                                 prompt, ..
                             } => {
                                 // Forward prompt directly as user input to avoid recursive slash handling
-                                self.command_sink
+                                self.client
                                     .send_command(AppCommand::ProcessUserInput(prompt))
                                     .await?;
                             } // Future custom command types can be handled here
@@ -1195,7 +1198,7 @@ impl Tui {
             TuiAppCommand::Core(core_cmd) => {
                 // Pass core commands through to the backend
                 if let Err(e) = self
-                    .command_sink
+                    .client
                     .send_command(AppCommand::ExecuteCommand(core_cmd))
                     .await
                 {
@@ -1311,7 +1314,7 @@ pub fn setup_panic_hook() {
 
 /// High-level entry point for running the TUI
 pub async fn run_tui(
-    client: std::sync::Arc<steer_grpc::GrpcClientAdapter>,
+    client: steer_grpc::AgentClient,
     session_id: Option<String>,
     model: steer_core::api::Model,
     directory: Option<std::path::PathBuf>,
@@ -1320,7 +1323,7 @@ pub async fn run_tui(
     force_setup: bool,
 ) -> Result<()> {
     use std::collections::HashMap;
-    use steer_core::app::io::{AppCommandSink, AppEventSource};
+    use steer_core::app::io::AppEventSource;
     use steer_core::session::{SessionConfig, SessionToolConfig};
 
     // Load theme - use catppuccin-mocha as default if none specified
@@ -1408,13 +1411,7 @@ pub async fn run_tui(
 
     client.start_streaming().await.map_err(Box::new)?;
     let event_rx = client.subscribe().await;
-    let mut tui = Tui::new(
-        client.clone() as std::sync::Arc<dyn AppCommandSink>,
-        model,
-        session_id,
-        theme.clone(),
-    )
-    .await?;
+    let mut tui = Tui::new(client, model, session_id, theme.clone()).await?;
 
     if !messages.is_empty() {
         tui.restore_messages(messages);
@@ -1463,7 +1460,7 @@ pub async fn run_tui(
 /// Run TUI in authentication setup mode
 /// This is now just a convenience function that launches regular TUI with setup mode forced
 pub async fn run_tui_auth_setup(
-    client: std::sync::Arc<steer_grpc::GrpcClientAdapter>,
+    client: steer_grpc::AgentClient,
     session_id: Option<String>,
     model: Option<Model>,
     session_db: Option<PathBuf>,
@@ -1485,16 +1482,14 @@ pub async fn run_tui_auth_setup(
 
 #[cfg(test)]
 mod tests {
+    use crate::tui::test_utils::local_client_and_server;
+
     use super::*;
-    use async_trait::async_trait;
+
     use serde_json::json;
-    use std::sync::Arc;
-    use steer_core::app::AppCommand;
-    use steer_core::app::AppEvent;
+
     use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-    use steer_core::app::io::{AppCommandSink, AppEventSource};
-    use steer_core::error::Result;
-    use tokio::sync::mpsc;
+    use tempfile::tempdir;
 
     /// RAII guard to ensure terminal state is restored after a test, even on panic.
     struct TerminalCleanupGuard;
@@ -1505,37 +1500,16 @@ mod tests {
         }
     }
 
-    // Mock command sink for tests
-    struct MockCommandSink;
-
-    #[async_trait]
-    impl AppCommandSink for MockCommandSink {
-        async fn send_command(&self, _command: AppCommand) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    struct MockEventSource;
-
-    #[async_trait]
-    impl AppEventSource for MockEventSource {
-        async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
-            let (_, rx) = mpsc::channel(10);
-            rx
-        }
-    }
-
     #[tokio::test]
     #[ignore = "Requires TTY - run with `cargo test -- --ignored` in a terminal"]
     async fn test_restore_messages_preserves_tool_call_params() {
         let _guard = TerminalCleanupGuard;
         // Create a TUI instance for testing
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
+        let path = tempdir().unwrap().path().to_path_buf();
+        let (client, _server_handle) = local_client_and_server(Some(path)).await;
         let model = steer_core::api::Model::Claude3_5Sonnet20241022;
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, model, session_id, None)
-            .await
-            .unwrap();
+        let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 
         // Build test messages: Assistant with ToolCall, then Tool result
         let tool_id = "test_tool_123".to_string();
@@ -1596,12 +1570,11 @@ mod tests {
     async fn test_restore_messages_handles_tool_result_before_assistant() {
         let _guard = TerminalCleanupGuard;
         // Test edge case where Tool result arrives before Assistant message
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
+        let path = tempdir().unwrap().path().to_path_buf();
+        let (client, _server_handle) = local_client_and_server(Some(path)).await;
         let model = steer_core::api::Model::Claude3_5Sonnet20241022;
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(command_sink, model, session_id, None)
-            .await
-            .unwrap();
+        let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 
         let tool_id = "test_tool_456".to_string();
         let real_params = json!({

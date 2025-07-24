@@ -10,7 +10,7 @@ impl Tui {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.is_processing {
                 // Cancel processing
-                self.command_sink
+                self.client
                     .send_command(AppCommand::CancelProcessing)
                     .await?;
             } else {
@@ -65,7 +65,7 @@ impl Tui {
             // Execute the bash command
             let command = self.input_panel_state.content();
             if !command.trim().is_empty() {
-                self.command_sink
+                self.client
                     .send_command(AppCommand::ExecuteBashCommand { command })
                     .await?;
                 self.input_panel_state.clear(); // Clear after executing

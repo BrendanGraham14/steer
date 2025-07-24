@@ -30,7 +30,7 @@ impl Tui {
             match key.code {
                 KeyCode::Char('c') => {
                     if self.is_processing {
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::CancelProcessing)
                             .await?;
                     } else {
@@ -179,7 +179,7 @@ impl Tui {
                         .textarea
                         .move_cursor(CursorMove::Back);
                 } else if self.is_processing {
-                    self.command_sink
+                    self.client
                         .send_command(AppCommand::CancelProcessing)
                         .await?;
                 }
@@ -429,7 +429,7 @@ impl Tui {
                     if content.starts_with('!') && content.len() > 1 {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::ExecuteBashCommand { command })
                             .await?;
                         self.input_panel_state.clear();

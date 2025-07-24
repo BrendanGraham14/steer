@@ -76,3 +76,9 @@ impl From<notify_rust::error::Error> for Error {
         Error::Notification(err.to_string())
     }
 }
+
+impl From<steer_grpc::GrpcError> for Error {
+    fn from(err: steer_grpc::GrpcError) -> Self {
+        Error::Grpc(Box::new(err))
+    }
+}

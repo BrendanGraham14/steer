@@ -15,7 +15,7 @@ impl Tui {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     // Approve once
-                    self.command_sink
+                    self.client
                         .send_command(AppCommand::HandleToolResponse {
                             id: tool_call.id,
                             approval: ApprovalType::Once,
@@ -36,7 +36,7 @@ impl Tui {
                                 )))
                             })?;
                         // Approve with the bash pattern payload
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::HandleToolResponse {
                                 id: tool_call.id,
                                 approval: ApprovalType::AlwaysBashPattern(
@@ -46,7 +46,7 @@ impl Tui {
                             .await?;
                     } else {
                         // For non-bash tools, 'A' approves always
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::HandleToolResponse {
                                 id: tool_call.id,
                                 approval: ApprovalType::AlwaysTool,
@@ -57,7 +57,7 @@ impl Tui {
                 }
                 KeyCode::Char('l') | KeyCode::Char('L') => {
                     if tool_call.name == BASH_TOOL_NAME {
-                        self.command_sink
+                        self.client
                             .send_command(AppCommand::HandleToolResponse {
                                 id: tool_call.id,
                                 approval: ApprovalType::AlwaysTool,
@@ -71,7 +71,7 @@ impl Tui {
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                     // Reject
-                    self.command_sink
+                    self.client
                         .send_command(AppCommand::HandleToolResponse {
                             id: tool_call.id,
                             approval: ApprovalType::Denied,

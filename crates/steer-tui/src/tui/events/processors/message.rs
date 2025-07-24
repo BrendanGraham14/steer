@@ -160,30 +160,19 @@ mod tests {
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
-    use async_trait::async_trait;
+
     use serde_json::json;
-    use std::sync::Arc;
-    use steer_core::app::AppCommand;
+
     use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-    use steer_core::app::io::AppCommandSink;
-    use steer_core::error::Result;
+
+    use steer_grpc::AgentClient;
     use steer_tools::schema::ToolCall;
-
-    // Mock command sink for tests
-    struct MockCommandSink;
-
-    #[async_trait]
-    impl AppCommandSink for MockCommandSink {
-        async fn send_command(&self, _command: AppCommand) -> Result<()> {
-            Ok(())
-        }
-    }
 
     struct TestContext {
         chat_store: ChatStore,
         chat_list_state: ChatListState,
         tool_registry: ToolCallRegistry,
-        command_sink: Arc<dyn AppCommandSink>,
+        client: AgentClient,
         is_processing: bool,
         progress_message: Option<String>,
         spinner_state: usize,
@@ -192,11 +181,11 @@ mod tests {
         messages_updated: bool,
     }
 
-    fn create_test_context() -> TestContext {
+    async fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
         let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
-        let command_sink = Arc::new(MockCommandSink) as Arc<dyn AppCommandSink>;
+        let (client, _server_handle) = crate::tui::test_utils::local_client_and_server(None).await;
         let is_processing = false;
         let progress_message = None;
         let spinner_state = 0;
@@ -208,7 +197,7 @@ mod tests {
             chat_store,
             chat_list_state,
             tool_registry,
-            command_sink,
+            client,
             is_processing,
             progress_message,
             spinner_state,
@@ -221,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn test_assistant_message_updates_placeholder_tool_params() {
         let mut processor = MessageEventProcessor::new();
-        let mut ctx = create_test_context();
+        let mut ctx = create_test_context().await;
 
         // First, create a placeholder Tool message (simulating what happens during ToolCallStarted)
         let tool_id = "test_tool_123".to_string();
@@ -277,7 +266,7 @@ mod tests {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
             tool_registry: &mut ctx.tool_registry,
-            command_sink: &ctx.command_sink,
+            client: &ctx.client,
             is_processing: &mut ctx.is_processing,
             progress_message: &mut ctx.progress_message,
             spinner_state: &mut ctx.spinner_state,
