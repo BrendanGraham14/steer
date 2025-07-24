@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- show unformatted html
 - mcp status tracking + some tool refactoring
 - *(tui)* unify/tidy todo formatting
 - *(tui)* always use detailed view of todos
