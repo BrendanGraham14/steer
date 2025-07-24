@@ -220,7 +220,56 @@ impl ToolResult {
                 }
             }
             ToolResult::Bash(r) => {
-                let mut output = r.stdout.clone();
+                // Helper to truncate long outputs
+                fn truncate_output(s: &str, max_chars: usize, max_lines: usize) -> String {
+                    let lines: Vec<&str> = s.lines().collect();
+                    let char_count = s.len();
+
+                    // Check both line and character limits
+                    if lines.len() > max_lines || char_count > max_chars {
+                        // Take first and last portions of output
+                        let head_lines = max_lines / 2;
+                        let tail_lines = max_lines - head_lines;
+
+                        let mut result = String::new();
+
+                        // Add head lines
+                        for line in lines.iter().take(head_lines) {
+                            result.push_str(line);
+                            result.push('\n');
+                        }
+
+                        // Add truncation marker
+                        let omitted_lines = lines.len().saturating_sub(max_lines);
+                        result.push_str(&format!(
+                            "\n[... {omitted_lines} lines omitted ({char_count} total chars) ...]\n\n"
+                        ));
+
+                        // Add tail lines
+                        if tail_lines > 0 && lines.len() > head_lines {
+                            for line in lines.iter().skip(lines.len().saturating_sub(tail_lines)) {
+                                result.push_str(line);
+                                result.push('\n');
+                            }
+                        }
+
+                        result
+                    } else {
+                        s.to_string()
+                    }
+                }
+
+                const MAX_STDOUT_CHARS: usize = 128 * 1024; // 128KB
+                const MAX_STDOUT_LINES: usize = 2000;
+                const MAX_STDERR_CHARS: usize = 64 * 1024; // 64KB  
+                const MAX_STDERR_LINES: usize = 500;
+
+                let stdout_truncated =
+                    truncate_output(&r.stdout, MAX_STDOUT_CHARS, MAX_STDOUT_LINES);
+                let stderr_truncated =
+                    truncate_output(&r.stderr, MAX_STDERR_CHARS, MAX_STDERR_LINES);
+
+                let mut output = stdout_truncated;
 
                 if r.exit_code != 0 {
                     if !output.is_empty() && !output.ends_with('\n') {
@@ -228,14 +277,14 @@ impl ToolResult {
                     }
                     output.push_str(&format!("Exit code: {}", r.exit_code));
 
-                    if !r.stderr.is_empty() {
-                        output.push_str(&format!("\nError output:\n{}", r.stderr));
+                    if !stderr_truncated.is_empty() {
+                        output.push_str(&format!("\nError output:\n{stderr_truncated}"));
                     }
-                } else if !r.stderr.is_empty() {
+                } else if !stderr_truncated.is_empty() {
                     if !output.is_empty() && !output.ends_with('\n') {
                         output.push('\n');
                     }
-                    output.push_str(&format!("Error output:\n{}", r.stderr));
+                    output.push_str(&format!("Error output:\n{stderr_truncated}"));
                 }
 
                 output
