@@ -252,8 +252,14 @@ where
             Event::End(tag) => self.end_tag(tag),
             Event::Text(text) => self.text(text),
             Event::Code(code) => self.code(code),
-            Event::Html(html) => warn!("Html not yet supported: {}", html),
-            Event::FootnoteReference(_) => warn!("Footnote reference not yet supported"),
+            Event::Html(html) => {
+                warn!("Rich html not yet supported: {}", html);
+                self.text(html)
+            }
+            Event::FootnoteReference(reference) => {
+                warn!("Footnote reference not yet supported: {}", reference);
+                self.text(reference)
+            }
             Event::SoftBreak => self.soft_break(),
             Event::HardBreak => self.hard_break(),
             Event::Rule => self.rule(),
