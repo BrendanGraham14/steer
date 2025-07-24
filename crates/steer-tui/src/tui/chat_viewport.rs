@@ -551,7 +551,7 @@ fn create_widget_for_flattened_item(
 ) -> Box<dyn ChatRenderable + Send + Sync> {
     use crate::tui::widgets::chat_widgets::{
         CommandResponseWidget, InFlightOperationWidget, SlashInputWidget, SystemNoticeWidget,
-        format_app_command, format_command_response, get_spinner_char, row_widget::RowWidget,
+        format_app_command, get_spinner_char, row_widget::RowWidget,
     };
 
     match item {
@@ -600,11 +600,15 @@ fn create_widget_for_flattened_item(
                     let body = Box::new(SystemNoticeWidget::new(*level, text.clone(), *ts));
                     Box::new(RowWidget::new(gutter, body))
                 }
-                ChatItemData::CoreCmdResponse { cmd, resp, .. } => {
+                ChatItemData::CoreCmdResponse {
+                    command: cmd,
+                    response,
+                    ..
+                } => {
                     let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format_app_command(cmd),
-                        format_command_response(resp),
+                        response.clone().into(),
                     ));
                     Box::new(RowWidget::new(gutter, body))
                 }
@@ -627,7 +631,7 @@ fn create_widget_for_flattened_item(
                     let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format!("/{command}"),
-                        response.clone(),
+                        response.clone().into(),
                     ));
                     Box::new(RowWidget::new(gutter, body))
                 }

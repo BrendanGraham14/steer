@@ -675,6 +675,34 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 
         Ok(Response::new(ReceiverStream::new(rx)))
     }
+
+    async fn get_mcp_servers(
+        &self,
+        request: Request<GetMcpServersRequest>,
+    ) -> Result<Response<GetMcpServersResponse>, Status> {
+        let req = request.into_inner();
+
+        debug!("GetMcpServers called for session: {}", req.session_id);
+
+        // Get MCP server statuses from session manager
+        match self.session_manager.get_mcp_statuses(&req.session_id).await {
+            Ok(servers) => {
+                use crate::grpc::conversions::mcp_server_info_to_proto;
+
+                let proto_servers = servers.into_iter().map(mcp_server_info_to_proto).collect();
+
+                Ok(Response::new(GetMcpServersResponse {
+                    servers: proto_servers,
+                }))
+            }
+            Err(e) => {
+                error!("Failed to get MCP server statuses: {}", e);
+                Err(Status::internal(format!(
+                    "Failed to get MCP server statuses: {e}"
+                )))
+            }
+        }
+    }
 }
 
 async fn try_resume_session(

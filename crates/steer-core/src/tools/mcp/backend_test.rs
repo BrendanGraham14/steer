@@ -7,7 +7,7 @@ mod tests {
     use crate::config::LlmConfigProvider;
     use crate::session::state::{BackendConfig, SessionConfig, ToolFilter};
     use crate::tools::execution_context::ExecutionContext;
-    use crate::tools::mcp_test_servers::test_servers::TestMcpService;
+    use crate::tools::mcp::test_servers::test_servers::TestMcpService;
     use crate::tools::{McpBackend, McpTransport, ToolBackend};
     use rmcp::service::ServiceExt;
     use std::collections::HashMap;
@@ -91,7 +91,7 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
@@ -188,7 +188,7 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
@@ -274,7 +274,7 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();
@@ -308,7 +308,7 @@ mod tests {
             .with_env_filter("debug")
             .try_init();
 
-        use crate::tools::mcp_test_servers::test_servers::start_sse_server;
+        use crate::tools::mcp::test_servers::test_servers::start_sse_server;
 
         // Start an SSE test server
         // Find an available port
@@ -341,7 +341,7 @@ mod tests {
         });
 
         // Build the registry
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
@@ -401,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_sse_backend_with_headers() {
-        use crate::tools::mcp_test_servers::test_servers::start_sse_server;
+        use crate::tools::mcp::test_servers::test_servers::start_sse_server;
 
         // Start an SSE test server
         // Find an available port
@@ -438,7 +438,7 @@ mod tests {
         });
 
         // Build the registry
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
@@ -472,7 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_http_backend_in_session_config() {
-        use crate::tools::mcp_test_servers::test_servers::start_http_server;
+        use crate::tools::mcp::test_servers::test_servers::start_http_server;
 
         // Start an HTTP test server
         // Find an available port
@@ -505,7 +505,7 @@ mod tests {
         });
 
         // Build the registry
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
@@ -562,7 +562,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_http_backend_with_headers() {
-        use crate::tools::mcp_test_servers::test_servers::start_http_server;
+        use crate::tools::mcp::test_servers::test_servers::start_http_server;
 
         // Start an HTTP test server
         // Find an available port
@@ -598,7 +598,7 @@ mod tests {
         });
 
         // Build the registry
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .expect("Failed to build tool registry");
@@ -691,7 +691,7 @@ mod tests {
         });
 
         // Registry creation should still succeed
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(default_llm_config_provider(), test_workspace().await)
             .await
             .unwrap();

@@ -4,12 +4,17 @@ use serde_json::json;
 use std::sync::Arc;
 use steer_core::api::Model;
 use steer_core::app::{
-    App, AppCommand, AppConfig, AppEvent, ApprovalDecision, ToolExecutor, command::ApprovalType,
+    App, AppCommand, AppConfig, AppEvent, ApprovalDecision, command::ApprovalType,
 };
 use steer_core::test_utils;
+use steer_core::tools::ToolExecutor;
 use steer_tools::ToolCall;
 use steer_tools::tools::edit::EditTool;
 use steer_tools::tools::view::ViewTool;
+use steer_tools::tools::{
+    BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
+    REPLACE_TOOL_NAME, VIEW_TOOL_NAME,
+};
 use steer_tools::traits::Tool;
 use steer_workspace::local::LocalWorkspace;
 use tempfile::TempDir;
@@ -56,7 +61,6 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
 
-    // Changed Model::Default to a specific model
     let app = App::new(
         app_config,
         event_tx,
@@ -69,26 +73,46 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
 
     assert!(
         !app.tool_executor
-            .requires_approval("read_file")
-            .await
-            .unwrap()
-    );
-    assert!(!app.tool_executor.requires_approval("grep").await.unwrap());
-    assert!(!app.tool_executor.requires_approval("ls").await.unwrap());
-    assert!(!app.tool_executor.requires_approval("glob").await.unwrap());
-    assert!(
-        app.tool_executor
-            .requires_approval("edit_file")
+            .requires_approval(VIEW_TOOL_NAME)
             .await
             .unwrap()
     );
     assert!(
-        app.tool_executor
-            .requires_approval("write_file")
+        !app.tool_executor
+            .requires_approval(GREP_TOOL_NAME)
             .await
             .unwrap()
     );
-    assert!(app.tool_executor.requires_approval("bash").await.unwrap());
+    assert!(
+        !app.tool_executor
+            .requires_approval(LS_TOOL_NAME)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !app.tool_executor
+            .requires_approval(GLOB_TOOL_NAME)
+            .await
+            .unwrap()
+    );
+    assert!(
+        app.tool_executor
+            .requires_approval(EDIT_TOOL_NAME)
+            .await
+            .unwrap()
+    );
+    assert!(
+        app.tool_executor
+            .requires_approval(REPLACE_TOOL_NAME)
+            .await
+            .unwrap()
+    );
+    assert!(
+        app.tool_executor
+            .requires_approval(BASH_TOOL_NAME)
+            .await
+            .unwrap()
+    );
     assert!(
         app.tool_executor
             .requires_approval("non_existent_tool")

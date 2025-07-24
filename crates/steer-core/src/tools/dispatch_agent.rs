@@ -5,10 +5,11 @@ use std::sync::Arc;
 use crate::{
     api::Model,
     app::{
-        ApprovalDecision, ToolExecutor,
+        ApprovalDecision,
         conversation::{Message, MessageData, UserContent},
     },
     config::LlmConfigProvider,
+    tools::ToolExecutor,
 };
 
 use crate::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest};

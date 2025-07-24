@@ -4,7 +4,6 @@ use crate::tui::Tui;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use steer_core::app::{AppCommand, command::ApprovalType};
 use steer_core::error::Error as CoreError;
-use steer_tools::ToolError;
 use steer_tools::tools::BASH_TOOL_NAME;
 use steer_tools::tools::bash::BashParams;
 use tracing::debug;
@@ -30,10 +29,13 @@ impl Tui {
                         // For bash commands, 'A' approves this specific command pattern
                         let bash_params: BashParams =
                             serde_json::from_value(tool_call.parameters.clone()).map_err(|e| {
-                                Error::Core(CoreError::Tool(ToolError::InvalidParams(
-                                    "bash".to_string(),
-                                    e.to_string(),
-                                )))
+                                Error::Core(CoreError::Tool(
+                                    steer_tools::ToolError::InvalidParams(
+                                        "bash".to_string(),
+                                        e.to_string(),
+                                    )
+                                    .into(),
+                                ))
                             })?;
                         // Approve with the bash pattern payload
                         self.client

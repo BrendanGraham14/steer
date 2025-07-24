@@ -67,7 +67,7 @@ pub struct ManagedSession {
 impl ManagedSession {
     /// Create a new managed session
     pub async fn new(
-        session: Session,
+        mut session: Session,
         app_config: AppConfig,
         store: Arc<dyn SessionStore>,
         default_model: Model,
@@ -87,7 +87,7 @@ impl ManagedSession {
         let workspace = session.build_workspace().await?;
 
         // Build backend registry from session tool config, passing workspace
-        let backend_registry = session
+        let (backend_registry, mcp_servers) = session
             .config
             .build_registry(
                 Arc::new(app_config.llm_config_provider.clone()),
@@ -95,7 +95,10 @@ impl ManagedSession {
             )
             .await?;
 
-        let tool_executor = Arc::new(crate::app::ToolExecutor::with_all_components(
+        // Update session state with MCP server info
+        session.state.mcp_servers = mcp_servers;
+
+        let tool_executor = Arc::new(crate::tools::ToolExecutor::with_all_components(
             workspace.clone(),
             Arc::new(backend_registry),
             Arc::new(crate::app::validation::ValidatorRegistry::new()),
@@ -752,6 +755,39 @@ impl SessionManager {
                 error!("Error loading session from store: {}", e);
                 Err(SessionManagerError::Storage(e).into())
             }
+        }
+    }
+
+    /// Get MCP server connection statuses for a session
+    pub async fn get_mcp_statuses(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::session::McpServerInfo>> {
+        // First check if session is active (has most up-to-date info)
+        {
+            let sessions = self.active_sessions.read().await;
+            if let Some(managed_session) = sessions.get(session_id) {
+                let servers: Vec<_> = managed_session
+                    .session
+                    .state
+                    .mcp_servers
+                    .values()
+                    .cloned()
+                    .collect();
+                return Ok(servers);
+            }
+        }
+
+        // If not active, load from store
+        match self.store.get_session(session_id).await? {
+            Some(session) => {
+                let servers: Vec<_> = session.state.mcp_servers.values().cloned().collect();
+                Ok(servers)
+            }
+            None => Err(SessionManagerError::SessionNotActive {
+                session_id: session_id.to_string(),
+            }
+            .into()),
         }
     }
 }

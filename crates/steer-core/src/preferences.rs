@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use strum::Display;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default, Display)]
+#[strum(serialize_all = "kebab-case")]
 pub enum EditingMode {
     #[default]
     Simple, // Default - no modal editing

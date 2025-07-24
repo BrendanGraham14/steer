@@ -13,6 +13,36 @@ use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
 use steer_tools::tools::read_only_workspace_tools;
 use steer_tools::{ToolCall, result::ToolResult};
 
+/// State of an MCP server connection
+#[derive(Debug, Clone)]
+pub enum McpConnectionState {
+    /// Currently attempting to connect
+    Connecting,
+    /// Successfully connected
+    Connected {
+        /// Names of tools available from this server
+        tool_names: Vec<String>,
+    },
+    /// Failed to connect
+    Failed {
+        /// Error message describing the failure
+        error: String,
+    },
+}
+
+/// Information about an MCP server
+#[derive(Debug, Clone)]
+pub struct McpServerInfo {
+    /// The configured server name
+    pub server_name: String,
+    /// The transport configuration
+    pub transport: McpTransport,
+    /// Current connection state
+    pub state: McpConnectionState,
+    /// Timestamp when this state was last updated
+    pub last_updated: DateTime<Utc>,
+}
+
 /// Container runtime to use
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -130,12 +160,14 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// Build a BackendRegistry from this configuration for external tools only.
     /// Workspace tools are now handled directly by the Workspace.
+    /// Returns the registry and a map of MCP server connection states.
     pub async fn build_registry(
         &self,
         llm_config_provider: Arc<LlmConfigProvider>,
         workspace: Arc<dyn crate::workspace::Workspace>,
-    ) -> Result<BackendRegistry> {
+    ) -> Result<(BackendRegistry, HashMap<String, McpServerInfo>)> {
         let mut registry = BackendRegistry::new();
+        let mut mcp_servers = HashMap::new();
 
         // 1. Register all USER-DEFINED backends first.
         // Their tool mappings may be overwritten by the more authoritative backends below.
@@ -171,6 +203,15 @@ impl SessionConfig {
                         server_name,
                         transport
                     );
+
+                    // Record that we're attempting to connect
+                    let mut server_info = McpServerInfo {
+                        server_name: server_name.clone(),
+                        transport: transport.clone(),
+                        state: McpConnectionState::Connecting,
+                        last_updated: Utc::now(),
+                    };
+
                     match crate::tools::McpBackend::new(
                         server_name.clone(),
                         transport.clone(),
@@ -179,10 +220,15 @@ impl SessionConfig {
                     .await
                     {
                         Ok(mcp_backend) => {
+                            let tool_names = mcp_backend.supported_tools().await;
+                            let tool_count = tool_names.len();
                             tracing::info!(
-                                "Successfully initialized MCP backend '{}'",
-                                server_name
+                                "Successfully initialized MCP backend '{}' with {} tools",
+                                server_name,
+                                tool_count
                             );
+                            server_info.state = McpConnectionState::Connected { tool_names };
+                            server_info.last_updated = Utc::now();
                             registry
                                 .register(format!("mcp_{server_name}"), Arc::new(mcp_backend))
                                 .await;
@@ -193,8 +239,14 @@ impl SessionConfig {
                                 server_name,
                                 e
                             );
+                            server_info.state = McpConnectionState::Failed {
+                                error: e.to_string(),
+                            };
+                            server_info.last_updated = Utc::now();
                         }
                     }
+
+                    mcp_servers.insert(server_name.clone(), server_info);
                 }
             }
         }
@@ -210,7 +262,7 @@ impl SessionConfig {
 
         // Note: Workspace tools are handled directly by the Workspace implementation.
 
-        Ok(registry)
+        Ok((registry, mcp_servers))
     }
 
     /// Filter tools based on visibility settings
@@ -452,6 +504,11 @@ pub struct SessionState {
     /// None means use last message semantics for backward compatibility
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_message_id: Option<String>,
+
+    /// Status of MCP server connections
+    /// This is a transient field that is rebuilt on session activation
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub mcp_servers: HashMap<String, McpServerInfo>,
 }
 
 impl SessionState {
@@ -906,7 +963,7 @@ mod tests {
             .await
             .unwrap();
 
-        let registry = config
+        let (registry, _mcp_servers) = config
             .build_registry(llm_config_provider, workspace)
             .await
             .unwrap();
@@ -932,6 +989,122 @@ mod tests {
     // Test removed: tool visibility filtering for workspace tools happens at the Workspace level
 
     // Test removed: workspace backend no longer exists in the registry
+
+    #[test]
+    fn test_mcp_status_tracking() {
+        // Test that MCP server info is properly tracked in session state
+        let mut session_state = SessionState::default();
+
+        // Add some MCP server info
+        let mcp_info = McpServerInfo {
+            server_name: "test-server".to_string(),
+            transport: crate::tools::McpTransport::Stdio {
+                command: "python".to_string(),
+                args: vec!["-m".to_string(), "test_server".to_string()],
+            },
+            state: McpConnectionState::Connected {
+                tool_names: vec![
+                    "tool1".to_string(),
+                    "tool2".to_string(),
+                    "tool3".to_string(),
+                    "tool4".to_string(),
+                    "tool5".to_string(),
+                ],
+            },
+            last_updated: Utc::now(),
+        };
+
+        session_state
+            .mcp_servers
+            .insert("test-server".to_string(), mcp_info.clone());
+
+        // Verify it's stored
+        assert_eq!(session_state.mcp_servers.len(), 1);
+        let stored = session_state.mcp_servers.get("test-server").unwrap();
+        assert_eq!(stored.server_name, "test-server");
+        assert!(matches!(
+            stored.state,
+            McpConnectionState::Connected { ref tool_names } if tool_names.len() == 5
+        ));
+
+        // Test failed connection
+        let failed_info = McpServerInfo {
+            server_name: "failed-server".to_string(),
+            transport: crate::tools::McpTransport::Tcp {
+                host: "localhost".to_string(),
+                port: 9999,
+            },
+            state: McpConnectionState::Failed {
+                error: "Connection refused".to_string(),
+            },
+            last_updated: Utc::now(),
+        };
+
+        session_state
+            .mcp_servers
+            .insert("failed-server".to_string(), failed_info);
+        assert_eq!(session_state.mcp_servers.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_tracking_in_build_registry() {
+        use crate::auth::DefaultAuthStorage;
+        use crate::config::LlmConfigProvider;
+
+        // Create a session config with both good and bad MCP servers
+        let mut config = SessionConfig::read_only();
+
+        // This one should fail (invalid transport)
+        config.tool_config.backends.push(BackendConfig::Mcp {
+            server_name: "bad-server".to_string(),
+            transport: crate::tools::McpTransport::Tcp {
+                host: "nonexistent.invalid".to_string(),
+                port: 12345,
+            },
+            tool_filter: ToolFilter::All,
+        });
+
+        // This one would succeed if we had a real server running
+        config.tool_config.backends.push(BackendConfig::Mcp {
+            server_name: "good-server".to_string(),
+            transport: crate::tools::McpTransport::Stdio {
+                command: "echo".to_string(),
+                args: vec!["test".to_string()],
+            },
+            tool_filter: ToolFilter::All,
+        });
+
+        let auth_storage =
+            DefaultAuthStorage::new().expect("Failed to create auth storage for test");
+        let llm_config_provider = Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)));
+        let workspace = crate::workspace::create_workspace(&config.workspace.to_workspace_config())
+            .await
+            .unwrap();
+
+        let (_registry, mcp_servers) = config
+            .build_registry(llm_config_provider, workspace)
+            .await
+            .unwrap();
+
+        // Should have tracked both servers
+        assert_eq!(mcp_servers.len(), 2);
+
+        // Check the bad server
+        let bad_server = mcp_servers.get("bad-server").unwrap();
+        assert_eq!(bad_server.server_name, "bad-server");
+        assert!(matches!(
+            bad_server.state,
+            McpConnectionState::Failed { .. }
+        ));
+
+        // Check the good server (will also fail in tests since echo isn't an MCP server)
+        let good_server = mcp_servers.get("good-server").unwrap();
+        assert_eq!(good_server.server_name, "good-server");
+        assert!(matches!(
+            good_server.state,
+            McpConnectionState::Failed { .. }
+        ));
+    }
 
     #[test]
     fn test_backend_config_variants() {

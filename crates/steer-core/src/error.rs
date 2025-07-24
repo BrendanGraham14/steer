@@ -1,3 +1,4 @@
+use steer_workspace::WorkspaceError;
 use thiserror::Error;
 
 use crate::{
@@ -5,6 +6,7 @@ use crate::{
     app::AgentExecutorError,
     auth::AuthError,
     session::{manager::SessionManagerError, store::SessionStoreError},
+    tools::ToolError,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -24,7 +26,7 @@ pub enum Error {
     #[error(transparent)]
     Workspace(#[from] WorkspaceError),
     #[error(transparent)]
-    Tool(#[from] steer_tools::ToolError),
+    Tool(#[from] ToolError),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Configuration error: {0}")]
@@ -41,52 +43,12 @@ pub enum Error {
     Transport(String),
     #[error("gRPC status error: {0}")]
     Status(String),
+    #[error("Bash command error: {0}")]
+    BashCommandError(String),
 }
 
-#[derive(Debug, Error)]
-pub enum WorkspaceError {
-    #[error("Workspace not supported: {0}")]
-    NotSupported(String),
-    #[error("Failed to collect environment: {0}")]
-    EnvironmentCollection(String),
-    #[error("Tool execution failed: {0}")]
-    ToolExecution(String),
-    #[error("Invalid workspace path: {0}")]
-    InvalidPath(String),
-    #[error(transparent)]
-    Git(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
-    #[error("Remote workspace error: {0}")]
-    Remote(String),
-}
-
-impl From<steer_workspace::WorkspaceError> for WorkspaceError {
-    fn from(err: steer_workspace::WorkspaceError) -> Self {
-        match err {
-            steer_workspace::WorkspaceError::NotSupported(msg) => WorkspaceError::NotSupported(msg),
-            steer_workspace::WorkspaceError::ToolExecution(msg) => {
-                WorkspaceError::ToolExecution(msg)
-            }
-            steer_workspace::WorkspaceError::Git(e) => WorkspaceError::Git(e),
-            steer_workspace::WorkspaceError::Io(e) => {
-                WorkspaceError::EnvironmentCollection(e.to_string())
-            }
-            steer_workspace::WorkspaceError::Transport(msg) => WorkspaceError::Remote(msg),
-            steer_workspace::WorkspaceError::Status(msg) => WorkspaceError::Remote(msg),
-            steer_workspace::WorkspaceError::InvalidConfiguration(msg) => {
-                WorkspaceError::InvalidPath(msg)
-            }
-            steer_workspace::WorkspaceError::TonicTransport(e) => {
-                WorkspaceError::Remote(e.to_string())
-            }
-            steer_workspace::WorkspaceError::TonicStatus(e) => {
-                WorkspaceError::Remote(e.to_string())
-            }
-        }
-    }
-}
-
-impl From<steer_workspace::WorkspaceError> for Error {
-    fn from(err: steer_workspace::WorkspaceError) -> Self {
-        Error::Workspace(err.into())
+impl From<steer_tools::ToolError> for Error {
+    fn from(err: steer_tools::ToolError) -> Self {
+        Error::Tool(err.into())
     }
 }

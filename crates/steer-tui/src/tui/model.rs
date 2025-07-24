@@ -4,7 +4,10 @@
 //! that can appear in the chat panel, including both conversation messages
 //! and meta rows like slash commands and system notices.
 
-use steer_core::app::conversation::{AppCommandType, CommandResponse, Message};
+use steer_core::{
+    app::conversation::{AppCommandType, CommandResponse as CoreCommandResponse, Message},
+    session::McpServerInfo,
+};
 use steer_tools::ToolCall;
 use time::OffsetDateTime;
 
@@ -49,8 +52,8 @@ pub enum ChatItemData {
     /// Core replied to a command
     CoreCmdResponse {
         id: RowId,
-        cmd: AppCommandType,
-        resp: CommandResponse,
+        command: AppCommandType,
+        response: CoreCommandResponse,
         ts: OffsetDateTime,
     },
 
@@ -58,7 +61,7 @@ pub enum ChatItemData {
     TuiCommandResponse {
         id: RowId,
         command: String,
-        response: String,
+        response: TuiCommandResponse,
         ts: OffsetDateTime,
     },
 
@@ -68,6 +71,30 @@ pub enum ChatItemData {
         label: String,
         ts: OffsetDateTime,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum TuiCommandResponse {
+    Text(String),
+    Theme { name: String },
+    ListThemes(Vec<String>),
+    ListMcpServers(Vec<McpServerInfo>),
+}
+
+#[derive(Debug, Clone)]
+pub enum CommandResponse {
+    Core(CoreCommandResponse),
+    Tui(TuiCommandResponse),
+}
+impl From<CoreCommandResponse> for CommandResponse {
+    fn from(response: CoreCommandResponse) -> Self {
+        CommandResponse::Core(response)
+    }
+}
+impl From<TuiCommandResponse> for CommandResponse {
+    fn from(response: TuiCommandResponse) -> Self {
+        CommandResponse::Tui(response)
+    }
 }
 
 #[derive(Debug, Clone)]
