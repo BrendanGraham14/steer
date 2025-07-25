@@ -111,7 +111,7 @@ impl CoreCommandType {
         match self {
             CoreCommandType::Model => "Show or change the current model",
             CoreCommandType::Clear => "Clear conversation history and tool approvals",
-            CoreCommandType::Compact => "Summarise older messages to save context space",
+            CoreCommandType::Compact => "Summarize the current conversation",
         }
     }
 
