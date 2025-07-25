@@ -91,7 +91,9 @@ steer server --port 50051
 steer tui --remote 192.168.1.10:50051
 ```
 
-### Session management
+### Sessions
+
+Steer persists data to a session. You may create, list, delete, and resume sessions.
 
 ```bash
 # List saved sessions
@@ -105,14 +107,17 @@ steer session create --session-config config.toml
 
 # Create with overrides
 steer session create --session-config config.toml --system-prompt "Custom prompt"
+
+# Resume a session
+steer --session <SESSION_ID>
 ```
 
 ### Session Configuration Files
 
-You can create sessions using TOML configuration files. This is useful for:
+Sessions can be configured using TOML configuration files. This is useful for:
 - Consistent project-specific configurations
 - Setting up MCP (Model Context Protocol) backends
-- Pre-approving tools for automation
+- Pre-approving tools or bash commands
 - Sharing configurations with your team
 
 #### Example: Minimal Configuration
@@ -162,31 +167,26 @@ See the `examples/` directory for more configuration examples.
 Steer supports multiple transport types for connecting to MCP servers:
 
 #### Stdio
-For MCP servers that communicate via standard input/output:
 ```toml
 transport = { type = "stdio", command = "python", args = ["-m", "mcp_server"] }
 ```
 
 #### TCP
-For MCP servers listening on a TCP port:
 ```toml
 transport = { type = "tcp", host = "127.0.0.1", port = 3000 }
 ```
 
 #### Unix Socket
-For MCP servers using Unix domain sockets (Unix/macOS only):
 ```toml
 transport = { type = "unix", path = "/tmp/mcp.sock" }
 ```
 
 #### SSE
-For MCP servers using Server-Sent Events:
 ```toml
 transport = { type = "sse", url = "http://localhost:3000/events", headers = { "Authorization" = "Bearer token" } }
 ```
 
 #### HTTP
-For MCP servers using streamable HTTP:
 ```toml
 transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-Key" = "secret" } }
 ```
@@ -200,15 +200,16 @@ transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-K
 /auth        Set up authentication for AI providers
 /model       Show or change the current model
 /clear       Clear conversation history and tool approvals
-/compact     Summarise older messages to save context space
+/compact     Summarize the current conversation
 /theme       Change or list available themes
+/mcp         Show MCP server connection status
 ```
 
 ---
 
 ## Notifications
 
-Steer provides context-aware notifications with different sounds for different events:
+Steer supports desktop and audio notifications when certain events occur.
 
 ### Notification Types
 
