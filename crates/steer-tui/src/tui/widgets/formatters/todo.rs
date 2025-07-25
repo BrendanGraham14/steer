@@ -110,7 +110,7 @@ impl ToolFormatter for TodoReadFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::TodoRead(todo_list) => {
-                    lines.push(Line::from(Span::styled("Todo List:", theme.text())));
+                    lines.push(Line::raw(""));
                     lines.push(separator_line(wrap_width, theme.dim_text()));
 
                     let mut todo_lines = format_todo_list(&todo_list.todos, theme);
@@ -164,7 +164,7 @@ impl ToolFormatter for TodoWriteFormatter {
             ))];
         };
 
-        lines.push(Line::from(Span::styled("Todo List Update:", theme.text())));
+        lines.push(Line::raw(""));
         lines.push(separator_line(wrap_width, theme.dim_text()));
 
         let mut todo_lines = format_todo_list(&params.todos, theme);
