@@ -99,7 +99,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: PreferencesCommands,
     },
-    /// Run in headless one-shot mode
+    /// Run in headless mode
     Headless {
         /// Model to use
         #[arg(long)]
