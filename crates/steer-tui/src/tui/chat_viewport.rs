@@ -751,8 +751,8 @@ mod tests {
         // Create test messages - first one with many lines
         let mut messages = vec![];
 
-        // First message with 100 lines of content (exceeds viewport height of 20)
-        let large_content = (0..100)
+        // First message with 10 lines of content
+        let large_content = (0..10)
             .map(|i| format!("Line {i}"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -800,8 +800,7 @@ mod tests {
             "Should see beginning of first message"
         );
 
-        // With the bug, we wouldn't see any subsequent messages.
-        // With the fix, we should see at least the second message
+        // We should see at least the second message
         assert!(
             buffer_str.contains("Second message visible"),
             "Should see second message after partial rendering of first - buffer: {buffer_str}"

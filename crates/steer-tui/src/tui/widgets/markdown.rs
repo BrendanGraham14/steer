@@ -526,19 +526,8 @@ where
     }
 
     fn soft_break(&mut self) {
-        // Soft break: In markdown, this is typically rendered as a space
-        // unless it's at the end of a line
-        // However, inside list items, soft breaks should create new lines
-        // to properly render sub-items like bullet points
-        if !self.list_indices.is_empty() {
-            // We're inside a list item - soft breaks should create new lines
-            self.push_line(Line::default());
-        } else if let Some(line) = self.marked_text.lines.last() {
-            if !line.line.spans.is_empty() {
-                // Add a space if there's content on the current line
-                self.push_span(" ".into());
-            }
-        }
+        // Treat soft breaks like hard breaks - always create a new line
+        self.push_line(Line::default());
     }
 
     fn start_codeblock(&mut self, kind: CodeBlockKind<'_>) {
