@@ -15,9 +15,13 @@ impl FileListingUtils {
     ) -> Result<Vec<String>, std::io::Error> {
         let mut files = Vec::new();
 
-        // Walk the directory, respecting .gitignore but including hidden files
+        // Walk the directory, respecting .gitignore but including hidden files (except .git)
         let walker = WalkBuilder::new(root_path)
             .hidden(false) // Include hidden files
+            .filter_entry(|entry| {
+                // Skip .git directory
+                entry.file_name() != ".git"
+            })
             .build();
 
         for entry in walker {
