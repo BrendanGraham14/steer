@@ -14,10 +14,45 @@ It includes a TUI, supports headless execution, and exposes a gRPC interface for
 cargo install steer
 ```
 
-## Quick start
+## Quick Start
 
-```bash
-steer
+Simply run `steer` to start the TUI in a local session.
+
+More options:
+
+```
+❯ steer --help
+Command-line interface for Steer coding agent.
+
+Usage: steer [OPTIONS] [COMMAND]
+
+Commands:
+  tui          Launch the interactive terminal UI (default)
+  preferences  Manage user preferences
+  headless     Run in headless mode
+  server       Start the gRPC server
+  session      Session management commands
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+      --session <SESSION>
+          Resume an existing session instead of starting a new one (local or remote modes)
+  -d, --directory <DIRECTORY>
+          Optional directory to work in
+  -m, --model <MODEL>
+          Model to use [default: claude-opus-4-20250514] [possible values: claude-3-5-sonnet-20240620, claude-3-5-sonnet-20241022, claude-3-7-sonnet-20250219, claude-3-5-haiku-20241022, claude-sonnet-4-20250514, claude-opus-4-20250514, gpt-4.1-2025-04-14, gpt-4.1-mini-2025-04-14, gpt-4.1-nano-2025-04-14, o3-2025-04-16, o3-pro-2025-06-10, o4-mini-2025-04-16, gemini-2.5-flash-preview-04-17, gemini-2.5-pro-preview-05-06, gemini-2.5-pro-preview-06-05, grok-3, grok-3-mini, grok-4-0709]
+      --remote <REMOTE>
+          Connect to a remote gRPC server instead of running locally
+      --system-prompt <SYSTEM_PROMPT>
+          Custom system prompt to use instead of the default
+      --session-config <SESSION_CONFIG>
+          Path to session configuration file (TOML format) for new sessions
+      --theme <THEME>
+          Theme to use for the TUI (defaults to "default")
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 ### Headless mode
@@ -29,7 +64,7 @@ echo "What is 2+2?" | steer headless
 # Provide a JSON file containing `Vec<Message>` in the Steer message format
 steer headless --messages-json /tmp/messages.json
 
-# Run inside an existing session (keeps history / tool approvals)
+# Run inside an existing session (keeps history / tool approvals), pipe the prompt from a file
 steer headless --session b4e1a7de-2e83-45ad-977c-2c4efdb3d9c6 < prompt.txt
 
 # Supply a custom session configuration (tool approvals, MCP backends, etc.)
