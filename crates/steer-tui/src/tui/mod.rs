@@ -1278,7 +1278,7 @@ impl Tui {
 
         // Populate the edit selection messages in the input panel state
         self.input_panel_state
-            .populate_edit_selection(self.chat_store.iter_items().map(|item| &item.data));
+            .populate_edit_selection(self.chat_store.iter_items());
 
         // Scroll to the hovered message if there is one
         if let Some(id) = self.input_panel_state.get_hovered_id() {
