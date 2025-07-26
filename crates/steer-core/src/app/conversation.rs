@@ -567,7 +567,7 @@ impl Conversation {
             },
             timestamp,
             id: summary_id.clone(),
-            parent_message_id: last_msg_id, // Continue from the last message in the thread
+            parent_message_id: None,
         };
 
         self.messages.push(summary_message);
