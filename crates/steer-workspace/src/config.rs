@@ -15,11 +15,6 @@ pub enum WorkspaceConfig {
         /// Optional authentication for the remote service
         auth: Option<RemoteAuth>,
     },
-    /// Container workspace (not yet implemented)
-    Container {
-        /// Container ID or name
-        container_id: String,
-    },
 }
 
 /// Authentication information for remote workspaces

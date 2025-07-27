@@ -9,7 +9,7 @@ use steer_core::app::conversation::{
 };
 use steer_core::app::{AppCommand, AppEvent, BashError, CompactError, Operation, OperationOutcome};
 use steer_core::session::state::{
-    BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
+    BackendConfig, BashToolConfig, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
 use steer_proto::agent::v1 as proto;
@@ -466,12 +466,6 @@ pub fn workspace_config_to_proto(config: &WorkspaceConfig) -> proto::WorkspaceCo
             agent_address: agent_address.clone(),
             auth: auth.as_ref().map(remote_auth_to_proto),
         }),
-        WorkspaceConfig::Container { image, runtime } => {
-            Config::Container(proto::ContainerWorkspaceConfig {
-                image: image.clone(),
-                runtime: container_runtime_to_proto(runtime) as i32,
-            })
-        }
     };
 
     proto::WorkspaceConfig {
@@ -490,14 +484,6 @@ pub fn remote_auth_to_proto(auth: &RemoteAuth) -> proto::RemoteAuth {
 
     proto::RemoteAuth {
         auth: Some(auth_variant),
-    }
-}
-
-/// Convert internal ContainerRuntime to protobuf
-pub fn container_runtime_to_proto(runtime: &ContainerRuntime) -> proto::ContainerRuntime {
-    match runtime {
-        ContainerRuntime::Docker => proto::ContainerRuntime::Docker,
-        ContainerRuntime::Podman => proto::ContainerRuntime::Podman,
     }
 }
 
@@ -637,17 +623,6 @@ pub fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> Worksp
             WorkspaceConfig::Remote {
                 agent_address: remote.agent_address,
                 auth,
-            }
-        }
-        Some(proto::workspace_config::Config::Container(container)) => {
-            let runtime = match proto::ContainerRuntime::try_from(container.runtime) {
-                Ok(proto::ContainerRuntime::Docker) => ContainerRuntime::Docker,
-                Ok(proto::ContainerRuntime::Podman) => ContainerRuntime::Podman,
-                _ => ContainerRuntime::Docker, // Default fallback
-            };
-            WorkspaceConfig::Container {
-                image: container.image,
-                runtime,
             }
         }
         None => WorkspaceConfig::Local {

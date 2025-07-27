@@ -15,8 +15,8 @@ use steer_core::app::{
     cancellation::{ActiveTool, CancellationInfo},
 };
 use steer_core::session::state::{
-    BackendConfig, ContainerRuntime, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
-    ToolVisibility, WorkspaceConfig,
+    BackendConfig, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter, ToolVisibility,
+    WorkspaceConfig,
 };
 use steer_tools::{
     ToolError,
@@ -54,16 +54,13 @@ prop_compose! {
 
 prop_compose! {
     fn arb_workspace_config()(
-        variant in 0..3usize,
+        variant in 0..2usize,
         address in "[a-z]+://[a-z]+:[0-9]+",
-        auth in proptest::option::of(arb_remote_auth()),
-        image in "[a-z]+:[a-z]+",
-        runtime in prop::sample::select(vec![ContainerRuntime::Docker, ContainerRuntime::Podman])
+        auth in proptest::option::of(arb_remote_auth())
     ) -> WorkspaceConfig {
         match variant {
             0 => WorkspaceConfig::Local { path: std::path::PathBuf::from("/tmp") },
-            1 => WorkspaceConfig::Remote { agent_address: address, auth },
-            _ => WorkspaceConfig::Container { image, runtime },
+            _ => WorkspaceConfig::Remote { agent_address: address, auth },
         }
     }
 }
@@ -395,16 +392,6 @@ proptest! {
                     }
                     (None, None) => {},
                     _ => prop_assert!(false, "Auth mismatch"),
-                }
-            }
-            (WorkspaceConfig::Container { image: i1, runtime: r1 },
-             WorkspaceConfig::Container { image: i2, runtime: r2 }) => {
-                prop_assert_eq!(i1, i2);
-                // Manually compare ContainerRuntime since it doesn't implement PartialEq
-                match (r1, r2) {
-                    (ContainerRuntime::Docker, ContainerRuntime::Docker) => {},
-                    (ContainerRuntime::Podman, ContainerRuntime::Podman) => {},
-                    _ => prop_assert!(false, "Runtime mismatch"),
                 }
             }
             _ => prop_assert!(false, "Config variant mismatch"),

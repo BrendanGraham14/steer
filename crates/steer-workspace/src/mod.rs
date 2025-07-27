@@ -149,11 +149,6 @@ pub enum WorkspaceConfig {
         /// Optional authentication for the remote service
         auth: Option<RemoteAuth>,
     },
-    /// Container workspace (not yet implemented)
-    Container {
-        /// Container ID or name
-        container_id: String,
-    },
 }
 
 /// Authentication information for remote workspaces
@@ -175,11 +170,6 @@ pub async fn create_workspace(config: &WorkspaceConfig) -> Result<Arc<dyn Worksp
         WorkspaceConfig::Remote { address, auth } => {
             let workspace = remote::RemoteWorkspace::new(address.clone(), auth.clone()).await?;
             Ok(Arc::new(workspace))
-        }
-        WorkspaceConfig::Container { .. } => {
-            Err(crate::error::WorkspaceError::NotSupported(
-                "Container workspaces are not yet supported.".to_string(),
-            ))
         }
     }
 }

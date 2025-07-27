@@ -32,6 +32,10 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    let working_dir = args
+        .working_dir
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
+
     // Initialize logging
     let log_level = if args.debug { "debug" } else { "info" };
     tracing_subscriber::fmt()
@@ -40,14 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .init();
 
-    // Change working directory if specified
-    if let Some(working_dir) = &args.working_dir {
-        std::env::set_current_dir(working_dir)?;
-        info!("Changed working directory to: {}", working_dir.display());
-    }
-
     // Create the remote backend service
-    let remote_workspace_service = RemoteWorkspaceService::new()
+    let remote_workspace_service = RemoteWorkspaceService::new(working_dir)
         .map_err(|e| format!("Failed to create remote backend service: {e}"))?;
 
     info!(
@@ -59,7 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = format!("{}:{}", args.address, args.port).parse()?;
 
     info!("Starting remote-workspace server on {}", addr);
-    info!("Working directory: {}", std::env::current_dir()?.display());
 
     // Create a channel for graceful shutdown
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();

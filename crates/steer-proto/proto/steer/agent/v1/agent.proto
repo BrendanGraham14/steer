@@ -700,12 +700,6 @@ enum ToolCallStatus {
   TOOL_CALL_STATUS_FAILED = 6;
 }
 
-enum ContainerRuntime {
-  CONTAINER_RUNTIME_UNSPECIFIED = 0;
-  CONTAINER_RUNTIME_DOCKER = 1;
-  CONTAINER_RUNTIME_PODMAN = 2;
-}
-
 enum McpTransport {
   MCP_TRANSPORT_UNSPECIFIED = 0;
   MCP_TRANSPORT_STDIO = 1;
@@ -717,7 +711,6 @@ message WorkspaceConfig {
   oneof config {
     LocalWorkspaceConfig local = 1;
     RemoteWorkspaceConfig remote = 2;
-    ContainerWorkspaceConfig container = 3;
   }
 }
 
@@ -730,10 +723,6 @@ message RemoteWorkspaceConfig {
   optional RemoteAuth auth = 2;
 }
 
-message ContainerWorkspaceConfig {
-  string image = 1;
-  ContainerRuntime runtime = 2;
-}
 
 message ExecuteCommandRequest {
   string session_id = 1;

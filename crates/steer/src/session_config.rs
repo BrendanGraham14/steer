@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use steer_core::session::{
-    BackendConfig, BashToolConfig, ContainerRuntime, RemoteAuth, SessionConfig, SessionToolConfig,
+    BackendConfig, BashToolConfig, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
 };
 use thiserror::Error;
@@ -65,10 +65,6 @@ pub enum PartialWorkspaceConfig {
     Remote {
         agent_address: String,
         auth: Option<RemoteAuth>,
-    },
-    Container {
-        image: String,
-        runtime: ContainerRuntime,
     },
 }
 
@@ -182,9 +178,6 @@ impl SessionConfigLoader {
                 agent_address,
                 auth,
             },
-            Some(PartialWorkspaceConfig::Container { image, runtime }) => {
-                WorkspaceConfig::Container { image, runtime }
-            }
             None => WorkspaceConfig::default(),
         };
 
