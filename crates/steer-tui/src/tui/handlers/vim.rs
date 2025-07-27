@@ -367,11 +367,16 @@ impl Tui {
                 self.switch_mode(InputMode::FuzzyFinder);
 
                 // Populate results with all commands initially
-                let results: Vec<String> = self
+                let results: Vec<_> = self
                     .command_registry
                     .all_commands()
                     .into_iter()
-                    .map(|cmd| cmd.name.to_string())
+                    .map(|cmd| {
+                        crate::tui::widgets::fuzzy_finder::PickerItem::new(
+                            cmd.name.to_string(),
+                            format!("/{} ", cmd.name),
+                        )
+                    })
                     .collect();
                 self.input_panel_state.fuzzy_finder.update_results(results);
             }
@@ -479,12 +484,23 @@ impl Tui {
                 self.switch_mode(InputMode::FuzzyFinder);
 
                 // Immediately show all files (limited to 20)
-                let results = self
+                let file_results = self
                     .input_panel_state
                     .file_cache()
                     .fuzzy_search("", Some(20))
                     .await;
-                self.input_panel_state.fuzzy_finder.update_results(results);
+                let picker_items: Vec<_> = file_results
+                    .into_iter()
+                    .map(|path| {
+                        crate::tui::widgets::fuzzy_finder::PickerItem::new(
+                            path.clone(),
+                            format!("@{path} "),
+                        )
+                    })
+                    .collect();
+                self.input_panel_state
+                    .fuzzy_finder
+                    .update_results(picker_items);
             }
 
             KeyCode::Char('/') => {
@@ -496,11 +512,16 @@ impl Tui {
                     self.switch_mode(InputMode::FuzzyFinder);
 
                     // Immediately show all commands
-                    let results: Vec<String> = self
+                    let results: Vec<_> = self
                         .command_registry
                         .all_commands()
                         .into_iter()
-                        .map(|cmd| cmd.name.to_string())
+                        .map(|cmd| {
+                            crate::tui::widgets::fuzzy_finder::PickerItem::new(
+                                cmd.name.to_string(),
+                                format!("/{} ", cmd.name),
+                            )
+                        })
                         .collect();
                     self.input_panel_state.fuzzy_finder.update_results(results);
                 } else {

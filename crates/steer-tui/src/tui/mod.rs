@@ -750,7 +750,7 @@ impl Tui {
     /// Render fuzzy finder overlay above the input panel
     fn render_fuzzy_finder_overlay_static(
         f: &mut Frame,
-        results: &[String],
+        results: &[crate::tui::widgets::fuzzy_finder::PickerItem],
         selected_index: usize,
         input_panel_height: u16,
         mode: crate::tui::widgets::fuzzy_finder::FuzzyFinderMode,
@@ -795,14 +795,14 @@ impl Tui {
                 .iter()
                 .enumerate()
                 .rev()
-                .map(|(i, path)| {
+                .map(|(i, item)| {
                     let is_selected = selected_index == i;
                     let style = if is_selected {
                         theme.style(theme::Component::PopupSelection)
                     } else {
                         Style::default()
                     };
-                    ListItem::new(path.as_str()).style(style)
+                    ListItem::new(item.label.as_str()).style(style)
                 })
                 .collect(),
             crate::tui::widgets::fuzzy_finder::FuzzyFinderMode::Commands => {
@@ -810,7 +810,7 @@ impl Tui {
                     .iter()
                     .enumerate()
                     .rev()
-                    .map(|(i, cmd_name)| {
+                    .map(|(i, item)| {
                         let is_selected = selected_index == i;
                         let style = if is_selected {
                             theme.style(theme::Component::PopupSelection)
@@ -819,11 +819,12 @@ impl Tui {
                         };
 
                         // Get command info to include description
-                        if let Some(cmd_info) = command_registry.get(cmd_name.as_str()) {
+                        let label = &item.label;
+                        if let Some(cmd_info) = command_registry.get(label.as_str()) {
                             let line = format!("/{:<12} {}", cmd_info.name, cmd_info.description);
                             ListItem::new(line).style(style)
                         } else {
-                            ListItem::new(format!("/{cmd_name}")).style(style)
+                            ListItem::new(format!("/{label}")).style(style)
                         }
                     })
                     .collect()
@@ -840,7 +841,7 @@ impl Tui {
                     } else {
                         Style::default()
                     };
-                    ListItem::new(item.as_str()).style(style)
+                    ListItem::new(item.label.as_str()).style(style)
                 })
                 .collect(),
         };
@@ -1278,7 +1279,7 @@ impl Tui {
 
         // Populate the edit selection messages in the input panel state
         self.input_panel_state
-            .populate_edit_selection(self.chat_store.iter_items().map(|item| &item.data));
+            .populate_edit_selection(self.chat_store.iter_items());
 
         // Scroll to the hovered message if there is one
         if let Some(id) = self.input_panel_state.get_hovered_id() {
