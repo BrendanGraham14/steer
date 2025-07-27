@@ -400,7 +400,8 @@ impl ChatViewport {
             let item_bottom = cumulative_y + item_height;
 
             // Check if item is visible
-            if item_bottom > self.state.offset && cumulative_y < self.state.offset + viewport_height
+            if item_bottom > self.state.offset
+                && cumulative_y < self.state.offset.saturating_add(viewport_height)
             {
                 // Calculate render height and first visible line
                 let (render_h, first_visible_line) = if cumulative_y < self.state.offset {
@@ -408,10 +409,13 @@ impl ChatViewport {
                     let first_line = self.state.offset - cumulative_y;
                     let visible_height = item_height.saturating_sub(first_line);
                     (visible_height.min(viewport_height), first_line)
-                } else if item_bottom > self.state.offset + viewport_height {
+                } else if item_bottom > self.state.offset.saturating_add(viewport_height) {
                     // Item extends below viewport - clip to viewport
-                    let visible_height =
-                        (self.state.offset + viewport_height).saturating_sub(cumulative_y);
+                    let visible_height = self
+                        .state
+                        .offset
+                        .saturating_add(viewport_height)
+                        .saturating_sub(cumulative_y);
                     (visible_height, 0)
                 } else {
                     // Item fully visible
@@ -433,7 +437,7 @@ impl ChatViewport {
             }
 
             // Early exit if we're past the visible area
-            if cumulative_y > self.state.offset + viewport_height {
+            if cumulative_y > self.state.offset.saturating_add(viewport_height) {
                 break;
             }
         }
