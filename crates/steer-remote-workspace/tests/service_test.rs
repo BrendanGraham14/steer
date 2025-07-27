@@ -9,7 +9,7 @@ use tonic::Request;
 /// Test service creation
 #[tokio::test]
 async fn test_service_creation() {
-    let service = RemoteWorkspaceService::new();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir());
     assert!(service.is_ok());
 
     let service = service.unwrap();
@@ -24,7 +24,7 @@ async fn test_service_creation() {
 /// Test health check endpoint
 #[tokio::test]
 async fn test_health_check() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
     let request = Request::new(HealthRequest {});
 
     let response = service.health(request).await;
@@ -38,7 +38,7 @@ async fn test_health_check() {
 /// Test get_tool_schemas endpoint
 #[tokio::test]
 async fn test_get_tool_schemas() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
     let request = Request::new(GetToolSchemasRequest {});
 
     let response = service.get_tool_schemas(request).await;
@@ -59,7 +59,7 @@ async fn test_get_tool_schemas() {
 /// Test tool execution with valid tool
 #[tokio::test]
 async fn test_execute_tool_ls() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
 
     let request = Request::new(ExecuteToolRequest {
         tool_call_id: "test-123".to_string(),
@@ -88,7 +88,7 @@ async fn test_execute_tool_ls() {
 /// Test tool execution with unknown tool
 #[tokio::test]
 async fn test_execute_unknown_tool() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
 
     let request = Request::new(ExecuteToolRequest {
         tool_call_id: "test-456".to_string(),
@@ -109,7 +109,7 @@ async fn test_execute_unknown_tool() {
 /// Test tool execution with invalid parameters
 #[tokio::test]
 async fn test_execute_tool_invalid_params() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
 
     let request = Request::new(ExecuteToolRequest {
         tool_call_id: "test-789".to_string(),
@@ -129,7 +129,7 @@ async fn test_execute_tool_invalid_params() {
 /// Test tool cancellation
 #[tokio::test]
 async fn test_tool_cancellation() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
 
     // Execute a long-running command
     let request = Request::new(ExecuteToolRequest {
@@ -158,7 +158,7 @@ async fn test_tool_cancellation() {
 /// Test get_agent_info endpoint
 #[tokio::test]
 async fn test_get_agent_info() {
-    let service = RemoteWorkspaceService::new().unwrap();
+    let service = RemoteWorkspaceService::new(std::env::temp_dir()).unwrap();
     let request = Request::new(GetAgentInfoRequest {});
 
     let response = service.get_agent_info(request).await;
@@ -174,7 +174,9 @@ async fn test_get_agent_info() {
 fn test_with_tools_constructor() {
     use steer_tools::tools::read_only_workspace_tools;
 
-    let service = RemoteWorkspaceService::with_tools(read_only_workspace_tools()).unwrap();
+    let service =
+        RemoteWorkspaceService::with_tools(read_only_workspace_tools(), std::env::temp_dir())
+            .unwrap();
     let tools = service.get_supported_tools();
 
     // Should only have read-only tools

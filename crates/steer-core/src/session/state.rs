@@ -43,14 +43,6 @@ pub struct McpServerInfo {
     pub last_updated: DateTime<Utc>,
 }
 
-/// Container runtime to use
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ContainerRuntime {
-    Docker,
-    Podman,
-}
-
 /// Defines the primary execution environment for a session's workspace
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -62,10 +54,6 @@ pub enum WorkspaceConfig {
         agent_address: String,
         auth: Option<RemoteAuth>,
     },
-    Container {
-        image: String,
-        runtime: ContainerRuntime,
-    },
 }
 
 impl WorkspaceConfig {
@@ -73,7 +61,6 @@ impl WorkspaceConfig {
         match self {
             WorkspaceConfig::Local { path } => Some(path.to_string_lossy().to_string()),
             WorkspaceConfig::Remote { agent_address, .. } => Some(agent_address.clone()),
-            WorkspaceConfig::Container { .. } => None,
         }
     }
 
@@ -90,12 +77,6 @@ impl WorkspaceConfig {
                 address: agent_address.clone(),
                 auth: auth.as_ref().map(|a| a.to_workspace_auth()),
             },
-            WorkspaceConfig::Container { .. } => {
-                // For now, container workspaces are not implemented in steer_workspace
-                steer_workspace::WorkspaceConfig::Local {
-                    path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-                }
-            }
         }
     }
 }
@@ -1123,8 +1104,6 @@ mod tests {
                 assert_eq!(tools.len(), 2);
             }
         }
-
-        // Container backend has been removed - tests removed
 
         // Test Mcp variant
         let mcp_config = BackendConfig::Mcp {

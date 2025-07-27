@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -37,18 +37,22 @@ use steer_grpc::grpc::conversions::{
 /// using the standard tool executor. It's designed to run on remote machines,
 /// VMs, or containers to provide remote tool execution capabilities.
 pub struct RemoteWorkspaceService {
+    working_dir: PathBuf,
     tools: Arc<HashMap<String, Box<dyn ExecutableTool>>>,
     version: String,
 }
 
 impl RemoteWorkspaceService {
     /// Create a new RemoteWorkspaceService with the standard tool set
-    pub fn new() -> Result<Self, ToolError> {
-        Self::with_tools(workspace_tools())
+    pub fn new(working_dir: PathBuf) -> Result<Self, ToolError> {
+        Self::with_tools(workspace_tools(), working_dir)
     }
 
     /// Create a new RemoteWorkspaceService with a custom set of tools
-    pub fn with_tools(tools_list: Vec<Box<dyn ExecutableTool>>) -> Result<Self, ToolError> {
+    pub fn with_tools(
+        tools_list: Vec<Box<dyn ExecutableTool>>,
+        working_dir: PathBuf,
+    ) -> Result<Self, ToolError> {
         let mut tools: HashMap<String, Box<dyn ExecutableTool>> = HashMap::new();
 
         // Register the provided tools
@@ -57,6 +61,7 @@ impl RemoteWorkspaceService {
         }
 
         Ok(Self {
+            working_dir,
             tools: Arc::new(tools),
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
@@ -227,14 +232,12 @@ impl RemoteWorkspaceService {
 
     /// Get directory structure for environment info
     fn get_directory_structure(&self) -> Result<String, std::io::Error> {
-        let current_dir = std::env::current_dir()?;
-        DirectoryStructureUtils::get_directory_structure(&current_dir, 3)
+        DirectoryStructureUtils::get_directory_structure(&self.working_dir, 3)
     }
 
     /// Get git status information
     async fn get_git_status(&self) -> Result<String, std::io::Error> {
-        let current_dir = std::env::current_dir()?;
-        GitStatusUtils::get_git_status(&current_dir)
+        GitStatusUtils::get_git_status(&self.working_dir)
     }
 }
 
@@ -370,9 +373,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                 ),
                 (
                     "working_directory".to_string(),
-                    std::env::current_dir()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| "unknown".to_string()),
+                    self.working_dir.to_string_lossy().to_string(),
                 ),
             ]),
         };
@@ -431,19 +432,8 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         let working_directory = if let Some(dir) = req.working_directory {
             dir
         } else {
-            std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .map_err(|e| Status::internal(format!("Failed to get current directory: {e}")))?
+            self.working_dir.to_string_lossy().to_string()
         };
-
-        // Change to the working directory if specified
-        if working_directory != std::env::current_dir().unwrap().to_string_lossy() {
-            if let Err(e) = std::env::set_current_dir(&working_directory) {
-                return Err(Status::invalid_argument(format!(
-                    "Failed to change to directory {working_directory}: {e}"
-                )));
-            }
-        }
 
         // Check if it's a git repo
         let is_git_repo = EnvironmentUtils::is_git_repo(Path::new(&working_directory));

@@ -24,10 +24,6 @@ pub async fn create_workspace(
                     .map_err(|e| WorkspaceError::NotSupported(e.to_string()))?;
             Ok(Arc::new(workspace))
         }
-        steer_workspace::WorkspaceConfig::Container { .. } => Err(WorkspaceError::NotSupported(
-            "Container workspaces are not yet supported.".to_string(),
-        )
-        .into()),
     }
 }
 
@@ -58,12 +54,6 @@ pub async fn create_workspace_from_session_config(
                 address: agent_address.clone(),
                 auth: ws_auth,
             }
-        }
-        crate::session::state::WorkspaceConfig::Container { .. } => {
-            return Err(WorkspaceError::NotSupported(
-                "Container workspaces are not yet supported.".to_string(),
-            )
-            .into());
         }
     };
 

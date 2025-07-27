@@ -1,7 +1,7 @@
 pub mod session;
 pub mod tracing;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Returns true if the path exists and is a git repository
 pub fn is_git_repo(path: &Path) -> bool {
@@ -37,11 +37,4 @@ pub fn escape_regex(s: &str) -> String {
     }
 
     result
-}
-
-/// Returns a default working directory, falling back through several options
-pub fn default_working_directory() -> PathBuf {
-    std::env::current_dir()
-        .or_else(|_| std::env::temp_dir().canonicalize())
-        .unwrap_or_else(|_| PathBuf::from("."))
 }

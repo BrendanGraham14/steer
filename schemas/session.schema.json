@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Steer Session Configuration",
   "description": "Configuration file for Steer sessions, including workspace settings, tool configurations, and AI behavior customization.",
   "type": "object",
@@ -29,7 +29,7 @@
     "tool_config": {
       "anyOf": [
         {
-          "$ref": "#/definitions/PartialToolConfig"
+          "$ref": "#/$defs/PartialToolConfig"
         },
         {
           "type": "null"
@@ -39,7 +39,7 @@
     "workspace": {
       "anyOf": [
         {
-          "$ref": "#/definitions/PartialWorkspaceConfig"
+          "$ref": "#/$defs/PartialWorkspaceConfig"
         },
         {
           "type": "null"
@@ -47,67 +47,51 @@
       ]
     }
   },
-  "definitions": {
+  "$defs": {
     "BackendConfig": {
       "description": "Backend configuration for different tool execution environments",
       "oneOf": [
         {
           "type": "object",
-          "required": [
-            "tool_filter",
-            "type"
-          ],
           "properties": {
             "tool_filter": {
               "description": "Tool filtering configuration for the local backend",
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ToolFilter"
-                }
-              ]
+              "$ref": "#/$defs/ToolFilter"
             },
             "type": {
               "type": "string",
-              "enum": [
-                "local"
-              ]
+              "const": "local"
             }
-          }
+          },
+          "required": [
+            "type",
+            "tool_filter"
+          ]
         },
         {
           "type": "object",
-          "required": [
-            "server_name",
-            "tool_filter",
-            "transport",
-            "type"
-          ],
           "properties": {
             "server_name": {
               "type": "string"
             },
             "tool_filter": {
-              "$ref": "#/definitions/ToolFilter"
+              "$ref": "#/$defs/ToolFilter"
             },
             "transport": {
-              "$ref": "#/definitions/McpTransport"
+              "$ref": "#/$defs/McpTransport"
             },
             "type": {
               "type": "string",
-              "enum": [
-                "mcp"
-              ]
+              "const": "mcp"
             }
-          }
+          },
+          "required": [
+            "type",
+            "server_name",
+            "transport",
+            "tool_filter"
+          ]
         }
-      ]
-    },
-    "ContainerRuntime": {
-      "description": "Container runtime to use",
-      "type": "string",
-      "enum": [
-        "docker",
-        "podman"
       ]
     },
     "McpTransport": {
@@ -116,11 +100,6 @@
         {
           "description": "Standard I/O transport (child process)",
           "type": "object",
-          "required": [
-            "args",
-            "command",
-            "type"
-          ],
           "properties": {
             "args": {
               "type": "array",
@@ -133,20 +112,18 @@
             },
             "type": {
               "type": "string",
-              "enum": [
-                "stdio"
-              ]
+              "const": "stdio"
             }
-          }
+          },
+          "required": [
+            "type",
+            "command",
+            "args"
+          ]
         },
         {
           "description": "TCP transport",
           "type": "object",
-          "required": [
-            "host",
-            "port",
-            "type"
-          ],
           "properties": {
             "host": {
               "type": "string"
@@ -154,42 +131,40 @@
             "port": {
               "type": "integer",
               "format": "uint16",
-              "minimum": 0.0
+              "maximum": 65535,
+              "minimum": 0
             },
             "type": {
               "type": "string",
-              "enum": [
-                "tcp"
-              ]
+              "const": "tcp"
             }
-          }
+          },
+          "required": [
+            "type",
+            "host",
+            "port"
+          ]
         },
         {
           "description": "Unix domain socket transport",
           "type": "object",
-          "required": [
-            "path",
-            "type"
-          ],
           "properties": {
             "path": {
               "type": "string"
             },
             "type": {
               "type": "string",
-              "enum": [
-                "unix"
-              ]
+              "const": "unix"
             }
-          }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
         },
         {
           "description": "Server-Sent Events transport",
           "type": "object",
-          "required": [
-            "type",
-            "url"
-          ],
           "properties": {
             "headers": {
               "type": [
@@ -202,22 +177,20 @@
             },
             "type": {
               "type": "string",
-              "enum": [
-                "sse"
-              ]
+              "const": "sse"
             },
             "url": {
               "type": "string"
             }
-          }
+          },
+          "required": [
+            "type",
+            "url"
+          ]
         },
         {
           "description": "HTTP streamable transport",
           "type": "object",
-          "required": [
-            "type",
-            "url"
-          ],
           "properties": {
             "headers": {
               "type": [
@@ -230,14 +203,16 @@
             },
             "type": {
               "type": "string",
-              "enum": [
-                "http"
-              ]
+              "const": "http"
             },
             "url": {
               "type": "string"
             }
-          }
+          },
+          "required": [
+            "type",
+            "url"
+          ]
         }
       ]
     },
@@ -261,7 +236,7 @@
         "approval_policy": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ToolApprovalPolicyConfig"
+              "$ref": "#/$defs/ToolApprovalPolicyConfig"
             },
             {
               "type": "null"
@@ -274,23 +249,23 @@
             "null"
           ],
           "items": {
-            "$ref": "#/definitions/BackendConfig"
+            "$ref": "#/$defs/BackendConfig"
           }
         },
         "tools": {
-          "default": null,
           "type": [
             "object",
             "null"
           ],
           "additionalProperties": {
-            "$ref": "#/definitions/PartialToolSpecificConfig"
-          }
+            "$ref": "#/$defs/PartialToolSpecificConfig"
+          },
+          "default": null
         },
         "visibility": {
           "anyOf": [
             {
-              "$ref": "#/definitions/ToolVisibilityConfig"
+              "$ref": "#/$defs/ToolVisibilityConfig"
             },
             {
               "type": "null"
@@ -303,7 +278,7 @@
     "PartialToolSpecificConfig": {
       "anyOf": [
         {
-          "$ref": "#/definitions/PartialBashConfig"
+          "$ref": "#/$defs/PartialBashConfig"
         }
       ]
     },
@@ -311,31 +286,25 @@
       "oneOf": [
         {
           "type": "object",
-          "required": [
-            "type"
-          ],
           "properties": {
             "path": {
-              "default": null,
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "default": null
             },
             "type": {
               "type": "string",
-              "enum": [
-                "local"
-              ]
+              "const": "local"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         {
           "type": "object",
-          "required": [
-            "agent_address",
-            "type"
-          ],
           "properties": {
             "agent_address": {
               "type": "string"
@@ -343,7 +312,7 @@
             "auth": {
               "anyOf": [
                 {
-                  "$ref": "#/definitions/RemoteAuth"
+                  "$ref": "#/$defs/RemoteAuth"
                 },
                 {
                   "type": "null"
@@ -352,33 +321,13 @@
             },
             "type": {
               "type": "string",
-              "enum": [
-                "remote"
-              ]
+              "const": "remote"
             }
-          }
-        },
-        {
-          "type": "object",
+          },
           "required": [
-            "image",
-            "runtime",
-            "type"
-          ],
-          "properties": {
-            "image": {
-              "type": "string"
-            },
-            "runtime": {
-              "$ref": "#/definitions/ContainerRuntime"
-            },
-            "type": {
-              "type": "string",
-              "enum": [
-                "container"
-              ]
-            }
-          }
+            "type",
+            "agent_address"
+          ]
         }
       ]
     },
@@ -387,43 +336,43 @@
       "oneOf": [
         {
           "type": "object",
-          "required": [
-            "Bearer"
-          ],
           "properties": {
             "Bearer": {
               "type": "object",
-              "required": [
-                "token"
-              ],
               "properties": {
                 "token": {
                   "type": "string"
                 }
-              }
+              },
+              "required": [
+                "token"
+              ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "Bearer"
+          ]
         },
         {
           "type": "object",
-          "required": [
-            "ApiKey"
-          ],
           "properties": {
             "ApiKey": {
               "type": "object",
-              "required": [
-                "key"
-              ],
               "properties": {
                 "key": {
                   "type": "string"
                 }
-              }
+              },
+              "required": [
+                "key"
+              ]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "ApiKey"
+          ]
         }
       ]
     },
@@ -433,25 +382,19 @@
         {
           "description": "Always ask for approval before executing any tool",
           "type": "object",
-          "required": [
-            "type"
-          ],
           "properties": {
             "type": {
               "type": "string",
-              "enum": [
-                "always_ask"
-              ]
+              "const": "always_ask"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         {
           "description": "Pre-approved tools execute without asking",
           "type": "object",
-          "required": [
-            "tools",
-            "type"
-          ],
           "properties": {
             "tools": {
               "type": "array",
@@ -462,20 +405,17 @@
             },
             "type": {
               "type": "string",
-              "enum": [
-                "pre_approved"
-              ]
+              "const": "pre_approved"
             }
-          }
+          },
+          "required": [
+            "type",
+            "tools"
+          ]
         },
         {
           "description": "Mixed policy: some tools pre-approved, others require approval",
           "type": "object",
-          "required": [
-            "ask_for_others",
-            "pre_approved",
-            "type"
-          ],
           "properties": {
             "ask_for_others": {
               "type": "boolean"
@@ -489,11 +429,14 @@
             },
             "type": {
               "type": "string",
-              "enum": [
-                "mixed"
-              ]
+              "const": "mixed"
             }
-          }
+          },
+          "required": [
+            "type",
+            "pre_approved",
+            "ask_for_others"
+          ]
         }
       ]
     },
@@ -503,7 +446,7 @@
           "type": "string"
         },
         {
-          "$ref": "#/definitions/ToolApprovalPolicy"
+          "$ref": "#/$defs/ToolApprovalPolicy"
         }
       ]
     },
@@ -513,16 +456,11 @@
         {
           "description": "Include all available tools",
           "type": "string",
-          "enum": [
-            "all"
-          ]
+          "const": "all"
         },
         {
           "description": "Include only the specified tools",
           "type": "object",
-          "required": [
-            "include"
-          ],
           "properties": {
             "include": {
               "type": "array",
@@ -531,14 +469,14 @@
               }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "include"
+          ]
         },
         {
           "description": "Include all tools except the specified ones",
           "type": "object",
-          "required": [
-            "exclude"
-          ],
           "properties": {
             "exclude": {
               "type": "array",
@@ -547,7 +485,10 @@
               }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "exclude"
+          ]
         }
       ]
     },
@@ -557,7 +498,7 @@
           "type": "string"
         },
         {
-          "$ref": "#/definitions/ToolVisibilityObject"
+          "$ref": "#/$defs/ToolVisibilityObject"
         }
       ]
     },
@@ -565,9 +506,6 @@
       "oneOf": [
         {
           "type": "object",
-          "required": [
-            "whitelist"
-          ],
           "properties": {
             "whitelist": {
               "type": "array",
@@ -577,13 +515,13 @@
               "uniqueItems": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "whitelist"
+          ]
         },
         {
           "type": "object",
-          "required": [
-            "blacklist"
-          ],
           "properties": {
             "blacklist": {
               "type": "array",
@@ -593,7 +531,10 @@
               "uniqueItems": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "required": [
+            "blacklist"
+          ]
         }
       ]
     }
