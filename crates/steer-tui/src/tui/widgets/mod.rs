@@ -17,7 +17,7 @@ pub use chat_widgets::{
     slash_input::SlashInputWidget,
     system_notice::SystemNoticeWidget,
 };
-pub use fuzzy_finder::{FuzzyFinder, FuzzyFinderResult};
+pub use fuzzy_finder::{FuzzyFinder, FuzzyFinderResult, PickerItem};
 pub use input_panel::{InputPanel, InputPanelState};
 pub use popup_list::{PopupList, PopupListState, StatefulPopupList};
 pub use status_bar::StatusBar;
