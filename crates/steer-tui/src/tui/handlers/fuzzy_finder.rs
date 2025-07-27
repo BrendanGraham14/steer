@@ -113,13 +113,17 @@ impl Tui {
                             use steer_core::api::Model;
 
                             let current_model = self.current_model;
-                            let models: Vec<String> = Model::iter_recommended()
+                            let models: Vec<_> = Model::iter_recommended()
                                 .map(|m| {
                                     let n = m.as_ref();
                                     if m == current_model {
-                                        format!("{n} (current)")
+                                        crate::tui::widgets::fuzzy_finder::PickerItem::simple(
+                                            format!("{n} (current)"),
+                                        )
                                     } else {
-                                        n.to_string()
+                                        crate::tui::widgets::fuzzy_finder::PickerItem::simple(
+                                            n.to_string(),
+                                        )
                                     }
                                 })
                                 .collect();
@@ -130,7 +134,11 @@ impl Tui {
                                 .activate(cursor_pos, FMode::Themes);
                             // Populate themes
                             let loader = ThemeLoader::new();
-                            let themes = loader.list_themes();
+                            let themes: Vec<_> = loader
+                                .list_themes()
+                                .into_iter()
+                                .map(crate::tui::widgets::fuzzy_finder::PickerItem::simple)
+                                .collect();
                             self.input_panel_state.fuzzy_finder.update_results(themes);
                         }
                         self.switch_mode(InputMode::FuzzyFinder);
@@ -159,21 +167,23 @@ impl Tui {
                     self.input_panel_state.deactivate_fuzzy();
                     self.restore_previous_mode();
                 }
-                FuzzyFinderResult::Select(selected) => {
+                FuzzyFinderResult::Select(selected_item) => {
                     match mode {
                         FuzzyFinderMode::Files => {
-                            // Complete with file path
-                            self.input_panel_state.complete_fuzzy_finder(&selected);
+                            // Complete with file path using the insert text
+                            self.input_panel_state.complete_picker_item(&selected_item);
                         }
                         FuzzyFinderMode::Commands => {
+                            // Extract just the command name from the label
+                            let selected_cmd = selected_item.label.as_str();
                             // Check if this is model or theme command
                             use crate::tui::commands::{CoreCommandType, TuiCommandType};
                             let model_cmd_name = CoreCommandType::Model.command_name();
                             let theme_cmd_name = TuiCommandType::Theme.command_name();
 
-                            if selected == model_cmd_name || selected == theme_cmd_name {
+                            if selected_cmd == model_cmd_name || selected_cmd == theme_cmd_name {
                                 // User selected model or theme - open the appropriate fuzzy finder
-                                let content = format!("/{selected} ");
+                                let content = format!("/{selected_cmd} ");
                                 self.input_panel_state.clear();
                                 self.input_panel_state
                                     .set_content_from_lines(vec![&content]);
@@ -185,7 +195,7 @@ impl Tui {
                                     .move_cursor(tui_textarea::CursorMove::End);
 
                                 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode as FMode;
-                                if selected == model_cmd_name {
+                                if selected_cmd == model_cmd_name {
                                     self.input_panel_state
                                         .fuzzy_finder
                                         .activate(cursor_pos, FMode::Models);
@@ -194,13 +204,17 @@ impl Tui {
                                     use steer_core::api::Model;
 
                                     let current_model = self.current_model;
-                                    let models: Vec<String> = Model::iter_recommended()
+                                    let models: Vec<_> = Model::iter_recommended()
                                         .map(|m| {
                                             let model_str = m.as_ref();
                                             if m == current_model {
-                                                format!("{model_str} (current)")
+                                                crate::tui::widgets::fuzzy_finder::PickerItem::simple(
+                                                    format!("{model_str} (current)")
+                                                )
                                             } else {
-                                                model_str.to_string()
+                                                crate::tui::widgets::fuzzy_finder::PickerItem::simple(
+                                                    model_str.to_string()
+                                                )
                                             }
                                         })
                                         .collect();
@@ -212,21 +226,25 @@ impl Tui {
 
                                     // Populate themes
                                     let loader = ThemeLoader::new();
-                                    let themes = loader.list_themes();
+                                    let themes: Vec<_> = loader
+                                        .list_themes()
+                                        .into_iter()
+                                        .map(crate::tui::widgets::fuzzy_finder::PickerItem::simple)
+                                        .collect();
                                     self.input_panel_state.fuzzy_finder.update_results(themes);
                                 }
                                 // Stay in fuzzy finder mode
                                 self.input_mode = InputMode::FuzzyFinder;
                             } else {
-                                // Complete with command normally
-                                self.input_panel_state.complete_command_fuzzy(&selected);
+                                // Complete with command using the insert text
+                                self.input_panel_state.complete_picker_item(&selected_item);
                                 self.input_panel_state.deactivate_fuzzy();
                                 self.restore_previous_mode();
                             }
                         }
                         FuzzyFinderMode::Models => {
                             // Extract model name (remove " (current)" suffix if present)
-                            let model_name = selected.trim_end_matches(" (current)");
+                            let model_name = selected_item.label.trim_end_matches(" (current)");
                             // Send the model command using command_name()
                             use crate::tui::commands::CoreCommandType;
                             let command = format!(
@@ -241,8 +259,11 @@ impl Tui {
                         FuzzyFinderMode::Themes => {
                             // Send the theme command using command_name()
                             use crate::tui::commands::TuiCommandType;
-                            let command =
-                                format!("/{} {}", TuiCommandType::Theme.command_name(), selected);
+                            let command = format!(
+                                "/{} {}",
+                                TuiCommandType::Theme.command_name(),
+                                selected_item.label
+                            );
                             self.send_message(command).await?;
                             // Clear the input after sending
                             self.input_panel_state.clear();
@@ -264,11 +285,16 @@ impl Tui {
                 if trigger_pos + 1 < content.len() {
                     let query = &content[trigger_pos + 1..];
                     // Search commands
-                    let results: Vec<String> = self
+                    let results: Vec<_> = self
                         .command_registry
                         .search(query)
                         .into_iter()
-                        .map(|cmd| cmd.name.to_string())
+                        .map(|cmd| {
+                            crate::tui::widgets::fuzzy_finder::PickerItem::new(
+                                cmd.name.to_string(),
+                                format!("/{} ", cmd.name),
+                            )
+                        })
                         .collect();
                     self.input_panel_state.fuzzy_finder.update_results(results);
                 }
@@ -343,8 +369,12 @@ impl Tui {
                     // Sort by score (highest first)
                     scored_models.sort_by(|a, b| b.0.cmp(&a.0));
 
-                    let results: Vec<String> =
-                        scored_models.into_iter().map(|(_, model)| model).collect();
+                    let results: Vec<_> = scored_models
+                        .into_iter()
+                        .map(|(_, model)| {
+                            crate::tui::widgets::fuzzy_finder::PickerItem::simple(model)
+                        })
+                        .collect();
 
                     self.input_panel_state.fuzzy_finder.update_results(results);
                 }
@@ -356,9 +386,13 @@ impl Tui {
                     let all_themes = loader.list_themes();
 
                     if query.is_empty() {
+                        let picker_items: Vec<_> = all_themes
+                            .into_iter()
+                            .map(crate::tui::widgets::fuzzy_finder::PickerItem::simple)
+                            .collect();
                         self.input_panel_state
                             .fuzzy_finder
-                            .update_results(all_themes);
+                            .update_results(picker_items);
                     } else {
                         let matcher = SkimMatcherV2::default();
                         let mut scored_themes: Vec<(i64, String)> = all_themes
@@ -373,8 +407,12 @@ impl Tui {
                         // Sort by score (highest first)
                         scored_themes.sort_by(|a, b| b.0.cmp(&a.0));
 
-                        let results: Vec<String> =
-                            scored_themes.into_iter().map(|(_, theme)| theme).collect();
+                        let results: Vec<_> = scored_themes
+                            .into_iter()
+                            .map(|(_, theme)| {
+                                crate::tui::widgets::fuzzy_finder::PickerItem::simple(theme)
+                            })
+                            .collect();
 
                         self.input_panel_state.fuzzy_finder.update_results(results);
                     }

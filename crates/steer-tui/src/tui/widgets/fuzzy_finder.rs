@@ -1,5 +1,29 @@
 use ratatui::widgets::ListState;
 
+/// An item in the fuzzy finder picker
+#[derive(Debug, Clone)]
+pub struct PickerItem {
+    /// The text displayed in the list
+    pub label: String,
+    /// The text to insert when selected
+    pub insert: String,
+}
+
+impl PickerItem {
+    /// Create a picker item where label and insert are the same
+    pub fn simple(text: String) -> Self {
+        Self {
+            label: text.clone(),
+            insert: text,
+        }
+    }
+
+    /// Create a picker item with different label and insert text
+    pub fn new(label: String, insert: String) -> Self {
+        Self { label, insert }
+    }
+}
+
 /// Type of content being searched
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FuzzyFinderMode {
@@ -17,8 +41,8 @@ pub enum FuzzyFinderMode {
 pub enum FuzzyFinderResult {
     /// User wants to close the finder
     Close,
-    /// User selected a file
-    Select(String),
+    /// User selected an item
+    Select(PickerItem),
 }
 
 /// A fuzzy finder component for file selection
@@ -27,7 +51,7 @@ pub struct FuzzyFinder {
     /// Whether the finder is currently active
     active: bool,
     /// Current search results
-    results: Vec<String>,
+    results: Vec<PickerItem>,
     /// Currently selected result index
     selected: usize,
     /// List state for scrolling
@@ -92,12 +116,12 @@ impl FuzzyFinder {
     }
 
     /// Get the current results
-    pub fn results(&self) -> &[String] {
+    pub fn results(&self) -> &[PickerItem] {
         &self.results
     }
 
     /// Update the search results
-    pub fn update_results(&mut self, results: Vec<String>) {
+    pub fn update_results(&mut self, results: Vec<PickerItem>) {
         self.results = results;
         // Reset selection if it's out of bounds
         if self.selected >= self.results.len() && !self.results.is_empty() {
@@ -131,8 +155,8 @@ impl FuzzyFinder {
             (KeyCode::Enter, _) | (KeyCode::Tab, _) => {
                 // Select current item if available
                 if !self.results.is_empty() && self.selected < self.results.len() {
-                    let selected_path = self.results[self.selected].clone();
-                    Some(FuzzyFinderResult::Select(selected_path))
+                    let selected_item = self.results[self.selected].clone();
+                    Some(FuzzyFinderResult::Select(selected_item))
                 } else {
                     // Close if no results
                     Some(FuzzyFinderResult::Close)
