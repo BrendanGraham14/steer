@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.1.15...steer-remote-workspace-v0.1.16) - 2025-07-27
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.1.8](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.1.7...steer-remote-workspace-v0.1.8) - 2025-07-24
 
 ### Added
