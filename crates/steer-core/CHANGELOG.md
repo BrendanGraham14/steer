@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.1.16...steer-core-v0.1.17) - 2025-07-29
+
+### Other
+
+- *(workspace)* delete dead container code + pass working_dir as a parm
+
 ## [0.1.16](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.1.15...steer-core-v0.1.16) - 2025-07-27
 
 ### Fixed
