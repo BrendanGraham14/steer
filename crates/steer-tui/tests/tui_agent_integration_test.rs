@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use steer_core::config::provider::ProviderId;
 use steer_core::session::SessionManagerConfig;
 use steer_grpc::{ServiceHost, ServiceHostConfig};
 use steer_proto::agent::v1::{
@@ -105,7 +106,10 @@ async fn test_tui_agent_service_file_listing() {
         db_path,
         session_manager_config: SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: steer_core::api::Model::Claude3_5Sonnet20241022,
+            default_model: (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-20241022".to_string(),
+            ),
             auto_persist: true,
         },
         bind_addr,
@@ -262,7 +266,10 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
         db_path,
         session_manager_config: SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: steer_core::api::Model::Claude3_5Sonnet20241022,
+            default_model: (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-20241022".to_string(),
+            ),
             auto_persist: true,
         },
         bind_addr,
@@ -370,7 +377,10 @@ async fn test_workspace_changed_event_flow() {
         db_path,
         session_manager_config: SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: steer_core::api::Model::Claude3_5Sonnet20241022,
+            default_model: (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-20241022".to_string(),
+            ),
             auto_persist: true,
         },
         bind_addr,

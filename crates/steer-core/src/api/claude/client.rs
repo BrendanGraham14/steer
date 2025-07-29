@@ -6,7 +6,7 @@ use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::api::{CompletionResponse, Model, Provider, error::ApiError};
+use crate::api::{CompletionResponse, Provider, error::ApiError};
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
@@ -14,7 +14,9 @@ use crate::auth::{
     AuthFlowWrapper, AuthStorage, DynAuthenticationFlow, InteractiveAuth,
     anthropic::{AnthropicOAuth, AnthropicOAuthFlow, refresh_if_needed},
 };
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
+
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Display)]
@@ -510,10 +512,11 @@ impl Provider for AnthropicClient {
 
     async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
         let mut claude_messages = convert_messages(messages)?;
@@ -576,32 +579,49 @@ impl Provider for AnthropicClient {
             }
         }
 
-        let request = if model.supports_thinking() {
+        // Extract model-specific logic using ModelId
+        let supports_thinking = call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config.as_ref())
+            .map(|tc| tc.enabled)
+            .unwrap_or(false);
+
+        let request = if supports_thinking {
             let thinking = Some(Thinking {
                 thinking_type: ThinkingType::Enabled,
                 budget_tokens: 4000,
             });
             CompletionRequest {
-                model: model.as_ref().to_string(),
+                model: model_id.1.clone(), // Use the model ID string
                 messages: claude_messages,
                 max_tokens: 32_000,
                 system: system_content.clone(),
                 tools,
-                temperature: Some(1.0),
-                top_p: None,
+                temperature: call_options
+                    .as_ref()
+                    .and_then(|o| o.temperature)
+                    .or(Some(1.0)),
+                top_p: call_options.as_ref().and_then(|o| o.top_p),
                 top_k: None,
                 stream: None,
                 thinking,
             }
         } else {
             CompletionRequest {
-                model: model.as_ref().to_string(),
+                model: model_id.1.clone(), // Use the model ID string
                 messages: claude_messages,
-                max_tokens: 8000,
+                max_tokens: call_options
+                    .as_ref()
+                    .and_then(|o| o.max_tokens)
+                    .map(|v| v as usize)
+                    .unwrap_or(8000),
                 system: system_content,
                 tools,
-                temperature: Some(0.7),
-                top_p: None,
+                temperature: call_options
+                    .as_ref()
+                    .and_then(|o| o.temperature)
+                    .or(Some(0.7)),
+                top_p: call_options.as_ref().and_then(|o| o.top_p),
                 top_k: None,
                 stream: None,
                 thinking: None,
@@ -616,11 +636,8 @@ impl Provider for AnthropicClient {
             request_builder = request_builder.header(&name, &value);
         }
 
-        if let (
-            Model::ClaudeSonnet4_20250514 | Model::ClaudeOpus4_20250514,
-            AuthMethod::ApiKey(_),
-        ) = (&model, &self.auth)
-        {
+        // Check for thinking beta header based on model ID
+        if supports_thinking && matches!(&self.auth, AuthMethod::ApiKey(_)) {
             request_builder =
                 request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
         }

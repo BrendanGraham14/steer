@@ -3,10 +3,12 @@ use eyre::{Result, eyre};
 
 use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
-use steer_core::api::Model;
 use steer_core::app::AppConfig;
+use steer_core::config::provider::ProviderId;
 use steer_core::session::{SessionManager, SessionManagerConfig};
-use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
+use steer_core::utils::session::{
+    create_session_store_with_config, resolve_session_store_config,
+};
 
 pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
@@ -14,7 +16,7 @@ pub struct CreateSessionCommand {
     pub remote: Option<String>,
     pub system_prompt: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
-    pub model: Option<Model>,
+    pub model: Option<String>,
 }
 
 #[async_trait]
@@ -45,9 +47,22 @@ impl Command for CreateSessionCommand {
         // Local session handling
         let store_config = resolve_session_store_config(self.session_db.clone())?;
         let session_store = create_session_store_with_config(store_config).await?;
+        
+        // Load model registry and resolve default model
+        let model_registry = steer_core::model_registry::ModelRegistry::load()
+            .map_err(|e| eyre!("Failed to load model registry: {}", e))?;
+        
+        let default_model = if let Some(ref model_str) = self.model {
+            model_registry.resolve(model_str)
+                .map_err(|e| eyre!("Invalid model: {}", e))?
+        } else {
+            // Default to opus
+            (ProviderId::Anthropic, "claude-opus-4-1-20250805".to_string())
+        };
+        
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: self.model.unwrap_or_default(),
+            default_model,
             auto_persist: true,
         };
 

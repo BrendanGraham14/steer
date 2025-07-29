@@ -10,15 +10,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
+use steer_tools::ToolCall;
+use tokio::net::TcpStream;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
-use tokio::net::TcpStream;
-#[cfg(unix)]
-use tokio::net::UnixStream;
-
-use crate::api::ToolCall;
 use crate::session::state::ToolFilter;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use steer_tools::{

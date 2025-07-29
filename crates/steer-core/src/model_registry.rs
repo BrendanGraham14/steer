@@ -76,10 +76,33 @@ impl ModelRegistry {
     pub fn by_alias(&self, alias: &str) -> Option<&ModelConfig> {
         self.aliases.get(alias).and_then(|id| self.models.get(id))
     }
+    /// Resolve a model string to a ModelId.
+    /// - If input contains '/', treats as 'provider/id' and parses accordingly
+    /// - Otherwise, looks up by alias
+    /// - Returns error if not found or invalid
+    pub fn resolve(&self, input: &str) -> Result<ModelId, Error> {
+        if let Some((provider_str, id)) = input.split_once('/') {
+            // Try to deserialize the provider string using serde
+            let provider: ProviderId =
+                serde_json::from_value(serde_json::Value::String(provider_str.to_string()))
+                    .map_err(|_| {
+                        Error::Configuration(format!("Invalid provider: {provider_str}"))
+                    })?;
+            Ok((provider, id.to_string()))
+        } else {
+            self.by_alias(input)
+                .map(|config| (config.provider.clone(), config.id.clone()))
+                .ok_or_else(|| Error::Configuration(format!("Unknown model or alias: {input}")))
+        }
+    }
 
-    /// Get an iterator over all recommended models.
     pub fn recommended(&self) -> impl Iterator<Item = &ModelConfig> {
         self.models.values().filter(|model| model.recommended)
+    }
+
+    /// Get all models in the registry
+    pub fn all(&self) -> impl Iterator<Item = &ModelConfig> {
+        self.models.values()
     }
 
     /// Load user configuration from the standard location.
@@ -150,11 +173,27 @@ impl ModelRegistry {
 
                 // Override scalar fields (last-write-wins)
                 base_model.recommended = user_model.recommended;
-                base_model.supports_thinking = user_model.supports_thinking;
 
                 // Override parameters if provided
-                if user_model.parameters.is_some() {
-                    base_model.parameters = user_model.parameters;
+                if let Some(user_params) = user_model.parameters {
+                    // Merge with base parameters or replace entirely
+                    if let Some(base_params) = base_model.parameters.as_mut() {
+                        // Base has parameters, merge thinking_config
+                        base_params.thinking_config = user_params.thinking_config;
+                        // Merge other fields if needed
+                        if let Some(temp) = user_params.temperature {
+                            base_params.temperature = Some(temp);
+                        }
+                        if let Some(max_tokens) = user_params.max_tokens {
+                            base_params.max_tokens = Some(max_tokens);
+                        }
+                        if let Some(top_p) = user_params.top_p {
+                            base_params.top_p = Some(top_p);
+                        }
+                    } else {
+                        // Base has no parameters, use user's
+                        base_model.parameters = Some(user_params);
+                    }
                 }
             } else {
                 // New model - add it
@@ -191,9 +230,9 @@ provider = "anthropic"
 id = "test-model"
 aliases = ["test", "tm"]
 recommended = true
-supports_thinking = false
 
 [models.parameters]
+thinking_config.enabled = false
 temperature = 0.7
 max_tokens = 1000
 "#;
@@ -248,7 +287,9 @@ provider = "openai"
 id = "gpt-4"
 aliases = ["gpt"]
 recommended = true
-supports_thinking = false
+
+[models.parameters]
+thinking_config.enabled = false
 "#;
 
         let user_toml = r#"
@@ -257,17 +298,19 @@ provider = "anthropic"
 id = "claude-3"
 aliases = ["c3", "claude3"]
 recommended = true
-supports_thinking = true
 
 [models.parameters]
+thinking_config.enabled = true
 temperature = 0.8
 
 [[models]]
-provider = "gemini"
+provider = "google"
 id = "gemini-pro"
 aliases = ["gemini"]
 recommended = true
-supports_thinking = false
+
+[models.parameters]
+thinking_config.enabled = true
 "#;
 
         let mut base: ModelsFile = toml::from_str(base_toml).unwrap();
@@ -293,7 +336,25 @@ supports_thinking = false
 
         // Scalar fields should be overridden
         assert!(claude.recommended);
-        assert!(claude.supports_thinking);
+        assert!(claude.parameters.is_some());
+        assert!(
+            claude
+                .parameters
+                .as_ref()
+                .unwrap()
+                .thinking_config
+                .is_some()
+        );
+        assert!(
+            claude
+                .parameters
+                .as_ref()
+                .unwrap()
+                .thinking_config
+                .as_ref()
+                .unwrap()
+                .enabled
+        );
 
         // Parameters should be set
         assert!(claude.parameters.is_some());
@@ -307,13 +368,24 @@ supports_thinking = false
             .find(|m| m.provider == ProviderId::Openai && m.id == "gpt-4")
             .unwrap();
         assert!(gpt4.recommended);
-        assert!(!gpt4.supports_thinking);
+        assert!(gpt4.parameters.is_some());
+        assert!(gpt4.parameters.as_ref().unwrap().thinking_config.is_some());
+        assert!(
+            !gpt4
+                .parameters
+                .as_ref()
+                .unwrap()
+                .thinking_config
+                .as_ref()
+                .unwrap()
+                .enabled
+        );
 
         // Check that Gemini was added
         let gemini = base
             .models
             .iter()
-            .find(|m| m.provider == ProviderId::Gemini && m.id == "gemini-pro")
+            .find(|m| m.provider == ProviderId::Google && m.id == "gemini-pro")
             .unwrap();
         assert!(gemini.recommended);
     }
@@ -332,7 +404,9 @@ provider = "anthropic"
 id = "test-model"
 aliases = ["test"]
 recommended = true
-supports_thinking = false
+
+[models.parameters]
+thinking_config.enabled = false
 "#;
 
         fs::write(&config_path, config).unwrap();

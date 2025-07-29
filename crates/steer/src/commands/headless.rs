@@ -13,13 +13,13 @@ use steer_tools::tools::{
 
 use super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
-use steer_core::api::Model;
-use steer_core::app::conversation::{Message, MessageData, UserContent};
+use steer_core::app::conversation::{Message, UserContent};
+use steer_core::app::MessageData;
 
 pub struct HeadlessCommand {
-    pub model: Option<Model>,
+    pub model: Option<String>,
     pub messages_json: Option<PathBuf>,
-    pub global_model: Model,
+    pub global_model: String,
     pub session: Option<String>,
     pub session_config: Option<PathBuf>,
     pub system_prompt: Option<String>,
@@ -61,7 +61,7 @@ impl Command for HeadlessCommand {
         };
 
         // Use model override if provided, otherwise use the global setting
-        let model_to_use = self.model.unwrap_or(self.global_model);
+        let model_to_use = self.model.as_ref().unwrap_or(&self.global_model);
 
         // Load session configuration if provided
         let session_config = if let Some(config_path) = &self.session_config {
@@ -88,7 +88,7 @@ impl Command for HeadlessCommand {
         };
 
         // Create session manager
-        let session_manager = crate::create_session_manager(model_to_use).await?;
+        let session_manager = crate::create_session_manager(model_to_use.clone()).await?;
 
         // Determine execution mode and run
         let result = match &self.session {
@@ -146,10 +146,8 @@ impl Command for HeadlessCommand {
                 };
 
                 // Convert API messages to app messages
-                let app_messages: Result<Vec<crate::app::Message>, _> = messages
-                    .into_iter()
-                    .map(crate::app::Message::try_from)
-                    .collect();
+                let app_messages: Result<Vec<Message>, _> =
+                    messages.into_iter().map(Message::try_from).collect();
 
                 let app_messages =
                     app_messages.map_err(|e| eyre!("Failed to convert messages: {}", e))?;
@@ -157,7 +155,7 @@ impl Command for HeadlessCommand {
                 crate::run_once_ephemeral(
                     &session_manager,
                     app_messages,
-                    model_to_use,
+                    model_to_use.clone(),
                     tool_config,
                     Some(auto_approve_policy),
                     system_prompt_to_use,

@@ -7,9 +7,8 @@ use tokio_util::sync::CancellationToken;
 use crate::api::error::ApiError;
 use crate::app::conversation::{AssistantContent, Message};
 use crate::auth::{AuthStorage, DynAuthenticationFlow};
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::{ToolCall, ToolSchema};
-
-use super::Model;
 
 /// Response from the provider's completion API
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,10 +62,11 @@ pub trait Provider: Send + Sync + 'static {
     /// Complete a prompt with the LLM
     async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError>;
 

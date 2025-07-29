@@ -2,22 +2,22 @@
 id = "anthropic"
 name = "Anthropic"
 api_format = "anthropic"
-auth_schemes = ["api_key", "oauth2"]
+auth_schemes = ["api-key", "oauth2"]
 
 [[providers]]
 id = "openai"
 name = "OpenAI"
 api_format = "openai-responses"
-auth_schemes = ["api_key"]
+auth_schemes = ["api-key"]
 
 [[providers]]
 id = "google"
 name = "Google"
 api_format = "google"
-auth_schemes = ["api_key"]
+auth_schemes = ["api-key"]
 
 [[providers]]
 id = "xai"
 name = "xAI"
 api_format = "xai"
-auth_schemes = ["api_key"]
+auth_schemes = ["api-key"]

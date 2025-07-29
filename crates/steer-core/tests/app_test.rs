@@ -1,10 +1,11 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use dotenvy::dotenv;
-use std::sync::Arc;
-use steer_core::api::Model;
 use steer_core::app::{App, AppConfig, AppEvent};
-use steer_core::test_utils;
 use steer_core::tools::ToolExecutor;
+
+use std::sync::Arc;
+use steer_core::config::provider::ProviderId;
+use steer_core::test_utils;
 use steer_tools::ToolCall;
 use steer_workspace::local::LocalWorkspace;
 use tempfile::TempDir;
@@ -43,7 +44,10 @@ async fn test_tool_executor() -> Result<()> {
     let app = App::new(
         app_config,
         event_tx,
-        Model::Claude3_7Sonnet20250219,
+        (
+            ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        ),
         workspace,
         tool_executor,
         None, // No session config for test

@@ -736,33 +736,37 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         &self,
         request: Request<ListModelsRequest>,
     ) -> Result<Response<ListModelsResponse>, Status> {
-        use steer_core::api::Model;
-
         let req = request.into_inner();
 
-        // Get all models
-        let all_models = Model::all();
+        // Load the model registry
+        let model_registry = steer_core::model_registry::ModelRegistry::load()
+            .map_err(|e| Status::internal(format!("Failed to load model registry: {e}")))?;
 
-        // Filter by provider if specified
-        let models: Vec<proto::ProviderModel> = all_models
-            .into_iter()
+        // Get all models from the registry
+        let all_models: Vec<proto::ProviderModel> = model_registry
+            .all()
             .filter(|m| {
                 if let Some(ref provider_id) = req.provider_id {
-                    m.provider_id().storage_key() == *provider_id
+                    m.provider.storage_key() == *provider_id
                 } else {
                     true
                 }
             })
             .map(|m| proto::ProviderModel {
-                provider_id: m.provider_id().storage_key(),
-                model_id: m.to_string(),
-                display_name: m.to_string(), // Could enhance with better display names
-                supports_thinking: m.supports_thinking(),
-                aliases: m.aliases().into_iter().map(|s| s.to_string()).collect(),
+                provider_id: m.provider.storage_key(),
+                model_id: m.id.clone(),
+                display_name: m.id.clone(),
+                supports_thinking: m
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.thinking_config.as_ref())
+                    .map(|tc| tc.enabled)
+                    .unwrap_or(false),
+                aliases: m.aliases.clone(),
             })
             .collect();
 
-        Ok(Response::new(ListModelsResponse { models }))
+        Ok(Response::new(ListModelsResponse { models: all_models }))
     }
 }
 
@@ -924,7 +928,8 @@ async fn handle_client_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use steer_core::api::Model;
+
+    use steer_core::config::provider::ProviderId;
 
     use std::collections::HashMap;
     use steer_core::session::state::WorkspaceConfig;
@@ -947,7 +952,10 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
-            default_model: Model::ClaudeSonnet4_20250514,
+            default_model: (
+                ProviderId::Anthropic,
+                "claude-3-7-sonnet-20250219".to_string(),
+            ),
             auto_persist: true,
         };
         let session_manager = Arc::new(SessionManager::new(store, config));

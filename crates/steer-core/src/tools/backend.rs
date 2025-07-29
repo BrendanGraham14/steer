@@ -2,10 +2,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::api::ToolCall;
 use crate::tools::ExecutionContext;
-use steer_tools::ToolSchema;
-use steer_tools::{ToolError, result::ToolResult};
+use steer_tools::{ToolCall, ToolError, ToolSchema, result::ToolResult};
 
 /// Metadata about a tool backend for debugging and monitoring
 #[derive(Debug, Clone)]
@@ -223,7 +221,6 @@ impl Default for BackendRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::ToolCall;
     use serde_json::json;
     use tokio_util::sync::CancellationToken;
 

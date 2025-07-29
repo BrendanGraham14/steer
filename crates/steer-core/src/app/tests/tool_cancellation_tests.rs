@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::api::Model;
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
         App,
         conversation::{AssistantContent, MessageData},
     };
+    use crate::config::provider::ProviderId;
     use crate::test_utils;
     use crate::tools::{BackendRegistry, LocalBackend, ToolExecutor};
     use crate::workspace::Workspace;
@@ -47,7 +47,10 @@ mod tests {
         // Create a minimal app configuration
         let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
-        let initial_model = Model::Claude3_7Sonnet20250219;
+        let initial_model = (
+            ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        );
 
         let workspace = create_test_workspace().await;
         let tool_executor = create_test_tool_executor(workspace.clone()).await;
@@ -130,7 +133,10 @@ mod tests {
         // Create a minimal app configuration
         let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
-        let initial_model = Model::Claude3_7Sonnet20250219;
+        let initial_model = (
+            ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        );
 
         let workspace = create_test_workspace().await;
         let tool_executor = create_test_tool_executor(workspace.clone()).await;
@@ -193,7 +199,10 @@ mod tests {
         // Create a minimal app configuration
         let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
-        let initial_model = Model::Claude3_7Sonnet20250219;
+        let initial_model = (
+            ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        );
 
         let workspace = create_test_workspace().await;
         let tool_executor = create_test_tool_executor(workspace.clone()).await;

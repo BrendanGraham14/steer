@@ -7,12 +7,11 @@ use steer::commands::{
     Command, headless::HeadlessCommand, serve::ServeCommand, session::SessionCommand,
 };
 use steer::session_config::{SessionConfigLoader, SessionConfigOverrides};
-use steer_core::api::Model;
 
 /// Parameters for running the TUI
 struct TuiParams {
     session_id: Option<String>,
-    model: Model,
+    model: String,
     directory: Option<PathBuf>,
     system_prompt: Option<String>,
     session_db: Option<PathBuf>,
@@ -25,7 +24,7 @@ struct TuiParams {
 struct RemoteTuiParams {
     remote_addr: String,
     session_id: Option<String>,
-    model: Model,
+    model: String,
     directory: Option<PathBuf>,
     system_prompt: Option<String>,
     session_config_path: Option<PathBuf>,
@@ -51,21 +50,24 @@ async fn main() -> Result<()> {
 
     // Load preferences to get default model
     let preferences = steer_core::preferences::Preferences::load().unwrap_or_default();
+    
+    // Load model registry early to validate models
+    let model_registry = steer_core::model_registry::ModelRegistry::load()
+        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
 
     // Determine which model to use:
     // 1. CLI argument (if provided)
     // 2. Preferences default_model (if set)
     // 3. System default
-    let model: steer_core::api::Model = if let Some(model_arg) = cli.model {
-        model_arg.into()
+    let model = if !cli.model.is_empty() && cli.model != "opus" {
+        // CLI provided a specific model
+        cli.model.clone()
     } else if let Some(ref default_model_str) = preferences.default_model {
-        // Try to parse the model from preferences
-        default_model_str.parse().unwrap_or_else(|_| {
-            eprintln!("Warning: Invalid model '{default_model_str}' in preferences, using default");
-            Model::default()
-        })
+        // Try to use the model from preferences
+        default_model_str.clone()
     } else {
-        Model::default()
+        // Use default
+        "opus".to_string()
     };
 
     // Set up signal handlers for terminal cleanup if using TUI
@@ -157,14 +159,14 @@ async fn main() -> Result<()> {
             system_prompt,
             remote,
         } => {
-            // Use headless model if provided, otherwise global model
-            let effective_model = headless_model.map(Into::into).unwrap_or(model);
+            // Parse headless model if provided, otherwise use global model
+            let effective_model = headless_model.as_ref().unwrap_or(&model);
             let remote_addr = remote.or(cli.remote.clone());
 
             let command = HeadlessCommand {
-                model: Some(effective_model),
+                model: Some(effective_model.clone()),
                 messages_json,
-                global_model: effective_model,
+                global_model: effective_model.clone(),
                 session,
                 session_config,
                 system_prompt: system_prompt.or(cli.system_prompt),
@@ -174,10 +176,15 @@ async fn main() -> Result<()> {
             command.execute().await
         }
         Commands::Server { port, bind } => {
+            // Resolve model string to ModelId
+            let model_id = model_registry
+                .resolve(&model)
+                .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+
             let command = ServeCommand {
                 port,
                 bind,
-                model,
+                model: model_id,
                 session_db: cli.session_db.clone(),
             };
             command.execute().await
@@ -216,9 +223,18 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
+    // Load model registry
+    let model_registry = steer_core::model_registry::ModelRegistry::load()
+        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+
+    // Resolve model string to ModelId
+    let model_id = model_registry
+        .resolve(&params.model)
+        .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+
     // Create in-memory channel
     let (channel, _server_handle) =
-        local_server::setup_local_grpc(params.model, params.session_db.clone())
+        local_server::setup_local_grpc(model_id.clone(), params.session_db.clone())
             .await
             .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
 
@@ -276,7 +292,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
     tui::run_tui(
         client,
         session_id,
-        params.model,
+        model_id,
         params.directory.clone(),
         None, // system_prompt is already applied to the session
         params.theme.clone(),
@@ -341,11 +357,20 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         session_id = Some(new_session_id);
     }
 
+    // Load model registry
+    let model_registry = steer_core::model_registry::ModelRegistry::load()
+        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+
+    // Resolve model string to ModelId
+    let model_id = model_registry
+        .resolve(&params.model)
+        .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+
     // Run TUI with the client
     tui::run_tui(
         client,
         session_id,
-        params.model,
+        model_id,
         params.directory.clone(),
         None, // system_prompt is already applied to the session
         params.theme.clone(),

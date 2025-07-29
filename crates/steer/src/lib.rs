@@ -6,7 +6,6 @@ pub mod session_config;
 pub use steer_core::{api, app, config, events, runners, session, tools, utils, workspace};
 
 use eyre::Result;
-use steer_core::api::Model;
 use steer_core::app::Message;
 use steer_core::runners::{OneShotRunner, RunOnceResult};
 use steer_core::session::{SessionManager, SessionToolConfig};
@@ -38,15 +37,24 @@ pub async fn run_once_in_session(
 pub async fn run_once_ephemeral(
     session_manager: &SessionManager,
     init_msgs: Vec<Message>,
-    model: Model,
+    model: String,
     tool_config: Option<SessionToolConfig>,
     tool_policy: Option<steer_core::session::ToolApprovalPolicy>,
     system_prompt: Option<String>,
 ) -> Result<RunOnceResult> {
+    // Load model registry to resolve the model string
+    let model_registry = steer_core::model_registry::ModelRegistry::load()
+        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+
+    // Resolve model string to ModelId
+    let model_id = model_registry
+        .resolve(&model)
+        .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+
     OneShotRunner::run_ephemeral(
         session_manager,
         init_msgs,
-        model,
+        model_id,
         tool_config,
         tool_policy,
         system_prompt,
@@ -55,32 +63,28 @@ pub async fn run_once_ephemeral(
     .map_err(|e| eyre::eyre!("Failed to run ephemeral session: {}", e))
 }
 
-/// Convenience function for simple one-shot runs with default tool configuration.
-/// Creates a temporary SessionManager for this single operation.
-///
-/// * `init_msgs`     – seed conversation (system + user or multi-turn)
-/// * `model`         – which LLM to use
-pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> Result<RunOnceResult> {
-    // Only create temporary session manager for the simple convenience function
-    let session_manager = create_session_manager(model).await?;
-    run_once_ephemeral(&session_manager, init_msgs, model, None, None, None).await
-}
-
 /// Creates a SessionManager for use with the one-shot functions.
 ///
 /// This is the recommended way to create a SessionManager for one-shot operations
 /// when you want to reuse it across multiple calls.
-pub async fn create_session_manager(default_model: Model) -> Result<SessionManager> {
+pub async fn create_session_manager(default_model: String) -> Result<SessionManager> {
     use steer_core::session::SessionManagerConfig;
 
     // Use the same session store as normal operation (~/.steer/sessions.db)
     let store = steer_core::utils::session::create_session_store()
         .await
         .map_err(|e| eyre::eyre!("Failed to create session store: {}", e))?;
+    
+    // Load model registry and resolve default model
+    let model_registry = steer_core::model_registry::ModelRegistry::load()
+        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+    
+    let model_id = model_registry.resolve(&default_model)
+        .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
 
     let config = SessionManagerConfig {
         max_concurrent_sessions: 10,
-        default_model,
+        default_model: model_id,
         auto_persist: true,
     };
 

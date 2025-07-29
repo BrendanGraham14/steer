@@ -69,6 +69,13 @@ impl AgentClient {
         })
     }
 
+    /// Convenience constructor: spin up a localhost gRPC server and return a ready client.
+    pub async fn local(default_model: steer_core::config::model::ModelId) -> GrpcResult<Self> {
+        use crate::local_server::setup_local_grpc;
+        let (channel, _server_handle) = setup_local_grpc(default_model, None).await?;
+        Self::from_channel(channel).await
+    }
+
     /// Create a new session on the server
     pub async fn create_session(&self, config: SessionConfig) -> GrpcResult<String> {
         debug!("Creating new session with gRPC server");

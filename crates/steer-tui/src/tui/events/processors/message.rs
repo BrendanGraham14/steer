@@ -165,6 +165,7 @@ mod tests {
 
     use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 
+    use steer_core::config::model::ModelId;
     use steer_grpc::AgentClient;
     use steer_tools::schema::ToolCall;
 
@@ -177,7 +178,7 @@ mod tests {
         progress_message: Option<String>,
         spinner_state: usize,
         current_tool_approval: Option<ToolCall>,
-        current_model: steer_core::api::Model,
+        current_model: ModelId,
         messages_updated: bool,
     }
 
@@ -190,7 +191,10 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = steer_core::api::Model::Claude3_5Sonnet20241022;
+        let current_model = (
+            steer_core::config::provider::Provider::Anthropic,
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
         let messages_updated = false;
 
         TestContext {
@@ -281,7 +285,10 @@ mod tests {
             .process(
                 steer_core::app::AppEvent::MessageAdded {
                     message: assistant_message,
-                    model: steer_core::api::Model::Claude3_5Sonnet20241022,
+                    model: (
+                        steer_core::config::provider::Provider::Anthropic,
+                        "claude-3-5-sonnet-20241022".to_string(),
+                    ),
                 },
                 &mut ctx,
             )

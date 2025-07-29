@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
+use steer_tools::ToolCall;
 
-use crate::api::ToolCall;
 use crate::config::LlmConfigProvider;
 use crate::tools::{BackendMetadata, ExecutionContext, ToolBackend};
 use crate::tools::{DispatchAgentTool, FetchTool};

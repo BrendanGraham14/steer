@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::Model;
 use crate::api::error::ApiError;
 use crate::api::provider::CompletionResponse;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
 use super::types::{OpenAIFunction, OpenAITool, ServiceTier, ToolChoice};
@@ -54,10 +54,11 @@ impl Client {
 
     pub(super) async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
         let mut openai_messages = Vec::new();
@@ -91,12 +92,30 @@ impl Client {
                 .collect()
         });
 
+        // Determine if we should use reasoning based on call options
+        let reasoning_effort = if call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config.as_ref())
+            .map(|tc| tc.enabled)
+            .unwrap_or(false)
+        {
+            Some(ReasoningEffort::Medium)
+        } else {
+            None
+        };
+
         let request = OpenAIRequest {
-            model: model.as_ref().to_string(),
+            model: model_id.1.clone(),  // Use the model ID string
             messages: openai_messages,
-            temperature: Some(1.0),
-            max_tokens: None,
-            top_p: Some(1.0),
+            temperature: call_options
+                .as_ref()
+                .and_then(|o| o.temperature)
+                .or(Some(1.0)),
+            max_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
+            top_p: call_options
+                .as_ref()
+                .and_then(|o| o.top_p)
+                .or(Some(1.0)),
             frequency_penalty: None,
             presence_penalty: None,
             stop: None,
@@ -107,11 +126,7 @@ impl Client {
             tool_choice: None,
             parallel_tool_calls: None,
             response_format: None,
-            reasoning_effort: if model.supports_thinking() {
-                Some(ReasoningEffort::Medium)
-            } else {
-                None
-            },
+            reasoning_effort,
             audio: None,
             stream_options: None,
             service_tier: None,

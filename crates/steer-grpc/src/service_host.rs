@@ -224,7 +224,8 @@ async fn create_session_store(db_path: &std::path::Path) -> Result<Arc<dyn Sessi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use steer_core::api::Model;
+
+    use steer_core::config::provider::ProviderId;
     use tempfile::TempDir;
 
     fn create_test_config() -> (ServiceHostConfig, TempDir) {
@@ -235,7 +236,10 @@ mod tests {
             db_path,
             session_manager_config: SessionManagerConfig {
                 max_concurrent_sessions: 10,
-                default_model: Model::ClaudeSonnet4_20250514,
+                default_model: (
+                    ProviderId::Anthropic,
+                    "claude-3-7-sonnet-20250219".to_string(),
+                ),
                 auto_persist: true,
             },
             bind_addr: "127.0.0.1:0".parse().unwrap(), // Use port 0 for testing

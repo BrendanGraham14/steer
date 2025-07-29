@@ -3,9 +3,11 @@ use eyre::{Result, eyre};
 use std::io::{self, Write};
 
 use super::super::Command;
-use steer_core::api::Model;
+use steer_core::config::provider::ProviderId;
 use steer_core::session::{SessionManager, SessionManagerConfig};
-use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
+use steer_core::utils::session::{
+    create_session_store_with_config, resolve_session_store_config,
+};
 
 pub struct DeleteSessionCommand {
     pub session_id: String,
@@ -43,7 +45,10 @@ impl Command for DeleteSessionCommand {
         let session_store = create_session_store_with_config(store_config).await?;
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: Model::default(),
+            default_model: (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             auto_persist: true,
         };
 

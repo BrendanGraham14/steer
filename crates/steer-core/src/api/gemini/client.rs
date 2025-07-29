@@ -5,12 +5,12 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::api::Model;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -749,13 +749,14 @@ impl Provider for GeminiClient {
 
     async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        _call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let model_name = model.as_ref();
+        let model_name = &model_id.1; // Use the model ID string
         let url = format!(
             "{}/models/{}:generateContent?key={}",
             GEMINI_API_BASE, model_name, self.api_key

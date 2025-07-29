@@ -4,12 +4,10 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error, instrument};
 
-use crate::api::ToolCall;
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
 use crate::tools::{BackendRegistry, ExecutionContext};
 use crate::workspace::Workspace;
-use steer_tools::ToolSchema;
-use steer_tools::result::ToolResult;
+use steer_tools::{ToolCall, ToolSchema, result::ToolResult};
 
 /// Manages the execution of tools called by the AI model
 #[derive(Clone)]

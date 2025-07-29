@@ -3,13 +3,13 @@ use eyre::{Result, eyre};
 use tracing::info;
 
 use super::Command;
-use steer_core::api::Model;
+use steer_core::config::model::ModelId;
 use steer_core::session::SessionManagerConfig;
 
 pub struct ServeCommand {
     pub port: u16,
     pub bind: String,
-    pub model: Model,
+    pub model: ModelId,
     pub session_db: Option<std::path::PathBuf>,
 }
 
@@ -32,7 +32,7 @@ impl Command for ServeCommand {
             db_path,
             SessionManagerConfig {
                 max_concurrent_sessions: 100,
-                default_model: self.model,
+                default_model: self.model.clone(),
                 auto_persist: true,
             },
             addr,

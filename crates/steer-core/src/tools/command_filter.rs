@@ -1,5 +1,4 @@
-use crate::api::Model;
-use crate::error::Result;
+use crate::{config::provider::ProviderId, error::Result};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -108,12 +107,16 @@ pub async fn get_command_prefix(
 
     match client
         .complete(
-            Model::Claude3_5Haiku20241022,
+            &(
+                ProviderId::Anthropic,
+                "claude-3-5-haiku-20241022".to_string(),
+            ),
             messages,
             Some(system_content.to_string()),
             None,
+            None,
             token,
-        ) // Pass the token
+        )
         .await
     {
         Ok(response) => {

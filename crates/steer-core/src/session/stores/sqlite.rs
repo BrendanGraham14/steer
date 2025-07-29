@@ -1057,8 +1057,8 @@ impl SessionStore for SqliteSessionStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::api::Model;
     use crate::app::conversation::{AssistantContent, Message, Role, UserContent};
+    use crate::config::provider::ProviderId;
     use crate::events::SessionMetadata;
     use crate::session::ToolVisibility;
     use crate::session::state::WorkspaceConfig;
@@ -1183,7 +1183,10 @@ mod tests {
         let event = StreamEvent::SessionCreated {
             session_id: session.id.clone(),
             metadata: SessionMetadata {
-                model: Model::Claude3_5Sonnet20241022,
+                model: (
+                    ProviderId::Anthropic,
+                    "claude-3-5-sonnet-20241022".to_string(),
+                ),
                 created_at: session.created_at,
                 metadata: session.config.metadata,
             },
@@ -1236,7 +1239,10 @@ mod tests {
         assert_eq!(sessions[0].last_model, None);
 
         // Add a MessageComplete event with Claude model
-        let claude_model = Model::Claude3_5Sonnet20241022;
+        let claude_model = (
+            ProviderId::Anthropic,
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
         let message_event = StreamEvent::MessageComplete {
             message: Message {
                 data: MessageData::Assistant {
@@ -1250,7 +1256,7 @@ mod tests {
             },
             usage: None,
             metadata: std::collections::HashMap::new(),
-            model: claude_model,
+            model: claude_model.clone(),
         };
         store
             .append_event(&session.id, &message_event)
@@ -1262,18 +1268,18 @@ mod tests {
         assert_eq!(sessions[0].last_model, Some(claude_model));
 
         // Add a ToolCallFailed event with GPT model (more recent)
-        let gpt_model = Model::Gpt4_1_20250414;
+        let gpt_model = (ProviderId::Openai, "gpt-4-1-20250414".to_string());
         let tool_event = StreamEvent::ToolCallFailed {
             tool_call_id: "tool1".to_string(),
             error: "Test error".to_string(),
             metadata: std::collections::HashMap::new(),
-            model: gpt_model,
+            model: gpt_model.clone(),
         };
         store.append_event(&session.id, &tool_event).await.unwrap();
 
         // Check that last_model is now GPT (the most recent)
         let sessions = store.list_sessions(SessionFilter::default()).await.unwrap();
-        assert_eq!(sessions[0].last_model, Some(gpt_model));
+        assert_eq!(sessions[0].last_model, Some(gpt_model.clone()));
 
         // Add an event without a model field (shouldn't change last_model)
         let session_event = StreamEvent::SessionSaved {

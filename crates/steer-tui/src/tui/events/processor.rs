@@ -5,13 +5,14 @@
 //! into a pipeline for modular event handling.
 
 use async_trait::async_trait;
+use steer_tools::ToolCall;
 
 use crate::tui::state::{ChatStore, ToolCallRegistry};
 use crate::tui::widgets::ChatListState;
-use steer_core::api::Model;
+use steer_core::config::model::ModelId;
+
 use steer_core::app::AppEvent;
 use steer_grpc::AgentClient;
-use steer_tools::schema::ToolCall;
 
 /// Result of processing an event
 #[derive(Debug, Clone)]
@@ -48,7 +49,7 @@ pub struct ProcessingContext<'a> {
     /// Current tool approval request
     pub current_tool_approval: &'a mut Option<ToolCall>,
     /// Current model being used
-    pub current_model: &'a mut Model,
+    pub current_model: &'a mut ModelId,
     /// Flag to indicate if messages were updated (for auto-scroll)
     pub messages_updated: &'a mut bool,
     /// Track in-flight operations

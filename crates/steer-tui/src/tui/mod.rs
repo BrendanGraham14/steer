@@ -26,10 +26,11 @@ use ratatui::crossterm::{
     terminal::SetTitle,
 };
 use ratatui::{Frame, Terminal};
-use steer_core::api::Model;
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
+use steer_core::app::io::AppEventSource;
 use steer_core::app::{AppCommand, AppEvent};
 use steer_core::config::LlmConfigProvider;
+use steer_core::config::model::ModelId;
 use steer_grpc::AgentClient;
 use steer_tools::schema::ToolCall;
 use tokio::sync::mpsc;
@@ -50,7 +51,6 @@ use crate::tui::ui_layout::UiLayout;
 use crate::tui::widgets::InputPanel;
 
 use steer_core::auth::{AuthStorage, ProviderRegistry};
-use steer_core::config::provider::ProviderId;
 
 pub mod commands;
 pub mod custom_commands;
@@ -137,7 +137,7 @@ pub struct Tui {
     /// Current tool approval request
     current_tool_approval: Option<ToolCall>,
     /// Current model in use
-    current_model: Model,
+    current_model: ModelId,
     /// Event processing pipeline
     event_pipeline: EventPipeline,
     /// Chat data store
@@ -233,7 +233,8 @@ impl Tui {
     /// Create a new TUI instance
     pub async fn new(
         client: AgentClient,
-        current_model: Model,
+        current_model: ModelId,
+
         session_id: String,
         theme: Option<Theme>,
     ) -> Result<Self> {
@@ -671,7 +672,7 @@ impl Tui {
             let is_processing = self.is_processing;
             let spinner_state = self.spinner_state;
             let current_tool_approval = self.current_tool_approval.as_ref();
-            let current_model_owned = self.current_model;
+            let current_model_owned = self.current_model.clone();
 
             // Check if ChatStore has changed and trigger rebuild if needed
             let current_revision = self.chat_store.revision();
@@ -1135,7 +1136,9 @@ impl Tui {
                         for provider_config in self.provider_registry.all() {
                             let status = if auth_providers.contains(&provider_config.id) {
                                 // Check if it has OAuth configured (for Anthropic)
-                                if provider_config.id == ProviderId::Anthropic {
+                                if provider_config.id
+                                    == steer_core::config::provider::ProviderId::Anthropic
+                                {
                                     let has_oauth = auth_storage
                                         .get_credential(
                                             &provider_config.id.storage_key(),
@@ -1352,14 +1355,13 @@ pub fn setup_panic_hook() {
 pub async fn run_tui(
     client: steer_grpc::AgentClient,
     session_id: Option<String>,
-    model: steer_core::api::Model,
+    model: steer_core::config::model::ModelId,
     directory: Option<std::path::PathBuf>,
     system_prompt: Option<String>,
     theme_name: Option<String>,
     force_setup: bool,
 ) -> Result<()> {
     use std::collections::HashMap;
-    use steer_core::app::io::AppEventSource;
     use steer_core::session::{SessionConfig, SessionToolConfig};
 
     // Load theme - use catppuccin-mocha as default if none specified
@@ -1422,7 +1424,7 @@ pub async fn run_tui(
         (session_id, messages)
     } else {
         // Create a new session
-        let session_config = SessionConfig {
+        let mut session_config = SessionConfig {
             workspace: if let Some(ref dir) = directory {
                 steer_core::session::state::WorkspaceConfig::Local { path: dir.clone() }
             } else {
@@ -1432,6 +1434,12 @@ pub async fn run_tui(
             system_prompt,
             metadata: HashMap::new(),
         };
+
+        // Add the initial model to session metadata
+        session_config.metadata.insert(
+            "initial_model".to_string(),
+            format!("{}/{}", model.0.storage_key(), model.1),
+        );
 
         let session_id = client
             .create_session(session_config)
@@ -1469,7 +1477,7 @@ pub async fn run_tui(
         for provider_config in tui.provider_registry.all() {
             let status = if auth_providers.contains(&provider_config.id) {
                 // Check if it has OAuth configured (for Anthropic)
-                if provider_config.id == ProviderId::Anthropic {
+                if provider_config.id == steer_core::config::provider::ProviderId::Anthropic {
                     let has_oauth = auth_storage
                         .get_credential(
                             &provider_config.id.storage_key(),
@@ -1511,7 +1519,7 @@ pub async fn run_tui(
 pub async fn run_tui_auth_setup(
     client: steer_grpc::AgentClient,
     session_id: Option<String>,
-    model: Option<Model>,
+    model: Option<ModelId>,
     session_db: Option<PathBuf>,
     theme_name: Option<String>,
 ) -> Result<()> {
@@ -1520,7 +1528,10 @@ pub async fn run_tui_auth_setup(
     run_tui(
         client,
         session_id,
-        model.unwrap_or_default(),
+        model.unwrap_or((
+            steer_core::config::provider::ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        )),
         session_db,
         None, // system_prompt
         theme_name,
@@ -1556,7 +1567,10 @@ mod tests {
         // Create a TUI instance for testing
         let path = tempdir().unwrap().path().to_path_buf();
         let (client, _server_handle) = local_client_and_server(Some(path)).await;
-        let model = steer_core::api::Model::Claude3_5Sonnet20241022;
+        let model = (
+            steer_core::config::provider::ProviderId::Anthropic,
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 
@@ -1621,7 +1635,10 @@ mod tests {
         // Test edge case where Tool result arrives before Assistant message
         let path = tempdir().unwrap().path().to_path_buf();
         let (client, _server_handle) = local_client_and_server(Some(path)).await;
-        let model = steer_core::api::Model::Claude3_5Sonnet20241022;
+        let model = (
+            steer_core::config::provider::ProviderId::Anthropic,
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 

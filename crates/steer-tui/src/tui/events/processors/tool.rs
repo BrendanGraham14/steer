@@ -191,6 +191,7 @@ mod tests {
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
+    use steer_core::config::model::ModelId;
 
     use serde_json::json;
     use std::collections::HashSet;
@@ -209,7 +210,7 @@ mod tests {
         progress_message: Option<String>,
         spinner_state: usize,
         current_tool_approval: Option<ToolCall>,
-        current_model: steer_core::api::Model,
+        current_model: ModelId,
         messages_updated: bool,
         in_flight_operations: HashSet<uuid::Uuid>,
     }
@@ -222,7 +223,10 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = steer_core::api::Model::Claude3_5Sonnet20241022;
+        let current_model = (
+            steer_core::config::provider::ProviderId::Anthropic,
+            "claude-3-5-sonnet-20241022".to_string(),
+        );
         let messages_updated = false;
         let in_flight_operations = HashSet::new();
         TestContext {
@@ -265,7 +269,7 @@ mod tests {
             parent_message_id: None,
         };
 
-        let model = ctx.current_model;
+        let model = ctx.current_model.clone();
 
         {
             let mut ctx = ProcessingContext {
@@ -285,7 +289,7 @@ mod tests {
                 .process(
                     steer_core::app::AppEvent::MessageAdded {
                         message: assistant,
-                        model,
+                        model: model.clone(),
                     },
                     &mut ctx,
                 )
@@ -313,7 +317,7 @@ mod tests {
                         name: "view".to_string(),
                         id: "id123".to_string(),
                         parameters: serde_json::Value::Null,
-                        model,
+                        model: model.clone(),
                     },
                     &mut ctx,
                 )

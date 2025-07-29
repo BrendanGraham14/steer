@@ -1,7 +1,6 @@
 use crate::grpc::error::ConversionError;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
-use steer_core::api::ToolCall;
 use steer_core::app::command::ApprovalType;
 use steer_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, CompactResult,
@@ -14,24 +13,31 @@ use steer_core::session::state::{
 };
 use steer_proto::agent::v1 as proto;
 use steer_proto::common::v1 as common;
+use steer_tools::ToolCall;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 
-/// Convert a core Model to proto ModelSpec
-fn model_to_proto(model: steer_core::api::Model) -> proto::ModelSpec {
+/// Convert a core ModelId to proto ModelSpec
+fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec {
     proto::ModelSpec {
-        provider_id: model.provider_id().storage_key(),
-        model_id: model.to_string(),
+        provider_id: model.0.storage_key(),
+        model_id: model.1.clone(),
     }
 }
 
-/// Convert proto ModelSpec to core Model  
-fn proto_to_model(spec: &proto::ModelSpec) -> Result<steer_core::api::Model, ConversionError> {
-    use std::str::FromStr;
-    steer_core::api::Model::from_str(&spec.model_id).map_err(|_| ConversionError::InvalidData {
-        message: format!("Invalid model ID: {}", spec.model_id),
-    })
-}
+/// Convert proto ModelSpec to core ModelId
+fn proto_to_model(
+    spec: &proto::ModelSpec,
+) -> Result<steer_core::config::model::ModelId, ConversionError> {
+    use steer_core::config::provider::ProviderId;
 
+    // Use serde to deserialize the provider ID
+    let provider_id: ProviderId = serde_json::from_value(serde_json::json!(&spec.provider_id))
+        .map_err(|e| ConversionError::InvalidData {
+            message: format!("Invalid provider ID '{}': {}", spec.provider_id, e),
+        })?;
+
+    Ok((provider_id, spec.model_id.clone()))
+}
 /// Convert steer_tools ToolResult to protobuf
 fn steer_tools_result_to_proto(
     result: &steer_tools::result::ToolResult,

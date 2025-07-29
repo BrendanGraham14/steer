@@ -3,13 +3,13 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::api::ToolCall;
     use crate::config::LlmConfigProvider;
     use crate::session::state::{BackendConfig, SessionConfig, ToolFilter};
     use crate::tools::execution_context::ExecutionContext;
     use crate::tools::mcp::test_servers::{TestMcpService, start_http_server, start_sse_server};
     use crate::tools::{McpBackend, McpTransport, ToolBackend};
     use rmcp::service::ServiceExt;
+    use steer_tools::ToolCall;
     use std::collections::HashMap;
     use std::sync::Arc;
     use steer_tools::result::{ExternalResult, ToolResult};
