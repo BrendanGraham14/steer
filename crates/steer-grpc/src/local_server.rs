@@ -64,7 +64,7 @@ pub async fn create_local_channel(
 /// Creates a complete localhost gRPC setup for local mode
 /// Returns the channel and a handle to the server task
 pub async fn setup_local_grpc(
-    default_model: steer_core::api::Model,
+    default_model: steer_core::config::model::ModelId,
     session_db_path: Option<std::path::PathBuf>,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     // Create session store with the provided configuration

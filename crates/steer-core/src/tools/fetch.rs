@@ -1,4 +1,4 @@
-use crate::{api::Model, config::LlmConfigProvider};
+use crate::config::{LlmConfigProvider, provider::ProviderId};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -152,7 +152,17 @@ Provide a concise response based only on the content above.
     };
 
     match client
-        .complete(Model::Claude3_5Haiku20241022, messages, None, None, token)
+        .complete(
+            &(
+                ProviderId::Anthropic,
+                "claude-3-5-haiku-20241022".to_string(),
+            ),
+            messages,
+            None,
+            None,
+            None,
+            token,
+        )
         .await
     {
         Ok(response) => {

@@ -3,7 +3,7 @@ use chrono::{Local, TimeZone, Utc};
 use eyre::{Result, eyre};
 
 use super::super::Command;
-use steer_core::api::Model;
+use steer_core::config::provider::ProviderId;
 use steer_core::session::{SessionFilter, SessionManager, SessionManagerConfig, SessionStatus};
 
 pub struct ListSessionCommand {
@@ -28,7 +28,10 @@ impl Command for ListSessionCommand {
             steer_core::utils::session::create_session_store_with_config(store_config).await?;
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: Model::default(),
+            default_model: (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             auto_persist: true,
         };
 
@@ -64,7 +67,7 @@ impl Command for ListSessionCommand {
         for session in sessions {
             let model_str = session
                 .last_model
-                .map(|m| m.as_ref().to_string())
+                .map(|(provider, model)| format!("{}/{}", provider.storage_key(), model))
                 .unwrap_or_else(|| "N/A".to_string());
 
             println!(
