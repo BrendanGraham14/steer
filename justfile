@@ -59,8 +59,8 @@ log:
 # Open the most recently created log file in ~/.steer
 log-created:
     #!/bin/bash
-    # On macOS, use stat -f "%B %N" to get birth time
-    latest_file=$(find ~/.steer -name "*.log" -type f | grep -E '/[0-9]{8}_[0-9]{6}\.log$' | while read f; do stat -f "%B %N" "$f"; done | sort -n | tail -1 | cut -d' ' -f2-)
+    # Use GNU stat to get birth time (creation time)
+    latest_file=$(find ~/.steer -name "*.log" -type f | grep -E '/[0-9]{8}_[0-9]{6}\.log$' | while read f; do stat --format="%W %n" "$f"; done | sort -n | tail -1 | cut -d' ' -f2-)
     if [ -z "$latest_file" ]; then
         echo "No log files matching pattern YYYYMMDD_HHMMSS.log found in ~/.steer"
         exit 1
