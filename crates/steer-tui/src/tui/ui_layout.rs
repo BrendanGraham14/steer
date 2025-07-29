@@ -10,7 +10,7 @@ use ratatui::{
     style::Style,
     widgets::{Block, Clear},
 };
-use steer_core::api::Model;
+use steer_core::config::model::ModelId;
 
 /// Computed layout areas for the UI
 pub struct UiLayout {
@@ -58,7 +58,7 @@ impl UiLayout {
     }
 
     /// Render the status bar
-    pub fn render_status_bar(&self, f: &mut Frame, current_model: &Model, theme: &Theme) {
+    pub fn render_status_bar(&self, f: &mut Frame, current_model: &ModelId, theme: &Theme) {
         let status_bar = StatusBar::new(current_model, theme);
         f.render_widget(status_bar, self.status_area);
     }

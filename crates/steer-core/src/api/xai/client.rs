@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
+use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
 use crate::api::util::normalize_chat_url;
-use crate::api::{Model, error::ApiError};
 use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
 const DEFAULT_API_URL: &str = "https://api.x.ai/v1/chat/completions";
@@ -445,24 +446,32 @@ impl Provider for XAIClient {
 
     async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
         let xai_messages = self.convert_messages(messages, system);
         let xai_tools = tools.map(|t| self.convert_tools(t));
 
+        // Extract thinking support from call options
+        let supports_thinking = call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config.as_ref())
+            .map(|tc| tc.enabled)
+            .unwrap_or(false);
+
         // grok-4 supports thinking by default but not the reasoning_effort parameter
-        let reasoning_effort = if model.supports_thinking() && !matches!(model, Model::Grok4_0709) {
+        let reasoning_effort = if supports_thinking && model_id.1 != "grok-4-0709" {
             Some(ReasoningEffort::High)
         } else {
             None
         };
 
         let request = CompletionRequest {
-            model: model.as_ref().to_string(),
+            model: model_id.1.clone(), // Use the model ID string
             messages: xai_messages,
             deferred: None,
             frequency_penalty: None,
@@ -480,11 +489,14 @@ impl Provider for XAIClient {
             stop: None,
             stream: None,
             stream_options: None,
-            temperature: Some(1.0),
+            temperature: call_options
+                .as_ref()
+                .and_then(|o| o.temperature)
+                .or(Some(1.0)),
             tool_choice: None,
             tools: xai_tools,
             top_logprobs: None,
-            top_p: None,
+            top_p: call_options.as_ref().and_then(|o| o.top_p),
             user: None,
             web_search_options: None,
         };

@@ -4,7 +4,7 @@
 use super::conversions::*;
 use serde_json::json;
 use std::collections::HashMap;
-use steer_core::api::ToolCall;
+use steer_tools::ToolCall;
 use steer_core::app::command::ApprovalType;
 use steer_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, Message as ConversationMessage, MessageData,

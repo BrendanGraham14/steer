@@ -1,14 +1,16 @@
 use dotenvy::dotenv;
-use serde_json::json;
-use std::sync::Arc;
-use steer_core::api::ApiError;
-use steer_core::api::{Client, Model};
+use steer_core::api::{ApiError, Client};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+
+use steer_core::config::provider::ProviderId;
 use steer_core::test_utils;
 use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use steer_workspace::Workspace;
 use steer_workspace::local::LocalWorkspace;
+
+use serde_json::json;
+use std::sync::Arc;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
@@ -19,11 +21,17 @@ async fn test_api_basic() {
     let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
-        Model::Claude3_5Haiku20241022,
-        Model::Gpt4_1Nano20250414,
-        Model::Gemini2_5FlashPreview0417,
-        Model::ClaudeSonnet4_20250514,
-        Model::Grok3Mini,
+        (
+            ProviderId::Anthropic,
+            "claude-3-5-haiku-20241022".to_string(),
+        ),
+        (ProviderId::Openai, "gpt-4o-mini".to_string()),
+        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
+        (
+            ProviderId::Anthropic,
+            "claude-3-5-sonnet-latest".to_string(),
+        ),
+        (ProviderId::Xai, "grok-2-mini".to_string()),
     ];
 
     let mut tasks = Vec::new();
@@ -50,8 +58,9 @@ async fn test_api_basic() {
             // Call API with specified model
             let response = client
                 .complete(
-                    model,
+                    &model.clone(),
                     messages,
+                    None,
                     None,
                     None,
                     CancellationToken::new(), // Each task gets its own token
@@ -125,10 +134,13 @@ async fn test_api_with_tools() {
     let client = Client::new_with_provider(provider); // Arc<Client>
 
     let models_to_test = vec![
-        Model::Claude3_5Haiku20241022,
-        Model::Gpt4_1Nano20250414,
-        Model::Gemini2_5FlashPreview0417,
-        Model::Grok3Mini,
+        (
+            ProviderId::Anthropic,
+            "claude-3-5-haiku-20241022".to_string(),
+        ),
+        (ProviderId::Openai, "gpt-4o-mini".to_string()),
+        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
+        (ProviderId::Xai, "grok-2-mini".to_string()),
     ];
 
     let mut tasks = Vec::new();
@@ -169,10 +181,11 @@ async fn test_api_with_tools() {
 
             let response = client
                 .complete(
-                    model,
+                    &model.clone(),
                     messages,
                     None,
-                    Some(tools),              // Use cloned tools
+                    Some(tools), // Use cloned tools
+                    None,
                     CancellationToken::new(), // Each task gets its own token
                 )
                 .await;
@@ -276,10 +289,13 @@ async fn test_api_with_tool_response() {
     let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
-        Model::Claude3_5Haiku20241022,
-        Model::Gpt4_1Nano20250414,
-        Model::Gemini2_5FlashPreview0417,
-        Model::Grok3Mini,
+        (
+            ProviderId::Anthropic,
+            "claude-3-5-haiku-20241022".to_string(),
+        ),
+        (ProviderId::Openai, "gpt-4o-mini".to_string()),
+        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
+        (ProviderId::Xai, "grok-2-mini".to_string()),
     ];
     let mut tasks = Vec::new();
 
@@ -346,10 +362,11 @@ async fn test_api_with_tool_response() {
 
             let response = client
                 .complete(
-                    model,
+                    &model.clone(),
                     messages,
                     None,
                     None, // No tools needed here as we are providing the tool result
+                    None,
                     CancellationToken::new(), // Each task gets its own token
                 )
                 .await;
@@ -431,9 +448,10 @@ async fn test_gemini_system_instructions() {
 
     let response = client
         .complete(
-            Model::Gemini2_5FlashPreview0417, // Use Gemini model
+            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
             messages,
             system,
+            None,
             None,
             CancellationToken::new(),
         )
@@ -517,10 +535,11 @@ async fn test_gemini_api_tool_result_error() {
 
     let response = client
         .complete(
-            Model::Gemini2_5FlashPreview0417, // Use Gemini model
+            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
             messages,
             None,
             None, // No tools needed here as we are providing the tool result
+            None,
             CancellationToken::new(),
         )
         .await;
@@ -592,10 +611,11 @@ async fn test_gemini_api_complex_tool_schema() {
 
     let response = client
         .complete(
-            Model::Gemini2_5FlashPreview0417,
+            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
             messages,
             None,
             Some(vec![complex_tool]), // Send the complex tool definition
+            None,
             CancellationToken::new(),
         )
         .await;
@@ -681,10 +701,11 @@ async fn test_gemini_api_tool_result_json() {
 
     let response = client
         .complete(
-            Model::Gemini2_5FlashPreview0417, // Use Gemini model
+            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
             messages,
             None,
             None, // No tools needed here as we are providing the tool result
+            None,
             CancellationToken::new(),
         )
         .await;
@@ -805,10 +826,11 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 
     let response = client
         .complete(
-            Model::Gemini2_5FlashPreview0417, // Use Gemini model
+            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
             messages,
             None,
             Some(tools), // Provide tools including the dummy weather tool
+            None,
             CancellationToken::new(),
         )
         .await;
@@ -829,10 +851,13 @@ async fn test_api_with_cancelled_tool_execution() {
     let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
-        Model::Claude3_5Haiku20241022,
-        Model::Gpt4_1Nano20250414,
-        Model::Gemini2_5FlashPreview0417,
-        Model::Grok3Mini,
+        (
+            ProviderId::Anthropic,
+            "claude-3-5-haiku-20241022".to_string(),
+        ),
+        (ProviderId::Openai, "gpt-4o-mini".to_string()),
+        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
+        (ProviderId::Xai, "grok-2-mini".to_string()),
     ];
     let mut tasks = Vec::new();
 
@@ -905,10 +930,11 @@ async fn test_api_with_cancelled_tool_execution() {
             // Call the API - it should handle the cancelled tool result gracefully
             let response = client
                 .complete(
-                    model,
+                    &model.clone(),
                     messages,
                     None,
                     None, // No tools needed as we're testing message handling
+                    None,
                     CancellationToken::new(),
                 )
                 .await;

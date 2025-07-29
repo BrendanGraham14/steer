@@ -1,10 +1,9 @@
+use crate::config::LlmConfigProvider;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use steer_tools::ToolCall;
 use steer_tools::tools::bash::BASH_TOOL_NAME;
 use tokio_util::sync::CancellationToken;
-
-use crate::api::ToolCall;
-use crate::config::LlmConfigProvider;
 
 #[derive(Debug)]
 pub struct ValidationContext {

@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use crate::api::Model;
-use crate::app::conversation::{MessageData, UserContent};
-use crate::app::{AppCommand, AppConfig, Message};
+use crate::app::conversation::UserContent;
+use crate::app::{AppCommand, AppConfig, Message, MessageData};
 use crate::config::LlmConfigProvider;
+use crate::config::model::ModelId;
 use crate::error::{Error, Result};
 use crate::session::state::WorkspaceConfig;
 
@@ -102,7 +102,7 @@ impl OneShotRunner {
     pub async fn run_ephemeral(
         session_manager: &SessionManager,
         init_msgs: Vec<Message>,
-        model: Model,
+        model: ModelId,
         tool_config: Option<SessionToolConfig>,
         tool_policy: Option<ToolApprovalPolicy>,
         system_prompt: Option<String>,
@@ -124,7 +124,10 @@ impl OneShotRunner {
                     ("mode".to_string(), "headless".to_string()),
                     ("ephemeral".to_string(), "true".to_string()),
                     ("created_by".to_string(), "one_shot_runner".to_string()),
-                    ("model".to_string(), model.to_string()),
+                    (
+                        "initial_model".to_string(),
+                        format!("{:?}/{}", model.0, model.1),
+                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -143,7 +146,10 @@ impl OneShotRunner {
                 ("mode".to_string(), "headless".to_string()),
                 ("ephemeral".to_string(), "true".to_string()),
                 ("created_by".to_string(), "one_shot_runner".to_string()),
-                ("model".to_string(), model.to_string()),
+                (
+                    "initial_model".to_string(),
+                    format!("{:?}/{}", model.0, model.1),
+                ),
             ]
             .into_iter()
             .collect();
@@ -172,9 +178,20 @@ impl OneShotRunner {
             }
         };
 
-        let (session_id, _command_tx) = session_manager
+        let (session_id, command_tx) = session_manager
             .create_session(session_config, app_config)
             .await?;
+
+        // Set the model using ExecuteCommand
+        let model_str = format!("{:?}/{}", model.0, model.1).to_lowercase();
+        command_tx
+            .send(AppCommand::ExecuteCommand(
+                crate::app::conversation::AppCommandType::Model {
+                    target: Some(model_str),
+                },
+            ))
+            .await
+            .map_err(|_| Error::InvalidOperation("Failed to send model command".to_string()))?;
 
         // 3. Process the final user message (this triggers the actual processing)
         let user_content = match init_msgs.last() {
@@ -282,9 +299,8 @@ impl OneShotRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{
-        AssistantContent, Message, MessageData, ToolResult, UserContent,
-    };
+    use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
+    use crate::config::provider::ProviderId;
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
@@ -303,7 +319,10 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: Model::default(),
+            default_model: (
+                crate::config::provider::ProviderId::Anthropic,
+                "claude-sonnet-4-20250514".to_string(),
+            ),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config);
@@ -345,7 +364,10 @@ mod tests {
         let future = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            Model::ClaudeSonnet4_20250514,
+            (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             Some(SessionToolConfig::read_only()),
             Some(create_test_tool_approval_policy()),
             None,
@@ -518,7 +540,10 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             vec![], // Empty messages
-            Model::ClaudeSonnet4_20250514,
+            (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             None,
             None,
             None,
@@ -555,7 +580,10 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            Model::ClaudeSonnet4_20250514,
+            (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             None,
             None,
             None,
@@ -670,7 +698,10 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            Model::ClaudeSonnet4_20250514,
+            (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             Some(SessionToolConfig::read_only()),
             None,
             None,
@@ -845,7 +876,10 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            Model::ClaudeSonnet4_20250514,
+            (
+                ProviderId::Anthropic,
+                "claude-3-5-sonnet-latest".to_string(),
+            ),
             Some(SessionToolConfig::read_only()),
             Some(create_test_tool_approval_policy()),
             None,

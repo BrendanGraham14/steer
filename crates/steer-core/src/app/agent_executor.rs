@@ -1,5 +1,6 @@
-use crate::api::{ApiError, Client as ApiClient, Model};
+use crate::api::{ApiError, Client as ApiClient};
 use crate::app::conversation::{Message, MessageData};
+use crate::config::model::ModelId;
 use futures::{StreamExt, stream::FuturesUnordered};
 use std::future::Future;
 use std::sync::Arc;
@@ -55,7 +56,7 @@ pub struct AgentExecutor {
 }
 
 pub struct AgentExecutorRunRequest<A, E> {
-    pub model: Model,
+    pub model: ModelId,
     pub initial_messages: Vec<Message>,
     pub system_prompt: Option<String>,
     pub available_tools: Vec<ToolSchema>,
@@ -96,11 +97,11 @@ impl AgentExecutor {
                 return Err(AgentExecutorError::Cancelled);
             }
 
-            info!(target: "AgentExecutor::run", model = ?request.model, "Calling LLM API");
+            info!(target: "AgentExecutor::run", model = ?&request.model, "Calling LLM API");
             let completion_response = self
                 .api_client
                 .complete_with_retry(
-                    request.model,
+                    &request.model,
                     &messages,
                     &request.system_prompt,
                     &tools,

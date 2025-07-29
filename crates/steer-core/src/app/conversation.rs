@@ -1,5 +1,5 @@
 use crate::api::Client as ApiClient;
-use crate::api::Model;
+use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -512,7 +512,7 @@ impl Conversation {
     pub async fn compact(
         &mut self,
         api_client: &ApiClient,
-        model: Model,
+        model: ModelId,
         token: CancellationToken,
     ) -> crate::error::Result<CompactResult> {
         // Get only the active thread
@@ -541,8 +541,9 @@ impl Conversation {
         let summary = tokio::select! {
             biased;
             result = api_client.complete(
-                model,
+                &model,
                 prompt_messages,
+                None,
                 None,
                 None,
                 token.clone(),

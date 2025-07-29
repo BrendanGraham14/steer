@@ -46,7 +46,7 @@ impl Command for SessionCommand {
                     remote: self.remote.clone(),
                     system_prompt: system_prompt.clone(),
                     session_db: self.session_db.clone(),
-                    model: model.map(|m| m.into()),
+                    model: model.clone(),
                 };
                 cmd.execute().await
             }
