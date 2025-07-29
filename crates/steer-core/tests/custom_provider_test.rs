@@ -54,14 +54,14 @@ fn test_provider_registry_custom_providers() {
 id = { custom = "custom-openai" }
 name = "My OpenAI Compatible API"
 api_format = "openai-responses"
-auth_schemes = ["api_key"]
+auth_schemes = ["api-key"]
 base_url = "https://my-api.example.com"
 
 [[providers]]
 id = { custom = "local-llm" }
 name = "Local LLM Server"  
 api_format = "openai-chat"
-auth_schemes = ["api_key"]
+auth_schemes = ["api-key"]
 base_url = "http://localhost:8080"
 "#;
 

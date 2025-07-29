@@ -3,7 +3,6 @@ use serde_json;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::Model;
 use crate::api::error::ApiError;
 use crate::api::openai::responses_types::{
     InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig, ReasoningSummary,
@@ -14,6 +13,7 @@ use crate::api::provider::CompletionResponse;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
 const DEFAULT_API_URL: &str = "https://api.openai.com/v1/responses";
@@ -55,10 +55,11 @@ impl Client {
     /// Build a request with proper message structure and tool support
     fn build_request(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
     ) -> ResponsesRequest {
         let input = self.convert_messages_to_input(&messages);
 
@@ -80,8 +81,13 @@ impl Client {
                 .collect()
         });
 
-        // Configure reasoning for supported models
-        let reasoning = if model.supports_thinking() {
+        // Configure reasoning for supported models based on call options
+        let reasoning = if call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config.as_ref())
+            .map(|tc| tc.enabled)
+            .unwrap_or(false)
+        {
             Some(ReasoningConfig {
                 effort: Some(crate::api::openai::responses_types::ReasoningEffort::Medium),
                 summary: Some(ReasoningSummary::Detailed),
@@ -97,12 +103,15 @@ impl Client {
         };
 
         ResponsesRequest {
-            model: model.as_ref().to_string(),
+            model: model_id.1.clone(),  // Use the model ID string
             input,
             instructions: system,
             previous_response_id: None,
-            temperature: Some(1.0),
-            max_output_tokens: None,
+            temperature: call_options
+                .as_ref()
+                .and_then(|o| o.temperature)
+                .or(Some(1.0)),
+            max_output_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
             max_tool_calls: None,
             parallel_tool_calls: Some(true),
             store: Some(false),
@@ -338,13 +347,14 @@ impl Client {
 impl Client {
     pub(super) async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let request = self.build_request(model, messages, system, tools);
+        let request = self.build_request(model_id, messages, system, tools, call_options);
 
         let request_builder = self.http_client.post(&self.base_url).json(&request);
 
@@ -474,6 +484,8 @@ mod tests {
     use super::*;
 
     use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+    use crate::config::model::ModelId;
+    use crate::config::provider::ProviderId;
     use steer_tools::ToolSchema;
 
     #[test]
@@ -555,12 +567,17 @@ mod tests {
             id: "msg1".to_string(),
             parent_message_id: None,
         }];
-
+        
+        let model_id = (
+            ProviderId::Openai,
+            "gpt-4.1-2025-04-14".to_string(),
+        );
         let request = client.build_request(
-            Model::Gpt4_1_20250414,
+            &model_id,
             messages,
             Some("You are a weather assistant".to_string()),
             Some(tools),
+            None,  // No call options for this test
         );
 
         assert!(request.tools.is_some());
@@ -587,8 +604,20 @@ mod tests {
             parent_message_id: None,
         }];
 
-        // Test with reasoning model
-        let request = client.build_request(Model::CodexMiniLatest, messages.clone(), None, None);
+        // Test with reasoning model (with call options enabling thinking)
+        let model_id = (
+            ProviderId::Openai,
+            "codex-mini-latest".to_string(),
+        );
+        let call_options = Some(crate::config::model::ModelParameters {
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            thinking_config: Some(crate::config::model::ThinkingConfig {
+                enabled: true,
+            }),
+        });
+        let request = client.build_request(&model_id, messages.clone(), None, None, call_options);
 
         assert!(request.reasoning.is_some());
         let reasoning = request.reasoning.unwrap();
@@ -597,8 +626,12 @@ mod tests {
             Some(crate::api::openai::responses_types::ReasoningEffort::Medium)
         );
 
-        // Test with non-reasoning model
-        let request = client.build_request(Model::Gpt4_1_20250414, messages, None, None);
+        // Test with non-reasoning model (no thinking config)
+        let model_id = (
+            ProviderId::Openai,
+            "gpt-4.1-2025-04-14".to_string(),
+        );
+        let request = client.build_request(&model_id, messages, None, None, None);
 
         assert!(request.reasoning.is_none());
     }

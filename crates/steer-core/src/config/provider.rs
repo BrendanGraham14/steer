@@ -5,7 +5,7 @@ use url::Url;
 ///
 /// The built-ins are kept in snake_case to match user-facing identifiers and TOML defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum Provider {
     Anthropic,
     Openai,
@@ -54,7 +54,7 @@ pub enum ApiFormat {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum AuthScheme {
     ApiKey,
     Oauth2,

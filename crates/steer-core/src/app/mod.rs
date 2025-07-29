@@ -1,8 +1,9 @@
-use crate::api::{Client as ApiClient, Model, ToolCall};
+use crate::api::Client as ApiClient;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::ApprovalType;
 use crate::app::conversation::{AppCommandType, AssistantContent, CompactResult, UserContent};
 use crate::config::LlmConfigProvider;
+use crate::config::model::ModelId;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use steer_tools::tools::BASH_TOOL_NAME;
 use steer_tools::tools::bash::BashParams;
-use steer_tools::{ToolError, ToolResult};
+use steer_tools::{ToolCall, ToolError, ToolResult};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -46,7 +47,7 @@ pub use agent_executor::{
 pub enum AppEvent {
     MessageAdded {
         message: Message,
-        model: Model,
+        model: ModelId,
     },
     MessageUpdated {
         id: String,
@@ -61,19 +62,19 @@ pub enum AppEvent {
         name: String,
         id: String,
         parameters: serde_json::Value,
-        model: Model,
+        model: ModelId,
     },
     ToolCallCompleted {
         name: String,
         result: ToolResult,
         id: String,
-        model: Model,
+        model: ModelId,
     },
     ToolCallFailed {
         name: String,
         error: String,
         id: String,
-        model: Model,
+        model: ModelId,
     },
 
     ProcessingStarted,   // Started processing a user message
@@ -96,7 +97,7 @@ pub enum AppEvent {
     },
 
     ModelChanged {
-        model: Model,
+        model: ModelId,
     },
     Error {
         message: String,
@@ -174,7 +175,7 @@ pub struct App {
     approved_tools: Arc<tokio::sync::RwLock<HashSet<String>>>, // Tracks tools approved with "Always" for the session
     approved_bash_patterns: std::sync::Arc<tokio::sync::RwLock<HashSet<String>>>, // Tracks bash commands approved for the session
     current_op_context: Option<OpContext>,
-    current_model: Model,
+    current_model: ModelId,
     session_config: Option<crate::session::state::SessionConfig>, // For tool visibility filtering
     workspace: Option<Arc<dyn crate::workspace::Workspace>>, // Workspace for environment and tool execution
     cached_system_prompt: Option<String>, // Cached system prompt to avoid recomputation
@@ -198,7 +199,7 @@ impl App {
     pub async fn new_with_conversation(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
-        initial_model: Model,
+        initial_model: ModelId,
         workspace: Arc<dyn crate::workspace::Workspace>,
         tool_executor: Arc<crate::tools::ToolExecutor>,
         session_config: Option<crate::session::state::SessionConfig>,
@@ -241,7 +242,7 @@ impl App {
     pub async fn new(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
-        initial_model: Model,
+        initial_model: ModelId,
         workspace: Arc<dyn crate::workspace::Workspace>,
         tool_executor: Arc<crate::tools::ToolExecutor>,
         session_config: Option<crate::session::state::SessionConfig>,
@@ -296,8 +297,8 @@ impl App {
         }
     }
 
-    pub fn get_current_model(&self) -> Model {
-        self.current_model
+    pub fn get_current_model(&self) -> ModelId {
+        self.current_model.clone()
     }
 
     /// Gets or creates the system prompt, using cache if available
@@ -308,12 +309,15 @@ impl App {
         } else {
             debug!(target: "app.get_or_create_system_prompt", "Creating new system prompt");
             let prompt = if let Some(workspace) = &self.workspace {
-                create_system_prompt_with_workspace(Some(self.current_model), workspace.as_ref())
-                    .await?
+                create_system_prompt_with_workspace(
+                    Some(self.current_model.clone()),
+                    workspace.as_ref(),
+                )
+                .await?
             } else {
                 // If no workspace, create a minimal system prompt
 
-                if let Some(model) = Some(self.current_model) {
+                if let Some(model) = Some(self.current_model.clone()) {
                     get_model_system_prompt(model)
                 } else {
                     crate::prompts::default_system_prompt()
@@ -325,9 +329,9 @@ impl App {
         }
     }
 
-    pub async fn set_model(&mut self, model: Model) -> Result<()> {
+    pub async fn set_model(&mut self, model: ModelId) -> Result<()> {
         // Check if the provider is available (has API key or OAuth)
-        let provider_id = model.provider_id();
+        let provider_id = model.0.clone();
 
         let auth = self
             .config
@@ -336,14 +340,12 @@ impl App {
             .await?;
         if auth.is_none() {
             return Err(crate::error::Error::Configuration(format!(
-                "Cannot set model to {}: missing authentication for {:?} provider",
-                model.as_ref(),
-                provider_id
+                "Cannot set model to {model:?}: missing authentication for {provider_id:?} provider"
             )));
         }
 
         // Set the model
-        self.current_model = model;
+        self.current_model = model.clone();
 
         // Clear cached system prompt when model changes
         self.cached_system_prompt = None;
@@ -360,7 +362,7 @@ impl App {
         conversation_guard.add_message(message.clone());
         self.emit_event(AppEvent::MessageAdded {
             message,
-            model: self.current_model,
+            model: self.current_model.clone(),
         });
         self.emit_event(AppEvent::ActiveMessageIdChanged {
             message_id: Some(message_id),
@@ -373,7 +375,7 @@ impl App {
 
         self.emit_event(AppEvent::MessageAdded {
             message: message.clone(),
-            model: self.current_model,
+            model: self.current_model.clone(),
         });
         self.emit_event(AppEvent::ActiveMessageIdChanged {
             message_id: Some(message.id().to_string()),
@@ -458,7 +460,7 @@ impl App {
                 .collect()
         };
 
-        let current_model = self.current_model;
+        let current_model = self.current_model.clone();
         let agent_executor = self.agent_executor.clone();
 
         // --- Tool Approval Callback ---
@@ -707,23 +709,30 @@ impl App {
             AppCommandType::Model { target } => {
                 if target.is_none() {
                     // If no model specified, list available models
-                    use crate::api::Model;
-                    use strum::IntoEnumIterator;
 
                     let current_model = self.get_current_model();
-                    let available_models: Vec<String> = Model::iter()
-                        .map(|m| {
-                            let model_str = m.as_ref();
-                            let aliases = m.aliases();
-                            let alias_str = if aliases.is_empty() {
+
+                    // Load model registry
+                    let model_registry =
+                        crate::model_registry::ModelRegistry::load().map_err(|e| {
+                            Error::Configuration(format!("Failed to load model registry: {e}"))
+                        })?;
+
+                    let available_models: Vec<String> = model_registry
+                        .all()
+                        .map(|config| {
+                            let model_id = (config.provider.clone(), config.id.clone());
+                            let model_str =
+                                format!("{}/{}", config.provider.storage_key(), config.id);
+                            let alias_str = if config.aliases.is_empty() {
                                 String::new()
-                            } else if aliases.len() == 1 {
-                                format!(" (alias: {})", aliases[0])
+                            } else if config.aliases.len() == 1 {
+                                format!(" (alias: {})", config.aliases[0])
                             } else {
-                                format!(" (aliases: {})", aliases.join(", "))
+                                format!(" (aliases: {})", config.aliases.join(", "))
                             };
 
-                            if m == current_model {
+                            if model_id == current_model {
                                 format!("* {model_str}{alias_str}") // Mark current model with asterisk
                             } else {
                                 format!("  {model_str}{alias_str}")
@@ -732,20 +741,26 @@ impl App {
                         .collect();
 
                     Ok(Some(conversation::CommandResponse::Text(format!(
-                        "Current model: {}\nAvailable models:\n{}",
-                        current_model.as_ref(),
+                        "Current model: {}/{}\nAvailable models:\n{}",
+                        current_model.0.storage_key(),
+                        current_model.1,
                         available_models.join("\n")
                     ))))
                 } else if let Some(ref model_name) = target {
                     // Try to set the model
-                    use crate::api::Model;
-                    use std::str::FromStr;
 
-                    match Model::from_str(model_name) {
-                        Ok(model) => match self.set_model(model).await {
+                    // Load model registry
+                    let model_registry =
+                        crate::model_registry::ModelRegistry::load().map_err(|e| {
+                            Error::Configuration(format!("Failed to load model registry: {e}"))
+                        })?;
+
+                    match model_registry.resolve(model_name) {
+                        Ok(model_id) => match self.set_model(model_id.clone()).await {
                             Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!(
-                                "Model changed to {}",
-                                model.as_ref()
+                                "Model changed to {}/{}",
+                                model_id.0.storage_key(),
+                                model_id.1
                             )))),
                             Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
                                 "Failed to set model: {e}"
@@ -770,7 +785,7 @@ impl App {
         info!(target:"App.compact_conversation", "Compacting conversation...");
         let client = self.api_client.clone();
         let conversation_arc = self.conversation.clone();
-        let model = self.current_model;
+        let model = self.current_model.clone();
 
         // Run directly but make it cancellable.
         let result = tokio::select! {
@@ -867,7 +882,7 @@ impl App {
                     id: tool_call.id.clone(),
                     name: tool_call.name.clone(),
                     error: "Cancelled".to_string(),
-                    model: self.current_model,
+                    model: self.current_model.clone(),
                 });
 
                 debug!(target: "App.inject_cancelled_tool_results",
@@ -1195,7 +1210,7 @@ async fn handle_app_command(
             if let Some(edited_message) = edited_message_opt {
                 app.emit_event(AppEvent::MessageAdded {
                     message: edited_message,
-                    model: app.current_model,
+                    model: app.current_model.clone(),
                 });
             }
 
@@ -1460,7 +1475,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                             id: tool_use_id.clone(),
                             name: tool_name.clone(),
                             error: e.to_string(),
-                            model: app.current_model,
+                            model: app.current_model.clone(),
                         });
                     }
                 } else {
@@ -1468,7 +1483,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                         id: tool_use_id.clone(),
                         name: tool_name.clone(),
                         result: result.clone(),
-                        model: app.current_model,
+                        model: app.current_model.clone(),
                     });
 
                     let mutating_tools =
@@ -1496,7 +1511,7 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 id: tool_call_id,
                 name,
                 parameters,
-                model: app.current_model,
+                model: app.current_model.clone(),
             });
         }
     }
@@ -1655,14 +1670,14 @@ async fn handle_task_outcome(app: &mut App, task_outcome: TaskOutcome) {
 }
 
 async fn create_system_prompt_with_workspace(
-    model: Option<Model>,
+    model: Option<ModelId>,
     workspace: &dyn crate::workspace::Workspace,
 ) -> Result<String> {
     let env_info = workspace.environment().await?;
 
     // Use model-specific prompt if available, otherwise use default
-    let system_prompt_body = if let Some(model) = model {
-        get_model_system_prompt(model)
+    let system_prompt_body = if let Some(model_id) = model {
+        get_model_system_prompt(model_id)
     } else {
         crate::prompts::default_system_prompt()
     };
@@ -1677,20 +1692,27 @@ async fn create_system_prompt_with_workspace(
     Ok(prompt)
 }
 
-fn get_model_system_prompt(model: Model) -> String {
-    match model {
-        Model::Gpt5_20250807 => crate::prompts::gpt5_system_prompt(),
-        Model::O3_20250416
-        | Model::Gpt4_1_20250414
-        | Model::O4Mini20250416
-        | Model::CodexMiniLatest
-        | Model::Grok4_0709 => crate::prompts::o3_system_prompt(),
-        Model::Gemini2_5FlashPreview0417
-        | Model::Gemini2_5ProPreview0506
-        | Model::Gemini2_5ProPreview0605 => crate::prompts::gemini_system_prompt(),
-        Model::ClaudeSonnet4_20250514
-        | Model::ClaudeOpus4_20250514
-        | Model::ClaudeOpus4_1_20250805 => crate::prompts::claude_system_prompt(),
+fn get_model_system_prompt(model_id: ModelId) -> String {
+    // Map known model IDs to specific prompts
+    match (model_id.0, model_id.1.as_str()) {
+        (crate::config::provider::ProviderId::Openai, "gpt-5-2025-08-07") => {
+            crate::prompts::gpt5_system_prompt()
+        }
+        (crate::config::provider::ProviderId::Openai, "o3-2025-04-16")
+        | (crate::config::provider::ProviderId::Openai, "gpt-4.1-2025-04-14")
+        | (crate::config::provider::ProviderId::Openai, "o4-mini-2025-04-16")
+        | (crate::config::provider::ProviderId::Openai, "codex-mini-latest")
+        | (crate::config::provider::ProviderId::Xai, "grok-4-0709") => {
+            crate::prompts::o3_system_prompt()
+        }
+        (crate::config::provider::ProviderId::Google, id) if id.starts_with("gemini-") => {
+            crate::prompts::gemini_system_prompt()
+        }
+        (crate::config::provider::ProviderId::Anthropic, "claude-sonnet-4-20250514")
+        | (crate::config::provider::ProviderId::Anthropic, "claude-opus-4-20250514")
+        | (crate::config::provider::ProviderId::Anthropic, "claude-opus-4-1-20250805") => {
+            crate::prompts::claude_system_prompt()
+        }
         _ => crate::prompts::default_system_prompt(),
     }
 }

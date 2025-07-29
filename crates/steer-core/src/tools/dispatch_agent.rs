@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{
-    api::Model,
     app::{
         ApprovalDecision,
         conversation::{Message, MessageData, UserContent},
@@ -112,7 +111,7 @@ Usage notes:
             .run(
                 AgentExecutorRunRequest
                  {
-                    model: Model::Claude3_7Sonnet20250219, // Or make configurable?
+                    model: (crate::config::provider::ProviderId::Anthropic, "claude-3-7-sonnet-20250219".to_string()), // Or make configurable?
                     initial_messages,
                     system_prompt: Some(system_prompt),
                     available_tools,

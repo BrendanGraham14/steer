@@ -10,246 +10,26 @@ pub mod xai;
 use crate::auth::ProviderRegistry;
 use crate::auth::storage::{Credential, CredentialType};
 use crate::config::model::ModelId;
+use crate::config::provider::ProviderId;
 use crate::config::{ApiAuth, LlmConfigProvider};
 use crate::error::Result;
+use crate::model_registry::ModelRegistry;
 pub use error::ApiError;
 pub use factory::{create_provider, create_provider_with_storage};
 pub use provider::{CompletionResponse, Provider};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
-pub use steer_tools::{InputSchema, ToolCall, ToolSchema};
-use strum::Display;
-use strum::EnumIter;
-use strum::IntoStaticStr;
-use strum_macros::{AsRefStr, EnumString};
+use steer_tools::ToolSchema;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
 
 use crate::app::conversation::Message;
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    EnumIter,
-    EnumString,
-    AsRefStr,
-    Display,
-    IntoStaticStr,
-    serde::Serialize,
-    serde::Deserialize,
-    Default,
-)]
-pub enum Model {
-    #[strum(serialize = "claude-3-5-sonnet-20240620")]
-    Claude3_5Sonnet20240620,
-    #[strum(serialize = "claude-3-5-sonnet-20241022")]
-    Claude3_5Sonnet20241022,
-    #[strum(serialize = "claude-3-7-sonnet-20250219")]
-    Claude3_7Sonnet20250219,
-    #[strum(serialize = "claude-3-5-haiku-20241022")]
-    Claude3_5Haiku20241022,
-    #[strum(serialize = "claude-sonnet-4-20250514", serialize = "sonnet")]
-    ClaudeSonnet4_20250514,
-    #[strum(serialize = "claude-opus-4-20250514", serialize = "opus-4")]
-    ClaudeOpus4_20250514,
-    #[strum(
-        serialize = "claude-opus-4-1-20250805",
-        serialize = "opus",
-        serialize = "opus-4-1"
-    )]
-    #[default]
-    ClaudeOpus4_1_20250805,
-    #[strum(serialize = "gpt-4.1-2025-04-14")]
-    Gpt4_1_20250414,
-    #[strum(serialize = "gpt-4.1-mini-2025-04-14")]
-    Gpt4_1Mini20250414,
-    #[strum(serialize = "gpt-4.1-nano-2025-04-14")]
-    Gpt4_1Nano20250414,
-    #[strum(serialize = "gpt-5-2025-08-07", serialize = "gpt-5")]
-    Gpt5_20250807,
-    #[strum(serialize = "o3-2025-04-16", serialize = "o3")]
-    O3_20250416,
-    #[strum(serialize = "o3-pro-2025-06-10", serialize = "o3-pro")]
-    O3Pro20250610,
-    #[strum(serialize = "o4-mini-2025-04-16", serialize = "o4-mini")]
-    O4Mini20250416,
-    #[strum(serialize = "codex-mini-latest", serialize = "codex-mini")]
-    CodexMiniLatest,
-    #[strum(serialize = "gemini-2.5-flash-preview-04-17")]
-    Gemini2_5FlashPreview0417,
-    #[strum(serialize = "gemini-2.5-pro-preview-05-06")]
-    Gemini2_5ProPreview0506,
-    #[strum(serialize = "gemini-2.5-pro-preview-06-05", serialize = "gemini")]
-    Gemini2_5ProPreview0605,
-    #[strum(serialize = "grok-3")]
-    Grok3,
-    #[strum(serialize = "grok-3-mini", serialize = "grok-mini")]
-    Grok3Mini,
-    #[strum(serialize = "grok-4-0709", serialize = "grok")]
-    Grok4_0709,
-}
-
-impl Model {
-    /// Returns true if this model should be shown in the model picker UI
-    #[deprecated(note = "Use ModelRegistry::recommended() instead")]
-    pub fn should_show(&self) -> bool {
-        matches!(
-            self,
-            Model::ClaudeOpus4_20250514
-                | Model::ClaudeOpus4_1_20250805
-                | Model::ClaudeSonnet4_20250514
-                | Model::O3_20250416
-                | Model::O3Pro20250610
-                | Model::Gemini2_5ProPreview0605
-                | Model::Grok4_0709
-                | Model::Grok3
-                | Model::Gpt4_1_20250414
-                | Model::Gpt5_20250807
-                | Model::O4Mini20250416
-                | Model::CodexMiniLatest
-        )
-    }
-
-    #[deprecated(note = "Use ModelRegistry::recommended() instead")]
-    pub fn iter_recommended() -> impl Iterator<Item = Model> {
-        use strum::IntoEnumIterator;
-        Model::iter().filter(|m| m.should_show())
-    }
-
-    /// Returns the provider ID for this model.
-    #[deprecated(note = "Use ModelId conversion and ModelRegistry instead")]
-    pub fn provider_id(&self) -> crate::config::provider::ProviderId {
-        use crate::config::provider::ProviderId;
-        match self {
-            Model::Claude3_7Sonnet20250219
-            | Model::Claude3_5Sonnet20240620
-            | Model::Claude3_5Sonnet20241022
-            | Model::Claude3_5Haiku20241022
-            | Model::ClaudeSonnet4_20250514
-            | Model::ClaudeOpus4_20250514
-            | Model::ClaudeOpus4_1_20250805 => ProviderId::Anthropic,
-
-            Model::Gpt4_1_20250414
-            | Model::Gpt4_1Mini20250414
-            | Model::Gpt4_1Nano20250414
-            | Model::Gpt5_20250807
-            | Model::O3_20250416
-            | Model::O3Pro20250610
-            | Model::O4Mini20250416
-            | Model::CodexMiniLatest => ProviderId::Openai,
-
-            Model::Gemini2_5FlashPreview0417
-            | Model::Gemini2_5ProPreview0506
-            | Model::Gemini2_5ProPreview0605 => ProviderId::Google,
-
-            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderId::Xai,
-        }
-    }
-
-    #[deprecated(note = "Use ModelRegistry::by_alias() instead")]
-    pub fn aliases(&self) -> Vec<&'static str> {
-        match self {
-            Model::ClaudeSonnet4_20250514 => vec!["sonnet"],
-            Model::ClaudeOpus4_20250514 => vec!["opus-4-0"],
-            Model::ClaudeOpus4_1_20250805 => vec!["opus-4-1", "opus"],
-            Model::O3_20250416 => vec!["o3"],
-            Model::O3Pro20250610 => vec!["o3-pro"],
-            Model::O4Mini20250416 => vec!["o4-mini"],
-            Model::Gemini2_5ProPreview0605 => vec!["gemini"],
-            Model::Grok3 => vec![],
-            Model::Grok3Mini => vec!["grok-mini"],
-            Model::Grok4_0709 => vec!["grok"],
-            Model::Gpt5_20250807 => vec!["gpt-5"],
-            Model::CodexMiniLatest => vec!["codex-mini"],
-            _ => vec![],
-        }
-    }
-
-    #[deprecated(note = "Use ModelRegistry::get() instead")]
-    pub fn supports_thinking(&self) -> bool {
-        matches!(
-            self,
-            Model::Claude3_7Sonnet20250219
-                | Model::ClaudeSonnet4_20250514
-                | Model::ClaudeOpus4_20250514
-                | Model::ClaudeOpus4_1_20250805
-                | Model::Gpt5_20250807
-                | Model::O3_20250416
-                | Model::O3Pro20250610
-                | Model::O4Mini20250416
-                | Model::Gemini2_5FlashPreview0417
-                | Model::Gemini2_5ProPreview0506
-                | Model::Gemini2_5ProPreview0605
-                | Model::Grok3Mini
-                | Model::Grok4_0709
-                | Model::CodexMiniLatest
-        )
-    }
-
-    /// Get all available models
-    #[deprecated(note = "Use ModelRegistry instead")]
-    pub fn all() -> Vec<Model> {
-        use strum::IntoEnumIterator;
-        Model::iter().collect()
-    }
-}
-
-impl From<Model> for ModelId {
-    fn from(model: Model) -> Self {
-        use crate::config::provider::ProviderId;
-
-        let provider_id = match model {
-            Model::Claude3_7Sonnet20250219
-            | Model::Claude3_5Sonnet20240620
-            | Model::Claude3_5Sonnet20241022
-            | Model::Claude3_5Haiku20241022
-            | Model::ClaudeSonnet4_20250514
-            | Model::ClaudeOpus4_20250514 => ProviderId::Anthropic,
-
-            Model::Gpt4_1_20250414
-            | Model::Gpt4_1Mini20250414
-            | Model::Gpt4_1Nano20250414
-            | Model::O3_20250416
-            | Model::O3Pro20250610
-            | Model::O4Mini20250416 => ProviderId::Openai,
-
-            Model::Gemini2_5FlashPreview0417
-            | Model::Gemini2_5ProPreview0506
-            | Model::Gemini2_5ProPreview0605 => ProviderId::Gemini,
-
-            Model::Grok3 | Model::Grok3Mini | Model::Grok4_0709 => ProviderId::Xai,
-        };
-
-        (provider_id, model.as_ref().to_string())
-    }
-}
-
-impl TryFrom<ModelId> for Model {
-    type Error = crate::error::Error;
-
-    fn try_from(model_id: ModelId) -> Result<Self> {
-        use std::str::FromStr;
-
-        let (provider, id) = model_id;
-
-        // Try to parse the model ID string
-        Model::from_str(&id).map_err(|_| {
-            crate::error::Error::Api(ApiError::Configuration(format!(
-                "Unknown model ID: {provider:?}/{id}"
-            )))
-        })
-    }
-}
-
 #[derive(Clone)]
 pub struct Client {
-    provider_map: Arc<RwLock<HashMap<Model, Arc<dyn Provider>>>>,
+    provider_map: Arc<RwLock<HashMap<ProviderId, Arc<dyn Provider>>>>,
     config_provider: LlmConfigProvider,
     provider_registry: Arc<ProviderRegistry>,
     model_registry: Arc<ModelRegistry>,
@@ -273,17 +53,14 @@ impl Client {
         }
     }
 
-    async fn get_or_create_provider(&self, model: Model) -> Result<Arc<dyn Provider>> {
+    async fn get_or_create_provider(&self, provider_id: ProviderId) -> Result<Arc<dyn Provider>> {
         // First check without holding the lock across await
         {
             let map = self.provider_map.read().unwrap();
-            if let Some(provider) = map.get(&model) {
+            if let Some(provider) = map.get(&provider_id) {
                 return Ok(provider.clone());
             }
         }
-
-        // Get provider ID directly from the model
-        let provider_id = model.provider_id();
 
         // Get the provider config from registry
         let provider_config = self.provider_registry.get(&provider_id).ok_or_else(|| {
@@ -318,7 +95,7 @@ impl Client {
             Some(ApiAuth::Key(key)) => Credential::ApiKey { value: key },
             None => {
                 return Err(crate::error::Error::Api(ApiError::Configuration(format!(
-                    "No authentication configured for {provider_id:?} needed by model {model:?}"
+                    "No authentication configured for {provider_id:?}"
                 ))));
             }
         };
@@ -327,7 +104,7 @@ impl Client {
         let mut map = self.provider_map.write().unwrap();
 
         // Check again in case another thread added it
-        if let Some(provider) = map.get(&model) {
+        if let Some(provider) = map.get(&provider_id) {
             return Ok(provider.clone());
         }
 
@@ -344,20 +121,24 @@ impl Client {
                 .map_err(crate::error::Error::Api)?
         };
 
-        map.insert(model, provider_instance.clone());
+        map.insert(provider_id, provider_instance.clone());
         Ok(provider_instance)
     }
 
+    /// Complete a prompt with a specific model ID and optional parameters
     pub async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<crate::config::model::ModelParameters>,
         token: CancellationToken,
     ) -> std::result::Result<CompletionResponse, ApiError> {
+        // Get provider from model ID
+        let provider_id = model_id.0.clone();
         let provider = self
-            .get_or_create_provider(model)
+            .get_or_create_provider(provider_id)
             .await
             .map_err(ApiError::from)?;
 
@@ -367,14 +148,31 @@ impl Client {
             });
         }
 
+        // Get model config and merge parameters
+        let model_config = self.model_registry.get(&model_id);
+        let effective_params = match (model_config, &call_options) {
+            (Some(config), Some(opts)) => config.effective_parameters(Some(opts)),
+            (Some(config), None) => config.effective_parameters(None),
+            (None, Some(opts)) => Some(*opts),
+            (None, None) => None,
+        };
+
+        debug!(
+            target: "api::complete",
+            ?model_id,
+            ?call_options,
+            ?effective_params,
+            "Final parameters for model"
+        );
+
         provider
-            .complete(model, messages, system, tools, token)
+            .complete(&model_id, messages, system, tools, effective_params, token)
             .await
     }
 
     pub async fn complete_with_retry(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: &[Message],
         system_prompt: &Option<String>,
         tools: &Option<Vec<ToolSchema>>,
@@ -382,25 +180,45 @@ impl Client {
         max_attempts: usize,
     ) -> std::result::Result<CompletionResponse, ApiError> {
         let mut attempts = 0;
+
+        // Prepare provider and parameters once
+        let provider_id = model_id.0.clone();
+        let provider = self
+            .get_or_create_provider(provider_id.clone())
+            .await
+            .map_err(ApiError::from)?;
+
+        let model_config = self.model_registry.get(&model_id);
+        let effective_params = model_config.and_then(|cfg| cfg.effective_parameters(None));
+
         debug!(
             target: "api::complete",
-            model =% model,
+            ?model_id,
+            ?effective_params,
             "system: {:?}",
             system_prompt
         );
         debug!(
             target: "api::complete",
-            model =% model,
+            ?model_id,
             "messages: {:?}",
             messages
         );
+
         loop {
-            match self
+            if token.is_cancelled() {
+                return Err(ApiError::Cancelled {
+                    provider: provider.name().to_string(),
+                });
+            }
+
+            match provider
                 .complete(
-                    model,
+                    model_id,
                     messages.to_vec(),
                     system_prompt.clone(),
                     tools.clone(),
+                    effective_params,
                     token.clone(),
                 )
                 .await
@@ -411,11 +229,8 @@ impl Client {
                 Err(error) => {
                     attempts += 1;
                     warn!(
-                        "API completion attempt {}/{} failed for model {}: {:?}",
-                        attempts,
-                        max_attempts,
-                        model.as_ref(),
-                        error
+                        "API completion attempt {}/{} failed for model {:?}: {:?}",
+                        attempts, max_attempts, model_id, error
                     );
 
                     if attempts >= max_attempts {
@@ -455,63 +270,5 @@ impl Client {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_model_from_str() {
-        let model = Model::from_str("claude-3-7-sonnet-20250219").unwrap();
-        assert_eq!(model, Model::Claude3_7Sonnet20250219);
-    }
-
-    #[test]
-    fn test_model_aliases() {
-        // Test short aliases
-        assert_eq!(
-            Model::from_str("sonnet").unwrap(),
-            Model::ClaudeSonnet4_20250514
-        );
-        assert_eq!(
-            Model::from_str("opus").unwrap(),
-            Model::ClaudeOpus4_1_20250805
-        );
-        assert_eq!(Model::from_str("o3").unwrap(), Model::O3_20250416);
-        assert_eq!(Model::from_str("o3-pro").unwrap(), Model::O3Pro20250610);
-        assert_eq!(
-            Model::from_str("gemini").unwrap(),
-            Model::Gemini2_5ProPreview0605
-        );
-        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok4_0709);
-        assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
-
-        // Also test the full names work
-        assert_eq!(
-            Model::from_str("claude-sonnet-4-20250514").unwrap(),
-            Model::ClaudeSonnet4_20250514
-        );
-        assert_eq!(
-            Model::from_str("o3-2025-04-16").unwrap(),
-            Model::O3_20250416
-        );
-
-        assert_eq!(
-            Model::from_str("o4-mini-2025-04-16").unwrap(),
-            Model::O4Mini20250416
-        );
-        assert_eq!(Model::from_str("grok-3").unwrap(), Model::Grok3);
-        assert_eq!(Model::from_str("grok").unwrap(), Model::Grok4_0709);
-        assert_eq!(Model::from_str("grok-4-0709").unwrap(), Model::Grok4_0709);
-        assert_eq!(Model::from_str("grok-3-mini").unwrap(), Model::Grok3Mini);
-        assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
-        assert_eq!(
-            Model::from_str("gpt-5-2025-08-07").unwrap(),
-            Model::Gpt5_20250807
-        );
-        assert_eq!(Model::from_str("gpt-5").unwrap(), Model::Gpt5_20250807);
     }
 }

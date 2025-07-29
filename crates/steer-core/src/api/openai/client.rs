@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::api::Model;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
 use crate::app::conversation::Message as AppMessage;
+use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
 use super::{OpenAIMode, chat, responses};
@@ -48,34 +48,36 @@ impl Provider for OpenAIClient {
 
     async fn complete(
         &self,
-        model: Model,
+        model_id: &ModelId,
         messages: Vec<AppMessage>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
         match self.default_mode {
             OpenAIMode::Responses => {
                 self.responses_client
                     .complete(
-                        model,
-                        messages.clone(),
-                        system.clone(),
-                        tools.clone(),
-                        token.clone(),
+                        model_id,
+                        messages,
+                        system,
+                        tools,
+                        call_options,
+                        token,
                     )
                     .await
                 // Optional fallback to chat if Responses says unsupported
                 // .or_else(|e| match e {
                 //     ApiError::InvalidRequest { details, .. } if details.contains("not supported") => {
-                //         self.chat_client.complete(model, messages, system, tools, token)
+                //         self.chat_client.complete(model_id, messages, system, tools, call_options, token)
                 //     }
                 //     err => Err(err),
                 // })
             }
             OpenAIMode::Chat => {
                 self.chat_client
-                    .complete(model, messages, system, tools, token)
+                    .complete(model_id, messages, system, tools, call_options, token)
                     .await
             }
         }

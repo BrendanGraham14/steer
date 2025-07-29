@@ -1,13 +1,14 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use dotenvy::dotenv;
-use serde_json::json;
-use std::sync::Arc;
-use steer_core::api::Model;
 use steer_core::app::{
     App, AppCommand, AppConfig, AppEvent, ApprovalDecision, command::ApprovalType,
 };
-use steer_core::test_utils;
 use steer_core::tools::ToolExecutor;
+
+use serde_json::json;
+use std::sync::Arc;
+use steer_core::config::provider::ProviderId;
+use steer_core::test_utils;
 use steer_tools::ToolCall;
 use steer_tools::tools::edit::EditTool;
 use steer_tools::tools::view::ViewTool;
@@ -64,7 +65,10 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     let app = App::new(
         app_config,
         event_tx,
-        Model::Claude3_7Sonnet20250219,
+        (
+            ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        ),
         workspace,
         tool_executor,
         None,
@@ -132,11 +136,13 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
 
     let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
-    // Changed Model::Default to a specific model
     let app_for_actor = App::new(
         app_config_for_actor,
         event_tx.clone(),
-        Model::Claude3_7Sonnet20250219,
+        (
+            ProviderId::Anthropic,
+            "claude-3-7-sonnet-20250219".to_string(),
+        ),
         workspace,
         tool_executor,
         None,

@@ -1,7 +1,7 @@
-use crate::api::{Model, ToolCall};
 use crate::app::{
     App, AppCommand, AppConfig, AppEvent, Conversation, Message as ConversationMessage, MessageData,
 };
+use crate::config::model::ModelId;
 use crate::error::{Error, Result};
 use crate::events::StreamEvent;
 use crate::session::{
@@ -10,7 +10,7 @@ use crate::session::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use steer_tools::ToolResult;
+use steer_tools::{ToolCall, ToolResult};
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
@@ -41,7 +41,7 @@ pub struct SessionManagerConfig {
     /// Maximum number of concurrent active sessions
     pub max_concurrent_sessions: usize,
     /// Default model for new sessions
-    pub default_model: Model,
+    pub default_model: ModelId,
     /// Whether to automatically persist sessions
     pub auto_persist: bool,
 }
@@ -70,7 +70,7 @@ impl ManagedSession {
         mut session: Session,
         app_config: AppConfig,
         store: Arc<dyn SessionStore>,
-        default_model: Model,
+        default_model: ModelId,
         conversation: Option<Conversation>,
     ) -> Result<Self> {
         // Create channels for the App
@@ -106,11 +106,11 @@ impl ManagedSession {
         ));
 
         // Create the App instance with the configured tool executor and session config
-        let app = if let Some(conv) = conversation {
+        let mut app = if let Some(conv) = conversation {
             App::new_with_conversation(
                 app_config,
                 app_event_tx,
-                default_model,
+                default_model.clone(),
                 workspace.clone(),
                 tool_executor,
                 Some(session.config.clone()),
@@ -128,6 +128,16 @@ impl ManagedSession {
             )
             .await?
         };
+
+        // Set the initial model if specified in session metadata
+        if let Some(model_str) = session.config.metadata.get("initial_model") {
+            // Use the model registry to resolve the model
+            if let Ok(model_registry) = crate::model_registry::ModelRegistry::load() {
+                if let Ok(model_id) = model_registry.resolve(model_str) {
+                    let _ = app.set_model(model_id).await;
+                }
+            }
+        }
 
         // Spawn the app actor loop
         let app_task_handle = tokio::spawn(crate::app::app_actor_loop(app, app_command_rx));
@@ -266,7 +276,7 @@ impl SessionManager {
             session.clone(),
             app_config,
             self.store.clone(),
-            self.config.default_model,
+            self.config.default_model.clone(),
             None,
         )
         .await
@@ -434,7 +444,7 @@ impl SessionManager {
             session.clone(),
             app_config,
             self.store.clone(),
-            self.config.default_model,
+            self.config.default_model.clone(),
             Some(conversation),
         )
         .await
@@ -970,7 +980,6 @@ async fn update_session_state_for_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::ToolCall;
     use crate::app::MessageData;
     use crate::app::conversation::{AssistantContent, Role, UserContent};
     use crate::session::stores::sqlite::SqliteSessionStore;
@@ -983,7 +992,10 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
-            default_model: Model::default(),
+            default_model: (
+                crate::config::provider::ProviderId::Anthropic,
+                "claude-sonnet-4-20250514".to_string(),
+            ),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config);
@@ -1073,7 +1085,10 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 1, // Set to 1 for testing
-            default_model: Model::default(),
+            default_model: (
+                crate::config::provider::ProviderId::Anthropic,
+                "claude-sonnet-4-20250514".to_string(),
+            ),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config);

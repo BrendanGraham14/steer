@@ -1,5 +1,5 @@
-use steer_core::api::Model;
-use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+use steer_core::app::conversation::{AssistantContent, Message, UserContent};
+use steer_core::app::MessageData;
 
 // This test requires real API keys and makes actual API calls
 // Run with: cargo test --test headless_test -- --ignored
@@ -24,9 +24,16 @@ async fn test_headless_mode_integration() {
     // Load config from environment is handled internally by run_once
 
     // Call run_once - note: new signature doesn't take config or timeout
-    let result = steer::run_once(messages, Model::Claude3_7Sonnet20250219)
-        .await
-        .expect("run_once should succeed");
+    let result = steer::run_once_ephemeral(
+        &steer::create_session_manager("claude-3-5-sonnet-latest".to_string()).await.unwrap(),
+        messages,
+        "claude-3-5-sonnet-latest".to_string(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("run_once should succeed");
 
     // First assert that we got an Assistant message
     assert!(

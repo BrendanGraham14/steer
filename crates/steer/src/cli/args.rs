@@ -1,37 +1,5 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use steer_core::api::Model;
-use strum::IntoEnumIterator;
-
-// Wrapper to implement clap::ValueEnum for Model
-#[derive(Debug, Clone, Copy)]
-pub struct ModelArg(pub Model);
-
-impl From<ModelArg> for Model {
-    fn from(arg: ModelArg) -> Self {
-        arg.0
-    }
-}
-
-impl clap::ValueEnum for ModelArg {
-    fn value_variants<'a>() -> &'a [Self] {
-        use once_cell::sync::Lazy;
-        static VARIANTS: Lazy<Vec<ModelArg>> = Lazy::new(|| Model::iter().map(ModelArg).collect());
-        &VARIANTS
-    }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        let s: &'static str = self.0.into();
-        let mut pv = clap::builder::PossibleValue::new(s);
-
-        // Add all aliases from the Model enum
-        for alias in self.0.aliases() {
-            pv = pv.alias(alias);
-        }
-
-        Some(pv)
-    }
-}
 
 /// An AI-powered agent and CLI tool that assists with software engineering tasks.
 #[derive(Parser)]
@@ -44,9 +12,9 @@ pub struct Cli {
     #[arg(short, long)]
     pub directory: Option<std::path::PathBuf>,
 
-    /// Model to use
-    #[arg(short, long, value_enum)]
-    pub model: Option<ModelArg>,
+    /// Model to use (e.g., 'opus', 'gpt-4o', 'openai/custom-model')
+    #[arg(short, long, default_value = "opus")]
+    pub model: String,
 
     /// Connect to a remote gRPC server instead of running locally
     #[arg(long)]
@@ -101,9 +69,9 @@ pub enum Commands {
     },
     /// Run in headless mode
     Headless {
-        /// Model to use
+        /// Model to use (overrides global --model)
         #[arg(long)]
-        model: Option<ModelArg>,
+        model: Option<String>,
 
         /// JSON file containing a Vec<Message> to use. If not provided, reads prompt from stdin.
         #[arg(long)]
@@ -186,7 +154,7 @@ pub enum SessionCommands {
         system_prompt: Option<String>,
         /// Model to use for the session
         #[arg(long)]
-        model: Option<ModelArg>,
+        model: Option<String>,
     },
     /// Delete a session
     Delete {

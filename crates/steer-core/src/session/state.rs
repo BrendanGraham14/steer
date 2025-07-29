@@ -1,3 +1,4 @@
+use crate::config::model::ModelId;
 use crate::error::Result;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -6,7 +7,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::api::Model;
 use crate::app::{Message, MessageData};
 use crate::config::LlmConfigProvider;
 use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
@@ -761,7 +761,7 @@ pub struct SessionInfo {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// The last known model used in this session
-    pub last_model: Option<Model>,
+    pub last_model: Option<ModelId>,
     pub message_count: usize,
     pub metadata: HashMap<String, String>,
 }
