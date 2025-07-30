@@ -25,9 +25,10 @@ impl FileListingUtils {
             .build();
 
         for entry in walker {
-            let entry = entry.map_err(|e| {
-                std::io::Error::other(format!("Failed to read directory entry: {e}"))
-            })?;
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue, // Skip files we don't have access to
+            };
 
             // Skip the root directory itself
             if entry.path() == root_path {
@@ -208,9 +209,15 @@ impl DirectoryStructureUtils {
             return Ok(());
         }
 
-        let entries = std::fs::read_dir(dir)?;
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return Ok(()), // Skip directories we can't access
+        };
         for entry in entries {
-            let entry = entry?;
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue, // Skip entries we can't access
+            };
             let path = entry.path();
 
             // Get relative path from the original root directory
@@ -334,5 +341,76 @@ mod tests {
         // Create a git repo
         gix::init(temp_dir.path()).unwrap();
         assert!(EnvironmentUtils::is_git_repo(temp_dir.path()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_list_files_skips_inaccessible() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().unwrap();
+
+        // Create accessible files
+        std::fs::write(temp_dir.path().join("readable.txt"), "test").unwrap();
+
+        // Create an inaccessible directory
+        let restricted_dir = temp_dir.path().join("restricted");
+        std::fs::create_dir(&restricted_dir).unwrap();
+        std::fs::write(restricted_dir.join("hidden.txt"), "secret").unwrap();
+
+        // Remove read permissions from the directory
+        let mut perms = std::fs::metadata(&restricted_dir).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&restricted_dir, perms).unwrap();
+
+        // Should list files without error, skipping the inaccessible directory
+        let files = FileListingUtils::list_files(temp_dir.path(), None, None).unwrap();
+
+        // Should contain the readable file
+        assert!(files.contains(&"readable.txt".to_string()));
+
+        // May or may not contain the restricted directory itself depending on walker behavior
+        // but should not error out
+
+        // Restore permissions for cleanup
+        let mut perms = std::fs::metadata(&restricted_dir).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&restricted_dir, perms).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_directory_structure_skips_inaccessible() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().unwrap();
+
+        // Create accessible directory
+        let accessible_dir = temp_dir.path().join("accessible");
+        std::fs::create_dir(&accessible_dir).unwrap();
+        std::fs::write(accessible_dir.join("file.txt"), "test").unwrap();
+
+        // Create an inaccessible directory
+        let restricted_dir = temp_dir.path().join("restricted");
+        std::fs::create_dir(&restricted_dir).unwrap();
+        std::fs::write(restricted_dir.join("hidden.txt"), "secret").unwrap();
+
+        // Remove read permissions from the directory
+        let mut perms = std::fs::metadata(&restricted_dir).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&restricted_dir, perms).unwrap();
+
+        // Should get directory structure without error
+        let result = DirectoryStructureUtils::get_directory_structure(temp_dir.path(), 3).unwrap();
+
+        // Should contain the accessible directory
+        assert!(result.contains("accessible/"));
+
+        // Should not error out due to inaccessible directory
+
+        // Restore permissions for cleanup
+        let mut perms = std::fs::metadata(&restricted_dir).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&restricted_dir, perms).unwrap();
     }
 }
