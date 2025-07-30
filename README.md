@@ -1,8 +1,10 @@
 # Steer
 
-Steer is an AI coding agent written in rust.
+Steer is an AI coding agent written in Rust.
 
 It includes a TUI, supports headless execution, and exposes a gRPC interface for programmatic usage.
+
+https://github.com/user-attachments/assets/5a31ccc9-6a96-4005-ab5a-ae3aa7ae34c4
 
 ---
 
