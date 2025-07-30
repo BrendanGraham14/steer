@@ -10,6 +10,11 @@ https://github.com/user-attachments/assets/5a31ccc9-6a96-4005-ab5a-ae3aa7ae34c4
 
 ## Install
 
+### Shell Script
+```
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/BrendanGraham14/steer/releases/latest/download/steer-installer.sh | sh
+```
+
 ### Cargo
 
 ```bash
