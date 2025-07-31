@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{TimeZone, Utc};
+use chrono::{Local, TimeZone, Utc};
 use eyre::{Result, eyre};
 
 use super::super::Command;
@@ -43,11 +43,15 @@ impl Command for ShowSessionCommand {
                 println!("ID: {}", info.id);
                 println!(
                     "Created: {}",
-                    info.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+                    info.created_at
+                        .with_timezone(&Local)
+                        .format("%Y-%m-%d %H:%M:%S")
                 );
                 println!(
                     "Updated: {}",
-                    info.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
+                    info.updated_at
+                        .with_timezone(&Local)
+                        .format("%Y-%m-%d %H:%M:%S")
                 );
                 println!("Messages: {}", info.message_count);
                 println!(
@@ -101,7 +105,10 @@ impl ShowSessionCommand {
                     let nsecs = created_at.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
                     match datetime {
-                        Some(dt) => println!("Created: {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
+                        Some(dt) => println!(
+                            "Created: {}",
+                            dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S")
+                        ),
                         None => println!("Created: N/A"),
                     }
                 }
@@ -111,7 +118,10 @@ impl ShowSessionCommand {
                     let nsecs = updated_at.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
                     match datetime {
-                        Some(dt) => println!("Updated: {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
+                        Some(dt) => println!(
+                            "Updated: {}",
+                            dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S")
+                        ),
                         None => println!("Updated: N/A"),
                     }
                 }

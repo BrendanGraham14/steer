@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{TimeZone, Utc};
+use chrono::{Local, TimeZone, Utc};
 use eyre::{Result, eyre};
 
 use super::super::Command;
@@ -70,8 +70,14 @@ impl Command for ListSessionCommand {
             println!(
                 "{:<36} {:<20} {:<20} {:<10} {:<30}",
                 session.id,
-                session.created_at.format("%Y-%m-%d %H:%M:%S"),
-                session.updated_at.format("%Y-%m-%d %H:%M:%S"),
+                session
+                    .created_at
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M:%S"),
+                session
+                    .updated_at
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M:%S"),
                 session.message_count,
                 model_str,
             );
@@ -123,7 +129,10 @@ impl ListSessionCommand {
                     let nsecs = ts.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
                     match datetime {
-                        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        Some(dt) => dt
+                            .with_timezone(&Local)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string(),
                         None => "N/A".to_string(),
                     }
                 })
@@ -137,7 +146,10 @@ impl ListSessionCommand {
                     let nsecs = ts.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
                     match datetime {
-                        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        Some(dt) => dt
+                            .with_timezone(&Local)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string(),
                         None => "N/A".to_string(),
                     }
                 })
