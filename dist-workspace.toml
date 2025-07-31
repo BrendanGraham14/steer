@@ -8,7 +8,7 @@ cargo-dist-version = "0.28.6"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
-installers = ["shell"]
+installers = ["shell", "npm", "homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = [
     "aarch64-apple-darwin",
@@ -21,3 +21,5 @@ install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = true
 allow-dirty = ["ci"]
+tap = "brendangraham14/homebrew-tap"
+publish-jobs = ["npm", "homebrew"]
