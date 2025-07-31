@@ -88,7 +88,7 @@ impl Command for HeadlessCommand {
         };
 
         // Create session manager
-        let session_manager = crate::create_session_manager().await?;
+        let session_manager = crate::create_session_manager(model_to_use).await?;
 
         // Determine execution mode and run
         let result = match &self.session {

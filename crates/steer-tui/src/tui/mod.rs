@@ -1396,7 +1396,7 @@ pub async fn run_tui(
         (session_id, messages)
     } else {
         // Create a new session
-        let mut session_config = SessionConfig {
+        let session_config = SessionConfig {
             workspace: if let Some(ref dir) = directory {
                 steer_core::session::state::WorkspaceConfig::Local { path: dir.clone() }
             } else {
@@ -1406,11 +1406,6 @@ pub async fn run_tui(
             system_prompt,
             metadata: HashMap::new(),
         };
-
-        // Add the initial model to session metadata
-        session_config
-            .metadata
-            .insert("initial_model".to_string(), model.to_string());
 
         let session_id = client
             .create_session(session_config)

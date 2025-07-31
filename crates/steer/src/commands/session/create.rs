@@ -14,6 +14,7 @@ pub struct CreateSessionCommand {
     pub remote: Option<String>,
     pub system_prompt: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
+    pub model: Option<Model>,
 }
 
 #[async_trait]
@@ -46,7 +47,7 @@ impl Command for CreateSessionCommand {
         let session_store = create_session_store_with_config(store_config).await?;
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: Model::default(),
+            default_model: self.model.unwrap_or_default(),
             auto_persist: true,
         };
 

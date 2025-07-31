@@ -38,6 +38,7 @@ impl Command for SessionCommand {
                 session_config,
                 metadata,
                 system_prompt,
+                model,
             } => {
                 let cmd = CreateSessionCommand {
                     session_config: session_config.clone(),
@@ -45,6 +46,7 @@ impl Command for SessionCommand {
                     remote: self.remote.clone(),
                     system_prompt: system_prompt.clone(),
                     session_db: self.session_db.clone(),
+                    model: model.map(|m| m.into()),
                 };
                 cmd.execute().await
             }

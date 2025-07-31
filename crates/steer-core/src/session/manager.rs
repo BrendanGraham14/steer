@@ -106,7 +106,7 @@ impl ManagedSession {
         ));
 
         // Create the App instance with the configured tool executor and session config
-        let mut app = if let Some(conv) = conversation {
+        let app = if let Some(conv) = conversation {
             App::new_with_conversation(
                 app_config,
                 app_event_tx,
@@ -128,13 +128,6 @@ impl ManagedSession {
             )
             .await?
         };
-
-        // Set the initial model if specified in session metadata
-        if let Some(model_str) = session.config.metadata.get("initial_model") {
-            if let Ok(model) = model_str.parse::<crate::api::Model>() {
-                let _ = app.set_model(model).await;
-            }
-        }
 
         // Spawn the app actor loop
         let app_task_handle = tokio::spawn(crate::app::app_actor_loop(app, app_command_rx));

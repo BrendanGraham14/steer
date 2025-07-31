@@ -63,7 +63,7 @@ pub async fn run_once_ephemeral(
 /// * `model`         – which LLM to use
 pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> Result<RunOnceResult> {
     // Only create temporary session manager for the simple convenience function
-    let session_manager = create_session_manager().await?;
+    let session_manager = create_session_manager(model).await?;
     run_once_ephemeral(&session_manager, init_msgs, model, None, None, None).await
 }
 
@@ -71,7 +71,7 @@ pub async fn run_once(init_msgs: Vec<Message>, model: Model) -> Result<RunOnceRe
 ///
 /// This is the recommended way to create a SessionManager for one-shot operations
 /// when you want to reuse it across multiple calls.
-pub async fn create_session_manager() -> Result<SessionManager> {
+pub async fn create_session_manager(default_model: Model) -> Result<SessionManager> {
     use steer_core::session::SessionManagerConfig;
 
     // Use the same session store as normal operation (~/.steer/sessions.db)
@@ -81,7 +81,7 @@ pub async fn create_session_manager() -> Result<SessionManager> {
 
     let config = SessionManagerConfig {
         max_concurrent_sessions: 10,
-        default_model: Model::default(),
+        default_model,
         auto_persist: true,
     };
 

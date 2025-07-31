@@ -184,6 +184,9 @@ pub enum SessionCommands {
         /// Custom system prompt to use instead of the default
         #[arg(long)]
         system_prompt: Option<String>,
+        /// Model to use for the session
+        #[arg(long)]
+        model: Option<ModelArg>,
     },
     /// Delete a session
     Delete {
