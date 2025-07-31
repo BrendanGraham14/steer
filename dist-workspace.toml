@@ -26,3 +26,5 @@ allow-dirty = ["ci"]
 tap = "brendangraham14/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["npm", "homebrew"]
+npm-scope = "@brendangraham"
+
