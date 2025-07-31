@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.21](https://github.com/BrendanGraham14/steer/compare/steer-v0.1.20...steer-v0.1.21) - 2025-07-31
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.1.19](https://github.com/BrendanGraham14/steer/compare/steer-v0.1.18...steer-v0.1.19) - 2025-07-31
 
 ### Fixed
