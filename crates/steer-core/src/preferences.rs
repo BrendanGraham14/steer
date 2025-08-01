@@ -12,6 +12,8 @@ pub enum EditingMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Preferences {
+    pub default_model: Option<String>,
+
     #[serde(default)]
     pub ui: UiPreferences,
 
@@ -21,7 +23,6 @@ pub struct Preferences {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UiPreferences {
-    pub default_model: Option<String>,
     pub theme: Option<String>,
     pub notifications: NotificationPreferences,
     pub history_limit: Option<usize>,
