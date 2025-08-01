@@ -49,8 +49,24 @@ async fn main() -> Result<()> {
     // Initialize tracing (level configured via RUST_LOG env var)
     steer_core::utils::tracing::init_tracing()?;
 
-    // Convert ModelArg to Model
-    let model: steer_core::api::Model = cli.model.into();
+    // Load preferences to get default model
+    let preferences = steer_core::preferences::Preferences::load().unwrap_or_default();
+
+    // Determine which model to use:
+    // 1. CLI argument (if provided)
+    // 2. Preferences default_model (if set)
+    // 3. System default
+    let model: steer_core::api::Model = if let Some(model_arg) = cli.model {
+        model_arg.into()
+    } else if let Some(ref default_model_str) = preferences.default_model {
+        // Try to parse the model from preferences
+        default_model_str.parse().unwrap_or_else(|_| {
+            eprintln!("Warning: Invalid model '{default_model_str}' in preferences, using default");
+            Model::default()
+        })
+    } else {
+        Model::default()
+    };
 
     // Set up signal handlers for terminal cleanup if using TUI
     #[cfg(feature = "ui")]

@@ -45,8 +45,8 @@ pub struct Cli {
     pub directory: Option<std::path::PathBuf>,
 
     /// Model to use
-    #[arg(short, long, value_enum, default_value_t = ModelArg(Model::default()))]
-    pub model: ModelArg,
+    #[arg(short, long, value_enum)]
+    pub model: Option<ModelArg>,
 
     /// Connect to a remote gRPC server instead of running locally
     #[arg(long)]
