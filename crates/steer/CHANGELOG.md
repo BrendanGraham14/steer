@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.1.21...steer-v0.2.0) - 2025-08-01
+
+### Fixed
+
+- respect default_model preference
+
+### Other
+
+- support cargo binstall
+
 ## [0.1.21](https://github.com/BrendanGraham14/steer/compare/steer-v0.1.20...steer-v0.1.21) - 2025-07-31
 
 ### Other
