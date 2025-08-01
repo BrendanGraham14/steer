@@ -110,3 +110,7 @@ ui = ["steer-tui"]
 
 [dev-dependencies]
 tempfile = "3.19.1"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/steer-v{ version }/steer-{ target }.tar.xz"
+pkg-fmt = "txz"
