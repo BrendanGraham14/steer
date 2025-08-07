@@ -75,9 +75,15 @@ pub enum Model {
     Claude3_5Haiku20241022,
     #[strum(serialize = "claude-sonnet-4-20250514", serialize = "sonnet")]
     ClaudeSonnet4_20250514,
-    #[strum(serialize = "claude-opus-4-20250514", serialize = "opus")]
-    #[default]
+    #[strum(serialize = "claude-opus-4-20250514", serialize = "opus-4")]
     ClaudeOpus4_20250514,
+    #[strum(
+        serialize = "claude-opus-4-1-20250805",
+        serialize = "opus",
+        serialize = "opus-4-1"
+    )]
+    #[default]
+    ClaudeOpus4_1_20250805,
     #[strum(serialize = "gpt-4.1-2025-04-14")]
     Gpt4_1_20250414,
     #[strum(serialize = "gpt-4.1-mini-2025-04-14")]
@@ -110,6 +116,7 @@ impl Model {
         matches!(
             self,
             Model::ClaudeOpus4_20250514
+                | Model::ClaudeOpus4_1_20250805
                 | Model::ClaudeSonnet4_20250514
                 | Model::O3_20250416
                 | Model::O3Pro20250610
@@ -133,7 +140,8 @@ impl Model {
             | Model::Claude3_5Sonnet20241022
             | Model::Claude3_5Haiku20241022
             | Model::ClaudeSonnet4_20250514
-            | Model::ClaudeOpus4_20250514 => ProviderKind::Anthropic,
+            | Model::ClaudeOpus4_20250514
+            | Model::ClaudeOpus4_1_20250805 => ProviderKind::Anthropic,
 
             Model::Gpt4_1_20250414
             | Model::Gpt4_1Mini20250414
@@ -153,7 +161,8 @@ impl Model {
     pub fn aliases(&self) -> Vec<&'static str> {
         match self {
             Model::ClaudeSonnet4_20250514 => vec!["sonnet"],
-            Model::ClaudeOpus4_20250514 => vec!["opus"],
+            Model::ClaudeOpus4_20250514 => vec!["opus-4-0"],
+            Model::ClaudeOpus4_1_20250805 => vec!["opus-4-1", "opus"],
             Model::O3_20250416 => vec!["o3"],
             Model::O3Pro20250610 => vec!["o3-pro"],
             Model::O4Mini20250416 => vec!["o4-mini"],
@@ -171,6 +180,7 @@ impl Model {
             Model::Claude3_7Sonnet20250219
                 | Model::ClaudeSonnet4_20250514
                 | Model::ClaudeOpus4_20250514
+                | Model::ClaudeOpus4_1_20250805
                 | Model::O3_20250416
                 | Model::O3Pro20250610
                 | Model::O4Mini20250416
@@ -395,7 +405,7 @@ mod tests {
         );
         assert_eq!(
             Model::from_str("opus").unwrap(),
-            Model::ClaudeOpus4_20250514
+            Model::ClaudeOpus4_1_20250805
         );
         assert_eq!(Model::from_str("o3").unwrap(), Model::O3_20250416);
         assert_eq!(Model::from_str("o3-pro").unwrap(), Model::O3Pro20250610);
