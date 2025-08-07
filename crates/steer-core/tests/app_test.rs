@@ -4,7 +4,6 @@ use steer_core::app::{App, AppConfig, AppEvent};
 use steer_core::tools::ToolExecutor;
 
 use std::sync::Arc;
-use steer_core::config::provider::ProviderId;
 use steer_core::test_utils;
 use steer_tools::ToolCall;
 use steer_workspace::local::LocalWorkspace;
@@ -44,10 +43,7 @@ async fn test_tool_executor() -> Result<()> {
     let app = App::new(
         app_config,
         event_tx,
-        (
-            ProviderId::Anthropic,
-            "claude-3-7-sonnet-20250219".to_string(),
-        ),
+        steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
         workspace,
         tool_executor,
         None, // No session config for test

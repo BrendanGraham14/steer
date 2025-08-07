@@ -9,7 +9,7 @@ use steer_core::auth::{
     AuthFlowWrapper, AuthMethod, AuthProgress, DefaultAuthStorage, DynAuthenticationFlow,
     api_key::ApiKeyAuthFlow,
 };
-use steer_core::config::provider::{AuthScheme, ProviderId};
+use steer_core::config::provider::{self, AuthScheme, ProviderId};
 use tracing::debug;
 
 // Remove TODO comment - authentication is now handled using the generic trait
@@ -37,7 +37,7 @@ impl SetupHandler {
 
         // Create appropriate auth flow based on provider and method
         let auth_flow: Box<dyn DynAuthenticationFlow> = match (&provider_id, method) {
-            (ProviderId::Anthropic, AuthMethod::OAuth) => {
+            (id, AuthMethod::OAuth) if *id == provider::anthropic() => {
                 // Only Anthropic supports OAuth currently
                 use steer_core::auth::anthropic::AnthropicOAuthFlow;
                 Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage)))
@@ -216,7 +216,7 @@ impl SetupHandler {
         }
 
         match key.code {
-            KeyCode::Char('1') if supports_oauth && provider_id == ProviderId::Anthropic => {
+            KeyCode::Char('1') if supports_oauth && provider_id == provider::anthropic() => {
                 // Start OAuth flow
                 if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::OAuth)
                     .await
@@ -254,7 +254,7 @@ impl SetupHandler {
                 }
                 Ok(None)
             }
-            KeyCode::Char('2') if supports_oauth && provider_id == ProviderId::Anthropic => {
+            KeyCode::Char('2') if supports_oauth && provider_id == provider::anthropic() => {
                 // Check conditions before calling ensure_controller
                 let should_proceed = {
                     let state = tui.setup_state.as_ref().unwrap();
@@ -388,8 +388,8 @@ impl SetupHandler {
                     Ok(None)
                 } else if tui.auth_controller.is_some()
                     && (!supports_oauth
-                        || provider_id != ProviderId::Anthropic
-                        || (provider_id == ProviderId::Anthropic && state.oauth_state.is_none()))
+                        || provider_id != provider::anthropic()
+                        || (provider_id == provider::anthropic() && state.oauth_state.is_none()))
                 {
                     // Typing API key
                     state.api_key_input.push(c);
@@ -405,8 +405,8 @@ impl SetupHandler {
                     Ok(None)
                 } else if tui.auth_controller.is_some()
                     && (!supports_oauth
-                        || provider_id != ProviderId::Anthropic
-                        || (provider_id == ProviderId::Anthropic && state.oauth_state.is_none()))
+                        || provider_id != provider::anthropic()
+                        || (provider_id == provider::anthropic() && state.oauth_state.is_none()))
                 {
                     state.api_key_input.pop();
                     Ok(None)

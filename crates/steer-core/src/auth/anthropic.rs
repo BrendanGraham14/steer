@@ -1,6 +1,6 @@
 use crate::auth::{AuthError, AuthStorage, AuthTokens, Credential, CredentialType, Result};
 use crate::auth::{AuthMethod, AuthProgress, AuthenticationFlow};
-use crate::config::provider::ProviderId;
+use crate::config::provider;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
@@ -229,7 +229,7 @@ pub async fn refresh_if_needed(
     oauth_client: &AnthropicOAuth,
 ) -> Result<AuthTokens> {
     let credential = storage
-        .get_credential(&ProviderId::Anthropic.storage_key(), CredentialType::OAuth2)
+        .get_credential(&provider::anthropic().storage_key(), CredentialType::OAuth2)
         .await?
         .ok_or(AuthError::ReauthRequired)?;
 
@@ -431,7 +431,7 @@ impl AuthenticationFlow for AnthropicOAuthFlow {
         // Check for OAuth tokens first
         if let Some(Credential::OAuth2(tokens)) = self
             .storage
-            .get_credential(&ProviderId::Anthropic.storage_key(), CredentialType::OAuth2)
+            .get_credential(&provider::anthropic().storage_key(), CredentialType::OAuth2)
             .await?
         {
             // Check if tokens are still valid
@@ -441,13 +441,13 @@ impl AuthenticationFlow for AnthropicOAuthFlow {
         // Check for API key
         Ok(self
             .storage
-            .get_credential(&ProviderId::Anthropic.storage_key(), CredentialType::ApiKey)
+            .get_credential(&provider::anthropic().storage_key(), CredentialType::ApiKey)
             .await?
             .is_some())
     }
 
     fn provider_name(&self) -> String {
-        ProviderId::Anthropic.storage_key()
+        provider::anthropic().storage_key()
     }
 }
 

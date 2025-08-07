@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::config::model::{ModelConfig, ModelId};
 use crate::config::provider::ProviderId;
+use crate::config::toml_types::ModelsFile as TomlModelsFile;
 use crate::error::Error;
 
 const DEFAULT_MODELS_TOML: &str = include_str!("../assets/default_models.toml");
@@ -18,12 +19,6 @@ pub struct ModelRegistry {
     aliases: HashMap<String, ModelId>,
 }
 
-/// Root structure for TOML deserialization.
-#[derive(Debug, Deserialize, Serialize)]
-struct ModelsFile {
-    models: Vec<ModelConfig>,
-}
-
 impl ModelRegistry {
     /// Load the model registry, merging built-in, user, and project configurations.
     ///
@@ -32,18 +27,25 @@ impl ModelRegistry {
     /// 2. User-level config
     /// 3. Project-level config
     pub fn load() -> Result<Self, Error> {
-        // First, load the built-in models
-        let mut models_file: ModelsFile = toml::from_str(DEFAULT_MODELS_TOML)
+        // First, load the built-in models from TOML
+        let toml_models: TomlModelsFile = toml::from_str(DEFAULT_MODELS_TOML)
             .map_err(|e| Error::Configuration(format!("Failed to parse default models: {e}")))?;
+
+        // Convert TOML models to ModelConfig
+        let mut models: Vec<ModelConfig> = toml_models
+            .models
+            .into_iter()
+            .map(ModelConfig::from)
+            .collect();
 
         // Load user-level config
         if let Some(user_config) = Self::load_user_config()? {
-            Self::merge_models(&mut models_file, user_config);
+            Self::merge_models(&mut models, user_config);
         }
 
         // Load project-level config
         if let Some(project_config) = Self::load_project_config()? {
-            Self::merge_models(&mut models_file, project_config);
+            Self::merge_models(&mut models, project_config);
         }
 
         // Build the registry from the merged models
@@ -52,7 +54,7 @@ impl ModelRegistry {
             aliases: HashMap::new(),
         };
 
-        for model in models_file.models {
+        for model in models {
             let model_id = (model.provider.clone(), model.id.clone());
 
             // Store aliases
@@ -63,6 +65,12 @@ impl ModelRegistry {
             // Store model
             registry.models.insert(model_id, model);
         }
+
+        debug!(
+            target: "model_registry::load",
+            "Loaded models: {:?}",
+            registry.models
+        );
 
         Ok(registry)
     }
@@ -106,32 +114,39 @@ impl ModelRegistry {
     }
 
     /// Load user configuration from the standard location.
-    fn load_user_config() -> Result<Option<ModelsFile>, Error> {
+    fn load_user_config() -> Result<Option<Vec<ModelConfig>>, Error> {
         let config_path = Self::get_user_config_path()?;
         Self::load_config_from_path(config_path)
     }
 
     /// Load project configuration from the current workspace.
-    fn load_project_config() -> Result<Option<ModelsFile>, Error> {
+    fn load_project_config() -> Result<Option<Vec<ModelConfig>>, Error> {
         let config_path = PathBuf::from("models.toml");
         Self::load_config_from_path(config_path)
     }
 
     /// Load configuration from a specific path.
-    fn load_config_from_path(path: PathBuf) -> Result<Option<ModelsFile>, Error> {
+    fn load_config_from_path(path: PathBuf) -> Result<Option<Vec<ModelConfig>>, Error> {
         if !path.exists() {
             return Ok(None);
         }
 
         let content = std::fs::read_to_string(&path).map_err(Error::Io)?;
 
-        let models = toml::from_str(&content).map_err(|e| {
+        let toml_models: TomlModelsFile = toml::from_str(&content).map_err(|e| {
             Error::Configuration(format!(
                 "Failed to parse models at {}: {}",
                 path.display(),
                 e
             ))
         })?;
+
+        // Convert TOML models to ModelConfig
+        let models = toml_models
+            .models
+            .into_iter()
+            .map(ModelConfig::from)
+            .collect();
 
         Ok(Some(models))
     }
@@ -149,55 +164,23 @@ impl ModelRegistry {
 
     /// Merge user models into the base models file.
     /// Arrays are appended, scalar fields use last-write-wins.
-    fn merge_models(base: &mut ModelsFile, user: ModelsFile) {
+    fn merge_models(base: &mut Vec<ModelConfig>, user_models: Vec<ModelConfig>) {
         // Create a map of existing models by (provider, id) for efficient lookup
         let mut existing_models: HashMap<(ProviderId, String), usize> = HashMap::new();
-        for (idx, model) in base.models.iter().enumerate() {
+        for (idx, model) in base.iter().enumerate() {
             existing_models.insert((model.provider.clone(), model.id.clone()), idx);
         }
 
         // Process each user model
-        for user_model in user.models {
+        for user_model in user_models {
             let key = (user_model.provider.clone(), user_model.id.clone());
 
             if let Some(&idx) = existing_models.get(&key) {
-                // Model exists - merge it (last-write-wins for scalars, append for arrays)
-                let base_model = &mut base.models[idx];
-
-                // Merge aliases (append unique values)
-                for alias in user_model.aliases {
-                    if !base_model.aliases.contains(&alias) {
-                        base_model.aliases.push(alias);
-                    }
-                }
-
-                // Override scalar fields (last-write-wins)
-                base_model.recommended = user_model.recommended;
-
-                // Override parameters if provided
-                if let Some(user_params) = user_model.parameters {
-                    // Merge with base parameters or replace entirely
-                    if let Some(base_params) = base_model.parameters.as_mut() {
-                        // Base has parameters, merge thinking_config
-                        base_params.thinking_config = user_params.thinking_config;
-                        // Merge other fields if needed
-                        if let Some(temp) = user_params.temperature {
-                            base_params.temperature = Some(temp);
-                        }
-                        if let Some(max_tokens) = user_params.max_tokens {
-                            base_params.max_tokens = Some(max_tokens);
-                        }
-                        if let Some(top_p) = user_params.top_p {
-                            base_params.top_p = Some(top_p);
-                        }
-                    } else {
-                        // Base has no parameters, use user's
-                        base_model.parameters = Some(user_params);
-                    }
-                }
+                // Model exists - merge it
+                base[idx].merge_with(user_model);
             } else {
                 // New model - add it
-                base.models.push(user_model);
+                base.push(user_model);
             }
         }
     }
@@ -206,18 +189,19 @@ impl ModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::provider;
 
     #[test]
     fn test_load_builtin_models() {
         // Test that we can parse the built-in models
-        let models_file: ModelsFile = toml::from_str(DEFAULT_MODELS_TOML).unwrap();
+        let models_file: TomlModelsFile = toml::from_str(DEFAULT_MODELS_TOML).unwrap();
         assert!(!models_file.models.is_empty());
 
         // Check that we have some expected models
         let has_claude = models_file
             .models
             .iter()
-            .any(|m| m.provider == ProviderId::Anthropic && m.id.contains("claude"));
+            .any(|m| m.provider == "anthropic" && m.id.contains("claude"));
         assert!(has_claude, "Should have at least one Claude model");
     }
 
@@ -230,20 +214,23 @@ provider = "anthropic"
 id = "test-model"
 aliases = ["test", "tm"]
 recommended = true
-
-[models.parameters]
-thinking_config.enabled = false
-temperature = 0.7
-max_tokens = 1000
+parameters = { thinking_config = { enabled = true } }
 "#;
 
-        let models_file: ModelsFile = toml::from_str(toml).unwrap();
+        let models_file: TomlModelsFile = toml::from_str(toml).unwrap();
+        // Convert TomlModelsFile to ModelConfig list using From trait
+        let models: Vec<ModelConfig> = models_file
+            .models
+            .into_iter()
+            .map(ModelConfig::from)
+            .collect();
+
         let mut registry = ModelRegistry {
             models: HashMap::new(),
             aliases: HashMap::new(),
         };
 
-        for model in models_file.models {
+        for model in models {
             let model_id = (model.provider.clone(), model.id.clone());
 
             for alias in &model.aliases {
@@ -254,10 +241,16 @@ max_tokens = 1000
         }
 
         // Test get
-        let model_id = (ProviderId::Anthropic, "test-model".to_string());
+        let model_id = (provider::anthropic(), "test-model".to_string());
         let model = registry.get(&model_id).unwrap();
         assert_eq!(model.id, "test-model");
         assert!(model.recommended);
+
+        // Test parameters were parsed correctly
+        assert!(model.parameters.is_some());
+        let params = model.parameters.unwrap();
+        assert!(params.thinking_config.is_some());
+        assert!(params.thinking_config.unwrap().enabled);
 
         // Test by_alias
         let model_by_alias = registry.by_alias("test").unwrap();
@@ -280,16 +273,13 @@ provider = "anthropic"
 id = "claude-3"
 aliases = ["claude"]
 recommended = false
-supports_thinking = false
+parameters = { temperature = 0.7, max_tokens = 2048 }
 
 [[models]]
 provider = "openai"
 id = "gpt-4"
 aliases = ["gpt"]
 recommended = true
-
-[models.parameters]
-thinking_config.enabled = false
 "#;
 
         let user_toml = r#"
@@ -298,34 +288,33 @@ provider = "anthropic"
 id = "claude-3"
 aliases = ["c3", "claude3"]
 recommended = true
-
-[models.parameters]
-thinking_config.enabled = true
-temperature = 0.8
+parameters = { temperature = 0.9, thinking_config = { enabled = true } }
 
 [[models]]
 provider = "google"
 id = "gemini-pro"
 aliases = ["gemini"]
 recommended = true
-
-[models.parameters]
-thinking_config.enabled = true
+parameters = { temperature = 0.5, top_p = 0.95 }
 "#;
 
-        let mut base: ModelsFile = toml::from_str(base_toml).unwrap();
-        let user: ModelsFile = toml::from_str(user_toml).unwrap();
+        let base: TomlModelsFile = toml::from_str(base_toml).unwrap();
+        let user: TomlModelsFile = toml::from_str(user_toml).unwrap();
 
-        ModelRegistry::merge_models(&mut base, user);
+        // Convert to ModelConfig using From trait
+        let base_models: Vec<_> = base.models.into_iter().map(ModelConfig::from).collect();
+        let user_models: Vec<_> = user.models.into_iter().map(ModelConfig::from).collect();
+
+        let mut base_models_mut = base_models;
+        ModelRegistry::merge_models(&mut base_models_mut, user_models);
 
         // Check that we have 3 models total
-        assert_eq!(base.models.len(), 3);
+        assert_eq!(base_models_mut.len(), 3);
 
         // Check the merged Claude model
-        let claude = base
-            .models
+        let claude = base_models_mut
             .iter()
-            .find(|m| m.provider == ProviderId::Anthropic && m.id == "claude-3")
+            .find(|m| m.provider == provider::anthropic() && m.id == "claude-3")
             .unwrap();
 
         // Aliases should be merged
@@ -336,58 +325,33 @@ thinking_config.enabled = true
 
         // Scalar fields should be overridden
         assert!(claude.recommended);
-        assert!(claude.parameters.is_some());
-        assert!(
-            claude
-                .parameters
-                .as_ref()
-                .unwrap()
-                .thinking_config
-                .is_some()
-        );
-        assert!(
-            claude
-                .parameters
-                .as_ref()
-                .unwrap()
-                .thinking_config
-                .as_ref()
-                .unwrap()
-                .enabled
-        );
 
-        // Parameters should be set
+        // Parameters should be merged (user overrides base)
         assert!(claude.parameters.is_some());
-        let params = claude.parameters.as_ref().unwrap();
-        assert_eq!(params.temperature, Some(0.8));
+        let claude_params = claude.parameters.unwrap();
+        assert_eq!(claude_params.temperature, Some(0.9)); // overridden from 0.7
+        assert_eq!(claude_params.max_tokens, Some(2048)); // kept from base
+        assert!(claude_params.thinking_config.is_some());
+        assert!(claude_params.thinking_config.unwrap().enabled);
 
         // Check that GPT-4 is unchanged
-        let gpt4 = base
-            .models
+        let gpt4 = base_models_mut
             .iter()
-            .find(|m| m.provider == ProviderId::Openai && m.id == "gpt-4")
+            .find(|m| m.provider == provider::openai() && m.id == "gpt-4")
             .unwrap();
         assert!(gpt4.recommended);
-        assert!(gpt4.parameters.is_some());
-        assert!(gpt4.parameters.as_ref().unwrap().thinking_config.is_some());
-        assert!(
-            !gpt4
-                .parameters
-                .as_ref()
-                .unwrap()
-                .thinking_config
-                .as_ref()
-                .unwrap()
-                .enabled
-        );
+        assert!(gpt4.parameters.is_none()); // No parameters in either base or user
 
-        // Check that Gemini was added
-        let gemini = base
-            .models
+        // Check that new model was added
+        let gemini = base_models_mut
             .iter()
-            .find(|m| m.provider == ProviderId::Google && m.id == "gemini-pro")
+            .find(|m| m.provider == provider::google() && m.id == "gemini-pro")
             .unwrap();
         assert!(gemini.recommended);
+        assert!(gemini.parameters.is_some());
+        let gemini_params = gemini.parameters.unwrap();
+        assert_eq!(gemini_params.temperature, Some(0.5));
+        assert_eq!(gemini_params.top_p, Some(0.95));
     }
 
     #[test]
@@ -404,9 +368,6 @@ provider = "anthropic"
 id = "test-model"
 aliases = ["test"]
 recommended = true
-
-[models.parameters]
-thinking_config.enabled = false
 "#;
 
         fs::write(&config_path, config).unwrap();
@@ -415,7 +376,7 @@ thinking_config.enabled = false
         assert!(result.is_some());
 
         let models_file = result.unwrap();
-        assert_eq!(models_file.models.len(), 1);
-        assert_eq!(models_file.models[0].id, "test-model");
+        assert_eq!(models_file.len(), 1);
+        assert_eq!(models_file[0].id, "test-model");
     }
 }
