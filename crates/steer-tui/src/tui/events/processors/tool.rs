@@ -69,6 +69,9 @@ impl EventProcessor for ToolEventProcessor {
                 // Store the tool call in the registry with full parameters
                 ctx.tool_registry.register_call(tool_call.clone());
 
+                // Move the tool call from pending to active since it's starting
+                ctx.tool_registry.start_execution(&id);
+
                 // Add a pending tool call item
                 let pending = crate::tui::model::ChatItem {
                     parent_chat_item_id: None, // Will be set by push()
