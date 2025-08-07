@@ -929,8 +929,6 @@ async fn handle_client_message(
 mod tests {
     use super::*;
 
-    use steer_core::config::provider::ProviderId;
-
     use std::collections::HashMap;
     use steer_core::session::state::WorkspaceConfig;
     use steer_core::session::stores::sqlite::SqliteSessionStore;
@@ -952,10 +950,7 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
-            default_model: (
-                ProviderId::Anthropic,
-                "claude-3-7-sonnet-20250219".to_string(),
-            ),
+            default_model: steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
             auto_persist: true,
         };
         let session_manager = Arc::new(SessionManager::new(store, config));

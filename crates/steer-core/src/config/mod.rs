@@ -33,7 +33,7 @@ impl Default for NotificationSettings {
 impl Config {
     fn new() -> Self {
         Self {
-            model: Some("claude-3-7-sonnet-20250219".to_string()),
+            model: Some(crate::config::model::builtin::opus().1),
             history_size: Some(10),
             system_prompt: None,
             notifications: Some(NotificationSettings::default()),
@@ -128,101 +128,94 @@ impl LlmConfigProvider {
 
     /// Get authentication for a specific provider ID
     pub async fn get_auth_for_provider(&self, provider_id: &ProviderId) -> Result<Option<ApiAuth>> {
-        match provider_id {
-            ProviderId::Anthropic => {
-                // API key via env var > OAuth > stored API key
-                let anthropic_key = std::env::var("CLAUDE_API_KEY")
-                    .ok()
-                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-                if let Some(key) = anthropic_key {
-                    Ok(Some(ApiAuth::Key(key)))
-                } else if self
-                    .storage
-                    .get_credential(
-                        &provider_id.storage_key(),
-                        crate::auth::CredentialType::OAuth2,
-                    )
-                    .await?
-                    .is_some()
+        if provider_id.as_str() == self::provider::ANTHROPIC_ID {
+            // API key via env var > OAuth > stored API key
+            let anthropic_key = std::env::var("CLAUDE_API_KEY")
+                .ok()
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+            if let Some(key) = anthropic_key {
+                Ok(Some(ApiAuth::Key(key)))
+            } else if self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::OAuth2,
+                )
+                .await?
+                .is_some()
+            {
+                Ok(Some(ApiAuth::OAuth))
+            } else {
                 {
-                    Ok(Some(ApiAuth::OAuth))
-                } else {
+                    // Fall back to stored API key in keyring
+                    if let Some(crate::auth::Credential::ApiKey { value }) = self
+                        .storage
+                        .get_credential(
+                            &provider_id.storage_key(),
+                            crate::auth::CredentialType::ApiKey,
+                        )
+                        .await?
                     {
-                        // Fall back to stored API key in keyring
-                        if let Some(crate::auth::Credential::ApiKey { value }) = self
-                            .storage
-                            .get_credential(
-                                &provider_id.storage_key(),
-                                crate::auth::CredentialType::ApiKey,
-                            )
-                            .await?
-                        {
-                            Ok(Some(ApiAuth::Key(value)))
-                        } else {
-                            Ok(None)
-                        }
+                        Ok(Some(ApiAuth::Key(value)))
+                    } else {
+                        Ok(None)
                     }
                 }
             }
-            ProviderId::Openai => {
-                // API key via env var > stored API key
-                if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-                    Ok(Some(ApiAuth::Key(key)))
-                } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-                    .storage
-                    .get_credential(
-                        &provider_id.storage_key(),
-                        crate::auth::CredentialType::ApiKey,
-                    )
-                    .await?
-                {
-                    Ok(Some(ApiAuth::Key(value)))
-                } else {
-                    Ok(None)
-                }
-            }
-            ProviderId::Google => {
-                // API key via env var > stored API key
-                if let Ok(key) =
-                    std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY"))
-                {
-                    Ok(Some(ApiAuth::Key(key)))
-                } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-                    .storage
-                    .get_credential(
-                        &provider_id.storage_key(),
-                        crate::auth::CredentialType::ApiKey,
-                    )
-                    .await?
-                {
-                    Ok(Some(ApiAuth::Key(value)))
-                } else {
-                    Ok(None)
-                }
-            }
-            ProviderId::Xai => {
-                // API key via env var > stored API key
-                if let Ok(key) =
-                    std::env::var("XAI_API_KEY").or_else(|_| std::env::var("GROK_API_KEY"))
-                {
-                    Ok(Some(ApiAuth::Key(key)))
-                } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-                    .storage
-                    .get_credential(
-                        &provider_id.storage_key(),
-                        crate::auth::CredentialType::ApiKey,
-                    )
-                    .await?
-                {
-                    Ok(Some(ApiAuth::Key(value)))
-                } else {
-                    Ok(None)
-                }
-            }
-            ProviderId::Custom(_) => {
-                // Custom providers should use their own credential lookup
+        } else if provider_id.as_str() == self::provider::OPENAI_ID {
+            // API key via env var > stored API key
+            if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+                Ok(Some(ApiAuth::Key(key)))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some(ApiAuth::Key(value)))
+            } else {
                 Ok(None)
             }
+        } else if provider_id.as_str() == self::provider::GOOGLE_ID {
+            // API key via env var > stored API key
+            if let Ok(key) =
+                std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY"))
+            {
+                Ok(Some(ApiAuth::Key(key)))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some(ApiAuth::Key(value)))
+            } else {
+                Ok(None)
+            }
+        } else if provider_id.as_str() == self::provider::XAI_ID {
+            // API key via env var > stored API key
+            if let Ok(key) = std::env::var("XAI_API_KEY").or_else(|_| std::env::var("GROK_API_KEY"))
+            {
+                Ok(Some(ApiAuth::Key(key)))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some(ApiAuth::Key(value)))
+            } else {
+                Ok(None)
+            }
+        } else {
+            // Custom providers should use their own credential lookup
+            Ok(None)
         }
     }
 
@@ -234,33 +227,21 @@ impl LlmConfigProvider {
     /// Return list of providers that have authentication configured
     pub async fn available_providers(&self) -> Result<Vec<ProviderId>> {
         let mut providers = Vec::new();
-        if self
-            .get_auth_for_provider(&ProviderId::Anthropic)
-            .await?
-            .is_some()
-        {
-            providers.push(ProviderId::Anthropic);
+        let anthropic = self::provider::anthropic();
+        if self.get_auth_for_provider(&anthropic).await?.is_some() {
+            providers.push(anthropic);
         }
-        if self
-            .get_auth_for_provider(&ProviderId::Openai)
-            .await?
-            .is_some()
-        {
-            providers.push(ProviderId::Openai);
+        let openai = self::provider::openai();
+        if self.get_auth_for_provider(&openai).await?.is_some() {
+            providers.push(openai);
         }
-        if self
-            .get_auth_for_provider(&ProviderId::Google)
-            .await?
-            .is_some()
-        {
-            providers.push(ProviderId::Google);
+        let google = self::provider::google();
+        if self.get_auth_for_provider(&google).await?.is_some() {
+            providers.push(google);
         }
-        if self
-            .get_auth_for_provider(&ProviderId::Xai)
-            .await?
-            .is_some()
-        {
-            providers.push(ProviderId::Xai);
+        let xai = self::provider::xai();
+        if self.get_auth_for_provider(&xai).await?.is_some() {
+            providers.push(xai);
         }
         Ok(providers)
     }
@@ -268,3 +249,4 @@ impl LlmConfigProvider {
 
 pub mod model;
 pub mod provider;
+pub mod toml_types;

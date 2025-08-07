@@ -1136,9 +1136,7 @@ impl Tui {
                         for provider_config in self.provider_registry.all() {
                             let status = if auth_providers.contains(&provider_config.id) {
                                 // Check if it has OAuth configured (for Anthropic)
-                                if provider_config.id
-                                    == steer_core::config::provider::ProviderId::Anthropic
-                                {
+                                if provider_config.id == steer_core::config::provider::anthropic() {
                                     let has_oauth = auth_storage
                                         .get_credential(
                                             &provider_config.id.storage_key(),
@@ -1477,7 +1475,7 @@ pub async fn run_tui(
         for provider_config in tui.provider_registry.all() {
             let status = if auth_providers.contains(&provider_config.id) {
                 // Check if it has OAuth configured (for Anthropic)
-                if provider_config.id == steer_core::config::provider::ProviderId::Anthropic {
+                if provider_config.id == steer_core::config::provider::anthropic() {
                     let has_oauth = auth_storage
                         .get_credential(
                             &provider_config.id.storage_key(),
@@ -1528,10 +1526,7 @@ pub async fn run_tui_auth_setup(
     run_tui(
         client,
         session_id,
-        model.unwrap_or((
-            steer_core::config::provider::ProviderId::Anthropic,
-            "claude-3-7-sonnet-20250219".to_string(),
-        )),
+        model.unwrap_or(steer_core::config::model::builtin::claude_3_7_sonnet_20250219()),
         session_db,
         None, // system_prompt
         theme_name,
@@ -1567,10 +1562,7 @@ mod tests {
         // Create a TUI instance for testing
         let path = tempdir().unwrap().path().to_path_buf();
         let (client, _server_handle) = local_client_and_server(Some(path)).await;
-        let model = (
-            steer_core::config::provider::ProviderId::Anthropic,
-            "claude-3-5-sonnet-20241022".to_string(),
-        );
+        let model = steer_core::config::model::builtin::claude_3_5_sonnet_20241022();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 
@@ -1635,10 +1627,7 @@ mod tests {
         // Test edge case where Tool result arrives before Assistant message
         let path = tempdir().unwrap().path().to_path_buf();
         let (client, _server_handle) = local_client_and_server(Some(path)).await;
-        let model = (
-            steer_core::config::provider::ProviderId::Anthropic,
-            "claude-3-5-sonnet-20241022".to_string(),
-        );
+        let model = steer_core::config::model::builtin::claude_3_5_sonnet_20241022();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 

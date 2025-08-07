@@ -1,7 +1,7 @@
 use steer_core::api::create_provider;
 use steer_core::auth::ProviderRegistry;
 use steer_core::auth::storage::Credential;
-use steer_core::config::provider::{ApiFormat, AuthScheme, Provider as ProviderId, ProviderConfig};
+use steer_core::config::provider::{self, ApiFormat, AuthScheme, ProviderConfig, ProviderId};
 use url::Url;
 
 #[tokio::test]
@@ -21,7 +21,7 @@ async fn test_custom_provider_with_openai_format() {
 
     // Create a custom provider config with OpenAI API format
     let provider_config = ProviderConfig {
-        id: ProviderId::Custom("my-llm".to_string()),
+        id: ProviderId("my-llm".to_string()),
         name: "My Custom LLM".to_string(),
         api_format: ApiFormat::OpenaiResponses,
         auth_schemes: vec![AuthScheme::ApiKey],
@@ -51,14 +51,14 @@ fn test_provider_registry_custom_providers() {
     // Write a custom providers.toml
     let providers_toml = r#"
 [[providers]]
-id = { custom = "custom-openai" }
+id = "custom-openai"
 name = "My OpenAI Compatible API"
 api_format = "openai-responses"
 auth_schemes = ["api-key"]
 base_url = "https://my-api.example.com"
 
 [[providers]]
-id = { custom = "local-llm" }
+id = "local-llm"
 name = "Local LLM Server"  
 api_format = "openai-chat"
 auth_schemes = ["api-key"]
@@ -73,12 +73,12 @@ base_url = "http://localhost:8080"
     let registry = ProviderRegistry::load_with_config_dir(Some(temp_dir.path())).unwrap();
 
     // Check built-in providers still exist
-    assert!(registry.get(&ProviderId::Anthropic).is_some());
-    assert!(registry.get(&ProviderId::Openai).is_some());
+    assert!(registry.get(&provider::anthropic()).is_some());
+    assert!(registry.get(&provider::openai()).is_some());
 
     // Check custom providers were loaded
     let custom_openai = registry
-        .get(&ProviderId::Custom("custom-openai".to_string()))
+        .get(&ProviderId("custom-openai".to_string()))
         .unwrap();
     assert_eq!(custom_openai.name, "My OpenAI Compatible API");
     assert_eq!(custom_openai.api_format, ApiFormat::OpenaiResponses);
@@ -87,10 +87,7 @@ base_url = "http://localhost:8080"
         "https://my-api.example.com/"
     );
 
-    let local_llm = registry
-        .get(&ProviderId::Custom("local-llm".to_string()))
-        .unwrap();
-
+    let local_llm = registry.get(&ProviderId("local-llm".to_string())).unwrap();
     assert_eq!(local_llm.name, "Local LLM Server");
     assert_eq!(local_llm.api_format, ApiFormat::OpenaiChat);
     assert_eq!(

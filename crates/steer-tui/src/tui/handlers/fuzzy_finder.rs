@@ -119,8 +119,7 @@ impl Tui {
                                     .recommended()
                                     .map(|m| {
                                         let model_id = (m.provider.clone(), m.id.clone());
-                                        let model_str =
-                                            format!("{}/{}", m.provider.storage_key(), m.id);
+                                        let model_str = format!("{}/{}", m.provider, m.id);
                                         let display = if model_id == current_model {
                                             format!("{model_str} (current)")
                                         } else {
@@ -214,7 +213,7 @@ impl Tui {
 
                                         // Group models by provider
                                         for provider_config in self.provider_registry.all() {
-                                            let provider_name = &provider_config.name;
+                                            let provider_name = &provider_config.id;
                                             for m in registry.recommended() {
                                                 if m.provider == provider_config.id {
                                                     let model_id =
@@ -348,7 +347,7 @@ impl Tui {
 
                         // Group models by provider
                         for provider_config in self.provider_registry.all() {
-                            let provider_name = &provider_config.name;
+                            let provider_name = &provider_config.id;
                             for m in registry.recommended() {
                                 if m.provider == provider_config.id {
                                     let model_id = (m.provider.clone(), m.id.clone());

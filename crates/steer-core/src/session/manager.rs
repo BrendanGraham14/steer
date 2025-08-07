@@ -992,10 +992,7 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 100,
-            default_model: (
-                crate::config::provider::ProviderId::Anthropic,
-                "claude-sonnet-4-20250514".to_string(),
-            ),
+            default_model: crate::config::model::builtin::claude_sonnet_4_20250514(),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config);
@@ -1085,10 +1082,7 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 1, // Set to 1 for testing
-            default_model: (
-                crate::config::provider::ProviderId::Anthropic,
-                "claude-sonnet-4-20250514".to_string(),
-            ),
+            default_model: crate::config::model::builtin::claude_sonnet_4_20250514(),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config);

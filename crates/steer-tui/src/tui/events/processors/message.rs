@@ -191,10 +191,7 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = (
-            steer_core::config::provider::Provider::Anthropic,
-            "claude-3-5-sonnet-20241022".to_string(),
-        );
+        let current_model = steer_core::config::model::builtin::claude_3_5_sonnet_20241022();
         let messages_updated = false;
 
         TestContext {
@@ -285,10 +282,7 @@ mod tests {
             .process(
                 steer_core::app::AppEvent::MessageAdded {
                     message: assistant_message,
-                    model: (
-                        steer_core::config::provider::Provider::Anthropic,
-                        "claude-3-5-sonnet-20241022".to_string(),
-                    ),
+                    model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
                 },
                 &mut ctx,
             )

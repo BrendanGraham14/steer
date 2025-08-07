@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use steer_core::config::provider::ProviderId;
 use steer_grpc::AgentClient;
 
 pub async fn local_client_and_server(
@@ -8,10 +7,7 @@ pub async fn local_client_and_server(
 ) -> (AgentClient, tokio::task::JoinHandle<()>) {
     use steer_grpc::local_server::setup_local_grpc;
     let (channel, server_handle) = setup_local_grpc(
-        (
-            ProviderId::Anthropic,
-            "claude-sonnet-4-20250514".to_string(),
-        ),
+        steer_core::config::model::builtin::claude_sonnet_4_20250514(),
         session_dir,
     )
     .await

@@ -1694,26 +1694,32 @@ async fn create_system_prompt_with_workspace(
 
 fn get_model_system_prompt(model_id: ModelId) -> String {
     // Map known model IDs to specific prompts
-    match (model_id.0, model_id.1.as_str()) {
-        (crate::config::provider::ProviderId::Openai, "gpt-5-2025-08-07") => {
-            crate::prompts::gpt5_system_prompt()
-        }
-        (crate::config::provider::ProviderId::Openai, "o3-2025-04-16")
-        | (crate::config::provider::ProviderId::Openai, "gpt-4.1-2025-04-14")
-        | (crate::config::provider::ProviderId::Openai, "o4-mini-2025-04-16")
-        | (crate::config::provider::ProviderId::Openai, "codex-mini-latest")
-        | (crate::config::provider::ProviderId::Xai, "grok-4-0709") => {
-            crate::prompts::o3_system_prompt()
-        }
-        (crate::config::provider::ProviderId::Google, id) if id.starts_with("gemini-") => {
-            crate::prompts::gemini_system_prompt()
-        }
-        (crate::config::provider::ProviderId::Anthropic, "claude-sonnet-4-20250514")
-        | (crate::config::provider::ProviderId::Anthropic, "claude-opus-4-20250514")
-        | (crate::config::provider::ProviderId::Anthropic, "claude-opus-4-1-20250805") => {
-            crate::prompts::claude_system_prompt()
-        }
-        _ => crate::prompts::default_system_prompt(),
+    let provider_str = model_id.0.as_str();
+    let model_str = model_id.1.as_str();
+
+    if provider_str == crate::config::provider::OPENAI_ID && model_str == "gpt-5-2025-08-07" {
+        crate::prompts::gpt5_system_prompt()
+    } else if provider_str == crate::config::provider::OPENAI_ID
+        && (model_str == "o3-2025-04-16"
+            || model_str == "gpt-4.1-2025-04-14"
+            || model_str == "o4-mini-2025-04-16"
+            || model_str == "codex-mini-latest")
+    {
+        crate::prompts::o3_system_prompt()
+    } else if provider_str == crate::config::provider::XAI_ID && model_str == "grok-4-0709" {
+        crate::prompts::o3_system_prompt()
+    } else if provider_str == crate::config::provider::GOOGLE_ID
+        && (model_str.starts_with("gemini-2.5") || model_str.starts_with("gemini-"))
+    {
+        crate::prompts::gemini_system_prompt()
+    } else if provider_str == crate::config::provider::ANTHROPIC_ID
+        && (model_str == "claude-sonnet-4-20250514"
+            || model_str == "claude-opus-4-20250514"
+            || model_str == "claude-opus-4-1-20250805")
+    {
+        crate::prompts::claude_system_prompt()
+    } else {
+        crate::prompts::default_system_prompt()
     }
 }
 

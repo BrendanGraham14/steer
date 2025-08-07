@@ -2,7 +2,6 @@ use dotenvy::dotenv;
 use steer_core::api::{ApiError, Client};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 
-use steer_core::config::provider::ProviderId;
 use steer_core::test_utils;
 use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
@@ -21,17 +20,11 @@ async fn test_api_basic() {
     let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
-        (
-            ProviderId::Anthropic,
-            "claude-3-5-haiku-20241022".to_string(),
-        ),
-        (ProviderId::Openai, "gpt-4o-mini".to_string()),
-        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
-        (
-            ProviderId::Anthropic,
-            "claude-3-5-sonnet-latest".to_string(),
-        ),
-        (ProviderId::Xai, "grok-2-mini".to_string()),
+        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
+        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
+        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
+        steer_core::config::model::builtin::grok_3_mini(),
     ];
 
     let mut tasks = Vec::new();
@@ -134,13 +127,10 @@ async fn test_api_with_tools() {
     let client = Client::new_with_provider(provider); // Arc<Client>
 
     let models_to_test = vec![
-        (
-            ProviderId::Anthropic,
-            "claude-3-5-haiku-20241022".to_string(),
-        ),
-        (ProviderId::Openai, "gpt-4o-mini".to_string()),
-        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
-        (ProviderId::Xai, "grok-2-mini".to_string()),
+        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
+        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
+        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::grok_3_mini(),
     ];
 
     let mut tasks = Vec::new();
@@ -289,13 +279,10 @@ async fn test_api_with_tool_response() {
     let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
-        (
-            ProviderId::Anthropic,
-            "claude-3-5-haiku-20241022".to_string(),
-        ),
-        (ProviderId::Openai, "gpt-4o-mini".to_string()),
-        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
-        (ProviderId::Xai, "grok-2-mini".to_string()),
+        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
+        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
+        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::grok_3_mini(),
     ];
     let mut tasks = Vec::new();
 
@@ -448,7 +435,7 @@ async fn test_gemini_system_instructions() {
 
     let response = client
         .complete(
-            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
             messages,
             system,
             None,
@@ -535,7 +522,7 @@ async fn test_gemini_api_tool_result_error() {
 
     let response = client
         .complete(
-            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
             messages,
             None,
             None, // No tools needed here as we are providing the tool result
@@ -611,7 +598,7 @@ async fn test_gemini_api_complex_tool_schema() {
 
     let response = client
         .complete(
-            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
+            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
             messages,
             None,
             Some(vec![complex_tool]), // Send the complex tool definition
@@ -701,7 +688,7 @@ async fn test_gemini_api_tool_result_json() {
 
     let response = client
         .complete(
-            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
             messages,
             None,
             None, // No tools needed here as we are providing the tool result
@@ -826,7 +813,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 
     let response = client
         .complete(
-            &(ProviderId::Google, "gemini-2.0-flash-exp".to_string()), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
             messages,
             None,
             Some(tools), // Provide tools including the dummy weather tool
@@ -851,13 +838,10 @@ async fn test_api_with_cancelled_tool_execution() {
     let client = Client::new_with_provider(provider);
 
     let models_to_test = vec![
-        (
-            ProviderId::Anthropic,
-            "claude-3-5-haiku-20241022".to_string(),
-        ),
-        (ProviderId::Openai, "gpt-4o-mini".to_string()),
-        (ProviderId::Google, "gemini-2.0-flash-exp".to_string()),
-        (ProviderId::Xai, "grok-2-mini".to_string()),
+        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
+        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
+        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::grok_3_mini(),
     ];
     let mut tasks = Vec::new();
 

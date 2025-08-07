@@ -1,40 +1,43 @@
-use async_trait::async_trait;
-use tokio_util::sync::CancellationToken;
-
+use super::chat;
+use super::responses;
+use super::OpenAIMode;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
-use crate::app::conversation::Message as AppMessage;
+use crate::app::conversation::Message;
 use crate::config::model::{ModelId, ModelParameters};
+use async_trait::async_trait;
 use steer_tools::ToolSchema;
+use tokio_util::sync::CancellationToken;
 
-use super::{OpenAIMode, chat, responses};
-
-/// Unified OpenAI client that routes to the appropriate API based on configured mode
-#[derive(Clone)]
-#[allow(dead_code)]
+/// Unified OpenAI client that supports both the Chat and Responses APIs.
+///
+/// The client internally manages two separate clients for the different API modes
+/// and delegates requests based on the configured default mode.
 pub struct OpenAIClient {
-    chat_client: chat::Client,
     responses_client: responses::Client,
+    chat_client: chat::Client,
     default_mode: OpenAIMode,
 }
 
 impl OpenAIClient {
-    pub fn new(api_key: String) -> Self {
-        Self::with_mode(api_key, OpenAIMode::Responses)
-    }
-
+    /// Create a new OpenAI client with a specific mode.
     pub fn with_mode(api_key: String, mode: OpenAIMode) -> Self {
         Self {
-            chat_client: chat::Client::new(api_key.clone()),
-            responses_client: responses::Client::new(api_key),
+            responses_client: responses::Client::new(api_key.clone()),
+            chat_client: chat::Client::new(api_key),
             default_mode: mode,
         }
     }
 
-    pub fn with_base_url_mode(api_key: String, base_url: Option<String>, mode: OpenAIMode) -> Self {
+    /// Create a new OpenAI client with a custom base URL and mode.
+    pub fn with_base_url_mode(
+        api_key: String,
+        base_url: Option<String>,
+        mode: OpenAIMode,
+    ) -> Self {
         Self {
-            chat_client: chat::Client::with_base_url(api_key.clone(), base_url.clone()),
-            responses_client: responses::Client::with_base_url(api_key, base_url),
+            responses_client: responses::Client::with_base_url(api_key.clone(), base_url.clone()),
+            chat_client: chat::Client::with_base_url(api_key, base_url),
             default_mode: mode,
         }
     }
@@ -43,13 +46,13 @@ impl OpenAIClient {
 #[async_trait]
 impl Provider for OpenAIClient {
     fn name(&self) -> &'static str {
-        super::PROVIDER_NAME
+        "openai"
     }
 
     async fn complete(
         &self,
         model_id: &ModelId,
-        messages: Vec<AppMessage>,
+        messages: Vec<Message>,
         system: Option<String>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
@@ -58,22 +61,8 @@ impl Provider for OpenAIClient {
         match self.default_mode {
             OpenAIMode::Responses => {
                 self.responses_client
-                    .complete(
-                        model_id,
-                        messages,
-                        system,
-                        tools,
-                        call_options,
-                        token,
-                    )
+                    .complete(model_id, messages, system, tools, call_options, token)
                     .await
-                // Optional fallback to chat if Responses says unsupported
-                // .or_else(|e| match e {
-                //     ApiError::InvalidRequest { details, .. } if details.contains("not supported") => {
-                //         self.chat_client.complete(model_id, messages, system, tools, call_options, token)
-                //     }
-                //     err => Err(err),
-                // })
             }
             OpenAIMode::Chat => {
                 self.chat_client

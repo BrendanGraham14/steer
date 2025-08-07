@@ -71,7 +71,7 @@ impl ProviderRegistry {
 mod tests {
     use super::*;
 
-    use crate::config::provider::{ApiFormat, AuthScheme, Provider, ProviderConfig};
+    use crate::config::provider::{self, ApiFormat, AuthScheme, ProviderConfig, ProviderId};
     use std::fs;
 
     // Helper to build a minimal provider config TOML with given definitions
@@ -107,14 +107,14 @@ mod tests {
 
         // Override Anthropics and add a custom provider
         let override_provider = ProviderConfig {
-            id: Provider::Anthropic,
+            id: provider::anthropic(),
             name: "Anthropic (override)".into(),
             api_format: ApiFormat::Anthropic,
             auth_schemes: vec![AuthScheme::ApiKey],
             base_url: None,
         };
         let custom_provider = ProviderConfig {
-            id: Provider::Custom("myprov".into()),
+            id: ProviderId("myprov".to_string()),
             name: "My Provider".into(),
             api_format: ApiFormat::OpenaiResponses,
             auth_schemes: vec![AuthScheme::ApiKey],
@@ -129,11 +129,11 @@ mod tests {
         let reg = ProviderRegistry::load_with_config_dir(Some(temp.path())).expect("load registry");
 
         // Overridden provider
-        let anthro = reg.get(&Provider::Anthropic).unwrap();
+        let anthro = reg.get(&provider::anthropic()).unwrap();
         assert_eq!(anthro.name, "Anthropic (override)");
 
         // Custom provider present
-        let custom = reg.get(&Provider::Custom("myprov".into())).unwrap();
+        let custom = reg.get(&ProviderId("myprov".to_string())).unwrap();
         assert_eq!(custom.name, "My Provider");
 
         assert_eq!(reg.all().count(), 5);
