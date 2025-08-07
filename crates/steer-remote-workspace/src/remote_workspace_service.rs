@@ -11,6 +11,7 @@ use steer_tools::{ExecutionContext, ToolError};
 use steer_workspace::utils::{
     DirectoryStructureUtils, EnvironmentUtils, FileListingUtils, GitStatusUtils,
 };
+use steer_workspace::{MAX_DIRECTORY_DEPTH, MAX_DIRECTORY_ITEMS};
 
 use crate::proto::{
     ExecuteToolRequest, ExecuteToolResponse, GetAgentInfoRequest, GetAgentInfoResponse,
@@ -232,7 +233,11 @@ impl RemoteWorkspaceService {
 
     /// Get directory structure for environment info
     fn get_directory_structure(&self) -> Result<String, std::io::Error> {
-        DirectoryStructureUtils::get_directory_structure(&self.working_dir, 3)
+        DirectoryStructureUtils::get_directory_structure(
+            &self.working_dir,
+            MAX_DIRECTORY_DEPTH,
+            Some(MAX_DIRECTORY_ITEMS),
+        )
     }
 
     /// Get git status information

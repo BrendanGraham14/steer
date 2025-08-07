@@ -11,6 +11,7 @@ pub use error::{Result, WorkspaceError};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use tracing::debug;
 
 /// Core workspace abstraction for environment information and file operations
 #[async_trait]
@@ -108,6 +109,12 @@ pub struct EnvironmentInfo {
     pub claude_md_content: Option<String>,
 }
 
+/// Default maximum depth for directory structure traversal
+pub const MAX_DIRECTORY_DEPTH: usize = 3;
+
+/// Default maximum number of items to include in directory structure
+pub const MAX_DIRECTORY_ITEMS: usize = 1000;
+
 impl EnvironmentInfo {
     /// Collect environment information for a given path
     pub fn collect_for_path(path: &std::path::Path) -> Result<Self> {
@@ -117,7 +124,12 @@ impl EnvironmentInfo {
         let platform = EnvironmentUtils::get_platform().to_string();
         let date = EnvironmentUtils::get_current_date();
 
-        let directory_structure = DirectoryStructureUtils::get_directory_structure(path, 3)?;
+        let directory_structure = DirectoryStructureUtils::get_directory_structure(
+            path,
+            MAX_DIRECTORY_DEPTH,
+            Some(MAX_DIRECTORY_ITEMS),
+        )?;
+        debug!("directory_structure: {}", directory_structure);
 
         let git_status = if is_git_repo {
             GitStatusUtils::get_git_status(path).ok()
