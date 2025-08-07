@@ -90,6 +90,8 @@ pub enum Model {
     Gpt4_1Mini20250414,
     #[strum(serialize = "gpt-4.1-nano-2025-04-14")]
     Gpt4_1Nano20250414,
+    #[strum(serialize = "gpt-5-2025-08-07", serialize = "gpt-5")]
+    Gpt5_20250807,
     #[strum(serialize = "o3-2025-04-16", serialize = "o3")]
     O3_20250416,
     #[strum(serialize = "o3-pro-2025-06-10", serialize = "o3-pro")]
@@ -124,6 +126,7 @@ impl Model {
                 | Model::Grok4_0709
                 | Model::Grok3
                 | Model::Gpt4_1_20250414
+                | Model::Gpt5_20250807
                 | Model::O4Mini20250416
         )
     }
@@ -146,6 +149,7 @@ impl Model {
             Model::Gpt4_1_20250414
             | Model::Gpt4_1Mini20250414
             | Model::Gpt4_1Nano20250414
+            | Model::Gpt5_20250807
             | Model::O3_20250416
             | Model::O3Pro20250610
             | Model::O4Mini20250416 => ProviderKind::OpenAI,
@@ -170,6 +174,7 @@ impl Model {
             Model::Grok3 => vec![],
             Model::Grok3Mini => vec!["grok-mini"],
             Model::Grok4_0709 => vec!["grok"],
+            Model::Gpt5_20250807 => vec!["gpt-5"],
             _ => vec![],
         }
     }
@@ -181,6 +186,7 @@ impl Model {
                 | Model::ClaudeSonnet4_20250514
                 | Model::ClaudeOpus4_20250514
                 | Model::ClaudeOpus4_1_20250805
+                | Model::Gpt5_20250807
                 | Model::O3_20250416
                 | Model::O3Pro20250610
                 | Model::O4Mini20250416
@@ -435,5 +441,10 @@ mod tests {
         assert_eq!(Model::from_str("grok-4-0709").unwrap(), Model::Grok4_0709);
         assert_eq!(Model::from_str("grok-3-mini").unwrap(), Model::Grok3Mini);
         assert_eq!(Model::from_str("grok-mini").unwrap(), Model::Grok3Mini);
+        assert_eq!(
+            Model::from_str("gpt-5-2025-08-07").unwrap(),
+            Model::Gpt5_20250807
+        );
+        assert_eq!(Model::from_str("gpt-5").unwrap(), Model::Gpt5_20250807);
     }
 }
