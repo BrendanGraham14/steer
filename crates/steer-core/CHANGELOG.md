@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.2.0...steer-core-v0.3.0) - 2025-08-07
+
+### Added
+
+- opus-4.1
+
 ## [0.2.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.1.21...steer-core-v0.2.0) - 2025-08-01
 
 ### Fixed
