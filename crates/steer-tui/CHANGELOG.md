@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.2.0...steer-tui-v0.3.0) - 2025-08-07
+
+### Fixed
+
+- *(tui)* move pending tool call to active
+
 ## [0.1.19](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.1.18...steer-tui-v0.1.19) - 2025-07-31
 
 ### Fixed
