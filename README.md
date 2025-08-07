@@ -47,7 +47,7 @@ Options:
   -d, --directory <DIRECTORY>
           Optional directory to work in
   -m, --model <MODEL>
-          Model to use [default: claude-opus-4-20250514] [possible values: claude-3-5-sonnet-20240620, claude-3-5-sonnet-20241022, claude-3-7-sonnet-20250219, claude-3-5-haiku-20241022, claude-sonnet-4-20250514, claude-opus-4-20250514, gpt-4.1-2025-04-14, gpt-4.1-mini-2025-04-14, gpt-4.1-nano-2025-04-14, o3-2025-04-16, o3-pro-2025-06-10, o4-mini-2025-04-16, gemini-2.5-flash-preview-04-17, gemini-2.5-pro-preview-05-06, gemini-2.5-pro-preview-06-05, grok-3, grok-3-mini, grok-4-0709]
+          Model to use [possible values: claude-3-5-sonnet-20240620, claude-3-5-sonnet-20241022, claude-3-7-sonnet-20250219, claude-3-5-haiku-20241022, claude-sonnet-4-20250514, claude-opus-4-20250514, claude-opus-4-1-20250805, gpt-4.1-2025-04-14, gpt-4.1-mini-2025-04-14, gpt-4.1-nano-2025-04-14, gpt-5-2025-08-07, o3-2025-04-16, o3-pro-2025-06-10, o4-mini-2025-04-16, gemini-2.5-flash-preview-04-17, gemini-2.5-pro-preview-05-06, gemini-2.5-pro-preview-06-05, grok-3, grok-3-mini, grok-4-0709]
       --remote <REMOTE>
           Connect to a remote gRPC server instead of running locally
       --system-prompt <SYSTEM_PROMPT>
