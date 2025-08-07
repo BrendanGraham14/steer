@@ -1,4 +1,4 @@
-use crate::{config::provider::ProviderId, error::Result};
+use crate::error::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -107,10 +107,7 @@ pub async fn get_command_prefix(
 
     match client
         .complete(
-            &(
-                ProviderId::Anthropic,
-                "claude-3-5-haiku-20241022".to_string(),
-            ),
+            &crate::config::model::builtin::claude_3_5_haiku_20241022(),
             messages,
             Some(system_content.to_string()),
             None,

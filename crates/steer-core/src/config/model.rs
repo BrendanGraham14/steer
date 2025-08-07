@@ -1,32 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 use super::provider::ProviderId;
+use super::toml_types::ModelData;
+
+// Re-export types from toml_types for public use
+pub use super::toml_types::{ModelParameters, ThinkingConfig};
 
 /// Type alias for model identification as a tuple of (ProviderId, model id string).
 pub type ModelId = (ProviderId, String);
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
-pub struct ThinkingConfig {
-    pub enabled: bool,
-}
+/// Built-in model constants generated from default_models.toml
+pub mod builtin {
 
-/// Model-specific parameters that can be configured.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
-pub struct ModelParameters {
-    /// Temperature setting for controlling randomness in generation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-
-    /// Maximum number of tokens to generate.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-
-    /// Top-p (nucleus) sampling parameter.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f32>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_config: Option<ThinkingConfig>,
+    include!(concat!(env!("OUT_DIR"), "/generated_model_ids.rs"));
 }
 
 impl ModelParameters {
@@ -78,16 +64,66 @@ impl ModelConfig {
             (None, None) => None,
         }
     }
+
+    /// Merge another ModelConfig into self, with other taking precedence for scalar fields
+    /// and arrays being appended uniquely.
+    pub fn merge_with(&mut self, other: ModelConfig) {
+        // Merge aliases (append unique values)
+        for alias in other.aliases {
+            if !self.aliases.contains(&alias) {
+                self.aliases.push(alias);
+            }
+        }
+
+        // Override scalar fields (last-write-wins)
+        self.recommended = other.recommended;
+
+        // Merge parameters
+        match (&mut self.parameters, other.parameters) {
+            (Some(self_params), Some(other_params)) => {
+                // Merge parameters
+                if let Some(temp) = other_params.temperature {
+                    self_params.temperature = Some(temp);
+                }
+                if let Some(max_tokens) = other_params.max_tokens {
+                    self_params.max_tokens = Some(max_tokens);
+                }
+                if let Some(top_p) = other_params.top_p {
+                    self_params.top_p = Some(top_p);
+                }
+                if let Some(thinking) = other_params.thinking_config {
+                    self_params.thinking_config = Some(thinking);
+                }
+            }
+            (None, Some(other_params)) => {
+                self.parameters = Some(other_params);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl From<ModelData> for ModelConfig {
+    fn from(data: ModelData) -> Self {
+        ModelConfig {
+            provider: ProviderId(data.provider),
+            id: data.id,
+            aliases: data.aliases,
+            recommended: data.recommended,
+            parameters: data.parameters,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::provider;
 
     #[test]
     fn test_model_config_toml_serialization() {
         let config = ModelConfig {
-            provider: ProviderId::Anthropic,
+            provider: provider::anthropic(),
             id: "claude-3-opus".to_string(),
             aliases: vec!["opus".to_string(), "claude-opus".to_string()],
             recommended: true,
@@ -119,7 +155,7 @@ mod tests {
         let config: ModelConfig =
             toml::from_str(toml_str).expect("Failed to deserialize minimal config");
 
-        assert_eq!(config.provider, ProviderId::Openai);
+        assert_eq!(config.provider, provider::openai());
         assert_eq!(config.id, "gpt-4");
         assert_eq!(config.aliases, Vec::<String>::new());
         assert!(!config.recommended);
@@ -166,7 +202,7 @@ mod tests {
     #[test]
     fn test_model_config_effective_parameters() {
         let config = ModelConfig {
-            provider: ProviderId::Anthropic,
+            provider: provider::anthropic(),
             id: "claude-3-opus".to_string(),
             aliases: vec![],
             recommended: true,

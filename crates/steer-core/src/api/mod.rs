@@ -149,7 +149,7 @@ impl Client {
         }
 
         // Get model config and merge parameters
-        let model_config = self.model_registry.get(&model_id);
+        let model_config = self.model_registry.get(model_id);
         let effective_params = match (model_config, &call_options) {
             (Some(config), Some(opts)) => config.effective_parameters(Some(opts)),
             (Some(config), None) => config.effective_parameters(None),
@@ -166,7 +166,7 @@ impl Client {
         );
 
         provider
-            .complete(&model_id, messages, system, tools, effective_params, token)
+            .complete(model_id, messages, system, tools, effective_params, token)
             .await
     }
 
@@ -188,18 +188,24 @@ impl Client {
             .await
             .map_err(ApiError::from)?;
 
-        let model_config = self.model_registry.get(&model_id);
+        let model_config = self.model_registry.get(model_id);
+        debug!(
+            target: "api::complete_with_retry",
+            ?model_id,
+            ?model_config,
+            "Model config"
+        );
         let effective_params = model_config.and_then(|cfg| cfg.effective_parameters(None));
 
         debug!(
-            target: "api::complete",
+            target: "api::complete_with_retry",
             ?model_id,
             ?effective_params,
             "system: {:?}",
             system_prompt
         );
         debug!(
-            target: "api::complete",
+            target: "api::complete_with_retry",
             ?model_id,
             "messages: {:?}",
             messages

@@ -111,7 +111,7 @@ Usage notes:
             .run(
                 AgentExecutorRunRequest
                  {
-                    model: (crate::config::provider::ProviderId::Anthropic, "claude-3-7-sonnet-20250219".to_string()), // Or make configurable?
+                    model: crate::config::model::builtin::claude_3_7_sonnet_20250219(), // Or make configurable?
                     initial_messages,
                     system_prompt: Some(system_prompt),
                     available_tools,

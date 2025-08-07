@@ -1,5 +1,5 @@
-use steer_core::app::conversation::{AssistantContent, Message, UserContent};
 use steer_core::app::MessageData;
+use steer_core::app::conversation::{AssistantContent, Message, UserContent};
 
 // This test requires real API keys and makes actual API calls
 // Run with: cargo test --test headless_test -- --ignored
@@ -27,7 +27,7 @@ async fn test_headless_mode_integration() {
     let result = steer::run_once_ephemeral(
         &steer::create_session_manager("claude-3-5-sonnet-latest".to_string()).await.unwrap(),
         messages,
-        "claude-3-5-sonnet-latest".to_string(),
+        steer_core::config::model::builtin::claude_3_5_sonnet_20241022().1,
         None,
         None,
         None,
