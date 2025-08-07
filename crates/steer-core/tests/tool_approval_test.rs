@@ -7,7 +7,6 @@ use steer_core::tools::ToolExecutor;
 
 use serde_json::json;
 use std::sync::Arc;
-use steer_core::config::provider::ProviderId;
 use steer_core::test_utils;
 use steer_tools::ToolCall;
 use steer_tools::tools::edit::EditTool;
@@ -65,10 +64,7 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
     let app = App::new(
         app_config,
         event_tx,
-        (
-            ProviderId::Anthropic,
-            "claude-3-7-sonnet-20250219".to_string(),
-        ),
+        steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
         workspace,
         tool_executor,
         None,
@@ -139,10 +135,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     let app_for_actor = App::new(
         app_config_for_actor,
         event_tx.clone(),
-        (
-            ProviderId::Anthropic,
-            "claude-3-7-sonnet-20250219".to_string(),
-        ),
+        steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
         workspace,
         tool_executor,
         None,

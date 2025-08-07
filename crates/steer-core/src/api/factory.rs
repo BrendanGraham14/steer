@@ -122,12 +122,12 @@ pub fn create_provider_with_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::provider::{AuthScheme, Provider as ProviderId};
+    use crate::config::provider::{self, AuthScheme, ProviderId};
 
     #[test]
     fn test_create_openai_provider() {
         let config = ProviderConfig {
-            id: ProviderId::Openai,
+            id: provider::openai(),
             name: "OpenAI".to_string(),
             api_format: ApiFormat::OpenaiResponses,
             auth_schemes: vec![AuthScheme::ApiKey],
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_create_custom_openai_provider() {
         let config = ProviderConfig {
-            id: ProviderId::Custom("my-provider".to_string()),
+            id: ProviderId("my-provider".to_string()),
             name: "My Provider".to_string(),
             api_format: ApiFormat::OpenaiResponses,
             auth_schemes: vec![AuthScheme::ApiKey],
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_oauth_requires_storage() {
         let config = ProviderConfig {
-            id: ProviderId::Anthropic,
+            id: provider::anthropic(),
             name: "Anthropic".to_string(),
             api_format: ApiFormat::Anthropic,
             auth_schemes: vec![AuthScheme::Oauth2],

@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-use steer_core::config::provider::{AuthScheme, ProviderId};
+use steer_core::config::provider::{self, AuthScheme, ProviderId};
 
 pub struct AuthenticationWidget;
 
@@ -105,7 +105,7 @@ impl AuthenticationWidget {
                 ]));
             }
         } else if supports_oauth
-            && provider_id == ProviderId::Anthropic
+            && provider_id == provider::anthropic()
             && state.api_key_input.is_empty()
             && state.oauth_state.is_none()
             && state.auth_providers.get(&provider_id)
@@ -144,7 +144,7 @@ impl AuthenticationWidget {
                 Span::styled(masked_key, theme.style(Component::SetupInputValue)),
             ]));
 
-            if provider_id == ProviderId::Anthropic {
+            if provider_id == provider::anthropic() {
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
                     "Tip: Get your API key from console.anthropic.com",
@@ -187,7 +187,7 @@ impl AuthenticationWidget {
                 Span::raw(" to cancel"),
             ])]
         } else if supports_oauth
-            && provider_id == ProviderId::Anthropic
+            && provider_id == provider::anthropic()
             && state.api_key_input.is_empty()
         {
             vec![Line::from(vec![

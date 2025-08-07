@@ -1058,7 +1058,6 @@ impl SessionStore for SqliteSessionStore {
 #[cfg(test)]
 mod tests {
     use crate::app::conversation::{AssistantContent, Message, Role, UserContent};
-    use crate::config::provider::ProviderId;
     use crate::events::SessionMetadata;
     use crate::session::ToolVisibility;
     use crate::session::state::WorkspaceConfig;
@@ -1183,10 +1182,7 @@ mod tests {
         let event = StreamEvent::SessionCreated {
             session_id: session.id.clone(),
             metadata: SessionMetadata {
-                model: (
-                    ProviderId::Anthropic,
-                    "claude-3-5-sonnet-20241022".to_string(),
-                ),
+                model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
                 created_at: session.created_at,
                 metadata: session.config.metadata,
             },
@@ -1239,10 +1235,7 @@ mod tests {
         assert_eq!(sessions[0].last_model, None);
 
         // Add a MessageComplete event with Claude model
-        let claude_model = (
-            ProviderId::Anthropic,
-            "claude-3-5-sonnet-20241022".to_string(),
-        );
+        let claude_model = crate::config::model::builtin::claude_3_5_sonnet_20241022();
         let message_event = StreamEvent::MessageComplete {
             message: Message {
                 data: MessageData::Assistant {
@@ -1268,7 +1261,7 @@ mod tests {
         assert_eq!(sessions[0].last_model, Some(claude_model));
 
         // Add a ToolCallFailed event with GPT model (more recent)
-        let gpt_model = (ProviderId::Openai, "gpt-4-1-20250414".to_string());
+        let gpt_model = crate::config::model::builtin::gpt_4_1_2025_04_14();
         let tool_event = StreamEvent::ToolCallFailed {
             tool_call_id: "tool1".to_string(),
             error: "Test error".to_string(),

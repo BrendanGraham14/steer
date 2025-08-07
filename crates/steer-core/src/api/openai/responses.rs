@@ -569,7 +569,7 @@ mod tests {
         }];
         
         let model_id = (
-            ProviderId::Openai,
+            crate::config::provider::openai(),
             "gpt-4.1-2025-04-14".to_string(),
         );
         let request = client.build_request(
@@ -606,7 +606,7 @@ mod tests {
 
         // Test with reasoning model (with call options enabling thinking)
         let model_id = (
-            ProviderId::Openai,
+            crate::config::provider::openai(),
             "codex-mini-latest".to_string(),
         );
         let call_options = Some(crate::config::model::ModelParameters {
@@ -628,7 +628,7 @@ mod tests {
 
         // Test with non-reasoning model (no thinking config)
         let model_id = (
-            ProviderId::Openai,
+            crate::config::provider::openai(),
             "gpt-4.1-2025-04-14".to_string(),
         );
         let request = client.build_request(&model_id, messages, None, None, None);

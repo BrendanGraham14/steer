@@ -4,11 +4,9 @@ use eyre::{Result, eyre};
 use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use steer_core::app::AppConfig;
-use steer_core::config::provider::ProviderId;
+
 use steer_core::session::{SessionManager, SessionManagerConfig};
-use steer_core::utils::session::{
-    create_session_store_with_config, resolve_session_store_config,
-};
+use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
 
 pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
@@ -56,8 +54,8 @@ impl Command for CreateSessionCommand {
             model_registry.resolve(model_str)
                 .map_err(|e| eyre!("Invalid model: {}", e))?
         } else {
-            // Default to opus
-            (ProviderId::Anthropic, "claude-opus-4-1-20250805".to_string())
+            // Default to opus (which now points to opus-4.1 via build.rs)
+            steer_core::config::model::builtin::opus()
         };
         
         let session_manager_config = SessionManagerConfig {

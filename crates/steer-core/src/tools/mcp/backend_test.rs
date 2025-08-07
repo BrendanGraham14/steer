@@ -9,9 +9,9 @@ mod tests {
     use crate::tools::mcp::test_servers::{TestMcpService, start_http_server, start_sse_server};
     use crate::tools::{McpBackend, McpTransport, ToolBackend};
     use rmcp::service::ServiceExt;
-    use steer_tools::ToolCall;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use steer_tools::ToolCall;
     use steer_tools::result::{ExternalResult, ToolResult};
     use tempfile::TempDir;
     use tokio::net::TcpListener;

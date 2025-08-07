@@ -223,10 +223,7 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = (
-            steer_core::config::provider::ProviderId::Anthropic,
-            "claude-3-5-sonnet-20241022".to_string(),
-        );
+        let current_model = steer_core::config::model::builtin::claude_3_5_sonnet_20241022();
         let messages_updated = false;
         let in_flight_operations = HashSet::new();
         TestContext {

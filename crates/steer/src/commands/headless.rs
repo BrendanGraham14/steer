@@ -13,8 +13,8 @@ use steer_tools::tools::{
 
 use super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
-use steer_core::app::conversation::{Message, UserContent};
 use steer_core::app::MessageData;
+use steer_core::app::conversation::{Message, UserContent};
 
 pub struct HeadlessCommand {
     pub model: Option<String>,

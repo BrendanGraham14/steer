@@ -131,13 +131,10 @@ pub struct SessionMetadata {
 impl From<&SessionInfo> for SessionMetadata {
     fn from(session_info: &SessionInfo) -> Self {
         Self {
-            model: session_info.last_model.clone().unwrap_or_else(|| {
-                use crate::config::provider::ProviderId;
-                (
-                    ProviderId::Anthropic,
-                    "claude-sonnet-4-20250514".to_string(),
-                )
-            }),
+            model: session_info
+                .last_model
+                .clone()
+                .unwrap_or_else(crate::config::model::builtin::claude_sonnet_4_20250514),
             created_at: session_info.created_at,
             metadata: session_info.metadata.clone(),
         }
@@ -349,9 +346,8 @@ impl EventFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{Message, MessageData};
     use crate::app::conversation::AssistantContent;
-    use crate::config::provider::ProviderId;
+    use crate::app::{Message, MessageData};
 
     #[test]
     fn test_stream_event_serialization() {
@@ -359,10 +355,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             error: "Failed to execute".to_string(),
             metadata: HashMap::new(),
-            model: (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
         };
 
         let serialized = serde_json::to_string(&event).unwrap();
@@ -407,10 +400,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             error: "Command failed".to_string(),
             metadata: HashMap::new(),
-            model: (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
         };
         assert!(tool_failed.is_error());
 
@@ -432,10 +422,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             error: "Failed".to_string(),
             metadata: HashMap::new(),
-            model: (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
         };
         assert_eq!(tool_event.tool_call_id(), Some("tool_123"));
 
@@ -457,10 +444,7 @@ mod tests {
         let session_event = StreamEvent::SessionCreated {
             session_id: "session_123".to_string(),
             metadata: SessionMetadata {
-                model: (
-                    ProviderId::Anthropic,
-                    "claude-3-5-sonnet-latest".to_string(),
-                ),
+                model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
                 created_at: Utc::now(),
                 metadata: HashMap::new(),
             },
@@ -474,10 +458,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             error: "Failed".to_string(),
             metadata: HashMap::new(),
-            model: (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
         };
         let event_with_metadata = StreamEventWithMetadata::new(5, "session_123".to_string(), event);
 
@@ -520,10 +501,7 @@ mod tests {
             message,
             usage: None,
             metadata: HashMap::new(),
-            model: (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            model: crate::config::model::builtin::claude_3_5_sonnet_20241022(),
         };
         assert_eq!(event.message_id(), Some("msg_123"));
     }

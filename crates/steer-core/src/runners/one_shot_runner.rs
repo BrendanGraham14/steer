@@ -300,7 +300,6 @@ impl OneShotRunner {
 mod tests {
     use super::*;
     use crate::app::conversation::{AssistantContent, Message, ToolResult, UserContent};
-    use crate::config::provider::ProviderId;
     use crate::session::ToolVisibility;
     use crate::session::stores::sqlite::SqliteSessionStore;
     use crate::session::{SessionConfig, SessionManagerConfig, ToolApprovalPolicy};
@@ -319,10 +318,7 @@ mod tests {
 
         let config = SessionManagerConfig {
             max_concurrent_sessions: 10,
-            default_model: (
-                crate::config::provider::ProviderId::Anthropic,
-                "claude-sonnet-4-20250514".to_string(),
-            ),
+            default_model: crate::config::model::builtin::claude_sonnet_4_20250514(),
             auto_persist: true,
         };
         let manager = SessionManager::new(store, config);
@@ -364,10 +360,7 @@ mod tests {
         let future = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            crate::config::model::builtin::claude_3_5_sonnet_20241022(),
             Some(SessionToolConfig::read_only()),
             Some(create_test_tool_approval_policy()),
             None,
@@ -540,10 +533,7 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             vec![], // Empty messages
-            (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            crate::config::model::builtin::claude_3_5_sonnet_20241022(),
             None,
             None,
             None,
@@ -580,10 +570,7 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            crate::config::model::builtin::claude_3_5_sonnet_20241022(),
             None,
             None,
             None,
@@ -698,10 +685,7 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            crate::config::model::builtin::claude_3_5_sonnet_20241022(),
             Some(SessionToolConfig::read_only()),
             None,
             None,
@@ -876,10 +860,7 @@ mod tests {
         let result = OneShotRunner::run_ephemeral(
             &session_manager,
             messages,
-            (
-                ProviderId::Anthropic,
-                "claude-3-5-sonnet-latest".to_string(),
-            ),
+            crate::config::model::builtin::claude_3_5_sonnet_20241022(),
             Some(SessionToolConfig::read_only()),
             Some(create_test_tool_approval_policy()),
             None,

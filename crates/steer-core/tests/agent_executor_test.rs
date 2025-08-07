@@ -2,13 +2,14 @@
 mod tests {
     use steer_core::api::Client;
     use steer_core::app::conversation::{AssistantContent, Message, Role, UserContent};
-    use steer_core::app::{AgentEvent, AgentExecutor, AgentExecutorRunRequest, ApprovalDecision, MessageData};
+    use steer_core::app::{
+        AgentEvent, AgentExecutor, AgentExecutorRunRequest, ApprovalDecision, MessageData,
+    };
 
-    use steer_core::config::provider::ProviderId;
-    use steer_core::test_utils;
-    use std::sync::Arc;
     use dotenvy::dotenv;
     use serde_json::json;
+    use std::sync::Arc;
+    use steer_core::test_utils;
     use steer_tools::{
         InputSchema, ToolCall, ToolSchema as Tool,
         result::{ExternalResult, ToolResult},
@@ -59,7 +60,7 @@ mod tests {
     async fn test_run_operation_basic_text_response_real() {
         let client = get_real_client().await;
         let executor = AgentExecutor::new(client.clone());
-        let model = (ProviderId::Openai, "gpt-4o-mini".to_string()); // Use a fast model
+        let model = steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(); // Use a fast model
         let initial_messages = vec![text_message("user", "Hello, world!")];
         let system_prompt = Some("You are a test assistant. Respond concisely.".to_string());
         let available_tools: Vec<Tool> = vec![];
@@ -124,7 +125,7 @@ mod tests {
     async fn test_run_operation_auto_tool_success_real() {
         let client = get_real_client().await;
         let executor = AgentExecutor::new(client.clone());
-        let model = (ProviderId::Openai, "gpt-4o-mini".to_string()); // Use a fast model supporting tools
+        let model = steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(); // Use a fast model supporting tools
         let initial_messages = vec![text_message("user", "What is the capital of France?")];
         // Provide a dummy tool definition that the LLM might try to call
         let available_tools = vec![Tool {
