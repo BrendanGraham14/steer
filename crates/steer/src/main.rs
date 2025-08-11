@@ -52,17 +52,14 @@ async fn main() -> Result<()> {
     let preferences = steer_core::preferences::Preferences::load().unwrap_or_default();
 
     // Determine which model to use:
-    // 1. CLI argument (if provided)
+    // 1. CLI argument (if provided and not the default "opus")
     // 2. Preferences default_model (if set)
     // 3. System default
     let model = if !cli.model.is_empty() && cli.model != "opus" {
-        // CLI provided a specific model
         cli.model.clone()
     } else if let Some(ref default_model_str) = preferences.default_model {
-        // Try to use the model from preferences
         default_model_str.clone()
     } else {
-        // Use default
         "opus".to_string()
     };
 
@@ -231,9 +228,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
 
-    // Resolve the user's model choice to a ModelId
     let model_id = if params.model != "opus" {
-        // User specified a model, resolve it via the server
         client
             .resolve_model(&params.model)
             .await
@@ -360,7 +355,6 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     // Use builtin default model for TUI initially
     let default_model = steer_core::config::model::builtin::opus();
 
-    // Resolve user-specified model if different from default
     let model_id = if params.model != "opus" && !params.model.is_empty() {
         match client.resolve_model(&params.model).await {
             Ok(resolved) => resolved,
