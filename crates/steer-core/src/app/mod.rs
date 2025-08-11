@@ -1695,29 +1695,27 @@ async fn create_system_prompt_with_workspace(
     );
     Ok(prompt)
 }
-fn get_model_system_prompt(model_id: ModelId) -> String {
-    // Map known model IDs to specific prompts
-    let provider_str = model_id.0.as_str();
-    let model_str = model_id.1.as_str();
 
-    if provider_str == crate::config::provider::OPENAI_ID && model_str == "gpt-5-2025-08-07" {
+fn get_model_system_prompt(model_id: ModelId) -> String {
+    use crate::config::model::builtin;
+
+    // Map known model IDs to specific prompts
+    if model_id == builtin::gpt_5_2025_08_07() {
         crate::prompts::gpt5_system_prompt()
-    } else if (provider_str == crate::config::provider::OPENAI_ID
-        && (model_str == "o3-2025-04-16"
-            || model_str == "gpt-4.1-2025-04-14"
-            || model_str == "o4-mini-2025-04-16"
-            || model_str == "codex-mini-latest"))
-        || (provider_str == crate::config::provider::XAI_ID && model_str == "grok-4-0709")
+    } else if model_id == builtin::o3_2025_04_16()
+        || model_id == builtin::gpt_4_1_2025_04_14()
+        || model_id == builtin::o4_mini_2025_04_16()
+        || model_id == builtin::grok_4_0709()
+        || model_id == builtin::codex_mini_latest()
     {
         crate::prompts::o3_system_prompt()
-    } else if provider_str == crate::config::provider::GOOGLE_ID
-        && (model_str.starts_with("gemini-2.5") || model_str.starts_with("gemini-"))
+    } else if model_id.0 == crate::config::provider::google()
+        && (model_id.1.starts_with("gemini-2.5") || model_id.1.starts_with("gemini-"))
     {
         crate::prompts::gemini_system_prompt()
-    } else if provider_str == crate::config::provider::ANTHROPIC_ID
-        && (model_str == "claude-sonnet-4-20250514"
-            || model_str == "claude-opus-4-20250514"
-            || model_str == "claude-opus-4-1-20250805")
+    } else if model_id == builtin::claude_sonnet_4_20250514()
+        || model_id == builtin::claude_opus_4_20250514()
+        || model_id == builtin::claude_opus_4_1_20250805()
     {
         crate::prompts::claude_system_prompt()
     } else {
