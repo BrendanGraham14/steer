@@ -11,16 +11,19 @@ use tracing::{debug, error, info, warn};
 pub struct AgentServiceImpl {
     session_manager: Arc<SessionManager>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
+    model_registry: Arc<steer_core::model_registry::ModelRegistry>,
 }
 
 impl AgentServiceImpl {
     pub fn new(
         session_manager: Arc<SessionManager>,
         llm_config_provider: steer_core::config::LlmConfigProvider,
+        model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     ) -> Self {
         Self {
             session_manager,
             llm_config_provider,
+            model_registry,
         }
     }
 }
@@ -45,9 +48,10 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let mut client_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
 
-        // Clone session manager and llm_config_provider for the stream handler task
+        // Clone session manager, llm_config_provider, and model_registry for the stream handler task
         let session_manager = self.session_manager.clone();
         let llm_config_provider = self.llm_config_provider.clone();
+        let model_registry = self.model_registry.clone();
 
         let _stream_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
             // Handle the first message to establish the session connection
@@ -72,7 +76,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                                 info!("Session {} not active, attempting to resume", session_id);
 
                                 // Try to resume the session
-                                match try_resume_session(&session_manager, &session_id, &llm_config_provider).await {
+                                match try_resume_session(&session_manager, &session_id, &llm_config_provider, &model_registry).await {
                                     Ok(()) => {
                                         // Session resumed, try to take receiver again
                                         match session_manager.take_event_receiver(&session_id).await {
@@ -250,6 +254,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 
         let app_config = steer_core::app::AppConfig {
             llm_config_provider: self.llm_config_provider.clone(),
+            model_registry: self.model_registry.clone(),
         };
 
         match self
@@ -533,6 +538,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let req = request.into_inner();
         let session_manager = self.session_manager.clone();
         let llm_config_provider = self.llm_config_provider.clone();
+        let model_registry = self.model_registry.clone();
 
         info!("ActivateSession called for {}", req.session_id);
 
@@ -547,6 +553,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
                 // Not active, so activate it
                 let app_config = steer_core::app::AppConfig {
                     llm_config_provider: llm_config_provider.clone(),
+                    model_registry: model_registry.clone(),
                 };
 
                 session_manager
@@ -738,13 +745,12 @@ impl agent_service_server::AgentService for AgentServiceImpl {
     ) -> Result<Response<ListModelsResponse>, Status> {
         let req = request.into_inner();
 
-        // Load the model registry
-        let model_registry = steer_core::model_registry::ModelRegistry::load()
-            .map_err(|e| Status::internal(format!("Failed to load model registry: {e}")))?;
+        // Use the injected model registry
+        let model_registry = &self.model_registry;
 
-        // Get all models from the registry
+        // Get only recommended models from the registry
         let all_models: Vec<proto::ProviderModel> = model_registry
-            .all()
+            .recommended() // Only recommended models
             .filter(|m| {
                 if let Some(ref provider_id) = req.provider_id {
                     m.provider.storage_key() == *provider_id
@@ -768,15 +774,41 @@ impl agent_service_server::AgentService for AgentServiceImpl {
 
         Ok(Response::new(ListModelsResponse { models: all_models }))
     }
+
+    async fn resolve_model(
+        &self,
+        request: Request<proto::ResolveModelRequest>,
+    ) -> Result<Response<proto::ResolveModelResponse>, Status> {
+        let req = request.into_inner();
+
+        // Use the injected model registry to resolve the input
+        match self.model_registry.resolve(&req.input) {
+            Ok(model_id) => {
+                let model_spec = proto::ModelSpec {
+                    provider_id: model_id.0.storage_key(),
+                    model_id: model_id.1,
+                };
+                Ok(Response::new(proto::ResolveModelResponse {
+                    model: Some(model_spec),
+                }))
+            }
+            Err(e) => Err(Status::not_found(format!(
+                "Failed to resolve model '{}': {}",
+                req.input, e
+            ))),
+        }
+    }
 }
 
 async fn try_resume_session(
     session_manager: &SessionManager,
     session_id: &str,
     llm_config_provider: &steer_core::config::LlmConfigProvider,
+    model_registry: &Arc<steer_core::model_registry::ModelRegistry>,
 ) -> Result<(), Status> {
     let app_config = steer_core::app::AppConfig {
         llm_config_provider: llm_config_provider.clone(),
+        model_registry: model_registry.clone(),
     };
 
     // Attempt to resume the session
@@ -963,7 +995,9 @@ mod tests {
 
         let auth_storage = Arc::new(steer_core::test_utils::InMemoryAuthStorage::new());
         let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
-        let service = AgentServiceImpl::new(session_manager.clone(), llm_config_provider);
+        let model_registry = Arc::new(steer_core::model_registry::ModelRegistry::load().unwrap());
+        let service =
+            AgentServiceImpl::new(session_manager.clone(), llm_config_provider, model_registry);
 
         // Start server on random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

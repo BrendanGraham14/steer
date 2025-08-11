@@ -31,8 +31,13 @@ async fn test_tool_executor() -> Result<()> {
     dotenv().ok();
 
     // Create app config
+    let model_registry = Arc::new(
+        steer_core::model_registry::ModelRegistry::load()
+            .expect("Failed to load model registry for tests"),
+    );
     let app_config = AppConfig {
         llm_config_provider: test_utils::test_llm_config_provider(),
+        model_registry,
     };
 
     // Initialize the app

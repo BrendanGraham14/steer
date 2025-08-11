@@ -55,7 +55,7 @@ thinking_config.enabled = true
 [[models]]
 provider = "openai"
 id = "gpt-4.1-2025-04-14"
-aliases = []
+aliases = ["gpt-4.1", "gpt4.1"]
 recommended = false
 
 [[models]]
@@ -72,10 +72,20 @@ recommended = false
 
 [[models]]
 provider = "openai"
+id = "codex-mini-latest"
+aliases = ["codex-mini"]
+recommended = true
+[models.parameters]
+thinking_config.enabled = true
+temperature = 1.0
+
+[[models]]
+provider = "openai"
 id = "gpt-5-2025-08-07"
 aliases = ["gpt-5", "gpt5"]
 recommended = true
-[model.parameters]
+[models.parameters]
+thinking_config.enabled = true
 temperature = 1.0
 
 [[models]]
