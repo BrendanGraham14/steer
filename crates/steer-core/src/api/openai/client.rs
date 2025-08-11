@@ -1,6 +1,6 @@
+use super::OpenAIMode;
 use super::chat;
 use super::responses;
-use super::OpenAIMode;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, Provider};
 use crate::app::conversation::Message;
@@ -30,11 +30,7 @@ impl OpenAIClient {
     }
 
     /// Create a new OpenAI client with a custom base URL and mode.
-    pub fn with_base_url_mode(
-        api_key: String,
-        base_url: Option<String>,
-        mode: OpenAIMode,
-    ) -> Self {
+    pub fn with_base_url_mode(api_key: String, base_url: Option<String>, mode: OpenAIMode) -> Self {
         Self {
             responses_client: responses::Client::with_base_url(api_key.clone(), base_url.clone()),
             chat_client: chat::Client::with_base_url(api_key, base_url),

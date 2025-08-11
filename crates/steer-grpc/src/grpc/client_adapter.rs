@@ -486,6 +486,60 @@ impl AgentClient {
 
         Ok(servers)
     }
+
+    /// Resolve a model string (alias or provider/model) to a ModelId
+    pub async fn resolve_model(
+        &self,
+        input: &str,
+    ) -> GrpcResult<steer_core::config::model::ModelId> {
+        let request = Request::new(proto::ResolveModelRequest {
+            input: input.to_string(),
+        });
+
+        let response = self
+            .client
+            .lock()
+            .await
+            .resolve_model(request)
+            .await
+            .map_err(Box::new)?;
+
+        let inner = response.into_inner();
+        let model_spec = inner.model.ok_or_else(|| GrpcError::InvalidSessionState {
+            reason: format!("Server returned no model for input '{input}'"),
+        })?;
+
+        // Convert proto ModelSpec to core ModelId
+        // Try to deserialize the provider string using serde (same as ModelRegistry does)
+        let provider_id: steer_core::config::provider::ProviderId =
+            serde_json::from_value(serde_json::Value::String(model_spec.provider_id.clone()))
+                .map_err(|_| GrpcError::InvalidSessionState {
+                    reason: format!(
+                        "Invalid provider ID from server: {}",
+                        model_spec.provider_id
+                    ),
+                })?;
+
+        Ok((provider_id, model_spec.model_id))
+    }
+
+    /// List available models (only recommended ones)
+    pub async fn list_models(
+        &self,
+        provider_id: Option<String>,
+    ) -> GrpcResult<Vec<proto::ProviderModel>> {
+        let request = Request::new(proto::ListModelsRequest { provider_id });
+
+        let response = self
+            .client
+            .lock()
+            .await
+            .list_models(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(response.into_inner().models)
+    }
 }
 
 #[async_trait]

@@ -5,6 +5,7 @@ use crate::app::conversation::{AppCommandType, AssistantContent, CompactResult, 
 use crate::config::LlmConfigProvider;
 use crate::config::model::ModelId;
 use crate::error::{Error, Result};
+use crate::model_registry::ModelRegistry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -151,6 +152,7 @@ pub struct CompactError {
 #[derive(Clone)]
 pub struct AppConfig {
     pub llm_config_provider: LlmConfigProvider,
+    pub model_registry: Arc<ModelRegistry>,
 }
 
 impl Default for AppConfig {
@@ -159,8 +161,13 @@ impl Default for AppConfig {
         let storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
         let provider = LlmConfigProvider::new(storage);
 
+        // Load default model registry
+        let model_registry =
+            Arc::new(ModelRegistry::load().expect("Failed to load model registry"));
+
         Self {
             llm_config_provider: provider,
+            model_registry,
         }
     }
 }
@@ -205,7 +212,10 @@ impl App {
         session_config: Option<crate::session::state::SessionConfig>,
         conversation: Conversation,
     ) -> Result<Self> {
-        let api_client = ApiClient::new_with_provider(config.llm_config_provider.clone());
+        let api_client = ApiClient::new_with_provider_and_registry(
+            config.llm_config_provider.clone(),
+            config.model_registry.clone(),
+        );
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
 
         // Initialize approved_bash_patterns from session config
@@ -712,11 +722,8 @@ impl App {
 
                     let current_model = self.get_current_model();
 
-                    // Load model registry
-                    let model_registry =
-                        crate::model_registry::ModelRegistry::load().map_err(|e| {
-                            Error::Configuration(format!("Failed to load model registry: {e}"))
-                        })?;
+                    // Use injected model registry
+                    let model_registry = &self.config.model_registry;
 
                     let available_models: Vec<String> = model_registry
                         .all()
@@ -749,11 +756,8 @@ impl App {
                 } else if let Some(ref model_name) = target {
                     // Try to set the model
 
-                    // Load model registry
-                    let model_registry =
-                        crate::model_registry::ModelRegistry::load().map_err(|e| {
-                            Error::Configuration(format!("Failed to load model registry: {e}"))
-                        })?;
+                    // Use injected model registry
+                    let model_registry = &self.config.model_registry;
 
                     match model_registry.resolve(model_name) {
                         Ok(model_id) => match self.set_model(model_id.clone()).await {
@@ -1691,7 +1695,6 @@ async fn create_system_prompt_with_workspace(
     );
     Ok(prompt)
 }
-
 fn get_model_system_prompt(model_id: ModelId) -> String {
     // Map known model IDs to specific prompts
     let provider_str = model_id.0.as_str();
@@ -1699,14 +1702,13 @@ fn get_model_system_prompt(model_id: ModelId) -> String {
 
     if provider_str == crate::config::provider::OPENAI_ID && model_str == "gpt-5-2025-08-07" {
         crate::prompts::gpt5_system_prompt()
-    } else if provider_str == crate::config::provider::OPENAI_ID
+    } else if (provider_str == crate::config::provider::OPENAI_ID
         && (model_str == "o3-2025-04-16"
             || model_str == "gpt-4.1-2025-04-14"
             || model_str == "o4-mini-2025-04-16"
-            || model_str == "codex-mini-latest")
+            || model_str == "codex-mini-latest"))
+        || (provider_str == crate::config::provider::XAI_ID && model_str == "grok-4-0709")
     {
-        crate::prompts::o3_system_prompt()
-    } else if provider_str == crate::config::provider::XAI_ID && model_str == "grok-4-0709" {
         crate::prompts::o3_system_prompt()
     } else if provider_str == crate::config::provider::GOOGLE_ID
         && (model_str.starts_with("gemini-2.5") || model_str.starts_with("gemini-"))

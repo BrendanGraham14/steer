@@ -64,7 +64,7 @@ impl Command for ListSessionCommand {
         for session in sessions {
             let model_str = session
                 .last_model
-                .map(|(provider, model)| format!("{}/{}", provider, model))
+                .map(|(provider, model)| format!("{provider}/{model}"))
                 .unwrap_or_else(|| "N/A".to_string());
 
             println!(

@@ -53,16 +53,20 @@ impl OneShotRunner {
         #[cfg(not(test))]
         let app_config = {
             let storage = std::sync::Arc::new(DefaultAuthStorage::new()?);
+            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
             AppConfig {
                 llm_config_provider: LlmConfigProvider::new(storage),
+                model_registry,
             }
         };
 
         #[cfg(test)]
         let app_config = {
             let storage = std::sync::Arc::new(crate::test_utils::InMemoryAuthStorage::new());
+            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
             AppConfig {
                 llm_config_provider: LlmConfigProvider::new(storage),
+                model_registry,
             }
         };
 
@@ -165,16 +169,20 @@ impl OneShotRunner {
         #[cfg(not(test))]
         let app_config = {
             let storage = std::sync::Arc::new(DefaultAuthStorage::new()?);
+            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
             AppConfig {
                 llm_config_provider: LlmConfigProvider::new(storage),
+                model_registry,
             }
         };
 
         #[cfg(test)]
         let app_config = {
             let storage = std::sync::Arc::new(crate::test_utils::InMemoryAuthStorage::new());
+            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
             AppConfig {
                 llm_config_provider: LlmConfigProvider::new(storage),
+                model_registry,
             }
         };
 
