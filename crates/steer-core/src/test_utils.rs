@@ -68,7 +68,12 @@ pub fn test_llm_config_provider() -> LlmConfigProvider {
 
 /// Convenience to build an `AppConfig` for tests with a fresh provider
 pub fn test_app_config() -> AppConfig {
+    let model_registry = Arc::new(
+        crate::model_registry::ModelRegistry::load()
+            .expect("Failed to load model registry for tests"),
+    );
     AppConfig {
         llm_config_provider: test_llm_config_provider(),
+        model_registry,
     }
 }

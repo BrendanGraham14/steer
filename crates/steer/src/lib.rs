@@ -74,12 +74,13 @@ pub async fn create_session_manager(default_model: String) -> Result<SessionMana
     let store = steer_core::utils::session::create_session_store()
         .await
         .map_err(|e| eyre::eyre!("Failed to create session store: {}", e))?;
-    
+
     // Load model registry and resolve default model
     let model_registry = steer_core::model_registry::ModelRegistry::load()
         .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
-    
-    let model_id = model_registry.resolve(&default_model)
+
+    let model_id = model_registry
+        .resolve(&default_model)
         .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
 
     let config = SessionManagerConfig {

@@ -54,8 +54,13 @@ async fn test_requires_approval_tool_detection() -> Result<()> {
 #[tokio::test]
 async fn test_tool_executor_requires_approval_check() -> Result<()> {
     dotenv().ok();
+    let model_registry = Arc::new(
+        steer_core::model_registry::ModelRegistry::load()
+            .expect("Failed to load model registry for tests"),
+    );
     let app_config = AppConfig {
         llm_config_provider: test_utils::test_llm_config_provider(),
+        model_registry,
     };
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
     let (workspace, _temp_dir) = create_test_workspace().await;

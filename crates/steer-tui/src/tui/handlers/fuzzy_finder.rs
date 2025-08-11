@@ -5,6 +5,7 @@ use crate::tui::theme::ThemeLoader;
 use crate::tui::widgets::PickerItem;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use steer_core::config::provider::ProviderId;
 use tui_textarea::Input;
 
 impl Tui {
@@ -110,16 +111,15 @@ impl Tui {
                             self.input_panel_state
                                 .fuzzy_finder
                                 .activate(cursor_pos, FMode::Models);
-                            // Populate models
-                            use steer_core::model_registry::ModelRegistry;
-
-                            if let Ok(registry) = ModelRegistry::load() {
+                            // Populate models from server
+                            if let Ok(models) = self.client.list_models(None).await {
                                 let current_model = self.current_model.clone();
-                                let picker_items: Vec<PickerItem> = registry
-                                    .recommended()
+                                let picker_items: Vec<PickerItem> = models
+                                    .into_iter()
                                     .map(|m| {
-                                        let model_id = (m.provider.clone(), m.id.clone());
-                                        let model_str = format!("{}/{}", m.provider, m.id);
+                                        let model_id =
+                                            (ProviderId(m.provider_id.clone()), m.model_id.clone());
+                                        let model_str = format!("{}/{}", m.provider_id, m.model_id);
                                         let display = if model_id == current_model {
                                             format!("{model_str} (current)")
                                         } else {
@@ -204,32 +204,26 @@ impl Tui {
                                         .fuzzy_finder
                                         .activate(cursor_pos, FMode::Models);
 
-                                    // Populate models grouped by provider
-                                    use steer_core::model_registry::ModelRegistry;
-
-                                    if let Ok(registry) = ModelRegistry::load() {
+                                    // Populate models from server
+                                    if let Ok(models) = self.client.list_models(None).await {
                                         let current_model = self.current_model.clone();
-                                        let mut results = Vec::new();
-
-                                        // Group models by provider
-                                        for provider_config in self.provider_registry.all() {
-                                            let provider_name = &provider_config.id;
-                                            for m in registry.recommended() {
-                                                if m.provider == provider_config.id {
-                                                    let model_id =
-                                                        (m.provider.clone(), m.id.clone());
-
-                                                    let model_str =
-                                                        format!("{}/{}", provider_name, m.id);
-                                                    let label = if model_id == current_model {
-                                                        format!("{model_str} (current)")
-                                                    } else {
-                                                        model_str.clone()
-                                                    };
-                                                    results.push(PickerItem::new(label, model_str));
-                                                }
-                                            }
-                                        }
+                                        let results: Vec<PickerItem> = models
+                                            .into_iter()
+                                            .map(|m| {
+                                                let model_id = (
+                                                    ProviderId(m.provider_id.clone()),
+                                                    m.model_id.clone(),
+                                                );
+                                                let model_str =
+                                                    format!("{}/{}", m.provider_id, m.model_id);
+                                                let label = if model_id == current_model {
+                                                    format!("{model_str} (current)")
+                                                } else {
+                                                    model_str.clone()
+                                                };
+                                                PickerItem::new(label, model_str)
+                                            })
+                                            .collect();
                                         self.input_panel_state.fuzzy_finder.update_results(results);
                                     }
                                 } else {
@@ -336,60 +330,36 @@ impl Tui {
 
             match mode {
                 FuzzyFinderMode::Models => {
-                    // Filter models based on query with provider grouping
+                    // Filter models based on query from server models
                     use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-                    use steer_core::model_registry::ModelRegistry;
 
-                    if let Ok(registry) = ModelRegistry::load() {
+                    if let Ok(models) = self.client.list_models(None).await {
                         let matcher = SkimMatcherV2::default();
                         let current_model = self.current_model.clone();
                         let mut scored_models: Vec<(i64, String)> = Vec::new();
 
-                        // Group models by provider
-                        for provider_config in self.provider_registry.all() {
-                            let provider_name = &provider_config.id;
-                            for m in registry.recommended() {
-                                if m.provider == provider_config.id {
-                                    let model_id = (m.provider.clone(), m.id.clone());
-                                    let full_label = if model_id == current_model {
-                                        format!("{}/{} (current)", provider_name, m.id)
-                                    } else {
-                                        format!("{}/{}", provider_name, m.id)
-                                    };
+                        for m in models {
+                            let model_id = (ProviderId(m.provider_id.clone()), m.model_id.clone());
+                            let full_label = if model_id == current_model {
+                                format!("{}/{} (current)", m.provider_id, m.model_id)
+                            } else {
+                                format!("{}/{}", m.provider_id, m.model_id)
+                            };
 
-                                    // Match against full label, model name, or aliases
-                                    let full_score = matcher.fuzzy_match(&full_label, &query);
-                                    let model_score = matcher.fuzzy_match(&m.id, &query);
-                                    let exact_alias_match = m
-                                        .aliases
-                                        .iter()
-                                        .any(|alias| alias.eq_ignore_ascii_case(&query));
+                            // Match against full label or model name
+                            let full_score = matcher.fuzzy_match(&full_label, &query);
+                            let model_score = matcher.fuzzy_match(&m.model_id, &query);
 
-                                    let alias_score = if exact_alias_match {
-                                        Some(1000) // High score for exact matches
-                                    } else {
-                                        m.aliases
-                                            .iter()
-                                            .filter_map(|alias| matcher.fuzzy_match(alias, &query))
-                                            .max()
-                                    };
+                            // Take the maximum score from all matches
+                            let best_score = match (full_score, model_score) {
+                                (Some(f), Some(m)) => Some(f.max(m)),
+                                (Some(f), None) => Some(f),
+                                (None, Some(m)) => Some(m),
+                                (None, None) => None,
+                            };
 
-                                    // Take the maximum score from all matches
-                                    let best_score = match (full_score, model_score, alias_score) {
-                                        (Some(f), Some(m), Some(a)) => Some(f.max(m).max(a)),
-                                        (Some(f), Some(m), None) => Some(f.max(m)),
-                                        (Some(f), None, Some(a)) => Some(f.max(a)),
-                                        (None, Some(m), Some(a)) => Some(m.max(a)),
-                                        (Some(f), None, None) => Some(f),
-                                        (None, Some(m), None) => Some(m),
-                                        (None, None, Some(a)) => Some(a),
-                                        (None, None, None) => None,
-                                    };
-
-                                    if let Some(score) = best_score {
-                                        scored_models.push((score, full_label));
-                                    }
-                                }
+                            if let Some(score) = best_score {
+                                scored_models.push((score, full_label));
                             }
                         }
 

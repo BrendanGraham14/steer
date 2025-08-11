@@ -25,7 +25,9 @@ async fn test_headless_mode_integration() {
 
     // Call run_once - note: new signature doesn't take config or timeout
     let result = steer::run_once_ephemeral(
-        &steer::create_session_manager("claude-3-5-sonnet-latest".to_string()).await.unwrap(),
+        &steer::create_session_manager("claude-3-5-sonnet-latest".to_string())
+            .await
+            .unwrap(),
         messages,
         steer_core::config::model::builtin::claude_3_5_sonnet_20241022().1,
         None,

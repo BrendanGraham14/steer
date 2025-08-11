@@ -53,6 +53,22 @@ impl Client {
         }
     }
 
+    pub fn new_with_provider_and_registry(
+        provider: LlmConfigProvider,
+        model_registry: Arc<ModelRegistry>,
+    ) -> Self {
+        // Load the provider registry
+        let provider_registry =
+            Arc::new(ProviderRegistry::load().expect("Failed to load provider registry"));
+
+        Self {
+            provider_map: Arc::new(RwLock::new(HashMap::new())),
+            config_provider: provider,
+            provider_registry,
+            model_registry,
+        }
+    }
+
     async fn get_or_create_provider(&self, provider_id: ProviderId) -> Result<Arc<dyn Provider>> {
         // First check without holding the lock across await
         {

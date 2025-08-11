@@ -103,7 +103,7 @@ impl Client {
         };
 
         ResponsesRequest {
-            model: model_id.1.clone(),  // Use the model ID string
+            model: model_id.1.clone(), // Use the model ID string
             input,
             instructions: system,
             previous_response_id: None,
@@ -484,8 +484,7 @@ mod tests {
     use super::*;
 
     use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
-    use crate::config::model::ModelId;
-    use crate::config::provider::ProviderId;
+
     use steer_tools::ToolSchema;
 
     #[test]
@@ -567,7 +566,7 @@ mod tests {
             id: "msg1".to_string(),
             parent_message_id: None,
         }];
-        
+
         let model_id = (
             crate::config::provider::openai(),
             "gpt-4.1-2025-04-14".to_string(),
@@ -577,7 +576,7 @@ mod tests {
             messages,
             Some("You are a weather assistant".to_string()),
             Some(tools),
-            None,  // No call options for this test
+            None, // No call options for this test
         );
 
         assert!(request.tools.is_some());
@@ -613,9 +612,7 @@ mod tests {
             temperature: None,
             max_tokens: None,
             top_p: None,
-            thinking_config: Some(crate::config::model::ThinkingConfig {
-                enabled: true,
-            }),
+            thinking_config: Some(crate::config::model::ThinkingConfig { enabled: true }),
         });
         let request = client.build_request(&model_id, messages.clone(), None, None, call_options);
 

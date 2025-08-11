@@ -108,7 +108,7 @@ impl ManagedSession {
         // Create the App instance with the configured tool executor and session config
         let mut app = if let Some(conv) = conversation {
             App::new_with_conversation(
-                app_config,
+                app_config.clone(),
                 app_event_tx,
                 default_model.clone(),
                 workspace.clone(),
@@ -119,7 +119,7 @@ impl ManagedSession {
             .await?
         } else {
             App::new(
-                app_config,
+                app_config.clone(),
                 app_event_tx,
                 default_model,
                 workspace.clone(),
@@ -131,11 +131,9 @@ impl ManagedSession {
 
         // Set the initial model if specified in session metadata
         if let Some(model_str) = session.config.metadata.get("initial_model") {
-            // Use the model registry to resolve the model
-            if let Ok(model_registry) = crate::model_registry::ModelRegistry::load() {
-                if let Ok(model_id) = model_registry.resolve(model_str) {
-                    let _ = app.set_model(model_id).await;
-                }
+            // Use the model registry from app_config to resolve the model
+            if let Ok(model_id) = app_config.model_registry.resolve(model_str) {
+                let _ = app.set_model(model_id).await;
             }
         }
 

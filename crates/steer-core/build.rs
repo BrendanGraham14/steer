@@ -76,9 +76,8 @@ fn generate_model_constants(out_dir: &Path) {
     }
 
     // Generate DEFAULT_MODEL constant - hardcoded to opus
-    output.push_str(&format!(
-        "\n// Default model\n#[inline]\npub fn default_model() -> ModelId {{ opus() }}\n"
-    ));
+    output
+        .push_str("\n// Default model\n#[inline]\npub fn default_model() -> ModelId { opus() }\n");
 
     let dest_file = out_dir.join("generated_model_ids.rs");
     fs::write(&dest_file, output).expect("Failed to write generated_model_ids.rs");

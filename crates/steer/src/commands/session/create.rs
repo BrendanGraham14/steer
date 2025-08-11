@@ -45,19 +45,20 @@ impl Command for CreateSessionCommand {
         // Local session handling
         let store_config = resolve_session_store_config(self.session_db.clone())?;
         let session_store = create_session_store_with_config(store_config).await?;
-        
+
         // Load model registry and resolve default model
         let model_registry = steer_core::model_registry::ModelRegistry::load()
             .map_err(|e| eyre!("Failed to load model registry: {}", e))?;
-        
+
         let default_model = if let Some(ref model_str) = self.model {
-            model_registry.resolve(model_str)
+            model_registry
+                .resolve(model_str)
                 .map_err(|e| eyre!("Invalid model: {}", e))?
         } else {
             // Default to opus (which now points to opus-4.1 via build.rs)
             steer_core::config::model::builtin::opus()
         };
-        
+
         let session_manager_config = SessionManagerConfig {
             max_concurrent_sessions: 10,
             default_model,
@@ -71,8 +72,13 @@ impl Command for CreateSessionCommand {
                 .map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
         );
         let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
+        let model_registry = std::sync::Arc::new(
+            steer_core::model_registry::ModelRegistry::load()
+                .map_err(|e| eyre!("Failed to load model registry: {}", e))?,
+        );
         let app_config = AppConfig {
             llm_config_provider,
+            model_registry,
         };
 
         let (session_id, _) = session_manager
