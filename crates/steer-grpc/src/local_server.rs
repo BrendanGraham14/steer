@@ -11,6 +11,7 @@ use tonic::transport::{Channel, Server};
 /// This runs both server and client in the same process using localhost TCP
 pub async fn create_local_channel(
     session_manager: Arc<SessionManager>,
+    model_registry: Arc<steer_core::model_registry::ModelRegistry>,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     // Create a channel for the server's bound address
     let (tx, rx) = oneshot::channel();
@@ -27,7 +28,7 @@ pub async fn create_local_channel(
     let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
 
     // Create the service
-    let service = AgentServiceImpl::new(session_manager, llm_config_provider);
+    let service = AgentServiceImpl::new(session_manager, llm_config_provider, model_registry);
     let svc = AgentServiceServer::new(service);
 
     // Spawn the server with a listener on localhost
@@ -72,6 +73,10 @@ pub async fn setup_local_grpc(
     let session_store =
         steer_core::utils::session::create_session_store_with_config(store_config).await?;
 
+    // Load model registry once at startup
+    let model_registry =
+        Arc::new(steer_core::model_registry::ModelRegistry::load().map_err(GrpcError::CoreError)?);
+
     // Create global event channel (not used in local mode but required)
     let session_manager_config = SessionManagerConfig {
         max_concurrent_sessions: 10,
@@ -82,7 +87,7 @@ pub async fn setup_local_grpc(
     let session_manager = Arc::new(SessionManager::new(session_store, session_manager_config));
 
     // Create localhost channel
-    let (channel, handle) = create_local_channel(session_manager).await?;
+    let (channel, handle) = create_local_channel(session_manager, model_registry).await?;
 
     Ok((channel, handle))
 }

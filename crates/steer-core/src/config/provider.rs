@@ -64,7 +64,6 @@ impl ProviderId {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub id: ProviderId,

@@ -50,10 +50,6 @@ async fn main() -> Result<()> {
 
     // Load preferences to get default model
     let preferences = steer_core::preferences::Preferences::load().unwrap_or_default();
-    
-    // Load model registry early to validate models
-    let model_registry = steer_core::model_registry::ModelRegistry::load()
-        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
 
     // Determine which model to use:
     // 1. CLI argument (if provided)
@@ -176,15 +172,13 @@ async fn main() -> Result<()> {
             command.execute().await
         }
         Commands::Server { port, bind } => {
-            // Resolve model string to ModelId
-            let model_id = model_registry
-                .resolve(&model)
-                .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+            // Use builtin default model for the server
+            let default_model = steer_core::config::model::builtin::opus();
 
             let command = ServeCommand {
                 port,
                 bind,
-                model: model_id,
+                model: default_model,
                 session_db: cli.session_db.clone(),
             };
             command.execute().await
@@ -223,18 +217,12 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
-    // Load model registry
-    let model_registry = steer_core::model_registry::ModelRegistry::load()
-        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
-
-    // Resolve model string to ModelId
-    let model_id = model_registry
-        .resolve(&params.model)
-        .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+    // Use builtin default model for server startup
+    let default_model = steer_core::config::model::builtin::opus();
 
     // Create in-memory channel
     let (channel, _server_handle) =
-        local_server::setup_local_grpc(model_id.clone(), params.session_db.clone())
+        local_server::setup_local_grpc(default_model.clone(), params.session_db.clone())
             .await
             .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
 
@@ -242,6 +230,18 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
     let client = steer_grpc::AgentClient::from_channel(channel)
         .await
         .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
+
+    // Resolve the user's model choice to a ModelId
+    let model_id = if params.model != "opus" {
+        // User specified a model, resolve it via the server
+        client
+            .resolve_model(&params.model)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to resolve model '{}': {}", params.model, e))?
+    } else {
+        // Use the default
+        default_model
+    };
 
     // Resolve "latest" alias
     if matches!(session_id.as_deref(), Some("latest")) {
@@ -357,14 +357,25 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         session_id = Some(new_session_id);
     }
 
-    // Load model registry
-    let model_registry = steer_core::model_registry::ModelRegistry::load()
-        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+    // Use builtin default model for TUI initially
+    let default_model = steer_core::config::model::builtin::opus();
 
-    // Resolve model string to ModelId
-    let model_id = model_registry
-        .resolve(&params.model)
-        .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
+    // Resolve user-specified model if different from default
+    let model_id = if params.model != "opus" && !params.model.is_empty() {
+        match client.resolve_model(&params.model).await {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve model '{}': {}, using default",
+                    params.model,
+                    e
+                );
+                default_model
+            }
+        }
+    } else {
+        default_model
+    };
 
     // Run TUI with the client
     tui::run_tui(

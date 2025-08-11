@@ -61,6 +61,7 @@ impl ServiceHostConfig {
 /// Manages the gRPC server, SessionManager, and component lifecycle
 pub struct ServiceHost {
     session_manager: Arc<SessionManager>,
+    model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     server_handle: Option<JoinHandle<Result<()>>>,
     cleanup_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -72,6 +73,13 @@ impl ServiceHost {
     pub async fn new(config: ServiceHostConfig) -> Result<Self> {
         // Initialize session store
         let store = create_session_store(&config.db_path).await?;
+
+        // Load model registry once at startup
+        let model_registry = Arc::new(steer_core::model_registry::ModelRegistry::load().map_err(
+            |e| GrpcError::InvalidSessionState {
+                reason: format!("Failed to load model registry: {e}"),
+            },
+        )?);
 
         // Create session manager
         let session_manager = Arc::new(SessionManager::new(
@@ -86,6 +94,7 @@ impl ServiceHost {
 
         Ok(Self {
             session_manager,
+            model_registry,
             server_handle: None,
             cleanup_handle: None,
             shutdown_tx: None,
@@ -105,7 +114,11 @@ impl ServiceHost {
         let llm_config_provider =
             steer_core::config::LlmConfigProvider::new(self.config.auth_storage.clone());
 
-        let service = AgentServiceImpl::new(self.session_manager.clone(), llm_config_provider);
+        let service = AgentServiceImpl::new(
+            self.session_manager.clone(),
+            llm_config_provider,
+            self.model_registry.clone(),
+        );
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let addr = self.config.bind_addr;
