@@ -120,7 +120,21 @@ async fn process_web_page_content(
     prompt: String,
     token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ToolError> {
-    let client = crate::api::Client::new_with_provider((*tool.llm_config_provider).clone());
+    // Load registries for API client - these are lightweight to load
+    let model_registry =
+        std::sync::Arc::new(crate::model_registry::ModelRegistry::load().map_err(|e| {
+            ToolError::execution("fetch", format!("Failed to load model registry: {e}"))
+        })?);
+    let provider_registry =
+        std::sync::Arc::new(crate::auth::ProviderRegistry::load().map_err(|e| {
+            ToolError::execution("fetch", format!("Failed to load provider registry: {e}"))
+        })?);
+
+    let client = crate::api::Client::new_with_deps(
+        (*tool.llm_config_provider).clone(),
+        provider_registry,
+        model_registry,
+    );
     let user_message = format!(
         r#"Web page content:
 ---

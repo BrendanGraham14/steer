@@ -69,7 +69,17 @@ Usage notes:
     ) -> std::result::Result<steer_tools::result::AgentResult, ToolError> {
         let token = context.cancellation_token.clone();
 
-        let api_client = Arc::new(crate::api::Client::new_with_provider((*tool.llm_config_provider).clone())); // Create ApiClient and wrap in Arc
+        // Load registries for API client - these are lightweight to load
+        let model_registry = Arc::new(crate::model_registry::ModelRegistry::load()
+            .map_err(|e| ToolError::execution("dispatch_agent", format!("Failed to load model registry: {e}")))?);
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load()
+            .map_err(|e| ToolError::execution("dispatch_agent", format!("Failed to load provider registry: {e}")))?);
+
+        let api_client = Arc::new(crate::api::Client::new_with_deps(
+            (*tool.llm_config_provider).clone(),
+            provider_registry,
+            model_registry,
+        )); // Create ApiClient and wrap in Arc
         let agent_executor = AgentExecutor::new(api_client);
 
         let tool_executor = Arc::new(ToolExecutor::with_workspace(tool.workspace.clone()));

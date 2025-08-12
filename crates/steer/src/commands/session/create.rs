@@ -3,7 +3,6 @@ use eyre::{Result, eyre};
 
 use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
-use steer_core::app::AppConfig;
 
 use steer_core::session::{SessionManager, SessionManagerConfig};
 use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
@@ -46,9 +45,16 @@ impl Command for CreateSessionCommand {
         let store_config = resolve_session_store_config(self.session_db.clone())?;
         let session_store = create_session_store_with_config(store_config).await?;
 
-        // Load model registry and resolve default model
-        let model_registry = steer_core::model_registry::ModelRegistry::load()
-            .map_err(|e| eyre!("Failed to load model registry: {}", e))?;
+        // Create AppConfig with both registries
+        let auth_storage = std::sync::Arc::new(
+            steer_core::auth::DefaultAuthStorage::new()
+                .map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
+        );
+        let app_config = steer_core::app::AppConfig::from_auth_storage(auth_storage)
+            .map_err(|e| eyre!("Failed to create app config: {}", e))?;
+
+        // Extract the registries for reuse
+        let model_registry = app_config.model_registry.clone();
 
         let default_model = if let Some(ref model_str) = self.model {
             model_registry
@@ -66,20 +72,6 @@ impl Command for CreateSessionCommand {
         };
 
         let session_manager = SessionManager::new(session_store, session_manager_config);
-
-        let auth_storage = std::sync::Arc::new(
-            steer_core::auth::DefaultAuthStorage::new()
-                .map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
-        );
-        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
-        let model_registry = std::sync::Arc::new(
-            steer_core::model_registry::ModelRegistry::load()
-                .map_err(|e| eyre!("Failed to load model registry: {}", e))?,
-        );
-        let app_config = AppConfig {
-            llm_config_provider,
-            model_registry,
-        };
 
         let (session_id, _) = session_manager
             .create_session(session_config, app_config)
