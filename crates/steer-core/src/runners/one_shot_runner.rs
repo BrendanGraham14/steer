@@ -3,13 +3,9 @@ use tracing::{error, info};
 
 use crate::app::conversation::UserContent;
 use crate::app::{AppCommand, AppConfig, Message, MessageData};
-use crate::config::LlmConfigProvider;
 use crate::config::model::ModelId;
 use crate::error::{Error, Result};
 use crate::session::state::WorkspaceConfig;
-
-#[cfg(not(test))]
-use crate::auth::DefaultAuthStorage;
 
 use crate::session::{
     manager::SessionManager,
@@ -50,25 +46,11 @@ impl OneShotRunner {
         message: String,
     ) -> Result<RunOnceResult> {
         // 1. Resume or activate the session if not already active
-        #[cfg(not(test))]
-        let app_config = {
-            let storage = std::sync::Arc::new(DefaultAuthStorage::new()?);
-            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
-            AppConfig {
-                llm_config_provider: LlmConfigProvider::new(storage),
-                model_registry,
-            }
-        };
-
         #[cfg(test)]
-        let app_config = {
-            let storage = std::sync::Arc::new(crate::test_utils::InMemoryAuthStorage::new());
-            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
-            AppConfig {
-                llm_config_provider: LlmConfigProvider::new(storage),
-                model_registry,
-            }
-        };
+        let app_config = AppConfig::default();
+
+        #[cfg(not(test))]
+        let app_config = AppConfig::new()?;
 
         let command_tx = session_manager
             .resume_session(&session_id, app_config)
@@ -166,25 +148,11 @@ impl OneShotRunner {
             default_config
         };
 
-        #[cfg(not(test))]
-        let app_config = {
-            let storage = std::sync::Arc::new(DefaultAuthStorage::new()?);
-            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
-            AppConfig {
-                llm_config_provider: LlmConfigProvider::new(storage),
-                model_registry,
-            }
-        };
-
         #[cfg(test)]
-        let app_config = {
-            let storage = std::sync::Arc::new(crate::test_utils::InMemoryAuthStorage::new());
-            let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
-            AppConfig {
-                llm_config_provider: LlmConfigProvider::new(storage),
-                model_registry,
-            }
-        };
+        let app_config = AppConfig::default();
+
+        #[cfg(not(test))]
+        let app_config = AppConfig::new()?;
 
         let (session_id, command_tx) = session_manager
             .create_session(session_config, app_config)
