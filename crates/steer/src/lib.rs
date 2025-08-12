@@ -42,12 +42,17 @@ pub async fn run_once_ephemeral(
     tool_policy: Option<steer_core::session::ToolApprovalPolicy>,
     system_prompt: Option<String>,
 ) -> Result<RunOnceResult> {
-    // Load model registry to resolve the model string
-    let model_registry = steer_core::model_registry::ModelRegistry::load()
-        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+    // Create AppConfig to get the model registry
+    let auth_storage = std::sync::Arc::new(
+        steer_core::auth::DefaultAuthStorage::new()
+            .map_err(|e| eyre::eyre!("Failed to create auth storage: {}", e))?,
+    );
+    let app_config = steer_core::app::AppConfig::from_auth_storage(auth_storage)
+        .map_err(|e| eyre::eyre!("Failed to create app config: {}", e))?;
 
     // Resolve model string to ModelId
-    let model_id = model_registry
+    let model_id = app_config
+        .model_registry
         .resolve(&model)
         .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
 
@@ -75,11 +80,16 @@ pub async fn create_session_manager(default_model: String) -> Result<SessionMana
         .await
         .map_err(|e| eyre::eyre!("Failed to create session store: {}", e))?;
 
-    // Load model registry and resolve default model
-    let model_registry = steer_core::model_registry::ModelRegistry::load()
-        .map_err(|e| eyre::eyre!("Failed to load model registry: {}", e))?;
+    // Create AppConfig to get both registries
+    let auth_storage = std::sync::Arc::new(
+        steer_core::auth::DefaultAuthStorage::new()
+            .map_err(|e| eyre::eyre!("Failed to create auth storage: {}", e))?,
+    );
+    let app_config = steer_core::app::AppConfig::from_auth_storage(auth_storage)
+        .map_err(|e| eyre::eyre!("Failed to create app config: {}", e))?;
 
-    let model_id = model_registry
+    let model_id = app_config
+        .model_registry
         .resolve(&default_model)
         .map_err(|e| eyre::eyre!("Invalid model: {}", e))?;
 
