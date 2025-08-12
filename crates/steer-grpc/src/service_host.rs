@@ -62,6 +62,7 @@ impl ServiceHostConfig {
 pub struct ServiceHost {
     session_manager: Arc<SessionManager>,
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
+    provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     server_handle: Option<JoinHandle<Result<()>>>,
     cleanup_handle: Option<JoinHandle<()>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -81,6 +82,14 @@ impl ServiceHost {
             },
         )?);
 
+        // Load provider registry once at startup
+        let provider_registry =
+            Arc::new(steer_core::auth::ProviderRegistry::load().map_err(|e| {
+                GrpcError::InvalidSessionState {
+                    reason: format!("Failed to load provider registry: {e}"),
+                }
+            })?);
+
         // Create session manager
         let session_manager = Arc::new(SessionManager::new(
             store,
@@ -95,6 +104,7 @@ impl ServiceHost {
         Ok(Self {
             session_manager,
             model_registry,
+            provider_registry,
             server_handle: None,
             cleanup_handle: None,
             shutdown_tx: None,
@@ -118,6 +128,7 @@ impl ServiceHost {
             self.session_manager.clone(),
             llm_config_provider,
             self.model_registry.clone(),
+            self.provider_registry.clone(),
         );
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 

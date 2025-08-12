@@ -58,9 +58,14 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
         steer_core::model_registry::ModelRegistry::load()
             .expect("Failed to load model registry for tests"),
     );
+    let provider_registry = Arc::new(
+        steer_core::auth::ProviderRegistry::load()
+            .expect("Failed to load provider registry for tests"),
+    );
     let app_config = AppConfig {
         llm_config_provider: test_utils::test_llm_config_provider(),
         model_registry,
+        provider_registry,
     };
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
     let (workspace, _temp_dir) = create_test_workspace().await;

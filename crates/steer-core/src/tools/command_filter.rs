@@ -86,8 +86,16 @@ pub async fn get_command_prefix(
     llm_config_provider: &LlmConfigProvider,
     token: CancellationToken,
 ) -> Result<String> {
-    // Use the provided LLM config provider directly
-    let client = crate::api::Client::new_with_provider(llm_config_provider.clone());
+    // Load registries for API client - these are lightweight to load
+    let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
+    let provider_registry = std::sync::Arc::new(crate::auth::ProviderRegistry::load()?);
+
+    // Use the provided LLM config provider with registries
+    let client = crate::api::Client::new_with_deps(
+        llm_config_provider.clone(),
+        provider_registry,
+        model_registry,
+    );
     let user_message = USER_MESSAGE_TEMPLATE.replace("${command}", command);
 
     // Create a user message with the new structure

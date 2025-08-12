@@ -2,6 +2,7 @@ use crate::api::Client as ApiClient;
 use crate::app::cancellation::ActiveTool;
 use crate::app::command::ApprovalType;
 use crate::app::conversation::{AppCommandType, AssistantContent, CompactResult, UserContent};
+use crate::auth::ProviderRegistry;
 use crate::config::LlmConfigProvider;
 use crate::config::model::ModelId;
 use crate::error::{Error, Result};
@@ -153,22 +154,38 @@ pub struct CompactError {
 pub struct AppConfig {
     pub llm_config_provider: LlmConfigProvider,
     pub model_registry: Arc<ModelRegistry>,
+    pub provider_registry: Arc<ProviderRegistry>,
 }
 
+impl AppConfig {
+    /// Create AppConfig from an auth storage instance.
+    /// Loads both registries once and returns the configured AppConfig.
+    pub fn from_auth_storage(auth_storage: Arc<dyn crate::auth::AuthStorage>) -> Result<Self> {
+        let llm_config_provider = LlmConfigProvider::new(auth_storage);
+        let model_registry = Arc::new(ModelRegistry::load()?);
+        let provider_registry = Arc::new(ProviderRegistry::load()?);
+
+        Ok(Self {
+            llm_config_provider,
+            model_registry,
+            provider_registry,
+        })
+    }
+
+    /// Create AppConfig for production use with default auth storage.
+    #[cfg(not(test))]
+    pub fn new() -> Result<Self> {
+        let auth_storage = Arc::new(crate::auth::DefaultAuthStorage::new()?);
+        Self::from_auth_storage(auth_storage)
+    }
+}
+
+/// Test-only default implementation using in-memory storage.
+/// Available in both test and non-test contexts for test utilities.
 impl Default for AppConfig {
     fn default() -> Self {
-        // Create an in-memory auth storage for default
         let storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
-        let provider = LlmConfigProvider::new(storage);
-
-        // Load default model registry
-        let model_registry =
-            Arc::new(ModelRegistry::load().expect("Failed to load model registry"));
-
-        Self {
-            llm_config_provider: provider,
-            model_registry,
-        }
+        Self::from_auth_storage(storage).expect("Failed to create test AppConfig")
     }
 }
 
@@ -212,8 +229,9 @@ impl App {
         session_config: Option<crate::session::state::SessionConfig>,
         conversation: Conversation,
     ) -> Result<Self> {
-        let api_client = ApiClient::new_with_provider_and_registry(
+        let api_client = ApiClient::new_with_deps(
             config.llm_config_provider.clone(),
+            config.provider_registry.clone(),
             config.model_registry.clone(),
         );
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));

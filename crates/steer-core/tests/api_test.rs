@@ -16,8 +16,12 @@ use tokio_util::sync::CancellationToken;
 #[tokio::test]
 #[ignore]
 async fn test_api_basic() {
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
@@ -123,8 +127,12 @@ async fn test_api_with_tools() {
     // Load environment variables from .env file
     dotenv().ok();
 
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider); // Arc<Client>
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    ); // Arc<Client>
 
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
@@ -275,8 +283,12 @@ async fn test_api_with_tools() {
 #[ignore]
 async fn test_api_with_tool_response() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
@@ -415,8 +427,12 @@ async fn test_api_with_tool_response() {
 #[ignore]
 async fn test_gemini_system_instructions() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     let timestamp = Message::current_timestamp();
     let messages = vec![Message {
@@ -464,8 +480,12 @@ async fn test_gemini_system_instructions() {
 #[ignore]
 async fn test_gemini_api_tool_result_error() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     let ts1 = Message::current_timestamp();
     let ts2 = ts1 + 1;
@@ -543,8 +563,12 @@ async fn test_gemini_api_tool_result_error() {
 #[ignore]
 async fn test_gemini_api_complex_tool_schema() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     // Define a tool with a complex schema
     let complex_tool = Tool {
@@ -627,8 +651,12 @@ async fn test_gemini_api_complex_tool_schema() {
 #[ignore]
 async fn test_gemini_api_tool_result_json() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     // Define the JSON string to be used as the tool result content
     let json_result_string =
@@ -709,8 +737,12 @@ async fn test_gemini_api_tool_result_json() {
 #[ignore]
 async fn test_gemini_api_with_multiple_tool_responses() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     let ts1 = Message::current_timestamp();
     let ts2 = ts1 + 1;
@@ -834,8 +866,12 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 #[ignore]
 async fn test_api_with_cancelled_tool_execution() {
     dotenv().ok();
-    let provider = test_utils::test_llm_config_provider();
-    let client = Client::new_with_provider(provider);
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
 
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),

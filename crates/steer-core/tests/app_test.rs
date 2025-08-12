@@ -35,9 +35,14 @@ async fn test_tool_executor() -> Result<()> {
         steer_core::model_registry::ModelRegistry::load()
             .expect("Failed to load model registry for tests"),
     );
+    let provider_registry = Arc::new(
+        steer_core::auth::ProviderRegistry::load()
+            .expect("Failed to load provider registry for tests"),
+    );
     let app_config = AppConfig {
         llm_config_provider: test_utils::test_llm_config_provider(),
         model_registry,
+        provider_registry,
     };
 
     // Initialize the app

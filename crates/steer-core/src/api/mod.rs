@@ -36,34 +36,16 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new_with_provider(provider: LlmConfigProvider) -> Self {
-        // Load the provider registry
-        let provider_registry =
-            Arc::new(ProviderRegistry::load().expect("Failed to load provider registry"));
-
-        // Load the model registry
-        let model_registry =
-            Arc::new(ModelRegistry::load().expect("Failed to load model registry"));
-
-        Self {
-            provider_map: Arc::new(RwLock::new(HashMap::new())),
-            config_provider: provider,
-            provider_registry,
-            model_registry,
-        }
-    }
-
-    pub fn new_with_provider_and_registry(
-        provider: LlmConfigProvider,
+    /// Create a new Client with all dependencies injected.
+    /// This is the preferred constructor to avoid internal registry loading.
+    pub fn new_with_deps(
+        config_provider: LlmConfigProvider,
+        provider_registry: Arc<ProviderRegistry>,
         model_registry: Arc<ModelRegistry>,
     ) -> Self {
-        // Load the provider registry
-        let provider_registry =
-            Arc::new(ProviderRegistry::load().expect("Failed to load provider registry"));
-
         Self {
             provider_map: Arc::new(RwLock::new(HashMap::new())),
-            config_provider: provider,
+            config_provider,
             provider_registry,
             model_registry,
         }

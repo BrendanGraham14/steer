@@ -50,8 +50,12 @@ mod tests {
     // Helper to get a real client (requires env vars)
     async fn get_real_client() -> Arc<Client> {
         dotenv().ok(); // Load .env file if present
-        let provider = test_utils::test_llm_config_provider();
-        Arc::new(Client::new_with_provider(provider))
+        let app_config = test_utils::test_app_config();
+        Arc::new(Client::new_with_deps(
+            app_config.llm_config_provider,
+            app_config.provider_registry,
+            app_config.model_registry,
+        ))
     }
 
     // Test Case 1: Basic text response without tools
