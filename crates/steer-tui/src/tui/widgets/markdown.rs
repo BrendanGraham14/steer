@@ -33,7 +33,8 @@ fn syntect_style_to_ratatui(syntect_style: syntect::highlighting::Style) -> Styl
 #[derive(Debug, Clone)]
 pub struct MarkedLine {
     pub line: Line<'static>,
-    pub no_wrap: bool, // If true, this line should not be wrapped
+    pub no_wrap: bool,       // If true, this line should not be wrapped
+    pub indent_level: usize, // Number of spaces to indent when wrapping
 }
 
 impl MarkedLine {
@@ -41,6 +42,7 @@ impl MarkedLine {
         Self {
             line,
             no_wrap: false,
+            indent_level: 0,
         }
     }
 
@@ -48,7 +50,13 @@ impl MarkedLine {
         Self {
             line,
             no_wrap: true,
+            indent_level: 0,
         }
+    }
+
+    pub fn with_indent(mut self, indent: usize) -> Self {
+        self.indent_level = indent;
+        self
     }
 }
 
@@ -211,6 +219,9 @@ struct TextWriter<'a, I> {
 
     /// Terminal width for rendering full-width elements like horizontal rules
     terminal_width: Option<u16>,
+
+    /// Current list item indent level (for wrapping)
+    list_item_indent: usize,
 }
 
 impl<'a, I> TextWriter<'a, I>
@@ -236,6 +247,7 @@ where
             in_code_block: false,
             code_block_language: None,
             terminal_width: None,
+            list_item_indent: 0,
         }
     }
 
@@ -512,6 +524,9 @@ where
         self.push_line(Line::default());
         // Mark that we're at the start of a list item
         self.in_list_item_start = true;
+        // Calculate indent for wrapped lines
+        // We'll set the actual indent when we push the marker, based on its actual width
+        self.list_item_indent = 0;
         // Don't push the list marker yet - wait for task list marker if present
         self.needs_newline = false;
     }
@@ -605,7 +620,13 @@ where
         let marked_line = if self.in_code_block {
             MarkedLine::new_no_wrap(static_line)
         } else {
-            MarkedLine::new(static_line)
+            // Apply list item indent if we're in a list
+            let indent = if !self.list_indices.is_empty() && !has_prefixes {
+                self.list_item_indent
+            } else {
+                0
+            };
+            MarkedLine::new(static_line).with_indent(indent)
         };
 
         self.marked_text.lines.push(marked_line);
@@ -851,18 +872,33 @@ where
             return;
         }
 
-        let width = self.list_indices.len().saturating_mul(4).saturating_sub(3);
+        let depth = self.list_indices.len();
+        let indent_width = depth.saturating_sub(1).saturating_mul(4);
+        let indent_str = " ".repeat(indent_width);
+
         if let Some(last_index) = self.list_indices.last_mut() {
-            let span = match last_index {
-                None => Span::styled(
-                    " ".repeat(width.saturating_sub(1)) + "- ",
-                    self.styles.list_marker,
-                ),
+            let (span, full_marker_width) = match last_index {
+                None => {
+                    // Bullet list
+                    let full_marker = format!("{indent_str}- ");
+                    let width = full_marker.len();
+                    (Span::styled(full_marker, self.styles.list_marker), width)
+                }
                 Some(index) => {
+                    // Numbered list
                     *index += 1;
-                    Span::styled(format!("{:width$}. ", *index - 1), self.styles.list_number)
+                    let full_marker = format!("{}{}. ", indent_str, *index - 1);
+                    let width = full_marker.len();
+                    (Span::styled(full_marker, self.styles.list_number), width)
                 }
             };
+
+            // Set the indent for wrapped lines to align with text after the marker
+            self.list_item_indent = full_marker_width;
+            // Update the current line's indent metadata (the line created in start_item)
+            if let Some(current_line) = self.marked_text.lines.last_mut() {
+                current_line.indent_level = self.list_item_indent;
+            }
             self.push_span(span);
         }
     }
@@ -875,8 +911,9 @@ where
         }
 
         // Push the list indentation and marker
-        let width = self.list_indices.len().saturating_mul(4).saturating_sub(3);
-        let indent = " ".repeat(width.saturating_sub(1));
+        let depth = self.list_indices.len();
+        let indent_width = depth.saturating_sub(1).saturating_mul(4);
+        let indent_str = " ".repeat(indent_width);
 
         // Use checkbox characters
         let checkbox = if checked { "[✓] " } else { "[ ] " };
@@ -888,7 +925,13 @@ where
             self.styles.task_unchecked
         };
 
-        let span = Span::styled(format!("{indent}- {checkbox}"), style);
+        let full_marker = format!("{indent_str}- {checkbox}");
+        let marker_width = full_marker.len();
+
+        // Update the list item indent to account for the actual marker width
+        self.list_item_indent = marker_width;
+
+        let span = Span::styled(full_marker, style);
         self.push_span(span);
 
         // Mark that we've handled the list item start
@@ -1302,6 +1345,90 @@ Regular paragraph
         assert!(
             !writer.in_list_item_start,
             "in_list_item_start should be false at end"
+        );
+    }
+
+    #[test]
+    fn test_list_item_wrapping_indentation() {
+        use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
+
+        // Plain, deterministic words to control wrapping exactly
+        let markdown = r#"- aaaa bbbb cccc dddd eeee ffff gggg"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+
+        let rendered = from_str(markdown, &styles, &theme);
+        assert_eq!(rendered.lines.len(), 1);
+        let ml = &rendered.lines[0];
+
+        // Wrap to width 10 so we know exact breaking points
+        let wrapped = style_wrap_with_indent(ml.line.clone(), 10, ml.indent_level);
+        let got: Vec<String> = wrapped
+            .into_iter()
+            .map(|ln| ln.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+
+        // Expected exact visual lines (note trailing spaces where present)
+        let expected = vec![
+            "- aaaa ".to_string(),
+            "  bbbb ".to_string(),
+            "  cccc ".to_string(),
+            "  dddd ".to_string(),
+            "  eeee ".to_string(),
+            "  ffff ".to_string(),
+            "  gggg".to_string(),
+        ];
+
+        assert_eq!(
+            got, expected,
+            "wrapped bullet should align under text after '- '"
+        );
+    }
+
+    #[test]
+    fn test_nested_list_item_wrapping_indentation_exact() {
+        use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
+
+        // Include a parent item so the nested marker is parsed as a sub-list
+        let markdown = r#"- outer
+    - aaaa bbbb cccc dddd eeee ffff"#;
+
+        let theme = Theme::default();
+        let styles = MarkdownStyles::from_theme(&theme);
+
+        let rendered = from_str(markdown, &styles, &theme);
+        assert_eq!(rendered.lines.len(), 2);
+
+        // First line should be the outer item (no wrapping expected)
+        let first: String = rendered.lines[0]
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(first, "- outer");
+
+        // Second line is the nested one; wrap at width 12
+        let ml = &rendered.lines[1];
+        let wrapped = style_wrap_with_indent(ml.line.clone(), 12, ml.indent_level);
+        let got: Vec<String> = wrapped
+            .into_iter()
+            .map(|ln| ln.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+
+        let expected = vec![
+            "    - aaaa ".to_string(),
+            "      bbbb ".to_string(),
+            "      cccc ".to_string(),
+            "      dddd ".to_string(),
+            "      eeee ".to_string(),
+            "      ffff".to_string(),
+        ];
+
+        assert_eq!(
+            got, expected,
+            "wrapped nested bullet should align under text after '    - '"
         );
     }
 

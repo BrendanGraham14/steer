@@ -3,7 +3,7 @@ use steer_core::app::conversation::{AppCommandType, AssistantContent, MessageDat
 use steer_core::app::conversation::{Message, UserContent};
 
 use crate::tui::theme::{Component, Theme};
-use crate::tui::widgets::formatters::helpers::style_wrap;
+use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
 use crate::tui::widgets::{ChatRenderable, HeightCache, ViewMode, markdown};
 
 pub struct MessageWidget {
@@ -48,7 +48,11 @@ impl ChatRenderable for MessageWidget {
                                     lines.push(marked_line.line);
                                 } else {
                                     // Wrap normal lines
-                                    let wrapped = style_wrap(marked_line.line, max_width as u16);
+                                    let wrapped = style_wrap_with_indent(
+                                        marked_line.line,
+                                        max_width as u16,
+                                        marked_line.indent_level,
+                                    );
                                     for line in wrapped {
                                         lines.push(line);
                                     }
@@ -156,7 +160,11 @@ impl ChatRenderable for MessageWidget {
                                     lines.push(marked_line.line);
                                 } else {
                                     // Wrap normal lines
-                                    let wrapped = style_wrap(marked_line.line, max_width as u16);
+                                    let wrapped = style_wrap_with_indent(
+                                        marked_line.line,
+                                        max_width as u16,
+                                        marked_line.indent_level,
+                                    );
                                     for line in wrapped {
                                         lines.push(line);
                                     }
@@ -197,7 +205,11 @@ impl ChatRenderable for MessageWidget {
                                 if marked_line.no_wrap {
                                     lines.push(thought_line);
                                 } else {
-                                    let wrapped = style_wrap(thought_line, max_width as u16);
+                                    let wrapped = style_wrap_with_indent(
+                                        thought_line,
+                                        max_width as u16,
+                                        marked_line.indent_level,
+                                    );
                                     for line in wrapped {
                                         lines.push(line);
                                     }

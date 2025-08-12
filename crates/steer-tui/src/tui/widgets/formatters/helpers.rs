@@ -80,9 +80,16 @@ pub fn extract_exit_code(error: &str) -> Option<&str> {
 /// Wrap a styled line while preserving span styles
 /// This function breaks lines at word boundaries while maintaining the style of each span
 pub fn style_wrap(line: Line<'_>, max_width: u16) -> Vec<Line<'static>> {
+    style_wrap_with_indent(line, max_width, 0)
+}
+
+/// Wrap a styled line while preserving span styles and applying indentation to wrapped lines
+/// This function breaks lines at word boundaries while maintaining the style of each span
+pub fn style_wrap_with_indent(line: Line<'_>, max_width: u16, indent: usize) -> Vec<Line<'static>> {
     let mut output_lines = Vec::new();
     let mut current_line_spans = Vec::new();
     let mut current_width = 0;
+    let mut is_first_line = true;
 
     for span in line.spans {
         let style = span.style;
@@ -95,12 +102,26 @@ pub fn style_wrap(line: Line<'_>, max_width: u16) -> Vec<Line<'static>> {
             let word_width = word.width();
 
             // Check if adding this word would exceed the line width
-            if current_width > 0 && current_width + word_width > max_width as usize {
+            // For wrapped lines, we need to account for the indent
+            let effective_max_width = if is_first_line {
+                max_width as usize
+            } else {
+                (max_width as usize).saturating_sub(indent)
+            };
+
+            if current_width > 0 && current_width + word_width > effective_max_width {
                 // Push the current line and start a new one
                 if !current_line_spans.is_empty() {
                     output_lines.push(Line::from(current_line_spans));
                     current_line_spans = Vec::new();
                     current_width = 0;
+                    is_first_line = false;
+
+                    // Add indent for the new wrapped line
+                    if indent > 0 {
+                        current_line_spans.push(Span::raw(" ".repeat(indent)));
+                        current_width = indent;
+                    }
                 }
             }
 
