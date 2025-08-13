@@ -1,3 +1,29 @@
+# Default catalog containing both providers and models
+
+[[providers]]
+id = "anthropic"
+name = "Anthropic"
+api_format = "anthropic"
+auth_schemes = ["api-key", "oauth2"]
+
+[[providers]]
+id = "openai"
+name = "OpenAI"
+api_format = "openai-responses"
+auth_schemes = ["api-key"]
+
+[[providers]]
+id = "google"
+name = "Google"
+api_format = "google"
+auth_schemes = ["api-key"]
+
+[[providers]]
+id = "xai"
+name = "xAI"
+api_format = "xai"
+auth_schemes = ["api-key"]
+
 [[models]]
 provider = "anthropic"
 id = "claude-3-5-sonnet-20240620"
@@ -55,20 +81,27 @@ thinking_config.enabled = true
 [[models]]
 provider = "openai"
 id = "gpt-4.1-2025-04-14"
-aliases = ["gpt-4.1", "gpt4.1"]
-recommended = false
+aliases = ["gpt-4.1"]
+recommended = true
+[models.parameters]
+thinking_config.enabled = true
 
 [[models]]
 provider = "openai"
 id = "gpt-4.1-mini-2025-04-14"
-aliases = []
+aliases = ["gpt-mini"]
 recommended = false
+[models.parameters]
+thinking_config.enabled = true
 
 [[models]]
 provider = "openai"
 id = "gpt-4.1-nano-2025-04-14"
-aliases = []
+aliases = ["gpt-nano"]
 recommended = false
+[models.parameters]
+thinking_config.enabled = true
+_config.enabled = true
 
 [[models]]
 provider = "openai"
@@ -77,16 +110,14 @@ aliases = ["codex-mini"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
-temperature = 1.0
 
 [[models]]
 provider = "openai"
 id = "gpt-5-2025-08-07"
-aliases = ["gpt-5", "gpt5"]
+aliases = ["gpt-5", "gpt5", "gpt"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
-temperature = 1.0
 
 [[models]]
 provider = "openai"
@@ -95,7 +126,6 @@ aliases = ["o3"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
-temperature = 1.0
 
 [[models]]
 provider = "openai"
@@ -104,7 +134,6 @@ aliases = ["o3-pro"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
-temperature = 1.0
 
 [[models]]
 provider = "openai"
@@ -117,38 +146,31 @@ thinking_config.enabled = true
 [[models]]
 provider = "google"
 id = "gemini-2.5-flash-preview-04-17"
-aliases = []
+aliases = ["gemini-flash", "flash"]
 recommended = false
-[models.parameters]
-thinking_config.enabled = true
-
 
 [[models]]
 provider = "google"
 id = "gemini-2.5-pro-preview-06-05"
-aliases = ["gemini"]
+aliases = ["gemini-pro", "gemini"]
 recommended = true
-[models.parameters]
-thinking_config.enabled = true
 
 [[models]]
 provider = "xai"
 id = "grok-3"
 aliases = []
-recommended = true
+recommended = false
 
 [[models]]
 provider = "xai"
 id = "grok-3-mini"
 aliases = ["grok-mini"]
 recommended = false
-[models.parameters]
-thinking_config.enabled = true
 
 [[models]]
 provider = "xai"
 id = "grok-4-0709"
-aliases = ["grok"]
+aliases = ["grok-4", "grok"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true

@@ -999,8 +999,9 @@ mod tests {
 
         let auth_storage = Arc::new(steer_core::test_utils::InMemoryAuthStorage::new());
         let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
-        let model_registry = Arc::new(steer_core::model_registry::ModelRegistry::load().unwrap());
-        let provider_registry = Arc::new(steer_core::auth::ProviderRegistry::load().unwrap());
+        let model_registry =
+            Arc::new(steer_core::model_registry::ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(steer_core::auth::ProviderRegistry::load(&[]).unwrap());
         let service = AgentServiceImpl::new(
             session_manager.clone(),
             llm_config_provider,

@@ -3,6 +3,7 @@ use crate::app::cancellation::ActiveTool;
 use crate::app::command::ApprovalType;
 use crate::app::conversation::{AppCommandType, AssistantContent, CompactResult, UserContent};
 use crate::auth::ProviderRegistry;
+use crate::catalog::CatalogConfig;
 use crate::config::LlmConfigProvider;
 use crate::config::model::ModelId;
 use crate::error::{Error, Result};
@@ -158,12 +159,20 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    /// Create AppConfig from an auth storage instance.
+    /// Create AppConfig from an auth storage instance with default catalog.
     /// Loads both registries once and returns the configured AppConfig.
     pub fn from_auth_storage(auth_storage: Arc<dyn crate::auth::AuthStorage>) -> Result<Self> {
+        Self::from_auth_storage_with_catalog(auth_storage, CatalogConfig::default())
+    }
+
+    /// Create AppConfig from an auth storage instance with custom catalog config.
+    pub fn from_auth_storage_with_catalog(
+        auth_storage: Arc<dyn crate::auth::AuthStorage>,
+        catalog_config: CatalogConfig,
+    ) -> Result<Self> {
         let llm_config_provider = LlmConfigProvider::new(auth_storage);
-        let model_registry = Arc::new(ModelRegistry::load()?);
-        let provider_registry = Arc::new(ProviderRegistry::load()?);
+        let model_registry = Arc::new(ModelRegistry::load(&catalog_config.catalog_paths)?);
+        let provider_registry = Arc::new(ProviderRegistry::load(&catalog_config.catalog_paths)?);
 
         Ok(Self {
             llm_config_provider,
@@ -1724,7 +1733,6 @@ fn get_model_system_prompt(model_id: ModelId) -> String {
         || model_id == builtin::gpt_4_1_2025_04_14()
         || model_id == builtin::o4_mini_2025_04_16()
         || model_id == builtin::grok_4_0709()
-        || model_id == builtin::codex_mini_latest()
     {
         crate::prompts::o3_system_prompt()
     } else if model_id.0 == crate::config::provider::google()

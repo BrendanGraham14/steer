@@ -1,5 +1,7 @@
-use crate::config::provider::{ProviderConfig, ProviderId, builtin_providers};
+use crate::config::provider::{ProviderConfig, ProviderId};
+use crate::config::toml_types::Catalog;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Registry for provider definitions and authentication flow factories.
 ///
@@ -9,51 +11,54 @@ pub struct ProviderRegistry {
     providers: HashMap<ProviderId, ProviderConfig>,
 }
 
-impl ProviderRegistry {
-    /// Load provider definitions by merging built-ins with optional user overrides.
-    ///
-    /// Built-ins come from the embedded `default_providers.toml` file.  Users may
-    /// place a `providers.toml` file at `~/.config/conductor/providers.toml` with
-    /// the same schema (`[[providers]]` array of tables).  Entries with duplicate
-    /// IDs replace the built-ins, and new IDs are appended.
-    pub fn load() -> crate::error::Result<Self> {
-        let config_dir = dirs::config_dir();
-        Self::load_with_config_dir(config_dir.as_deref())
-    }
+const DEFAULT_CATALOG_TOML: &str = include_str!("../../assets/default_catalog.toml");
 
-    /// Load provider definitions with an explicit config directory.
+impl ProviderRegistry {
+    /// Load provider definitions with optional additional catalog files.
     ///
-    /// This is primarily for testing. If `config_dir` is None, only built-in
-    /// providers are loaded.
-    pub fn load_with_config_dir(
-        config_dir: Option<&std::path::Path>,
-    ) -> crate::error::Result<Self> {
+    /// Merge order (later overrides earlier):
+    /// 1. Built-in defaults from embedded catalog
+    /// 2. Additional catalog files specified
+    pub fn load(additional_catalogs: &[String]) -> crate::error::Result<Self> {
         let mut providers: HashMap<ProviderId, ProviderConfig> = HashMap::new();
 
-        // 1. Built-in providers
-        for p in builtin_providers()? {
-            providers.insert(p.id.clone(), p);
+        // 1. Built-in providers from embedded catalog
+        let builtin_catalog: Catalog = toml::from_str(DEFAULT_CATALOG_TOML).map_err(|e| {
+            crate::error::Error::Configuration(format!(
+                "Failed to parse embedded default_catalog.toml: {e}"
+            ))
+        })?;
+
+        for p in builtin_catalog.providers {
+            let config = ProviderConfig::from(p);
+            providers.insert(config.id.clone(), config);
         }
 
-        // 2. Optional user overrides
-        if let Some(cfg_dir) = config_dir {
-            let path = cfg_dir.join("conductor").join("providers.toml");
-            if path.exists() {
-                let contents = std::fs::read_to_string(&path)?;
-                #[derive(serde::Deserialize)]
-                struct Wrapper {
-                    providers: Vec<ProviderConfig>,
-                }
-                let wrapper: Wrapper = toml::from_str(&contents).map_err(|e| {
-                    crate::error::Error::Configuration(format!("Failed to parse {path:?}: {e}"))
-                })?;
-                for p in wrapper.providers {
-                    providers.insert(p.id.clone(), p); // overrides if duplicate
+        // 2. Additional catalog files
+        for catalog_path in additional_catalogs {
+            if let Some(catalog) = Self::load_catalog_file(Path::new(catalog_path))? {
+                for p in catalog.providers {
+                    let config = ProviderConfig::from(p);
+                    providers.insert(config.id.clone(), config);
                 }
             }
         }
 
         Ok(Self { providers })
+    }
+
+    /// Load a catalog file from disk.
+    fn load_catalog_file(path: &Path) -> crate::error::Result<Option<Catalog>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let contents = std::fs::read_to_string(path)?;
+        let catalog: Catalog = toml::from_str(&contents).map_err(|e| {
+            crate::error::Error::Configuration(format!("Failed to parse {}: {}", path.display(), e))
+        })?;
+
+        Ok(Some(catalog))
     }
 
     /// Get a provider config by ID.
@@ -70,63 +75,56 @@ impl ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::config::provider::{self, ApiFormat, AuthScheme, ProviderConfig, ProviderId};
+    use crate::config::provider::{self, ApiFormat, AuthScheme, ProviderId};
+    use crate::config::toml_types::{Catalog, ProviderData};
     use std::fs;
 
-    // Helper to build a minimal provider config TOML with given definitions
-    fn write_user_providers(base_dir: &std::path::Path, providers: &[ProviderConfig]) {
-        let steer_dir = base_dir.join("conductor");
-        fs::create_dir_all(&steer_dir).unwrap();
-
-        #[derive(serde::Serialize)]
-        struct Wrapper<'a> {
-            providers: &'a [ProviderConfig],
-        }
-
-        let toml_str = toml::to_string(&Wrapper { providers }).unwrap();
-        fs::write(steer_dir.join("providers.toml"), toml_str).unwrap();
+    // Helper to write a test catalog
+    fn write_test_catalog(base_dir: &std::path::Path, catalog: &Catalog) {
+        let catalog_path = base_dir.join("test_catalog.toml");
+        let toml_str = toml::to_string(catalog).unwrap();
+        fs::write(catalog_path, toml_str).unwrap();
     }
 
     #[test]
-    fn loads_builtin_when_no_user_file() {
-        let reg = ProviderRegistry::load_with_config_dir(None).expect("load registry");
-        assert_eq!(reg.all().count(), 4);
+    fn loads_builtin_when_no_additional_catalogs() {
+        let reg = ProviderRegistry::load(&[]).expect("load registry");
+        assert_eq!(reg.all().count(), 4); // Anthropic, OpenAI, Google, xAI
     }
 
     #[test]
-    fn loads_builtin_when_config_dir_empty() {
-        let temp = tempfile::tempdir().unwrap();
-        let reg = ProviderRegistry::load_with_config_dir(Some(temp.path())).expect("load registry");
-        assert_eq!(reg.all().count(), 4);
-    }
-
-    #[test]
-    fn user_overrides_replace_and_extend() {
+    fn loads_and_merges_additional_catalog() {
         let temp = tempfile::tempdir().unwrap();
 
-        // Override Anthropics and add a custom provider
-        let override_provider = ProviderConfig {
-            id: provider::anthropic(),
-            name: "Anthropic (override)".into(),
-            api_format: ApiFormat::Anthropic,
-            auth_schemes: vec![AuthScheme::ApiKey],
-            base_url: None,
-        };
-        let custom_provider = ProviderConfig {
-            id: ProviderId("myprov".to_string()),
-            name: "My Provider".into(),
-            api_format: ApiFormat::OpenaiResponses,
-            auth_schemes: vec![AuthScheme::ApiKey],
-            base_url: None,
+        // Create a catalog with override and new provider
+        let catalog = Catalog {
+            providers: vec![
+                ProviderData {
+                    id: "anthropic".to_string(),
+                    name: "Anthropic (override)".to_string(),
+                    api_format: ApiFormat::Anthropic,
+                    auth_schemes: vec![AuthScheme::ApiKey],
+                    base_url: None,
+                },
+                ProviderData {
+                    id: "myprov".to_string(),
+                    name: "My Provider".to_string(),
+                    api_format: ApiFormat::OpenaiResponses,
+                    auth_schemes: vec![AuthScheme::ApiKey],
+                    base_url: None,
+                },
+            ],
+            models: vec![],
         };
 
-        write_user_providers(
-            temp.path(),
-            &[override_provider.clone(), custom_provider.clone()],
-        );
+        write_test_catalog(temp.path(), &catalog);
 
-        let reg = ProviderRegistry::load_with_config_dir(Some(temp.path())).expect("load registry");
+        let catalog_path = temp
+            .path()
+            .join("test_catalog.toml")
+            .to_string_lossy()
+            .to_string();
+        let reg = ProviderRegistry::load(&[catalog_path]).expect("load registry");
 
         // Overridden provider
         let anthro = reg.get(&provider::anthropic()).unwrap();
