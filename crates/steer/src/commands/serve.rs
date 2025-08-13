@@ -3,6 +3,8 @@ use eyre::{Result, eyre};
 use tracing::info;
 
 use super::Command;
+use std::path::PathBuf;
+use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
 use steer_core::session::SessionManagerConfig;
 
@@ -11,6 +13,7 @@ pub struct ServeCommand {
     pub bind: String,
     pub model: ModelId,
     pub session_db: Option<std::path::PathBuf>,
+    pub catalogs: Vec<PathBuf>,
 }
 
 #[async_trait]
@@ -28,7 +31,15 @@ impl Command for ServeCommand {
             None => steer_core::utils::session::create_session_store_path()?,
         };
 
-        let config = steer_grpc::ServiceHostConfig::new(
+        // Create catalog config with provided paths
+        let catalog_config = CatalogConfig::with_catalogs(
+            self.catalogs
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
+        );
+
+        let config = steer_grpc::ServiceHostConfig::with_catalog(
             db_path,
             SessionManagerConfig {
                 max_concurrent_sessions: 100,
@@ -36,6 +47,7 @@ impl Command for ServeCommand {
                 auto_persist: true,
             },
             addr,
+            catalog_config,
         )
         .map_err(|e| eyre!("Failed to create service config: {}", e))?;
 

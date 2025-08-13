@@ -1,8 +1,10 @@
-use steer_core::config::provider::{self, builtin_providers};
+use steer_core::auth::ProviderRegistry;
+use steer_core::config::provider;
 
 #[test]
 fn parses_default_providers() {
-    let providers = builtin_providers().expect("parse embedded TOML");
+    let registry = ProviderRegistry::load(&[]).expect("load provider registry");
+    let providers: Vec<_> = registry.all().cloned().collect();
     assert_eq!(providers.len(), 4);
 
     let ids: Vec<_> = providers.iter().map(|p| &p.id).collect::<Vec<_>>();

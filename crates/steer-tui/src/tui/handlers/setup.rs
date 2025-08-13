@@ -47,6 +47,7 @@ impl SetupHandler {
                 Box::new(AuthFlowWrapper::new(ApiKeyAuthFlow::new(
                     auth_storage,
                     provider_id.clone(),
+                    provider_config.name.clone(),
                 )))
             }
             _ => {

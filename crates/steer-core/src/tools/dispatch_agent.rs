@@ -70,9 +70,9 @@ Usage notes:
         let token = context.cancellation_token.clone();
 
         // Load registries for API client - these are lightweight to load
-        let model_registry = Arc::new(crate::model_registry::ModelRegistry::load()
+        let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[])
             .map_err(|e| ToolError::execution("dispatch_agent", format!("Failed to load model registry: {e}")))?);
-        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load()
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[])
             .map_err(|e| ToolError::execution("dispatch_agent", format!("Failed to load provider registry: {e}")))?);
 
         let api_client = Arc::new(crate::api::Client::new_with_deps(

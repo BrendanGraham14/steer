@@ -102,6 +102,10 @@ pub enum Commands {
         /// Bind address
         #[arg(long, default_value = "127.0.0.1")]
         bind: String,
+
+        /// Additional catalog files to load (repeatable)
+        #[arg(long = "catalog", value_name = "PATH")]
+        catalogs: Vec<PathBuf>,
     },
     /// Session management commands
     Session {

@@ -1,14 +1,14 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
 use crate::config::model::{ModelConfig, ModelId};
 use crate::config::provider::ProviderId;
-use crate::config::toml_types::ModelsFile as TomlModelsFile;
+use crate::config::toml_types::Catalog;
 use crate::error::Error;
 
-const DEFAULT_MODELS_TOML: &str = include_str!("../assets/default_models.toml");
+const DEFAULT_CATALOG_TOML: &str = include_str!("../assets/default_catalog.toml");
 
 /// Registry containing all available model configurations.
 #[derive(Debug, Clone)]
@@ -20,32 +20,64 @@ pub struct ModelRegistry {
 }
 
 impl ModelRegistry {
-    /// Load the model registry, merging built-in, user, and project configurations.
+    /// Load the model registry with optional additional catalog files.
     ///
     /// Merge order (later overrides earlier):
-    /// 1. Built-in defaults
-    /// 2. User-level config
-    /// 3. Project-level config
-    pub fn load() -> Result<Self, Error> {
-        // First, load the built-in models from TOML
-        let toml_models: TomlModelsFile = toml::from_str(DEFAULT_MODELS_TOML)
-            .map_err(|e| Error::Configuration(format!("Failed to parse default models: {e}")))?;
+    /// 1. Built-in defaults from embedded catalog
+    /// 2. Additional catalog files specified
+    pub fn load(additional_catalogs: &[String]) -> Result<Self, Error> {
+        // First, load the built-in models from embedded catalog
+        let builtin_catalog: Catalog = toml::from_str(DEFAULT_CATALOG_TOML)
+            .map_err(|e| Error::Configuration(format!("Failed to parse default catalog: {e}")))?;
 
         // Convert TOML models to ModelConfig
-        let mut models: Vec<ModelConfig> = toml_models
+        let mut models: Vec<ModelConfig> = builtin_catalog
             .models
             .into_iter()
             .map(ModelConfig::from)
             .collect();
 
-        // Load user-level config
-        if let Some(user_config) = Self::load_user_config()? {
-            Self::merge_models(&mut models, user_config);
+        // Validate providers exist for built-in models
+        let mut known_providers: HashMap<ProviderId, bool> = HashMap::new();
+        for p in builtin_catalog.providers {
+            known_providers.insert(ProviderId(p.id), true);
         }
 
-        // Load project-level config
-        if let Some(project_config) = Self::load_project_config()? {
-            Self::merge_models(&mut models, project_config);
+        // Load discovered catalogs (user + project)
+        for path in Self::discover_catalog_paths() {
+            if let Some(catalog) = Self::load_catalog_file(&path)? {
+                for p in catalog.providers {
+                    known_providers.insert(ProviderId(p.id), true);
+                }
+                let more_models: Vec<ModelConfig> =
+                    catalog.models.into_iter().map(ModelConfig::from).collect();
+                Self::merge_models(&mut models, more_models);
+            }
+        }
+
+        // Load additional catalog files
+        for catalog_path in additional_catalogs {
+            if let Some(catalog) = Self::load_catalog_file(Path::new(catalog_path))? {
+                // Add new providers to known set
+                for p in catalog.providers {
+                    known_providers.insert(ProviderId(p.id), true);
+                }
+
+                // Merge models
+                let catalog_models: Vec<ModelConfig> =
+                    catalog.models.into_iter().map(ModelConfig::from).collect();
+                Self::merge_models(&mut models, catalog_models);
+            }
+        }
+
+        // Validate all models reference known providers
+        for model in &models {
+            if !known_providers.contains_key(&model.provider) {
+                return Err(Error::Configuration(format!(
+                    "Model '{}' references unknown provider '{}'",
+                    model.id, model.provider
+                )));
+            }
         }
 
         // Build the registry from the merged models
@@ -113,53 +145,34 @@ impl ModelRegistry {
         self.models.values()
     }
 
-    /// Load user configuration from the standard location.
-    fn load_user_config() -> Result<Option<Vec<ModelConfig>>, Error> {
-        let config_path = Self::get_user_config_path()?;
-        Self::load_config_from_path(config_path)
-    }
-
-    /// Load project configuration from the current workspace.
-    fn load_project_config() -> Result<Option<Vec<ModelConfig>>, Error> {
-        let config_path = PathBuf::from("models.toml");
-        Self::load_config_from_path(config_path)
-    }
-
-    /// Load configuration from a specific path.
-    fn load_config_from_path(path: PathBuf) -> Result<Option<Vec<ModelConfig>>, Error> {
+    /// Load catalog from a specific path.
+    fn load_catalog_file(path: &Path) -> Result<Option<Catalog>, Error> {
         if !path.exists() {
             return Ok(None);
         }
 
-        let content = std::fs::read_to_string(&path).map_err(Error::Io)?;
-
-        let toml_models: TomlModelsFile = toml::from_str(&content).map_err(|e| {
+        let content = std::fs::read_to_string(path).map_err(Error::Io)?;
+        // Parse as full catalog only
+        let catalog: Catalog = toml::from_str(&content).map_err(|e| {
             Error::Configuration(format!(
-                "Failed to parse models at {}: {}",
+                "Failed to parse catalog at {}: {}",
                 path.display(),
                 e
             ))
         })?;
-
-        // Convert TOML models to ModelConfig
-        let models = toml_models
-            .models
-            .into_iter()
-            .map(ModelConfig::from)
-            .collect();
-
-        Ok(Some(models))
+        Ok(Some(catalog))
     }
 
-    /// Get the path to the user's models configuration file.
-    fn get_user_config_path() -> Result<PathBuf, Error> {
-        use directories::ProjectDirs;
-
-        let proj_dirs = ProjectDirs::from("", "", "conductor").ok_or_else(|| {
-            Error::Configuration("Cannot determine project directories".to_string())
-        })?;
-
-        Ok(proj_dirs.config_dir().join("models.toml"))
+    /// Determine default discovery paths for catalogs (user + project)
+    fn discover_catalog_paths() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        // Project-level catalog
+        paths.push(PathBuf::from("catalog.toml"));
+        // User-level catalog: ~/.config/steer/catalog.toml
+        if let Some(proj) = directories::ProjectDirs::from("", "", "steer") {
+            paths.push(proj.config_dir().join("catalog.toml"));
+        }
+        paths
     }
 
     /// Merge user models into the base models file.
@@ -193,12 +206,13 @@ mod tests {
 
     #[test]
     fn test_load_builtin_models() {
-        // Test that we can parse the built-in models
-        let models_file: TomlModelsFile = toml::from_str(DEFAULT_MODELS_TOML).unwrap();
-        assert!(!models_file.models.is_empty());
+        // Test that we can parse the built-in catalog
+        let catalog: Catalog = toml::from_str(DEFAULT_CATALOG_TOML).unwrap();
+        assert!(!catalog.models.is_empty());
+        assert!(!catalog.providers.is_empty());
 
         // Check that we have some expected models
-        let has_claude = models_file
+        let has_claude = catalog
             .models
             .iter()
             .any(|m| m.provider == "anthropic" && m.id.contains("claude"));
@@ -207,8 +221,14 @@ mod tests {
 
     #[test]
     fn test_registry_creation() {
-        // Create a test models file
+        // Create a test catalog
         let toml = r#"
+[[providers]]
+id = "anthropic"
+name = "Anthropic"
+api_format = "anthropic"
+auth_schemes = ["api-key"]
+
 [[models]]
 provider = "anthropic"
 id = "test-model"
@@ -217,13 +237,9 @@ recommended = true
 parameters = { thinking_config = { enabled = true } }
 "#;
 
-        let models_file: TomlModelsFile = toml::from_str(toml).unwrap();
-        // Convert TomlModelsFile to ModelConfig list using From trait
-        let models: Vec<ModelConfig> = models_file
-            .models
-            .into_iter()
-            .map(ModelConfig::from)
-            .collect();
+        let catalog: Catalog = toml::from_str(toml).unwrap();
+        // Convert Catalog to ModelConfig list using From trait
+        let models: Vec<ModelConfig> = catalog.models.into_iter().map(ModelConfig::from).collect();
 
         let mut registry = ModelRegistry {
             models: HashMap::new(),
@@ -268,6 +284,18 @@ parameters = { thinking_config = { enabled = true } }
     #[test]
     fn test_merge_models() {
         let base_toml = r#"
+[[providers]]
+id = "anthropic"
+name = "Anthropic"
+api_format = "anthropic"
+auth_schemes = ["api-key"]
+
+[[providers]]
+id = "openai"
+name = "OpenAI"
+api_format = "openai-responses"
+auth_schemes = ["api-key"]
+
 [[models]]
 provider = "anthropic"
 id = "claude-3"
@@ -283,6 +311,12 @@ recommended = true
 "#;
 
         let user_toml = r#"
+[[providers]]
+id = "google"
+name = "Google"
+api_format = "google"
+auth_schemes = ["api-key"]
+
 [[models]]
 provider = "anthropic"
 id = "claude-3"
@@ -298,8 +332,8 @@ recommended = true
 parameters = { temperature = 0.5, top_p = 0.95 }
 "#;
 
-        let base: TomlModelsFile = toml::from_str(base_toml).unwrap();
-        let user: TomlModelsFile = toml::from_str(user_toml).unwrap();
+        let base: Catalog = toml::from_str(base_toml).unwrap();
+        let user: Catalog = toml::from_str(user_toml).unwrap();
 
         // Convert to ModelConfig using From trait
         let base_models: Vec<_> = base.models.into_iter().map(ModelConfig::from).collect();
@@ -355,14 +389,20 @@ parameters = { temperature = 0.5, top_p = 0.95 }
     }
 
     #[test]
-    fn test_load_config_from_path() {
+    fn test_load_catalog_from_path() {
         use std::fs;
         use tempfile::TempDir;
 
         let dir = TempDir::new().unwrap();
-        let config_path = dir.path().join("test_models.toml");
+        let config_path = dir.path().join("test_catalog.toml");
 
         let config = r#"
+[[providers]]
+id = "anthropic"
+name = "Anthropic"
+api_format = "anthropic"
+auth_schemes = ["api-key"]
+
 [[models]]
 provider = "anthropic"
 id = "test-model"
@@ -372,11 +412,13 @@ recommended = true
 
         fs::write(&config_path, config).unwrap();
 
-        let result = ModelRegistry::load_config_from_path(config_path).unwrap();
+        let result = ModelRegistry::load_catalog_file(&config_path).unwrap();
         assert!(result.is_some());
 
-        let models_file = result.unwrap();
-        assert_eq!(models_file.len(), 1);
-        assert_eq!(models_file[0].id, "test-model");
+        let catalog = result.unwrap();
+        assert_eq!(catalog.models.len(), 1);
+        assert_eq!(catalog.models[0].id, "test-model");
+        assert_eq!(catalog.providers.len(), 1);
+        assert_eq!(catalog.providers[0].id, "anthropic");
     }
 }

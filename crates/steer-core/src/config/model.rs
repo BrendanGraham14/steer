@@ -9,7 +9,7 @@ pub use super::toml_types::{ModelParameters, ThinkingConfig};
 /// Type alias for model identification as a tuple of (ProviderId, model id string).
 pub type ModelId = (ProviderId, String);
 
-/// Built-in model constants generated from default_models.toml
+/// Built-in model constants generated from default_catalog.toml
 pub mod builtin {
 
     include!(concat!(env!("OUT_DIR"), "/generated_model_ids.rs"));

@@ -55,11 +55,11 @@ async fn test_requires_approval_tool_detection() -> Result<()> {
 async fn test_tool_executor_requires_approval_check() -> Result<()> {
     dotenv().ok();
     let model_registry = Arc::new(
-        steer_core::model_registry::ModelRegistry::load()
+        steer_core::model_registry::ModelRegistry::load(&[])
             .expect("Failed to load model registry for tests"),
     );
     let provider_registry = Arc::new(
-        steer_core::auth::ProviderRegistry::load()
+        steer_core::auth::ProviderRegistry::load(&[])
             .expect("Failed to load provider registry for tests"),
     );
     let app_config = AppConfig {

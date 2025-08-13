@@ -17,13 +17,6 @@ pub enum AuthScheme {
     Oauth2,
 }
 
-/// Root structure for provider TOML deserialization.
-/// Used by both build.rs and runtime code.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ProvidersFile {
-    pub providers: Vec<ProviderData>,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProviderData {
     pub id: String,
@@ -32,13 +25,6 @@ pub struct ProviderData {
     pub auth_schemes: Vec<AuthScheme>,
     #[serde(default)]
     pub base_url: Option<String>,
-}
-
-/// Root structure for model TOML deserialization.
-/// Used by both build.rs and runtime code.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ModelsFile {
-    pub models: Vec<ModelData>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -75,4 +61,14 @@ pub struct ModelParameters {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_config: Option<ThinkingConfig>,
+}
+
+/// Unified catalog structure containing both providers and models.
+/// Both arrays are optional to allow partial catalogs.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Catalog {
+    #[serde(default)]
+    pub providers: Vec<ProviderData>,
+    #[serde(default)]
+    pub models: Vec<ModelData>,
 }

@@ -8,13 +8,19 @@ use std::sync::Arc;
 pub struct ApiKeyAuthFlow {
     storage: Arc<dyn AuthStorage>,
     provider_id: ProviderId,
+    provider_display_name: String,
 }
 
 impl ApiKeyAuthFlow {
-    pub fn new(storage: Arc<dyn AuthStorage>, provider_id: ProviderId) -> Self {
+    pub fn new(
+        storage: Arc<dyn AuthStorage>,
+        provider_id: ProviderId,
+        provider_display_name: String,
+    ) -> Self {
         Self {
             storage,
             provider_id,
+            provider_display_name,
         }
     }
 
@@ -25,7 +31,7 @@ impl ApiKeyAuthFlow {
 
     /// Get the display name for the provider
     fn provider_display_name(&self) -> String {
-        self.provider_id.default_display_name()
+        self.provider_display_name.clone()
     }
 
     /// Validate an API key format based on provider-specific rules
@@ -157,7 +163,7 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
     }
 
     fn provider_name(&self) -> String {
-        self.provider_name()
+        ApiKeyAuthFlow::provider_name(self)
     }
 }
 
@@ -217,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_key_flow() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage.clone(), provider::xai());
+        let auth_flow = ApiKeyAuthFlow::new(storage.clone(), provider::xai(), "xAI".to_string());
 
         // Test available methods
         let methods = auth_flow.available_methods();
@@ -266,7 +272,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_api_key() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, provider::xai());
+        let auth_flow = ApiKeyAuthFlow::new(storage, provider::xai(), "xAI".to_string());
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 
@@ -284,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_method() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, provider::xai());
+        let auth_flow = ApiKeyAuthFlow::new(storage, provider::xai(), "xAI".to_string());
 
         // Test with OAuth method
         let result = auth_flow.start_auth(AuthMethod::OAuth).await;
@@ -301,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_openai_key_validation() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, provider::openai());
+        let auth_flow = ApiKeyAuthFlow::new(storage, provider::openai(), "OpenAI".to_string());
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 
@@ -325,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn test_api_key_with_spaces() {
         let storage = Arc::new(MockAuthStorage::new());
-        let auth_flow = ApiKeyAuthFlow::new(storage, provider::xai());
+        let auth_flow = ApiKeyAuthFlow::new(storage, provider::xai(), "xAI".to_string());
 
         let mut state = auth_flow.start_auth(AuthMethod::ApiKey).await.unwrap();
 

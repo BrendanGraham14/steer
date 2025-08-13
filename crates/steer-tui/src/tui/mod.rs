@@ -264,7 +264,7 @@ impl Tui {
             .unwrap_or_default();
 
         // Load the provider registry
-        let provider_registry = Arc::new(ProviderRegistry::load().map_err(|e| {
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).map_err(|e| {
             crate::error::Error::Generic(format!("Failed to load provider registry: {e}"))
         })?);
 
