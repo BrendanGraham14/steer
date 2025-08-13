@@ -12,7 +12,7 @@ pub struct Cli {
     #[arg(short, long)]
     pub directory: Option<std::path::PathBuf>,
 
-    /// Model to use (e.g., 'opus' (default), 'o3', 'gemini', 'grok', 'openai/custom-model')
+    /// Model to use (e.g., 'opus', 'o3', 'gemini', 'grok', 'openai/custom-model')
     #[arg(short, long, default_value = "opus")]
     pub model: String,
 
