@@ -9,6 +9,7 @@ use tracing::{error, info};
 
 use crate::grpc::server::AgentServiceImpl;
 use steer_core::auth::storage::AuthStorage;
+use steer_core::catalog::CatalogConfig;
 use steer_core::session::{SessionManager, SessionManagerConfig, SessionStore};
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
 
@@ -23,6 +24,8 @@ pub struct ServiceHostConfig {
     pub bind_addr: SocketAddr,
     /// Auth storage
     pub auth_storage: Arc<dyn AuthStorage>,
+    /// Catalog configuration for additional models/providers
+    pub catalog_config: CatalogConfig,
 }
 
 impl std::fmt::Debug for ServiceHostConfig {
@@ -32,6 +35,7 @@ impl std::fmt::Debug for ServiceHostConfig {
             .field("session_manager_config", &self.session_manager_config)
             .field("bind_addr", &self.bind_addr)
             .field("auth_storage", &"Arc<dyn AuthStorage>")
+            .field("catalog_config", &self.catalog_config)
             .finish()
     }
 }
@@ -53,6 +57,28 @@ impl ServiceHostConfig {
             session_manager_config,
             bind_addr,
             auth_storage,
+            catalog_config: CatalogConfig::default(),
+        })
+    }
+
+    /// Create a new ServiceHostConfig with custom catalog configuration
+    pub fn with_catalog(
+        db_path: std::path::PathBuf,
+        session_manager_config: SessionManagerConfig,
+        bind_addr: SocketAddr,
+        catalog_config: CatalogConfig,
+    ) -> Result<Self> {
+        let auth_storage = Arc::new(
+            steer_core::auth::DefaultAuthStorage::new()
+                .map_err(|e| GrpcError::CoreError(e.into()))?,
+        );
+
+        Ok(Self {
+            db_path,
+            session_manager_config,
+            bind_addr,
+            auth_storage,
+            catalog_config,
         })
     }
 }
@@ -76,19 +102,20 @@ impl ServiceHost {
         let store = create_session_store(&config.db_path).await?;
 
         // Load model registry once at startup
-        let model_registry = Arc::new(steer_core::model_registry::ModelRegistry::load().map_err(
-            |e| GrpcError::InvalidSessionState {
+        let model_registry = Arc::new(
+            steer_core::model_registry::ModelRegistry::load(&config.catalog_config.catalog_paths)
+                .map_err(|e| GrpcError::InvalidSessionState {
                 reason: format!("Failed to load model registry: {e}"),
-            },
-        )?);
+            })?,
+        );
 
         // Load provider registry once at startup
-        let provider_registry =
-            Arc::new(steer_core::auth::ProviderRegistry::load().map_err(|e| {
-                GrpcError::InvalidSessionState {
+        let provider_registry = Arc::new(
+            steer_core::auth::ProviderRegistry::load(&config.catalog_config.catalog_paths)
+                .map_err(|e| GrpcError::InvalidSessionState {
                     reason: format!("Failed to load provider registry: {e}"),
-                }
-            })?);
+                })?,
+        );
 
         // Create session manager
         let session_manager = Arc::new(SessionManager::new(
@@ -264,6 +291,7 @@ mod tests {
             },
             bind_addr: "127.0.0.1:0".parse().unwrap(), // Use port 0 for testing
             auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
+            catalog_config: CatalogConfig::default(),
         };
 
         (config, temp_dir)

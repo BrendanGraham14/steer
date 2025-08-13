@@ -51,15 +51,8 @@ impl ProviderId {
     }
 
     /// Returns the default display name for this provider ID.
-    /// Custom providers should override this with their configured name.
+    /// For UI, prefer using ProviderRegistry config.name; this falls back to the raw ID.
     pub fn default_display_name(&self) -> String {
-        // Load provider configs to get proper display names
-        if let Ok(providers) = builtin_providers() {
-            if let Some(config) = providers.iter().find(|p| p.id == *self) {
-                return config.name.clone();
-            }
-        }
-        // Fallback: return the ID itself
         self.0.clone()
     }
 }
@@ -80,30 +73,4 @@ pub struct ProviderModel {
     pub provider: ProviderId,
     pub model_id: String,
     pub name: String,
-}
-
-/// Embedded default provider definitions (generated at compile time).
-const DEFAULT_PROVIDERS_TOML: &str = include_str!("../../assets/default_providers.toml");
-
-/// Return the list of built-in provider definitions parsed from the embedded TOML.
-/// The TOML uses a top-level array of providers (`[[providers]]`).
-///
-/// Errors are returned as a typed [`crate::error::Error`] to conform to workspace
-/// conventions.
-pub fn builtin_providers() -> crate::error::Result<Vec<ProviderConfig>> {
-    use crate::config::toml_types::ProvidersFile;
-
-    let providers_file: ProvidersFile = toml::from_str(DEFAULT_PROVIDERS_TOML).map_err(|e| {
-        crate::error::Error::Configuration(format!(
-            "Failed to parse embedded default_providers.toml: {e}"
-        ))
-    })?;
-
-    let providers = providers_file
-        .providers
-        .into_iter()
-        .map(ProviderConfig::from)
-        .collect::<Vec<_>>();
-
-    Ok(providers)
 }

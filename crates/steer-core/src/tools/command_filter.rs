@@ -87,8 +87,8 @@ pub async fn get_command_prefix(
     token: CancellationToken,
 ) -> Result<String> {
     // Load registries for API client - these are lightweight to load
-    let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load()?);
-    let provider_registry = std::sync::Arc::new(crate::auth::ProviderRegistry::load()?);
+    let model_registry = std::sync::Arc::new(crate::model_registry::ModelRegistry::load(&[])?);
+    let provider_registry = std::sync::Arc::new(crate::auth::ProviderRegistry::load(&[])?);
 
     // Use the provided LLM config provider with registries
     let client = crate::api::Client::new_with_deps(

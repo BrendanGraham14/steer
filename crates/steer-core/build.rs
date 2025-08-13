@@ -6,26 +6,26 @@ use std::path::Path;
 include!("src/config/toml_types.rs");
 
 fn main() {
-    println!("cargo:rerun-if-changed=assets/default_providers.toml");
-    println!("cargo:rerun-if-changed=assets/default_models.toml");
+    println!("cargo:rerun-if-changed=assets/default_catalog.toml");
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir);
 
-    generate_provider_constants(dest_path);
-    generate_model_constants(dest_path);
+    // Load unified catalog
+    let toml_content = include_str!("assets/default_catalog.toml");
+    let catalog: Catalog =
+        toml::from_str(toml_content).expect("Failed to parse default_catalog.toml");
+
+    generate_provider_constants(dest_path, &catalog.providers);
+    generate_model_constants(dest_path, &catalog.models);
 }
 
-fn generate_provider_constants(out_dir: &Path) {
-    let toml_content = include_str!("assets/default_providers.toml");
-    let providers: ProvidersFile =
-        toml::from_str(toml_content).expect("Failed to parse default_providers.toml");
-
+fn generate_provider_constants(out_dir: &Path, providers: &[ProviderData]) {
     let mut output = String::new();
-    output.push_str("// Generated provider constants from default_providers.toml\n\n");
+    output.push_str("// Generated provider constants from default_catalog.toml\n\n");
 
     // Generate string constants and constructor functions
-    for provider in &providers.providers {
+    for provider in providers {
         let const_name = provider.id.to_uppercase();
         let fn_name = provider.id.to_lowercase();
         output.push_str(&format!(
@@ -42,18 +42,14 @@ fn generate_provider_constants(out_dir: &Path) {
     fs::write(&dest_file, output).expect("Failed to write generated_provider_ids.rs");
 }
 
-fn generate_model_constants(out_dir: &Path) {
-    let toml_content = include_str!("assets/default_models.toml");
-    let models: ModelsFile =
-        toml::from_str(toml_content).expect("Failed to parse default_models.toml");
-
+fn generate_model_constants(out_dir: &Path, models: &[ModelData]) {
     let mut output = String::new();
-    output.push_str("// Generated model constants from default_models.toml\n");
+    output.push_str("// Generated model constants from default_catalog.toml\n");
     output.push_str("use crate::config::provider::*;\n");
     output.push_str("use crate::config::model::ModelId;\n\n");
 
     // First pass: generate primary constants for each model
-    for model in &models.models {
+    for model in models {
         let const_name = model.id.to_lowercase().replace("-", "_").replace(".", "_");
         let provider_fn = model.provider.to_lowercase();
         output.push_str(&format!(
@@ -65,7 +61,7 @@ fn generate_model_constants(out_dir: &Path) {
     output.push_str("\n// Aliases\n");
 
     // Second pass: generate alias constants
-    for model in &models.models {
+    for model in models {
         let target_fn = model.id.to_lowercase().replace("-", "_").replace(".", "_");
         for alias in &model.aliases {
             let alias_const = alias.to_lowercase().replace("-", "_").replace(".", "_");

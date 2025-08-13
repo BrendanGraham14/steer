@@ -2,6 +2,7 @@ use steer_core::api::create_provider;
 use steer_core::auth::ProviderRegistry;
 use steer_core::auth::storage::Credential;
 use steer_core::config::provider::{self, ApiFormat, AuthScheme, ProviderConfig, ProviderId};
+use steer_core::config::toml_types::{Catalog, ProviderData};
 use url::Url;
 
 #[tokio::test]
@@ -48,29 +49,32 @@ fn test_provider_registry_custom_providers() {
     // Create a temporary directory for config
     let temp_dir = tempfile::tempdir().unwrap();
 
-    // Write a custom providers.toml
-    let providers_toml = r#"
-[[providers]]
-id = "custom-openai"
-name = "My OpenAI Compatible API"
-api_format = "openai-responses"
-auth_schemes = ["api-key"]
-base_url = "https://my-api.example.com"
+    // Write a custom catalog.toml with only providers
+    let catalog = Catalog {
+        providers: vec![
+            ProviderData {
+                id: "custom-openai".into(),
+                name: "My OpenAI Compatible API".into(),
+                api_format: ApiFormat::OpenaiResponses,
+                auth_schemes: vec![AuthScheme::ApiKey],
+                base_url: Some("https://my-api.example.com".into()),
+            },
+            ProviderData {
+                id: "local-llm".into(),
+                name: "Local LLM Server".into(),
+                api_format: ApiFormat::OpenaiChat,
+                auth_schemes: vec![AuthScheme::ApiKey],
+                base_url: Some("http://localhost:8080".into()),
+            },
+        ],
+        models: vec![],
+    };
 
-[[providers]]
-id = "local-llm"
-name = "Local LLM Server"  
-api_format = "openai-chat"
-auth_schemes = ["api-key"]
-base_url = "http://localhost:8080"
-"#;
+    let catalog_path = temp_dir.path().join("catalog.toml");
+    std::fs::write(&catalog_path, toml::to_string(&catalog).unwrap()).unwrap();
 
-    let steer_dir = temp_dir.path().join("conductor");
-    std::fs::create_dir_all(&steer_dir).unwrap();
-    std::fs::write(steer_dir.join("providers.toml"), providers_toml).unwrap();
-
-    // Load registry with custom config
-    let registry = ProviderRegistry::load_with_config_dir(Some(temp_dir.path())).unwrap();
+    // Load registry with custom catalog
+    let registry = ProviderRegistry::load(&[catalog_path.to_string_lossy().to_string()]).unwrap();
 
     // Check built-in providers still exist
     assert!(registry.get(&provider::anthropic()).is_some());
