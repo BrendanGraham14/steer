@@ -350,9 +350,10 @@ impl ToolBackend for McpBackend {
         let output = result
             .content
             .into_iter()
-            .map(|content| {
-                // Access the raw content
-                match &content.raw {
+            .flat_map(|annotated_contents| annotated_contents.into_iter())
+            .map(|annotated| {
+                // Access the raw content from the Annotated wrapper
+                match annotated.raw {
                     rmcp::model::RawContent::Text(text_content) => text_content.text.to_string(),
                     rmcp::model::RawContent::Image { .. } => "[Image content]".to_string(),
                     rmcp::model::RawContent::Resource { .. } => "[Resource content]".to_string(),

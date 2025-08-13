@@ -57,7 +57,7 @@ tracing-subscriber = { version = "0.3.19", features = [
   "env-filter",
 ] }
 tracing-appender = "0.2.3"
-rmcp = { version = "0.3", features = [
+rmcp = { version = "0.5", features = [
   "client",
   "server",
   "transport-child-process",
