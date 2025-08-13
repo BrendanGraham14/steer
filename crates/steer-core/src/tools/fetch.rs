@@ -121,12 +121,13 @@ async fn process_web_page_content(
     token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ToolError> {
     // Load registries for API client - these are lightweight to load
-    let model_registry =
-        std::sync::Arc::new(crate::model_registry::ModelRegistry::load().map_err(|e| {
+    let model_registry = std::sync::Arc::new(
+        crate::model_registry::ModelRegistry::load(&[]).map_err(|e| {
             ToolError::execution("fetch", format!("Failed to load model registry: {e}"))
-        })?);
+        })?,
+    );
     let provider_registry =
-        std::sync::Arc::new(crate::auth::ProviderRegistry::load().map_err(|e| {
+        std::sync::Arc::new(crate::auth::ProviderRegistry::load(&[]).map_err(|e| {
             ToolError::execution("fetch", format!("Failed to load provider registry: {e}"))
         })?);
 

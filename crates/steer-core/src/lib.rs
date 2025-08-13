@@ -4,6 +4,7 @@ pub mod api;
 pub mod app;
 pub mod auth;
 pub mod auth_utils;
+pub mod catalog;
 pub mod config;
 pub mod error;
 pub mod events;

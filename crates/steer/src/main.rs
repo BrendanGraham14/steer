@@ -168,7 +168,11 @@ async fn main() -> Result<()> {
             };
             command.execute().await
         }
-        Commands::Server { port, bind } => {
+        Commands::Server {
+            port,
+            bind,
+            catalogs,
+        } => {
             // Use builtin default model for the server
             let default_model = steer_core::config::model::builtin::opus();
 
@@ -177,6 +181,7 @@ async fn main() -> Result<()> {
                 bind,
                 model: default_model,
                 session_db: cli.session_db.clone(),
+                catalogs,
             };
             command.execute().await
         }

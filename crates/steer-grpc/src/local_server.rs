@@ -2,6 +2,7 @@ use crate::grpc::error::GrpcError;
 use crate::grpc::server::AgentServiceImpl;
 type Result<T> = std::result::Result<T, GrpcError>;
 use std::sync::Arc;
+use steer_core::catalog::CatalogConfig;
 use steer_core::session::{SessionManager, SessionManagerConfig};
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
 use tokio::sync::oneshot;
@@ -68,11 +69,12 @@ pub async fn create_local_channel(
     Ok((channel, server_handle))
 }
 
-/// Creates a complete localhost gRPC setup for local mode
+/// Creates a complete localhost gRPC setup for local mode with custom catalog
 /// Returns the channel and a handle to the server task
-pub async fn setup_local_grpc(
+pub async fn setup_local_grpc_with_catalog(
     default_model: steer_core::config::model::ModelId,
     session_db_path: Option<std::path::PathBuf>,
+    catalog_config: CatalogConfig,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     // Create session store with the provided configuration
     let store_config = steer_core::utils::session::resolve_session_store_config(session_db_path)?;
@@ -80,11 +82,15 @@ pub async fn setup_local_grpc(
         steer_core::utils::session::create_session_store_with_config(store_config).await?;
 
     // Load both registries once at startup
-    let model_registry =
-        Arc::new(steer_core::model_registry::ModelRegistry::load().map_err(GrpcError::CoreError)?);
+    let model_registry = Arc::new(
+        steer_core::model_registry::ModelRegistry::load(&catalog_config.catalog_paths)
+            .map_err(GrpcError::CoreError)?,
+    );
 
-    let provider_registry =
-        Arc::new(steer_core::auth::ProviderRegistry::load().map_err(GrpcError::CoreError)?);
+    let provider_registry = Arc::new(
+        steer_core::auth::ProviderRegistry::load(&catalog_config.catalog_paths)
+            .map_err(GrpcError::CoreError)?,
+    );
 
     // Create global event channel (not used in local mode but required)
     let session_manager_config = SessionManagerConfig {
@@ -100,4 +106,13 @@ pub async fn setup_local_grpc(
         create_local_channel(session_manager, model_registry, provider_registry).await?;
 
     Ok((channel, handle))
+}
+
+/// Creates a complete localhost gRPC setup for local mode
+/// Returns the channel and a handle to the server task
+pub async fn setup_local_grpc(
+    default_model: steer_core::config::model::ModelId,
+    session_db_path: Option<std::path::PathBuf>,
+) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
+    setup_local_grpc_with_catalog(default_model, session_db_path, CatalogConfig::default()).await
 }
