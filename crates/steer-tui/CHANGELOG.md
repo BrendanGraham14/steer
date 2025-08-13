@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.4.0...steer-tui-v0.5.0) - 2025-08-13
+
+### Added
+
+- make wrapped markdown list content start at the same place as text in initial line
+
 ## [0.3.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.2.0...steer-tui-v0.3.0) - 2025-08-07
 
 ### Fixed
