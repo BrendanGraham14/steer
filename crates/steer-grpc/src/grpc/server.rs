@@ -725,16 +725,21 @@ impl agent_service_server::AgentService for AgentServiceImpl {
         let providers = self
             .provider_registry
             .all()
-            .map(|p| proto::ProviderConfig {
+            .map(|p| proto::ProviderInfo {
                 id: p.id.storage_key(),
                 name: p.name.clone(),
-                api_format: format!("{:?}", p.api_format).to_lowercase(),
                 auth_schemes: p
                     .auth_schemes
                     .iter()
-                    .map(|s| format!("{s:?}").to_lowercase())
+                    .map(|s| match s {
+                        steer_core::config::toml_types::AuthScheme::ApiKey => {
+                            proto::ProviderAuthScheme::AuthSchemeApiKey as i32
+                        }
+                        steer_core::config::toml_types::AuthScheme::Oauth2 => {
+                            proto::ProviderAuthScheme::AuthSchemeOauth2 as i32
+                        }
+                    })
                     .collect(),
-                base_url: p.base_url.as_ref().map(|u| u.to_string()),
             })
             .collect();
 
@@ -775,6 +780,44 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .collect();
 
         Ok(Response::new(ListModelsResponse { models: all_models }))
+    }
+
+    async fn get_provider_auth_status(
+        &self,
+        request: Request<proto::GetProviderAuthStatusRequest>,
+    ) -> Result<Response<proto::GetProviderAuthStatusResponse>, Status> {
+        let req = request.into_inner();
+
+        let mut statuses = Vec::new();
+        for p in self.provider_registry.all() {
+            if let Some(ref filter) = req.provider_id {
+                if &p.id.storage_key() != filter {
+                    continue;
+                }
+            }
+            let status = match self
+                .llm_config_provider
+                .get_auth_for_provider(&p.id)
+                .await
+                .map_err(|e| Status::internal(format!("auth lookup failed: {e}")))?
+            {
+                Some(steer_core::config::ApiAuth::OAuth) => {
+                    proto::provider_auth_status::Status::AuthStatusOauth as i32
+                }
+                Some(steer_core::config::ApiAuth::Key(_)) => {
+                    proto::provider_auth_status::Status::AuthStatusApiKey as i32
+                }
+                None => proto::provider_auth_status::Status::AuthStatusNone as i32,
+            };
+            statuses.push(proto::ProviderAuthStatus {
+                provider_id: p.id.storage_key(),
+                status,
+            });
+        }
+
+        Ok(Response::new(proto::GetProviderAuthStatusResponse {
+            statuses,
+        }))
     }
 
     async fn resolve_model(

@@ -5,7 +5,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Stdout};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Error, Result};
@@ -29,7 +28,7 @@ use ratatui::{Frame, Terminal};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 use steer_core::app::io::AppEventSource;
 use steer_core::app::{AppCommand, AppEvent};
-use steer_core::config::LlmConfigProvider;
+
 use steer_core::config::model::ModelId;
 use steer_grpc::AgentClient;
 use steer_tools::schema::ToolCall;
@@ -43,14 +42,13 @@ use crate::tui::events::processors::message::MessageEventProcessor;
 use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
 use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
+use crate::tui::state::RemoteProviderRegistry;
 use crate::tui::state::SetupState;
 use crate::tui::state::{ChatStore, ToolCallRegistry};
 
 use crate::tui::chat_viewport::ChatViewport;
 use crate::tui::ui_layout::UiLayout;
 use crate::tui::widgets::InputPanel;
-
-use steer_core::auth::{AuthStorage, ProviderRegistry};
 
 pub mod commands;
 pub mod custom_commands;
@@ -168,8 +166,6 @@ pub struct Tui {
     mode_stack: VecDeque<InputMode>,
     /// Last known revision of ChatStore for dirty tracking
     last_revision: u64,
-    /// Provider registry for dynamic provider discovery
-    provider_registry: Arc<ProviderRegistry>,
 }
 
 const MAX_MODE_DEPTH: usize = 8;
@@ -263,11 +259,6 @@ impl Tui {
             .map_err(crate::error::Error::Core)
             .unwrap_or_default();
 
-        // Load the provider registry
-        let provider_registry = Arc::new(ProviderRegistry::load(&[]).map_err(|e| {
-            crate::error::Error::Generic(format!("Failed to load provider registry: {e}"))
-        })?);
-
         // Determine initial input mode based on editing mode preference
         let input_mode = match preferences.ui.editing_mode {
             steer_core::preferences::EditingMode::Simple => InputMode::Simple,
@@ -304,7 +295,6 @@ impl Tui {
             vim_state: VimState::default(),
             mode_stack: VecDeque::new(),
             last_revision: 0,
-            provider_registry,
         };
 
         Ok(tui)
@@ -1122,48 +1112,55 @@ impl Tui {
                     TuiCommand::Auth => {
                         // Launch auth setup
                         // Initialize auth setup state
-                        let auth_storage =
-                            Arc::new(steer_core::auth::DefaultAuthStorage::new().map_err(|e| {
-                                crate::error::Error::Generic(format!(
-                                    "Failed to create auth storage: {e}"
-                                ))
-                            })?);
-                        let auth_providers = LlmConfigProvider::new(auth_storage.clone())
-                            .available_providers()
-                            .await?;
+                        // Fetch providers and their auth status from server
+                        let providers = self.client.list_providers().await.map_err(|e| {
+                            crate::error::Error::Generic(format!(
+                                "Failed to list providers from server: {e}"
+                            ))
+                        })?;
+                        let statuses =
+                            self.client
+                                .get_provider_auth_status(None)
+                                .await
+                                .map_err(|e| {
+                                    crate::error::Error::Generic(format!(
+                                        "Failed to get provider auth status: {e}"
+                                    ))
+                                })?;
 
+                        // Build provider registry view from remote providers
                         let mut provider_status = std::collections::HashMap::new();
-                        for provider_config in self.provider_registry.all() {
-                            let status = if auth_providers.contains(&provider_config.id) {
-                                // Check if it has OAuth configured (for Anthropic)
-                                if provider_config.id == steer_core::config::provider::anthropic() {
-                                    let has_oauth = auth_storage
-                                        .get_credential(
-                                            &provider_config.id.storage_key(),
-                                            steer_core::auth::CredentialType::OAuth2,
-                                        )
-                                        .await
-                                        .ok()
-                                        .flatten()
-                                        .is_some();
-                                    if has_oauth {
-                                        crate::tui::state::AuthStatus::OAuthConfigured
-                                    } else {
-                                        crate::tui::state::AuthStatus::ApiKeySet
-                                    }
-                                } else {
+
+                        use steer_grpc::proto::provider_auth_status::Status;
+                        let mut status_map = std::collections::HashMap::new();
+                        for s in statuses {
+                            status_map.insert(s.provider_id.clone(), s.status);
+                        }
+
+                        // Convert remote providers into a minimal registry-like view for TUI
+                        let registry =
+                            std::sync::Arc::new(RemoteProviderRegistry::from_proto(providers));
+
+                        for p in registry.all() {
+                            let status = match status_map.get(&p.id).copied() {
+                                Some(v) if v == Status::AuthStatusOauth as i32 => {
+                                    crate::tui::state::AuthStatus::OAuthConfigured
+                                }
+                                Some(v) if v == Status::AuthStatusApiKey as i32 => {
                                     crate::tui::state::AuthStatus::ApiKeySet
                                 }
-                            } else {
-                                crate::tui::state::AuthStatus::NotConfigured
+                                _ => crate::tui::state::AuthStatus::NotConfigured,
                             };
-                            provider_status.insert(provider_config.id.clone(), status);
+                            provider_status.insert(
+                                steer_core::config::provider::ProviderId(p.id.clone()),
+                                status,
+                            );
                         }
 
                         // Enter setup mode, skipping welcome page
                         self.setup_state =
                             Some(crate::tui::state::SetupState::new_for_auth_command(
-                                self.provider_registry.clone(),
+                                registry,
                                 provider_status,
                             ));
                         // Enter setup mode directly without pushing to the mode stack so that
@@ -1448,59 +1445,66 @@ pub async fn run_tui(
 
     client.start_streaming().await.map_err(Box::new)?;
     let event_rx = client.subscribe().await;
-    let mut tui = Tui::new(client, model, session_id, theme.clone()).await?;
+    let mut tui = Tui::new(client, model.clone(), session_id.clone(), theme.clone()).await?;
 
     if !messages.is_empty() {
-        tui.restore_messages(messages);
+        tui.restore_messages(messages.clone());
     }
 
-    let auth_storage = Arc::new(
-        steer_core::auth::DefaultAuthStorage::new()
-            .map_err(|e| Error::Generic(format!("Failed to create auth storage: {e}")))?,
-    );
-    let auth_providers = LlmConfigProvider::new(auth_storage.clone())
-        .available_providers()
+    // Query server for providers' auth status to decide if we should launch setup
+    let statuses = tui
+        .client
+        .get_provider_auth_status(None)
         .await
-        .map_err(|e| Error::Generic(format!("Failed to check auth: {e}")))?;
+        .map_err(|e| Error::Generic(format!("Failed to get provider auth status: {e}")))?;
+
+    use steer_grpc::proto::provider_auth_status::Status as AuthStatusProto;
+    let has_any_auth = statuses.iter().any(|s| {
+        s.status == AuthStatusProto::AuthStatusOauth as i32
+            || s.status == AuthStatusProto::AuthStatusApiKey as i32
+    });
 
     let should_run_setup = force_setup
         || (!steer_core::preferences::Preferences::config_path()
             .map(|p| p.exists())
             .unwrap_or(false)
-            && auth_providers.is_empty());
+            && !has_any_auth);
 
     // Initialize setup state if first run or forced
     if should_run_setup {
+        // Build registry for TUI sorting/labels from remote
+        let providers =
+            tui.client.list_providers().await.map_err(|e| {
+                Error::Generic(format!("Failed to list providers from server: {e}"))
+            })?;
+        let registry = std::sync::Arc::new(RemoteProviderRegistry::from_proto(providers));
+
+        // Map statuses by id for quick lookup
+        let mut status_map = std::collections::HashMap::new();
+        for s in statuses {
+            status_map.insert(s.provider_id.clone(), s.status);
+        }
+
         let mut provider_status = std::collections::HashMap::new();
-        for provider_config in tui.provider_registry.all() {
-            let status = if auth_providers.contains(&provider_config.id) {
-                // Check if it has OAuth configured (for Anthropic)
-                if provider_config.id == steer_core::config::provider::anthropic() {
-                    let has_oauth = auth_storage
-                        .get_credential(
-                            &provider_config.id.storage_key(),
-                            steer_core::auth::CredentialType::OAuth2,
-                        )
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some();
-                    if has_oauth {
-                        crate::tui::state::AuthStatus::OAuthConfigured
-                    } else {
-                        crate::tui::state::AuthStatus::ApiKeySet
-                    }
-                } else {
+        use steer_grpc::proto::provider_auth_status::Status as AuthStatusProto;
+        for p in registry.all() {
+            let status = match status_map.get(&p.id).copied() {
+                Some(v) if v == AuthStatusProto::AuthStatusOauth as i32 => {
+                    crate::tui::state::AuthStatus::OAuthConfigured
+                }
+                Some(v) if v == AuthStatusProto::AuthStatusApiKey as i32 => {
                     crate::tui::state::AuthStatus::ApiKeySet
                 }
-            } else {
-                crate::tui::state::AuthStatus::NotConfigured
+                _ => crate::tui::state::AuthStatus::NotConfigured,
             };
-            provider_status.insert(provider_config.id.clone(), status);
+            provider_status.insert(
+                steer_core::config::provider::ProviderId(p.id.clone()),
+                status,
+            );
         }
 
         tui.setup_state = Some(crate::tui::state::SetupState::new(
-            tui.provider_registry.clone(),
+            registry,
             provider_status,
         ));
         tui.input_mode = InputMode::Setup;

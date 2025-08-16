@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-use steer_core::config::provider::{self, AuthScheme, ProviderId};
+use steer_core::config::provider::{self, ProviderId};
 
 pub struct AuthenticationWidget;
 
@@ -34,7 +34,10 @@ impl AuthenticationWidget {
             .map(|c| c.name.as_str())
             .unwrap_or("Unknown Provider");
         let supports_oauth = provider_config
-            .map(|c| c.auth_schemes.contains(&AuthScheme::Oauth2))
+            .map(|c| {
+                c.auth_schemes
+                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2)
+            })
             .unwrap_or(false);
 
         let header = vec![
