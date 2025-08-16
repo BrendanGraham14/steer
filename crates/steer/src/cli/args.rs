@@ -36,6 +36,10 @@ pub struct Cli {
     #[arg(long)]
     pub theme: Option<String>,
 
+    /// Additional catalog files to load (repeatable)
+    #[arg(long = "catalog", value_name = "PATH")]
+    pub catalogs: Vec<PathBuf>,
+
     /// Force the welcome/setup flow to run (for testing)
     #[arg(long, hide = true)]
     pub force_setup: bool,
@@ -58,6 +62,9 @@ pub enum Commands {
         /// Theme to use for the TUI (overrides global)
         #[arg(long)]
         theme: Option<String>,
+        /// Additional catalog files to load (repeatable, overrides global)
+        #[arg(long = "catalog", value_name = "PATH")]
+        catalogs: Vec<PathBuf>,
         /// Force the welcome/setup flow to run (for testing)
         #[arg(long, hide = true)]
         force_setup: bool,
@@ -92,6 +99,10 @@ pub enum Commands {
         /// Connect to a remote gRPC server (overrides global --remote)
         #[arg(long)]
         remote: Option<String>,
+
+        /// Additional catalog files to load (repeatable)
+        #[arg(long = "catalog", value_name = "PATH")]
+        catalogs: Vec<PathBuf>,
     },
     /// Start the gRPC server
     Server {

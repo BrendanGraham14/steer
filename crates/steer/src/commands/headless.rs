@@ -25,6 +25,7 @@ pub struct HeadlessCommand {
     pub system_prompt: Option<String>,
     pub remote: Option<String>,
     pub directory: Option<PathBuf>,
+    pub catalogs: Vec<PathBuf>,
 }
 
 #[async_trait]
@@ -63,7 +64,23 @@ impl Command for HeadlessCommand {
         // Use model override if provided, otherwise use the global setting
         let model_to_use = self.model.as_ref().unwrap_or(&self.global_model);
 
-        // Load session configuration if provided
+        // Normalize provided catalog paths (if any)
+        let normalized_catalogs: Vec<String> = self
+            .catalogs
+            .iter()
+            .map(|p| {
+                if !p.exists() {
+                    tracing::warn!("Catalog path does not exist: {}", p.display());
+                    p.to_string_lossy().to_string()
+                } else {
+                    p.canonicalize()
+                        .map(|c| c.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| p.to_string_lossy().to_string())
+                }
+            })
+            .collect();
+
+        // Load session configuration (explicit path if provided, else auto-discovery)
         let session_config = if let Some(config_path) = &self.session_config {
             let overrides = SessionConfigOverrides {
                 system_prompt: self.system_prompt.clone(),
@@ -75,7 +92,12 @@ impl Command for HeadlessCommand {
 
             Some(loader.load().await?)
         } else {
-            None
+            let overrides = SessionConfigOverrides {
+                system_prompt: self.system_prompt.clone(),
+                ..Default::default()
+            };
+            let loader = SessionConfigLoader::new(None).with_overrides(overrides);
+            Some(loader.load().await?)
         };
 
         // Extract tool config and system prompt from session config if available
@@ -87,8 +109,12 @@ impl Command for HeadlessCommand {
             None => (None, self.system_prompt.clone()),
         };
 
-        // Create session manager
-        let session_manager = crate::create_session_manager(model_to_use.clone()).await?;
+        // Create session manager with custom catalogs (discovered catalogs are added by core loaders)
+        let session_manager = crate::create_session_manager_with_catalog(
+            model_to_use.clone(),
+            normalized_catalogs.clone(),
+        )
+        .await?;
 
         // Determine execution mode and run
         let result = match &self.session {
@@ -152,13 +178,14 @@ impl Command for HeadlessCommand {
                 let app_messages =
                     app_messages.map_err(|e| eyre!("Failed to convert messages: {}", e))?;
 
-                crate::run_once_ephemeral(
+                crate::run_once_ephemeral_with_catalog(
                     &session_manager,
                     app_messages,
                     model_to_use.clone(),
                     tool_config,
                     Some(auto_approve_policy),
                     system_prompt_to_use,
+                    normalized_catalogs,
                 )
                 .await?
             }

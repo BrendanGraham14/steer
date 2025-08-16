@@ -18,7 +18,8 @@ impl ProviderRegistry {
     ///
     /// Merge order (later overrides earlier):
     /// 1. Built-in defaults from embedded catalog
-    /// 2. Additional catalog files specified
+    /// 2. Discovered catalogs (project, then user)
+    /// 3. Additional catalog files specified
     pub fn load(additional_catalogs: &[String]) -> crate::error::Result<Self> {
         let mut providers: HashMap<ProviderId, ProviderConfig> = HashMap::new();
 
@@ -34,7 +35,17 @@ impl ProviderRegistry {
             providers.insert(config.id.clone(), config);
         }
 
-        // 2. Additional catalog files
+        // 2. Discovered catalog files (project then user)
+        for path in crate::utils::paths::AppPaths::discover_catalogs() {
+            if let Some(catalog) = Self::load_catalog_file(&path)? {
+                for p in catalog.providers {
+                    let config = ProviderConfig::from(p);
+                    providers.insert(config.id.clone(), config);
+                }
+            }
+        }
+
+        // 3. Additional catalog files
         for catalog_path in additional_catalogs {
             if let Some(catalog) = Self::load_catalog_file(Path::new(catalog_path))? {
                 for p in catalog.providers {
@@ -89,7 +100,8 @@ mod tests {
     #[test]
     fn loads_builtin_when_no_additional_catalogs() {
         let reg = ProviderRegistry::load(&[]).expect("load registry");
-        assert_eq!(reg.all().count(), 4); // Anthropic, OpenAI, Google, xAI
+        // At least built-ins; discovered catalogs may add more in dev envs
+        assert!(reg.all().count() >= 4);
     }
 
     #[test]
@@ -134,6 +146,6 @@ mod tests {
         let custom = reg.get(&ProviderId("myprov".to_string())).unwrap();
         assert_eq!(custom.name, "My Provider");
 
-        assert_eq!(reg.all().count(), 5);
+        assert!(reg.all().count() >= 5);
     }
 }
