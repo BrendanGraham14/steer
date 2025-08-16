@@ -149,13 +149,26 @@ impl SessionConfigLoader {
 
             self.partial_to_full(partial)?
         } else {
-            // Use defaults
-            SessionConfig {
+            // Discover standard session config locations (.steer/session.toml, ~/.config/steer/session.toml)
+            let mut discovered: Option<SessionConfig> = None;
+            for p in steer_core::utils::paths::AppPaths::discover_session_configs() {
+                if let Ok(content) = fs::read_to_string(&p).await {
+                    let partial: PartialSessionConfig =
+                        toml::from_str(&content).with_context(|| {
+                            format!("Failed to parse TOML config from: {}", p.display())
+                        })?;
+                    discovered = Some(self.partial_to_full(partial)?);
+                    break;
+                }
+            }
+
+            // Fallback to defaults if nothing discovered
+            discovered.unwrap_or(SessionConfig {
                 workspace: WorkspaceConfig::default(),
                 tool_config: SessionToolConfig::default(),
                 system_prompt: None,
                 metadata: HashMap::new(),
-            }
+            })
         };
 
         self.apply_overrides(&mut config)?;
