@@ -33,6 +33,9 @@ service AgentService {
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc ResolveModel(ResolveModelRequest) returns (ResolveModelResponse);
+
+  // Provider auth status
+  rpc GetProviderAuthStatus(GetProviderAuthStatusRequest) returns (GetProviderAuthStatusResponse);
 }
 
 // Client to server messages in the bidirectional stream
@@ -765,16 +768,19 @@ message WorkspaceFilesEvent {
 }
 
 // Provider and model configuration
-message ProviderConfig {
+enum ProviderAuthScheme {
+  AUTH_SCHEME_API_KEY = 0;
+  AUTH_SCHEME_OAUTH2 = 1;
+}
+
+message ProviderInfo {
   string id = 1;  // "anthropic", "openai", "gemini", "xai", or custom name
   string name = 2;  // Display name
-  string api_format = 3;  // "openai", "anthropic", "gemini", "xai"
-  repeated string auth_schemes = 4;  // "api_key", "oauth2"
-  optional string base_url = 5;  // Optional override URL
+  repeated ProviderAuthScheme auth_schemes = 3;  // supported auth methods
 }
 
 message ProviderModel {
-  string provider_id = 1;  // References ProviderConfig.id
+  string provider_id = 1;  // References ProviderInfo.id
   string model_id = 2;  // Model identifier (e.g., "claude-3-5-sonnet-20241022")
   string display_name = 3;  // User-friendly name
   bool supports_thinking = 4;  // Whether model supports thinking/reasoning
@@ -912,7 +918,7 @@ message ListProvidersRequest {
 }
 
 message ListProvidersResponse {
-  repeated ProviderConfig providers = 1;
+  repeated ProviderInfo providers = 1;
 }
 
 message ListModelsRequest {
@@ -929,4 +935,23 @@ message ResolveModelRequest {
 
 message ResolveModelResponse {
   ModelSpec model = 1;
+}
+
+// Provider auth status messages
+message GetProviderAuthStatusRequest {
+  optional string provider_id = 1; // if omitted, return all providers
+}
+
+message ProviderAuthStatus {
+  string provider_id = 1;
+  enum Status {
+    AUTH_STATUS_NONE = 0;
+    AUTH_STATUS_API_KEY = 1;
+    AUTH_STATUS_OAUTH = 2;
+  }
+  Status status = 2;
+}
+
+message GetProviderAuthStatusResponse {
+  repeated ProviderAuthStatus statuses = 1;
 }

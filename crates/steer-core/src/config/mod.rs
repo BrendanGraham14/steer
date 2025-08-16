@@ -146,20 +146,18 @@ impl LlmConfigProvider {
             {
                 Ok(Some(ApiAuth::OAuth))
             } else {
+                // Fall back to stored API key in keyring
+                if let Some(crate::auth::Credential::ApiKey { value }) = self
+                    .storage
+                    .get_credential(
+                        &provider_id.storage_key(),
+                        crate::auth::CredentialType::ApiKey,
+                    )
+                    .await?
                 {
-                    // Fall back to stored API key in keyring
-                    if let Some(crate::auth::Credential::ApiKey { value }) = self
-                        .storage
-                        .get_credential(
-                            &provider_id.storage_key(),
-                            crate::auth::CredentialType::ApiKey,
-                        )
-                        .await?
-                    {
-                        Ok(Some(ApiAuth::Key(value)))
-                    } else {
-                        Ok(None)
-                    }
+                    Ok(Some(ApiAuth::Key(value)))
+                } else {
+                    Ok(None)
                 }
             }
         } else if provider_id.as_str() == self::provider::OPENAI_ID {
@@ -214,36 +212,25 @@ impl LlmConfigProvider {
                 Ok(None)
             }
         } else {
-            // Custom providers should use their own credential lookup
-            Ok(None)
+            // Custom providers - check for stored API key
+            if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some(ApiAuth::Key(value)))
+            } else {
+                Ok(None)
+            }
         }
     }
 
     /// Get the auth storage
     pub fn auth_storage(&self) -> &Arc<dyn AuthStorage> {
         &self.storage
-    }
-
-    /// Return list of providers that have authentication configured
-    pub async fn available_providers(&self) -> Result<Vec<ProviderId>> {
-        let mut providers = Vec::new();
-        let anthropic = self::provider::anthropic();
-        if self.get_auth_for_provider(&anthropic).await?.is_some() {
-            providers.push(anthropic);
-        }
-        let openai = self::provider::openai();
-        if self.get_auth_for_provider(&openai).await?.is_some() {
-            providers.push(openai);
-        }
-        let google = self::provider::google();
-        if self.get_auth_for_provider(&google).await?.is_some() {
-            providers.push(google);
-        }
-        let xai = self::provider::xai();
-        if self.get_auth_for_provider(&xai).await?.is_some() {
-            providers.push(xai);
-        }
-        Ok(providers)
     }
 }
 

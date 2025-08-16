@@ -6,7 +6,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Widget},
 };
-use steer_core::config::provider::AuthScheme;
 
 pub struct ProviderSelectionWidget;
 
@@ -48,7 +47,9 @@ impl ProviderSelectionWidget {
             .map(|(i, provider)| {
                 let status = state
                     .auth_providers
-                    .get(&provider.id)
+                    .get(&steer_core::config::provider::ProviderId(
+                        provider.id.clone(),
+                    ))
                     .unwrap_or(&AuthStatus::NotConfigured);
                 let (icon, status_style) = match status {
                     AuthStatus::OAuthConfigured => ("✓", theme.style(Component::SetupStatusActive)),
@@ -63,12 +64,15 @@ impl ProviderSelectionWidget {
                     theme.style(Component::SetupProviderName)
                 };
 
-                // Show provider name with auth method hints
-                let auth_hint = if provider.auth_schemes.contains(&AuthScheme::Oauth2)
-                    && provider.auth_schemes.contains(&AuthScheme::ApiKey)
-                {
+                let has_oauth = provider
+                    .auth_schemes
+                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2);
+                let has_api_key = provider
+                    .auth_schemes
+                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeApiKey);
+                let auth_hint = if has_oauth && has_api_key {
                     " (OAuth/API Key)"
-                } else if provider.auth_schemes.contains(&AuthScheme::Oauth2) {
+                } else if has_oauth {
                     " (OAuth)"
                 } else {
                     " (API Key)"

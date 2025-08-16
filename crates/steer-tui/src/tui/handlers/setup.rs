@@ -9,7 +9,7 @@ use steer_core::auth::{
     AuthFlowWrapper, AuthMethod, AuthProgress, DefaultAuthStorage, DynAuthenticationFlow,
     api_key::ApiKeyAuthFlow,
 };
-use steer_core::config::provider::{self, AuthScheme, ProviderId};
+use steer_core::config::provider::{self, ProviderId};
 use tracing::debug;
 
 // Remove TODO comment - authentication is now handled using the generic trait
@@ -30,14 +30,24 @@ impl SetupHandler {
             DefaultAuthStorage::new().map_err(|e| crate::error::Error::Auth(e.to_string()))?,
         );
 
-        // Get provider config from registry
-        let provider_config = tui.provider_registry.get(&provider_id).ok_or_else(|| {
-            crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
-        })?;
+        // Get provider config name without holding borrow across mutation
+        let (provider_name, supports_oauth) = {
+            let cfg = tui
+                .setup_state
+                .as_ref()
+                .and_then(|s| s.registry.get(&provider_id))
+                .ok_or_else(|| {
+                    crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
+                })?;
+            let supports_oauth = cfg
+                .auth_schemes
+                .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2);
+            (cfg.name.clone(), supports_oauth)
+        };
 
         // Create appropriate auth flow based on provider and method
         let auth_flow: Box<dyn DynAuthenticationFlow> = match (&provider_id, method) {
-            (id, AuthMethod::OAuth) if *id == provider::anthropic() => {
+            (id, AuthMethod::OAuth) if *id == provider::anthropic() && supports_oauth => {
                 // Only Anthropic supports OAuth currently
                 use steer_core::auth::anthropic::AnthropicOAuthFlow;
                 Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage)))
@@ -47,14 +57,13 @@ impl SetupHandler {
                 Box::new(AuthFlowWrapper::new(ApiKeyAuthFlow::new(
                     auth_storage,
                     provider_id.clone(),
-                    provider_config.name.clone(),
+                    provider_name.clone(),
                 )))
             }
             _ => {
-                if let Some(setup_state) = &mut tui.setup_state {
+                if let Some(setup_state) = tui.setup_state.as_mut() {
                     setup_state.error_message = Some(format!(
-                        "{} doesn't support {:?} authentication",
-                        provider_config.name, method
+                        "{provider_name} doesn't support {method:?} authentication"
                     ));
                 }
                 return Err(crate::error::Error::Auth(
@@ -63,21 +72,22 @@ impl SetupHandler {
             }
         };
 
-        match auth_flow.start_auth(method).await {
+        let start_result = auth_flow.start_auth(method).await;
+        match start_result {
             Ok(auth_state) => {
                 tui.auth_controller = Some(AuthController {
                     flow: Arc::from(auth_flow),
                     state: auth_state,
                 });
                 // Mark authentication as in progress
-                if let Some(setup_state) = &mut tui.setup_state {
+                if let Some(setup_state) = tui.setup_state.as_mut() {
                     setup_state
                         .auth_providers
                         .insert(provider_id, AuthStatus::InProgress);
                 }
             }
             Err(e) => {
-                if let Some(setup_state) = &mut tui.setup_state {
+                if let Some(setup_state) = tui.setup_state.as_mut() {
                     setup_state.error_message =
                         Some(format!("Failed to initialize authentication: {e}"));
                 }
@@ -163,7 +173,9 @@ impl SetupHandler {
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
                 if let Some(provider_config) = providers.get(state.provider_cursor) {
-                    state.selected_provider = Some(provider_config.id.clone());
+                    state.selected_provider = Some(steer_core::config::provider::ProviderId(
+                        provider_config.id.clone(),
+                    ));
                     state.next_step();
                 }
                 Ok(None)
@@ -194,14 +206,20 @@ impl SetupHandler {
     ) -> Result<Option<InputMode>> {
         // Get provider config to check auth schemes
         let (supports_oauth, supports_api_key, provider_name) = {
-            let provider_config = tui.provider_registry.get(&provider_id).ok_or_else(|| {
-                crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
-            })?;
-            (
-                provider_config.auth_schemes.contains(&AuthScheme::Oauth2),
-                provider_config.auth_schemes.contains(&AuthScheme::ApiKey),
-                provider_config.name.clone(),
-            )
+            let provider_config = tui
+                .setup_state
+                .as_ref()
+                .and_then(|s| s.registry.get(&provider_id))
+                .ok_or_else(|| {
+                    crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
+                })?;
+            let has_oauth = provider_config
+                .auth_schemes
+                .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2);
+            let has_api_key = provider_config
+                .auth_schemes
+                .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeApiKey);
+            (has_oauth, has_api_key, provider_config.name.clone())
         };
 
         // For providers that only support API key, automatically initialize API key auth
