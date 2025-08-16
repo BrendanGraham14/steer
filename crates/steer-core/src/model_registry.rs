@@ -24,7 +24,8 @@ impl ModelRegistry {
     ///
     /// Merge order (later overrides earlier):
     /// 1. Built-in defaults from embedded catalog
-    /// 2. Additional catalog files specified
+    /// 2. Discovered catalogs (project, then user)
+    /// 3. Additional catalog files specified
     pub fn load(additional_catalogs: &[String]) -> Result<Self, Error> {
         // First, load the built-in models from embedded catalog
         let builtin_catalog: Catalog = toml::from_str(DEFAULT_CATALOG_TOML)
@@ -165,13 +166,9 @@ impl ModelRegistry {
 
     /// Determine default discovery paths for catalogs (user + project)
     fn discover_catalog_paths() -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-        // Project-level catalog
-        paths.push(PathBuf::from("catalog.toml"));
-        // User-level catalog: ~/.config/steer/catalog.toml
-        if let Some(proj) = directories::ProjectDirs::from("", "", "steer") {
-            paths.push(proj.config_dir().join("catalog.toml"));
-        }
+        // Standardized discovery paths via utils::paths
+        let paths: Vec<PathBuf> = crate::utils::paths::AppPaths::discover_catalogs();
+        // Do not filter by existence here; load() already checks existence when reading
         paths
     }
 

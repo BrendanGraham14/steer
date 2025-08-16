@@ -1,3 +1,4 @@
+pub mod paths;
 pub mod session;
 pub mod tracing;
 

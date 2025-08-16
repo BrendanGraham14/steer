@@ -7,6 +7,7 @@ use steer::commands::{
     Command, headless::HeadlessCommand, serve::ServeCommand, session::SessionCommand,
 };
 use steer::session_config::{SessionConfigLoader, SessionConfigOverrides};
+use tracing::{debug, warn};
 
 /// Parameters for running the TUI
 struct TuiParams {
@@ -17,6 +18,7 @@ struct TuiParams {
     session_db: Option<PathBuf>,
     session_config_path: Option<PathBuf>,
     theme: Option<String>,
+    catalogs: Vec<PathBuf>,
     force_setup: bool,
 }
 
@@ -29,6 +31,7 @@ struct RemoteTuiParams {
     system_prompt: Option<String>,
     session_config_path: Option<PathBuf>,
     theme: Option<String>,
+    catalogs: Vec<PathBuf>,
     force_setup: bool,
 }
 
@@ -74,6 +77,7 @@ async fn main() -> Result<()> {
         remote: None,         // Will use global --remote if set
         session_config: None, // Will use global --session-config if set
         theme: None,          // Will use global --theme if set
+        catalogs: vec![],     // Will use global --catalog if set
         force_setup: cli.force_setup,
     });
 
@@ -82,6 +86,7 @@ async fn main() -> Result<()> {
             remote,
             session_config,
             theme,
+            catalogs: subcommand_catalogs,
             force_setup,
         } => {
             #[cfg(feature = "ui")]
@@ -92,6 +97,15 @@ async fn main() -> Result<()> {
                 let session_config_path = session_config.or(cli.session_config.clone());
                 // Use subcommand theme if provided, otherwise fall back to global
                 let theme_name = theme.or(cli.theme.clone());
+                // Merge catalogs: use subcommand if provided, otherwise fall back to global
+                let catalogs = if !subcommand_catalogs.is_empty() {
+                    subcommand_catalogs
+                } else {
+                    cli.catalogs.clone()
+                };
+
+                // Normalize and warn for invalid catalog paths
+                let catalogs = normalize_catalogs(&catalogs);
 
                 // Set panic hook for terminal cleanup
                 setup_panic_hook();
@@ -107,6 +121,7 @@ async fn main() -> Result<()> {
                         system_prompt: cli.system_prompt,
                         session_config_path,
                         theme: theme_name.clone(),
+                        catalogs: catalogs.iter().map(PathBuf::from).collect(),
                         force_setup,
                     })
                     .await
@@ -120,6 +135,7 @@ async fn main() -> Result<()> {
                         session_db: cli.session_db,
                         session_config_path,
                         theme: theme_name,
+                        catalogs: catalogs.iter().map(PathBuf::from).collect(),
                         force_setup,
                     })
                     .await
@@ -151,6 +167,7 @@ async fn main() -> Result<()> {
             session_config,
             system_prompt,
             remote,
+            catalogs,
         } => {
             // Parse headless model if provided, otherwise use global model
             let effective_model = headless_model.as_ref().unwrap_or(&model);
@@ -165,23 +182,32 @@ async fn main() -> Result<()> {
                 system_prompt: system_prompt.or(cli.system_prompt),
                 remote: remote_addr,
                 directory: cli.directory,
+                catalogs,
             };
             command.execute().await
         }
         Commands::Server {
             port,
             bind,
-            catalogs,
+            catalogs: server_catalogs,
         } => {
             // Use builtin default model for the server
             let default_model = steer_core::config::model::builtin::opus();
+
+            // Merge catalogs: prefer subcommand if provided, else use global
+            let catalogs = if !server_catalogs.is_empty() {
+                server_catalogs
+            } else {
+                cli.catalogs.clone()
+            };
+            let catalogs = normalize_catalogs(&catalogs);
 
             let command = ServeCommand {
                 port,
                 bind,
                 model: default_model,
                 session_db: cli.session_db.clone(),
-                catalogs,
+                catalogs: catalogs.iter().map(PathBuf::from).collect(),
             };
             command.execute().await
         }
@@ -222,11 +248,17 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
     // Use builtin default model for server startup
     let default_model = steer_core::config::model::builtin::opus();
 
+    // Normalize and warn for invalid catalog paths
+    let catalog_paths: Vec<String> = normalize_catalogs(&params.catalogs);
+
     // Create in-memory channel
-    let (channel, _server_handle) =
-        local_server::setup_local_grpc(default_model.clone(), params.session_db.clone())
-            .await
-            .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
+    let (channel, _server_handle) = local_server::setup_local_grpc_with_catalog(
+        default_model.clone(),
+        params.session_db.clone(),
+        steer_core::catalog::CatalogConfig::with_catalogs(catalog_paths),
+    )
+    .await
+    .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
 
     // Create gRPC client
     let client = steer_grpc::AgentClient::from_channel(channel)
@@ -264,10 +296,8 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
     }
 
     // If no session_id, we need to create a new session
-    if session_id.is_none()
-        && (params.session_config_path.is_some() || params.system_prompt.is_some())
-    {
-        // Load session config from file if provided
+    if session_id.is_none() {
+        // Load session config (explicit path if provided, else auto-discovery or defaults)
         let overrides = SessionConfigOverrides {
             system_prompt: params.system_prompt.clone(),
             ..Default::default()
@@ -333,10 +363,8 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     }
 
     // If no session_id, we need to create a new session
-    if session_id.is_none()
-        && (params.session_config_path.is_some() || params.system_prompt.is_some())
-    {
-        // Load session config from file if provided
+    if session_id.is_none() {
+        // Load session config (explicit path if provided, else auto-discovery or defaults)
         let overrides = SessionConfigOverrides {
             system_prompt: params.system_prompt.clone(),
             ..Default::default()
@@ -360,16 +388,26 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     // Use builtin default model for TUI initially
     let default_model = steer_core::config::model::builtin::opus();
 
+    // Try resolving via local catalogs first (if provided), then fall back to server
     let model_id = if params.model != "opus" && !params.model.is_empty() {
-        match client.resolve_model(&params.model).await {
-            Ok(resolved) => resolved,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to resolve model '{}': {}, using default",
-                    params.model,
-                    e
-                );
-                default_model
+        // Attempt local resolution using provided catalogs
+        let catalog_paths: Vec<String> = normalize_catalogs(&params.catalogs);
+        let locally_resolved: Option<steer_core::config::model::ModelId> =
+            resolve_model_locally(&params.model, &catalog_paths);
+
+        if let Some(id) = locally_resolved {
+            id
+        } else {
+            match client.resolve_model(&params.model).await {
+                Ok(resolved) => resolved,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to resolve model '{}' via server: {}, using default",
+                        params.model,
+                        e
+                    );
+                    default_model
+                }
             }
         }
     } else {
@@ -441,5 +479,75 @@ async fn setup_signal_handlers() {
             }
             std::process::exit(130);
         });
+    }
+}
+
+/// Normalize catalog paths: canonicalize when possible and warn on missing or invalid paths
+fn normalize_catalogs(paths: &[PathBuf]) -> Vec<String> {
+    let mut out = Vec::with_capacity(paths.len());
+    for p in paths {
+        if !p.exists() {
+            warn!("Catalog path does not exist: {}", p.display());
+            out.push(p.to_string_lossy().to_string());
+            continue;
+        }
+        match p.canonicalize() {
+            Ok(c) => out.push(c.to_string_lossy().to_string()),
+            Err(e) => {
+                warn!("Failed to canonicalize catalog path {}: {}", p.display(), e);
+                out.push(p.to_string_lossy().to_string());
+            }
+        }
+    }
+    debug!("Using catalog paths: {:?}", out);
+    out
+}
+
+/// Try to resolve a model locally using provided catalog paths. Falls back to discovered catalogs.
+fn resolve_model_locally(
+    model: &str,
+    catalog_paths: &[String],
+) -> Option<steer_core::config::model::ModelId> {
+    // Load a standalone registry using only explicit catalogs (discovered catalogs are already handled inside load())
+    let registry = match steer_core::model_registry::ModelRegistry::load(catalog_paths) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Failed to load local catalogs for model resolution: {}", e);
+            return None;
+        }
+    };
+
+    match registry.resolve(model) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            debug!("Local resolution failed for '{}': {}", model, e);
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_normalize_catalogs_warns_and_keeps_paths() {
+        let tmp = TempDir::new().unwrap();
+        let existing = tmp.path().join("exists.toml");
+        fs::write(&existing, "").unwrap();
+        let missing = tmp.path().join("missing.toml");
+        let out = normalize_catalogs(&[existing.clone(), missing.clone()]);
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("exists.toml"));
+        assert!(out[1].contains("missing.toml"));
+    }
+
+    #[test]
+    fn test_resolve_model_locally_works_with_discovery() {
+        let res = resolve_model_locally("opus", &[]);
+        // Should resolve using embedded + discovered catalogs
+        assert!(res.is_some());
     }
 }

@@ -54,6 +54,8 @@ Options:
           Custom system prompt to use instead of the default
       --session-config <SESSION_CONFIG>
           Path to session configuration file (TOML format) for new sessions
+      --catalog <PATH>
+          Additional catalog file containing models and providers (repeatable)
       --theme <THEME>
           Theme to use for the TUI (defaults to "default")
   -h, --help
@@ -88,14 +90,32 @@ steer
 /auth
 ```
 
+### Catalogs
+
+Catalogs are TOML files that define both model providers and models. Steer ships with a built-in default catalog and will also auto-discover:
+- ./.steer/catalog.toml (project-level)
+- ~/.config/steer/catalog.toml (user-level)
+
+For session config, Steer will auto-discover:
+- ./.steer/session.toml (project-level)
+- ~/.config/steer/session.toml (user-level)
+
+You can add more with --catalog (repeatable). Later catalogs override earlier entries. Note: project configs live under ./.steer (e.g., ./.steer/session.toml, ./.steer/catalog.toml).
+
 ### gRPC server / remote mode
+
+Catalog files contain both providers and models. You can supply one or more with --catalog in both local and remote modes.
 
 ```bash
 # Start a standalone server (default 127.0.0.1:50051)
-steer server --port 50051
+# Load extra catalogs (repeatable)
+steer server --port 50051 --catalog ./my-catalog.toml --catalog ~/.config/steer/catalog.toml
 
-# Connect to an already running server
-steer tui --remote 192.168.1.10:50051
+# Local TUI using custom catalogs (affects local in-process server)
+steer --catalog ./my-catalog.toml
+
+# Connect to an already running server; --catalog helps resolve model aliases locally before falling back to server
+steer tui --remote 192.168.1.10:50051 --catalog ./team-catalog.toml
 ```
 
 ### Sessions
