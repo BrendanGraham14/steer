@@ -523,6 +523,35 @@ impl AgentClient {
         Ok((provider_id, model_spec.model_id))
     }
 
+    /// List providers from server
+    pub async fn list_providers(&self) -> GrpcResult<Vec<proto::ProviderInfo>> {
+        let request = Request::new(proto::ListProvidersRequest {});
+        let response = self
+            .client
+            .lock()
+            .await
+            .list_providers(request)
+            .await
+            .map_err(Box::new)?;
+        Ok(response.into_inner().providers)
+    }
+
+    /// Get provider auth status from server
+    pub async fn get_provider_auth_status(
+        &self,
+        provider_id: Option<String>,
+    ) -> GrpcResult<Vec<proto::ProviderAuthStatus>> {
+        let request = Request::new(proto::GetProviderAuthStatusRequest { provider_id });
+        let response = self
+            .client
+            .lock()
+            .await
+            .get_provider_auth_status(request)
+            .await
+            .map_err(Box::new)?;
+        Ok(response.into_inner().statuses)
+    }
+
     /// List available models (only recommended ones)
     pub async fn list_models(
         &self,

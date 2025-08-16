@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use steer_core::auth::ProviderRegistry;
-use steer_core::config::provider::{ProviderConfig, ProviderId};
+use steer_core::config::provider::ProviderId;
 
 #[derive(Debug, Clone)]
 pub struct SetupState {
@@ -14,7 +13,7 @@ pub struct SetupState {
     pub error_message: Option<String>,
     pub provider_cursor: usize,
     pub skip_setup: bool,
-    pub registry: Arc<ProviderRegistry>,
+    pub registry: Arc<RemoteProviderRegistry>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,9 +39,48 @@ pub struct OAuthFlowState {
     pub waiting_for_callback: bool,
 }
 
+/// Minimal provider view built from remote proto ProviderInfo
+#[derive(Debug, Clone)]
+pub struct RemoteProviderConfig {
+    pub id: String,
+    pub name: String,
+    pub auth_schemes: Vec<steer_grpc::proto::ProviderAuthScheme>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteProviderRegistry {
+    providers: Vec<RemoteProviderConfig>,
+}
+
+impl RemoteProviderRegistry {
+    pub fn from_proto(providers: Vec<steer_grpc::proto::ProviderInfo>) -> Self {
+        let providers = providers
+            .into_iter()
+            .map(|p| RemoteProviderConfig {
+                id: p.id,
+                name: p.name,
+                auth_schemes: p
+                    .auth_schemes
+                    .into_iter()
+                    .filter_map(|v| steer_grpc::proto::ProviderAuthScheme::try_from(v).ok())
+                    .collect(),
+            })
+            .collect();
+        Self { providers }
+    }
+
+    pub fn all(&self) -> impl Iterator<Item = &RemoteProviderConfig> {
+        self.providers.iter()
+    }
+
+    pub fn get(&self, id: &ProviderId) -> Option<&RemoteProviderConfig> {
+        self.providers.iter().find(|p| p.id == id.storage_key())
+    }
+}
+
 impl SetupState {
     pub fn new(
-        registry: Arc<ProviderRegistry>,
+        registry: Arc<RemoteProviderRegistry>,
         auth_providers: HashMap<ProviderId, AuthStatus>,
     ) -> Self {
         Self {
@@ -61,7 +99,7 @@ impl SetupState {
 
     /// Create a SetupState that skips the welcome page - for /auth command
     pub fn new_for_auth_command(
-        registry: Arc<ProviderRegistry>,
+        registry: Arc<RemoteProviderRegistry>,
         auth_providers: HashMap<ProviderId, AuthStatus>,
     ) -> Self {
         let mut state = Self::new(registry, auth_providers);
@@ -95,7 +133,7 @@ impl SetupState {
         self.error_message = None;
     }
 
-    pub fn available_providers(&self) -> Vec<&ProviderConfig> {
+    pub fn available_providers(&self) -> Vec<&RemoteProviderConfig> {
         let mut providers: Vec<_> = self.registry.all().collect();
         // Sort by name for consistent ordering
         providers.sort_by_key(|p| p.name.clone());
