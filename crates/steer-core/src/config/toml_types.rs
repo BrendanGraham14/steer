@@ -31,6 +31,8 @@ pub struct ProviderData {
 pub struct ModelData {
     pub provider: String,
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
