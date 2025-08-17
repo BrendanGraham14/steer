@@ -120,10 +120,16 @@ impl Tui {
                                         let model_id =
                                             (ProviderId(m.provider_id.clone()), m.model_id.clone());
                                         let model_str = format!("{}/{}", m.provider_id, m.model_id);
+                                        let display_name = m.display_name;
+                                        let display_full = format!(
+                                            "{}/{}",
+                                            model_id.0.storage_key(),
+                                            display_name
+                                        );
                                         let display = if model_id == current_model {
-                                            format!("{model_str} (current)")
+                                            format!("{display_full} (current)")
                                         } else {
-                                            model_str.clone()
+                                            display_full.clone()
                                         };
                                         PickerItem::new(display, model_str)
                                     })
@@ -216,10 +222,12 @@ impl Tui {
                                                 );
                                                 let model_str =
                                                     format!("{}/{}", m.provider_id, m.model_id);
+                                                let display_full =
+                                                    format!("{}/{}", m.provider_id, m.display_name);
                                                 let label = if model_id == current_model {
-                                                    format!("{model_str} (current)")
+                                                    format!("{display_full} (current)")
                                                 } else {
-                                                    model_str.clone()
+                                                    display_full.clone()
                                                 };
                                                 PickerItem::new(label, model_str)
                                             })
@@ -250,14 +258,12 @@ impl Tui {
                             }
                         }
                         FuzzyFinderMode::Models => {
-                            // Extract model name (remove " (current)" suffix if present)
-                            let model_name = selected_item.label.trim_end_matches(" (current)");
-                            // Send the model command using command_name()
+                            // Use the insert text (provider/model_id) for command
                             use crate::tui::commands::CoreCommandType;
                             let command = format!(
                                 "/{} {}",
                                 CoreCommandType::Model.command_name(),
-                                model_name
+                                selected_item.insert
                             );
                             self.send_message(command).await?;
                             // Clear the input after sending
@@ -341,22 +347,35 @@ impl Tui {
                         for m in models {
                             let model_id = (ProviderId(m.provider_id.clone()), m.model_id.clone());
                             let full_label = if model_id == current_model {
-                                format!("{}/{} (current)", m.provider_id, m.model_id)
+                                format!("{}/{} (current)", m.provider_id, m.display_name)
                             } else {
-                                format!("{}/{}", m.provider_id, m.model_id)
+                                format!("{}/{}", m.provider_id, m.display_name)
                             };
 
-                            // Match against full label or model name
+                            // Match against full label, display name, and aliases (alias and provider/alias)
                             let full_score = matcher.fuzzy_match(&full_label, &query);
-                            let model_score = matcher.fuzzy_match(&m.model_id, &query);
+                            let name_score = matcher.fuzzy_match(&m.display_name, &query);
+                            let alias_score: Option<i64> = m
+                                .aliases
+                                .iter()
+                                .filter_map(|a| {
+                                    let s1 = matcher.fuzzy_match(a, &query);
+                                    let s2 = matcher
+                                        .fuzzy_match(&format!("{}/{}", m.provider_id, a), &query);
+                                    match (s1, s2) {
+                                        (Some(x), Some(y)) => Some(x.max(y)),
+                                        (Some(x), None) => Some(x),
+                                        (None, Some(y)) => Some(y),
+                                        (None, None) => None,
+                                    }
+                                })
+                                .max();
 
                             // Take the maximum score from all matches
-                            let best_score = match (full_score, model_score) {
-                                (Some(f), Some(m)) => Some(f.max(m)),
-                                (Some(f), None) => Some(f),
-                                (None, Some(m)) => Some(m),
-                                (None, None) => None,
-                            };
+                            let best_score = [full_score, name_score, alias_score]
+                                .into_iter()
+                                .flatten()
+                                .max();
 
                             if let Some(score) = best_score {
                                 scored_models.push((score, full_label));

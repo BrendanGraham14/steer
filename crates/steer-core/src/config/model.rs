@@ -37,6 +37,9 @@ pub struct ModelConfig {
     /// The model identifier (e.g., "gpt-4", "claude-3-opus").
     pub id: String,
 
+    /// The model display name. If not provided, the model id is used.
+    pub display_name: Option<String>,
+
     /// Alternative names/aliases for this model.
     #[serde(default)]
     pub aliases: Vec<String>,
@@ -108,6 +111,7 @@ impl From<ModelData> for ModelConfig {
         ModelConfig {
             provider: ProviderId(data.provider),
             id: data.id,
+            display_name: data.display_name,
             aliases: data.aliases,
             recommended: data.recommended,
             parameters: data.parameters,
@@ -125,6 +129,7 @@ mod tests {
         let config = ModelConfig {
             provider: provider::anthropic(),
             id: "claude-3-opus".to_string(),
+            display_name: None,
             aliases: vec!["opus".to_string(), "claude-opus".to_string()],
             recommended: true,
             parameters: Some(ModelParameters {
@@ -157,6 +162,7 @@ mod tests {
 
         assert_eq!(config.provider, provider::openai());
         assert_eq!(config.id, "gpt-4");
+        assert_eq!(config.display_name, None);
         assert_eq!(config.aliases, Vec::<String>::new());
         assert!(!config.recommended);
         assert!(config.parameters.is_none());
@@ -204,6 +210,7 @@ mod tests {
         let config = ModelConfig {
             provider: provider::anthropic(),
             id: "claude-3-opus".to_string(),
+            display_name: None,
             aliases: vec![],
             recommended: true,
             parameters: Some(ModelParameters {

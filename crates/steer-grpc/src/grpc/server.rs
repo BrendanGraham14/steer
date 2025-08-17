@@ -768,7 +768,7 @@ impl agent_service_server::AgentService for AgentServiceImpl {
             .map(|m| proto::ProviderModel {
                 provider_id: m.provider.storage_key(),
                 model_id: m.id.clone(),
-                display_name: m.id.clone(),
+                display_name: m.display_name.clone().unwrap_or_else(|| m.id.clone()),
                 supports_thinking: m
                     .parameters
                     .as_ref()
