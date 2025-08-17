@@ -1,0 +1,36 @@
+[[providers]]
+id = "fireworks"
+name = "Fireworks"
+api_format = "openai-chat"
+auth_schemes = ["api-key"]
+base_url = "https://api.fireworks.ai/inference/v1"
+
+[[models]]
+provider = "fireworks"
+id = "accounts/fireworks/models/gpt-oss-120b"
+display_name = "gpt-oss-120b"
+aliases = ["gpt-oss-120b", "gpt-oss"]
+recommended = true
+[models.parameters]
+temperature = 1
+max_tokens = 32_000
+
+[[models]]
+provider = "fireworks"
+id = "accounts/fireworks/models/glm-4p5"
+display_name = "glm-4.5"
+aliases = ["glm-4.5", "glm"]
+recommended = true
+[models.parameters]
+temperature = 1
+max_tokens = 32_000
+
+[[models]]
+provider = "fireworks"
+id = "accounts/fireworks/models/kimi-k2-instruct"
+display_name = "kimi-k2"
+aliases = ["kimi-k2", "kimi"]
+recommended = true
+[models.parameters]
+temperature = 1
+max_tokens = 32_000
