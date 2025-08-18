@@ -84,7 +84,7 @@ NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTAN
 - When searching for code patterns based on structure (like finding all functions, classes, imports, etc.), use the {AST_GREP_TOOL_NAME} tool instead of {GREP_TOOL_NAME}. {AST_GREP_TOOL_NAME} understands code syntax and can match patterns like `console.log($ARG)` or `fn $NAME($PARAMS)` or `function $FUNC($$$ARGS) {{ $$$ }}` where $$$ matches any number of elements.
 - Use {GREP_TOOL_NAME} for simple text searches and {AST_GREP_TOOL_NAME} for structural code searches. Both tools respect .gitignore files.
 - {AST_GREP_TOOL_NAME} auto-detects language from file extensions but you can specify it explicitly. It supports rust, javascript, typescript, python, java, go, and more.
-- If you intend to call multiple tools and there are no dependencies between the calls, make all of the independent calls in the same function_calls block.
+- If you intend to call multiple tools and there are no dependencies between the calls, issue the tool calls in parallel.
 "#,
     )
 }
