@@ -1683,8 +1683,8 @@ async fn create_system_prompt_with_workspace(
 
 fn get_model_system_prompt(model: Model) -> String {
     match model {
+        Model::Gpt5_20250807 => crate::prompts::gpt5_system_prompt(),
         Model::O3_20250416
-        | Model::Gpt5_20250807
         | Model::Gpt4_1_20250414
         | Model::O4Mini20250416
         | Model::CodexMiniLatest
