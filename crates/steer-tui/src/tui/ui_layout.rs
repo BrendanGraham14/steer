@@ -58,8 +58,14 @@ impl UiLayout {
     }
 
     /// Render the status bar
-    pub fn render_status_bar(&self, f: &mut Frame, current_model: &ModelId, theme: &Theme) {
-        let status_bar = StatusBar::new(current_model, theme);
+    pub fn render_status_bar(
+        &self,
+        f: &mut Frame,
+        current_model: &ModelId,
+        theme: &Theme,
+        update_badge: crate::tui::widgets::status_bar::UpdateBadge,
+    ) {
+        let status_bar = StatusBar::new(current_model, theme).with_update_badge(update_badge);
         f.render_widget(status_bar, self.status_area);
     }
 }

@@ -7,6 +7,8 @@ use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::tui::update::UpdateStatus;
+
 use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
@@ -62,6 +64,7 @@ mod chat_viewport;
 mod events;
 mod handlers;
 mod ui_layout;
+mod update;
 
 #[cfg(test)]
 mod test_utils;
@@ -166,6 +169,8 @@ pub struct Tui {
     mode_stack: VecDeque<InputMode>,
     /// Last known revision of ChatStore for dirty tracking
     last_revision: u64,
+    /// Update checker status
+    update_status: UpdateStatus,
 }
 
 const MAX_MODE_DEPTH: usize = 8;
@@ -295,6 +300,7 @@ impl Tui {
             vim_state: VimState::default(),
             mode_stack: VecDeque::new(),
             last_revision: 0,
+            update_status: UpdateStatus::Checking,
         };
 
         Ok(tui)
@@ -425,6 +431,14 @@ impl Tui {
         // Load the initial file list
         self.load_file_cache().await;
 
+        // Spawn update checker
+        let (update_tx, mut update_rx) = mpsc::channel::<UpdateStatus>(1);
+        let current_version = env!("CARGO_PKG_VERSION").to_string();
+        tokio::spawn(async move {
+            let status = update::check_latest("BrendanGraham14", "steer", &current_version).await;
+            let _ = update_tx.send(status).await;
+        });
+
         let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
@@ -475,6 +489,10 @@ impl Tui {
             }
 
             tokio::select! {
+                Some(status) = update_rx.recv() => {
+                    self.update_status = status;
+                    needs_redraw = true;
+                }
                 Some(event_res) = term_event_rx.recv() => {
                     match event_res {
                         Ok(evt) => {
@@ -715,8 +733,15 @@ impl Tui {
             );
             f.render_stateful_widget(input_panel, layout.input_area, &mut self.input_panel_state);
 
-            // Render status bar
-            layout.render_status_bar(f, &current_model_owned, &self.theme);
+            let update_badge = match &self.update_status {
+                UpdateStatus::Available(info) => {
+                    crate::tui::widgets::status_bar::UpdateBadge::Available {
+                        latest: &info.latest,
+                    }
+                }
+                _ => crate::tui::widgets::status_bar::UpdateBadge::None,
+            };
+            layout.render_status_bar(f, &current_model_owned, &self.theme, update_badge);
 
             // Get fuzzy finder results before the render call
             let fuzzy_finder_data = if input_mode == InputMode::FuzzyFinder {
