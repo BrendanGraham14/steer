@@ -73,6 +73,48 @@ impl RemoteWorkspaceService {
         self.tools.keys().cloned().collect()
     }
 
+    /// Convert a ToolError to a ToolErrorDetail payload
+    fn tool_error_to_detail(error: &ToolError) -> crate::proto::ToolErrorDetail {
+        use crate::proto::tool_error_detail::Kind;
+
+        let (kind, tool_name, message) = match error {
+            ToolError::Execution { tool_name, message } => {
+                (Kind::Execution, tool_name.clone(), message.clone())
+            }
+            ToolError::Io { tool_name, message } => (Kind::Io, tool_name.clone(), message.clone()),
+            ToolError::InvalidParams(tool_name, message) => {
+                (Kind::InvalidParams, tool_name.clone(), message.clone())
+            }
+            ToolError::Cancelled(tool_name) => (
+                Kind::Cancelled,
+                tool_name.clone(),
+                format!("{tool_name} was cancelled"),
+            ),
+            ToolError::Timeout(tool_name) => (
+                Kind::Timeout,
+                tool_name.clone(),
+                format!("{tool_name} execution timed out"),
+            ),
+            ToolError::UnknownTool(tool_name) => (
+                Kind::UnknownTool,
+                tool_name.clone(),
+                format!("Unknown tool: {tool_name}"),
+            ),
+            ToolError::DeniedByUser(tool_name) => (
+                Kind::DeniedByUser,
+                tool_name.clone(),
+                format!("Tool execution denied: {tool_name}"),
+            ),
+            ToolError::InternalError(msg) => (Kind::Internal, String::new(), msg.clone()),
+        };
+
+        crate::proto::ToolErrorDetail {
+            kind: kind as i32,
+            tool_name,
+            message,
+        }
+    }
+
     /// Convert a ToolError to a gRPC Status
     fn tool_error_to_status(error: ToolError) -> Status {
         match error {
@@ -328,6 +370,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                         nanos: duration.subsec_nanos() as i32,
                     }),
                     metadata: std::collections::HashMap::new(),
+                    error_detail: None,
                 }
             }
             Err(error) => {
@@ -353,6 +396,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                             nanos: duration.subsec_nanos() as i32,
                         }),
                         metadata: std::collections::HashMap::new(),
+                        error_detail: Some(Self::tool_error_to_detail(&error)),
                     },
                 }
             }

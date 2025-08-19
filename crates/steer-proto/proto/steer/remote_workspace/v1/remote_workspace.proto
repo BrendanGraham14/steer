@@ -56,6 +56,9 @@ message ExecuteToolResponse {
   google.protobuf.Timestamp started_at = 13;
   google.protobuf.Timestamp completed_at = 14;
   map<string, string> metadata = 15;
+  
+  // Typed tool error details for domain failures (success=false)
+  optional ToolErrorDetail error_detail = 16;
 }
 
 // Generic typed result for external tools
@@ -63,6 +66,24 @@ message TypedToolResult {
   bytes json_data = 1;  // JSON-encoded result implementing ToolOutput
   string type_name = 2;  // Type name (e.g., "CustomSearchResult")
   optional string summary = 3;  // Optional brief summary for display
+}
+
+// Typed error payload for tool failures
+message ToolErrorDetail {
+  enum Kind {
+    KIND_UNSET = 0;
+    EXECUTION = 1;
+    IO = 2;
+    INVALID_PARAMS = 3;
+    CANCELLED = 4;
+    TIMEOUT = 5;
+    UNKNOWN_TOOL = 6;
+    DENIED_BY_USER = 7;
+    INTERNAL = 8;
+  }
+  Kind kind = 1;
+  string tool_name = 2;
+  string message = 3;
 }
 
 // Request messages

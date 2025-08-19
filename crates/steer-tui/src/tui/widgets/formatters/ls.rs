@@ -109,7 +109,7 @@ impl ToolFormatter for LsFormatter {
                 ToolResult::Error(error) => {
                     lines.push(separator_line(wrap_width, theme.dim_text()));
                     lines.push(Line::from(Span::styled(
-                        error.to_string(),
+                        tool_error_user_message(error).into_owned(),
                         theme.error_text(),
                     )));
                 }
