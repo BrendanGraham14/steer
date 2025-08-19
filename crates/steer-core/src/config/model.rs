@@ -80,6 +80,9 @@ impl ModelConfig {
 
         // Override scalar fields (last-write-wins)
         self.recommended = other.recommended;
+        if other.display_name.is_some() {
+            self.display_name = other.display_name;
+        }
 
         // Merge parameters
         match (&mut self.parameters, other.parameters) {
