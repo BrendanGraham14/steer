@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.5.0...steer-tui-v0.6.0) - 2025-08-19
+
+### Added
+
+- *(tui)* add GitHub update checker and status bar badge
+
+### Other
+
+- cleaner tool error propagation
+
 ## [0.5.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.4.0...steer-tui-v0.5.0) - 2025-08-19
 
 ### Added

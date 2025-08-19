@@ -3654,7 +3654,7 @@ checksum = "3af6b589e163c5a788fab00ce0c0366f6efbb9959c2f9874b224936af7fce7e1"
 dependencies = [
  "base64",
  "indexmap 2.10.0",
- "quick-xml 0.38.1",
+ "quick-xml 0.38.2",
  "serde",
  "time",
 ]
@@ -3969,9 +3969,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.38.1"
+version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9845d9dccf565065824e69f9f235fafba1587031eda353c1f1561cd6a6be78f4"
+checksum = "d200a41a7797e6461bd04e4e95c3347053a731c32c87f066f2f0dda22dbdbba8"
 dependencies = [
  "memchr",
 ]
@@ -5131,7 +5131,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steer"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5196,7 +5196,7 @@ dependencies = [
 
 [[package]]
 name = "steer-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -5267,7 +5267,7 @@ dependencies = [
 
 [[package]]
 name = "steer-grpc"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5292,7 +5292,7 @@ dependencies = [
 
 [[package]]
 name = "steer-macros"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5302,7 +5302,7 @@ dependencies = [
 
 [[package]]
 name = "steer-proto"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -5314,7 +5314,7 @@ dependencies = [
 
 [[package]]
 name = "steer-remote-workspace"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "fuzzy-matcher",
@@ -5337,7 +5337,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tools"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -5369,7 +5369,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5419,7 +5419,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5443,7 +5443,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace-client"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "serde",
