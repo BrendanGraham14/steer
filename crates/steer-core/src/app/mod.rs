@@ -752,12 +752,19 @@ impl App {
                     // Use injected model registry
                     let model_registry = &self.config.model_registry;
 
-                    let available_models: Vec<String> = model_registry
+                    let mut items: Vec<(bool, String, String, String, String)> = model_registry
                         .all()
                         .map(|config| {
                             let model_id = (config.provider.clone(), config.id.clone());
-                            let model_str =
-                                format!("{}/{}", config.provider.storage_key(), config.id);
+                            let is_current = model_id == current_model;
+                            let prov = config.provider.storage_key();
+                            let sort_name = config
+                                .display_name
+                                .as_deref()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or(&config.id)
+                                .to_string();
+                            let id = config.id.clone();
                             let alias_str = if config.aliases.is_empty() {
                                 String::new()
                             } else if config.aliases.len() == 1 {
@@ -765,9 +772,20 @@ impl App {
                             } else {
                                 format!(" (aliases: {})", config.aliases.join(", "))
                             };
+                            (is_current, prov, sort_name, id, alias_str)
+                        })
+                        .collect();
 
-                            if model_id == current_model {
-                                format!("* {model_str}{alias_str}") // Mark current model with asterisk
+                    items.sort_by(|a, b| {
+                        (a.1.as_str(), a.2.as_str()).cmp(&(b.1.as_str(), b.2.as_str()))
+                    });
+
+                    let available_models: Vec<String> = items
+                        .into_iter()
+                        .map(|(is_current, prov, _sort_name, id, alias_str)| {
+                            let model_str = format!("{prov}/{id}");
+                            if is_current {
+                                format!("* {model_str}{alias_str}")
                             } else {
                                 format!("  {model_str}{alias_str}")
                             }
@@ -787,18 +805,35 @@ impl App {
                     let model_registry = &self.config.model_registry;
 
                     match model_registry.resolve(model_name) {
-                        Ok(model_id) => match self.set_model(model_id.clone()).await {
-                            Ok(()) => Ok(Some(conversation::CommandResponse::Text(format!(
-                                "Model changed to {}/{}",
-                                model_id.0.storage_key(),
-                                model_id.1
-                            )))),
-                            Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
-                                "Failed to set model: {e}"
-                            )))),
-                        },
-                        Err(_) => Ok(Some(conversation::CommandResponse::Text(format!(
-                            "Unknown model: {model_name}"
+                        Ok(model_id) => {
+                            // Clone id for lookup after mutation
+                            let lookup_id = model_id.clone();
+                            match self.set_model(model_id).await {
+                                Ok(()) => {
+                                    // Build friendly display: provider/display_name or fallback to provider/id
+                                    let display = if let Some(cfg) =
+                                        self.config.model_registry.get(&lookup_id)
+                                    {
+                                        let name = cfg
+                                            .display_name
+                                            .as_deref()
+                                            .filter(|s| !s.trim().is_empty())
+                                            .unwrap_or(&cfg.id);
+                                        format!("{}/{}", cfg.provider.storage_key(), name)
+                                    } else {
+                                        format!("{}/{}", lookup_id.0.storage_key(), lookup_id.1)
+                                    };
+                                    Ok(Some(conversation::CommandResponse::Text(format!(
+                                        "Model changed to {display}"
+                                    ))))
+                                }
+                                Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
+                                    "Failed to set model: {e}"
+                                )))),
+                            }
+                        }
+                        Err(e) => Ok(Some(conversation::CommandResponse::Text(format!(
+                            "Failed to resolve model '{model_name}': {e}"
                         )))),
                     }
                 } else {
