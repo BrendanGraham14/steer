@@ -94,28 +94,30 @@ steer
 
 Catalogs are TOML files that define both model providers and models. Steer ships with a built-in default catalog and will also auto-discover:
 - ./.steer/catalog.toml (project-level)
-- ~/.config/steer/catalog.toml (user-level)
+- <user config dir>/catalog.toml (user-level; platform-specific)
+  - macOS: ~/Library/Application Support/steer/catalog.toml
+  - Linux: ~/.config/steer/catalog.toml
+  - Windows: %APPDATA%\steer\catalog.toml
 
 For session config, Steer will auto-discover:
 - ./.steer/session.toml (project-level)
-- ~/.config/steer/session.toml (user-level)
+- <user config dir>/session.toml (user-level; same user config dir as above)
 
 You can add more with --catalog (repeatable). Later catalogs override earlier entries. Note: project configs live under ./.steer (e.g., ./.steer/session.toml, ./.steer/catalog.toml).
 
 ### gRPC server / remote mode
 
-Catalog files contain both providers and models. You can supply one or more with --catalog in both local and remote modes.
+You can supply one or more catalogs with `--catalog`.
+
+- Server: catalogs passed to `steer server` are loaded on the server and define available providers/models.
+- Local TUI: passing `--catalog` affects the in-process server started by the CLI.
 
 ```bash
-# Start a standalone server (default 127.0.0.1:50051)
-# Load extra catalogs (repeatable)
-steer server --port 50051 --catalog ./my-catalog.toml --catalog ~/.config/steer/catalog.toml
+# Start a standalone server (default 127.0.0.1:50051) with additional catalogs
+steer server --port 50051 --catalog ./my-catalog.toml
 
-# Local TUI using custom catalogs (affects local in-process server)
+# Local TUI using a custom catalog (applies to the local in-process server)
 steer --catalog ./my-catalog.toml
-
-# Connect to an already running server; --catalog helps resolve model aliases locally before falling back to server
-steer tui --remote 192.168.1.10:50051 --catalog ./team-catalog.toml
 ```
 
 ### Sessions
