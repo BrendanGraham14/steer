@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.4.0...steer-proto-v0.5.0) - 2025-08-19
+
+### Added
+
+- expose provider auth status via gRPC and switch TUI to remote provider registry
+- expose ListModels and ListProviders endpoints
+
+### Other
+
+- core app holds model registry, tui lists/resolves models via grpc
+
 ## [0.1.20](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.1.19...steer-proto-v0.1.20) - 2025-07-31
 
 ### Other

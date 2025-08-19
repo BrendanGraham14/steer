@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.4.0...steer-v0.5.0) - 2025-08-19
+
+### Added
+
+- catalog discovery, --catalog flag, and session config auto-
+- *(models)* Introduce data-driven model registry
+- implement ModelRegistry with config loading and merge logic
+
+### Other
+
+- merge models & providers into a single catalog file
+- tweak model helptext
+- *(core,grpc,cli)* [**breaking**] inject ProviderRegistry and centralize AppConfig creation
+- a few more hardcoded strings
+- core app holds model registry, tui lists/resolves models via grpc
+- generate constants for builtin models
+- *(auth)* rename AuthTokens to OAuth2Token with backward compatibility
+
 ## [0.2.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.1.21...steer-v0.2.0) - 2025-08-01
 
 ### Fixed

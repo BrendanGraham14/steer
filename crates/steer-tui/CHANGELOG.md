@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.4.0...steer-tui-v0.5.0) - 2025-08-19
+
+### Added
+
+- *(core,tui)* [**breaking**] improve model UX and resolution; stricter alias/display_name validation
+- add support for a model display_name
+- expose provider auth status via gRPC and switch TUI to remote provider registry
+- *(models)* Introduce data-driven model registry
+- *(core)* [**breaking**] refactor API client factory for provider-based dispatch
+- make wrapped markdown list content start at the same place as text in initial line
+
+### Other
+
+- merge models & providers into a single catalog file
+- core app holds model registry, tui lists/resolves models via grpc
+- generate constants for builtin models
+
 ## [0.3.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.2.0...steer-tui-v0.3.0) - 2025-08-07
 
 ### Fixed
