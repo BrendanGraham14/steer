@@ -1,4 +1,4 @@
-use super::ToolFormatter;
+use super::{ToolFormatter, helpers::*};
 use crate::tui::theme::{Component, Theme};
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -98,7 +98,7 @@ impl ToolFormatter for ReplaceFormatter {
         // Show error if result is an error
         if let Some(ToolResult::Error(error)) = result {
             lines.push(Line::from(Span::styled(
-                error.to_string(),
+                tool_error_user_message(error).into_owned(),
                 theme.style(Component::ErrorText),
             )));
         }

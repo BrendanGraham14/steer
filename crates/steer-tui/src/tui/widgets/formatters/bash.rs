@@ -218,7 +218,7 @@ impl ToolFormatter for BashFormatter {
                 ToolResult::Error(error) => {
                     // Show error message
                     const MAX_ERROR_LINES: usize = 10;
-                    let error_message = error.to_string();
+                    let error_message = tool_error_user_message(error);
                     let (error_lines, truncated) = truncate_lines(&error_message, MAX_ERROR_LINES);
 
                     for line in error_lines {

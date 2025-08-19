@@ -36,7 +36,10 @@ impl ToolFormatter for ExternalFormatter {
                 }
                 ToolResult::Error(err) => {
                     spans.push(Span::raw(" ✗ "));
-                    spans.push(Span::styled(err.to_string(), theme.error_text()));
+                    spans.push(Span::styled(
+                        tool_error_user_message(err).into_owned(),
+                        theme.error_text(),
+                    ));
                 }
                 _ => {}
             }
@@ -87,7 +90,7 @@ impl ToolFormatter for ExternalFormatter {
                     }
                 }
                 ToolResult::Error(err) => {
-                    for wrapped in textwrap::wrap(&err.to_string(), wrap_width) {
+                    for wrapped in textwrap::wrap(&tool_error_user_message(err), wrap_width) {
                         lines.push(Line::from(Span::styled(
                             wrapped.to_string(),
                             theme.error_text(),

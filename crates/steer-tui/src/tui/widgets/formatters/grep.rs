@@ -173,7 +173,7 @@ impl ToolFormatter for GrepFormatter {
                 ToolResult::Error(error) => {
                     lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
                     lines.push(Line::from(Span::styled(
-                        error.to_string(),
+                        tool_error_user_message(error).into_owned(),
                         theme.style(Component::ErrorText),
                     )));
                 }

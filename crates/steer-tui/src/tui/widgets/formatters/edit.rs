@@ -175,7 +175,7 @@ impl ToolFormatter for EditFormatter {
                     }
                     ToolResult::Error(error) => {
                         lines.push(Line::from(Span::styled(
-                            error.to_string(),
+                            tool_error_user_message(error).into_owned(),
                             theme.style(Component::ErrorText),
                         )));
                     }
@@ -217,7 +217,7 @@ impl ToolFormatter for EditFormatter {
             if let Some(ToolResult::Error(error)) = result {
                 lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
                 lines.push(Line::from(Span::styled(
-                    error.to_string(),
+                    tool_error_user_message(error).into_owned(),
                     theme.style(Component::ErrorText),
                 )));
             }

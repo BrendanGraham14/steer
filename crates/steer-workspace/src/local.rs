@@ -124,9 +124,10 @@ impl Workspace for LocalWorkspace {
             .with_working_directory(self.path.clone());
 
         // Execute the tool
-        tool.run(tool_call.parameters.clone(), &steer_context)
-            .await
-            .map_err(|e| WorkspaceError::ToolExecution(e.to_string()))
+        match tool.run(tool_call.parameters.clone(), &steer_context).await {
+            Ok(result) => Ok(result),
+            Err(e) => Ok(ToolResult::Error(e)),
+        }
     }
 
     async fn available_tools(&self) -> Vec<ToolSchema> {

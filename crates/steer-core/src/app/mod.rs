@@ -1537,10 +1537,18 @@ async fn handle_agent_event(app: &mut App, event: AgentEvent) {
                 let is_error = matches!(result, ToolResult::Error(_));
                 if is_error {
                     if let steer_tools::result::ToolResult::Error(e) = result {
+                        // Extract concise error message from structured ToolError
+                        let error_message = match e {
+                            steer_tools::ToolError::Execution { message, .. } => message.clone(),
+                            steer_tools::ToolError::Io { message, .. } => message.clone(),
+                            steer_tools::ToolError::InvalidParams(_, msg) => msg.clone(),
+                            _ => e.to_string(),
+                        };
+
                         app.emit_event(AppEvent::ToolCallFailed {
                             id: tool_use_id.clone(),
                             name: tool_name.clone(),
-                            error: e.to_string(),
+                            error: error_message,
                             model: app.current_model.clone(),
                         });
                     }

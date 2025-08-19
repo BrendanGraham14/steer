@@ -2,8 +2,19 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
+use std::borrow::Cow;
 use textwrap;
 use unicode_width::UnicodeWidthStr;
+
+/// Extract concise user-facing message from a ToolError
+pub fn tool_error_user_message(e: &steer_tools::error::ToolError) -> Cow<'_, str> {
+    match e {
+        steer_tools::error::ToolError::Execution { message, .. } => Cow::Borrowed(message),
+        steer_tools::error::ToolError::Io { message, .. } => Cow::Borrowed(message),
+        steer_tools::error::ToolError::InvalidParams(_, msg) => Cow::Borrowed(msg),
+        _ => Cow::Owned(e.to_string()),
+    }
+}
 
 /// Truncate text to a maximum number of lines, adding an ellipsis if truncated
 pub fn truncate_lines(text: &str, max_lines: usize) -> (Vec<&str>, bool) {

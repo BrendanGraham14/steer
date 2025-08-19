@@ -276,7 +276,19 @@ impl ToolExecutor {
             .execute_tool(tool_call, tools_context)
             .await
             .map_err(|e| {
-                steer_tools::ToolError::InternalError(format!("Workspace execution failed: {e}"))
+                // Map WorkspaceError variants to structured ToolError
+                use steer_workspace::WorkspaceError;
+                match e {
+                    WorkspaceError::ToolExecution(msg) => steer_tools::ToolError::Execution {
+                        tool_name: tool_call.name.clone(),
+                        message: msg,
+                    },
+                    WorkspaceError::Io(msg) => steer_tools::ToolError::Io {
+                        tool_name: tool_call.name.clone(),
+                        message: msg,
+                    },
+                    _ => steer_tools::ToolError::InternalError(e.to_string()),
+                }
             })
     }
 }

@@ -7,8 +7,8 @@ use tonic::transport::Channel;
 
 use steer_proto::remote_workspace::v1::{
     ExecuteToolRequest, ExecuteToolResponse, GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
-    GetToolApprovalRequirementsRequest, GetToolSchemasRequest, ListFilesRequest,
-    remote_workspace_service_client::RemoteWorkspaceServiceClient,
+    GetToolApprovalRequirementsRequest, GetToolSchemasRequest, ListFilesRequest, ToolErrorDetail,
+    remote_workspace_service_client::RemoteWorkspaceServiceClient, tool_error_detail,
 };
 use steer_tools::{
     ToolCall, ToolSchema,
@@ -342,14 +342,21 @@ impl Workspace for RemoteWorkspace {
         let response = client
             .execute_tool(request)
             .await
-            .map_err(|e| WorkspaceError::ToolExecution(format!("Failed to execute tool: {e}")))?
+            .map_err(|e| WorkspaceError::Status(format!("Failed to execute tool: {e}")))?
             .into_inner();
 
         if !response.success {
-            return Err(WorkspaceError::ToolExecution(format!(
-                "Tool execution failed: {}",
-                response.error
-            )));
+            // Use typed error_detail if available, otherwise fall back to string
+            let tool_error = if let Some(detail) = response.error_detail {
+                convert_error_detail_to_tool_error(detail)
+            } else {
+                // Fallback for older servers
+                steer_tools::ToolError::Execution {
+                    tool_name: tool_call.name.clone(),
+                    message: response.error,
+                }
+            };
+            return Ok(ToolResult::Error(tool_error));
         }
 
         convert_tool_response(response)
@@ -442,6 +449,32 @@ fn convert_proto_to_todo_write_file_operation(
         steer_proto::common::v1::TodoWriteFileOperation::OperationUnset => {
             TodoWriteFileOperation::Created
         }
+    }
+}
+
+/// Convert proto ToolErrorDetail to ToolError
+fn convert_error_detail_to_tool_error(detail: ToolErrorDetail) -> steer_tools::ToolError {
+    use tool_error_detail::Kind;
+
+    let kind = Kind::try_from(detail.kind).unwrap_or(Kind::Internal);
+
+    match kind {
+        Kind::Execution => steer_tools::ToolError::Execution {
+            tool_name: detail.tool_name,
+            message: detail.message,
+        },
+        Kind::Io => steer_tools::ToolError::Io {
+            tool_name: detail.tool_name,
+            message: detail.message,
+        },
+        Kind::InvalidParams => {
+            steer_tools::ToolError::InvalidParams(detail.tool_name, detail.message)
+        }
+        Kind::Cancelled => steer_tools::ToolError::Cancelled(detail.tool_name),
+        Kind::Timeout => steer_tools::ToolError::Timeout(detail.tool_name),
+        Kind::UnknownTool => steer_tools::ToolError::UnknownTool(detail.tool_name),
+        Kind::DeniedByUser => steer_tools::ToolError::DeniedByUser(detail.tool_name),
+        Kind::Internal | Kind::Unset => steer_tools::ToolError::InternalError(detail.message),
     }
 }
 
