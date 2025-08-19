@@ -1,5 +1,16 @@
 [workspace]
-members = ["crates/*"]
+members = [
+  "crates/steer",
+  "crates/steer-core",
+  "crates/steer-grpc",
+  "crates/steer-macros",
+  "crates/steer-proto",
+  "crates/steer-remote-workspace",
+  "crates/steer-tools",
+  "crates/steer-tui",
+  "crates/steer-workspace",
+  "crates/steer-workspace-client",
+]
 resolver = "3"
 
 [workspace.package]
