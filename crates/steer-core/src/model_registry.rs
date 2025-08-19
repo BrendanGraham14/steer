@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tracing::debug;
@@ -17,6 +17,8 @@ pub struct ModelRegistry {
     models: HashMap<ModelId, ModelConfig>,
     /// Map of aliases to ModelIds for alias resolution.
     aliases: HashMap<String, ModelId>,
+    /// Set of providers that have at least one model in the registry (for fast provider checks).
+    providers: HashSet<ProviderId>,
 }
 
 impl ModelRegistry {
@@ -85,14 +87,38 @@ impl ModelRegistry {
         let mut registry = Self {
             models: HashMap::new(),
             aliases: HashMap::new(),
+            providers: HashSet::new(),
         };
 
         for model in models {
             let model_id = (model.provider.clone(), model.id.clone());
 
-            // Store aliases
-            for alias in &model.aliases {
-                registry.aliases.insert(alias.clone(), model_id.clone());
+            // Track provider presence
+            registry.providers.insert(model.provider.clone());
+
+            // Store aliases, ensuring global uniqueness; trim and reject empty aliases
+            for raw in &model.aliases {
+                let alias = raw.trim();
+                if alias.is_empty() {
+                    return Err(Error::Configuration(format!(
+                        "Empty alias found for {}/{}",
+                        model_id.0.storage_key(),
+                        model_id.1,
+                    )));
+                }
+                if let Some(existing) = registry.aliases.get(alias) {
+                    if existing != &model_id {
+                        return Err(Error::Configuration(format!(
+                            "Duplicate alias '{}' used by {}/{} and {}/{}",
+                            alias,
+                            existing.0.storage_key(),
+                            existing.1,
+                            model_id.0.storage_key(),
+                            model_id.1,
+                        )));
+                    }
+                }
+                registry.aliases.insert(alias.to_string(), model_id.clone());
             }
 
             // Store model
@@ -104,6 +130,35 @@ impl ModelRegistry {
             "Loaded models: {:?}",
             registry.models
         );
+
+        // Validate display_name values: non-empty, unique per provider
+        {
+            let mut seen: HashMap<ProviderId, HashSet<String>> = HashMap::new();
+            for ((prov, _mid), cfg) in &registry.models {
+                if let Some(name_raw) = cfg.display_name.as_deref() {
+                    let name = name_raw.trim();
+                    if name.is_empty() {
+                        return Err(Error::Configuration(format!(
+                            "Invalid display_name '{}' for {}/{}",
+                            name_raw,
+                            prov.storage_key(),
+                            cfg.id
+                        )));
+                    }
+                    let set = seen.entry(prov.clone()).or_default();
+                    if !set.insert(name.to_string()) {
+                        return Err(Error::Configuration(format!(
+                            "Duplicate display_name '{}' for provider {}",
+                            name,
+                            prov.storage_key()
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Validate alias collisions across providers (already enforced during build)
+        // Add a targeted test to ensure cross-provider duplicate aliases error out.
 
         Ok(registry)
     }
@@ -118,18 +173,45 @@ impl ModelRegistry {
         self.aliases.get(alias).and_then(|id| self.models.get(id))
     }
     /// Resolve a model string to a ModelId.
-    /// - If input contains '/', treats as 'provider/id' and parses accordingly
+    /// - If input contains '/', treats as 'provider/<id|alias>' and resolves accordingly
+    ///   Note: model IDs may themselves contain '/', so everything after the first '/'
+    ///   is treated as the model ID or alias.
     /// - Otherwise, looks up by alias
     /// - Returns error if not found or invalid
     pub fn resolve(&self, input: &str) -> Result<ModelId, Error> {
-        if let Some((provider_str, id)) = input.split_once('/') {
-            // Try to deserialize the provider string using serde
-            let provider: ProviderId =
-                serde_json::from_value(serde_json::Value::String(provider_str.to_string()))
-                    .map_err(|_| {
-                        Error::Configuration(format!("Invalid provider: {provider_str}"))
-                    })?;
-            Ok((provider, id.to_string()))
+        if let Some((provider_str, part_raw)) = input.split_once('/') {
+            // Parse provider directly and validate it exists in the registry
+            let provider: ProviderId = ProviderId(provider_str.to_string());
+            let provider_known = self.providers.contains(&provider);
+            if !provider_known {
+                return Err(Error::Configuration(format!(
+                    "Unknown provider: {provider_str}"
+                )));
+            }
+
+            let part = part_raw.trim();
+            if part.is_empty() {
+                return Err(Error::Configuration(
+                    "Model name cannot be empty".to_string(),
+                ));
+            }
+
+            // 1) Try exact model id match (ID can include '/')
+            let candidate = (provider.clone(), part.to_string());
+            if self.models.contains_key(&candidate) {
+                return Ok(candidate);
+            }
+
+            // 2) Try alias scoped to the provider
+            if let Some(alias_id) = self.aliases.get(part) {
+                if alias_id.0 == provider {
+                    return Ok(alias_id.clone());
+                }
+            }
+
+            Err(Error::Configuration(format!(
+                "Unknown model or alias: {input}"
+            )))
         } else {
             self.by_alias(input)
                 .map(|config| (config.provider.clone(), config.id.clone()))
@@ -241,10 +323,14 @@ parameters = { thinking_config = { enabled = true } }
         let mut registry = ModelRegistry {
             models: HashMap::new(),
             aliases: HashMap::new(),
+            providers: HashSet::new(),
         };
 
         for model in models {
             let model_id = (model.provider.clone(), model.id.clone());
+
+            // track provider
+            registry.providers.insert(model.provider.clone());
 
             for alias in &model.aliases {
                 registry.aliases.insert(alias.clone(), model_id.clone());
@@ -417,5 +503,173 @@ recommended = true
         assert_eq!(catalog.models[0].id, "test-model");
         assert_eq!(catalog.providers.len(), 1);
         assert_eq!(catalog.providers[0].id, "anthropic");
+    }
+
+    #[test]
+    fn test_resolve_by_provider_and_parts() {
+        // Build a small registry manually
+        let mut registry = ModelRegistry {
+            models: HashMap::new(),
+            aliases: HashMap::new(),
+            providers: HashSet::new(),
+        };
+        let prov = provider::anthropic();
+
+        let m1 = ModelConfig {
+            provider: prov.clone(),
+            id: "id-1".to_string(),
+            display_name: Some("NiceName".to_string()),
+            aliases: vec!["alias1".into()],
+            recommended: false,
+            parameters: None,
+        };
+        let m2 = ModelConfig {
+            provider: prov.clone(),
+            id: "id-2".to_string(),
+            display_name: Some("Other".to_string()),
+            aliases: vec!["alias2".into()],
+            recommended: false,
+            parameters: None,
+        };
+        let id1 = (prov.clone(), m1.id.clone());
+        let id2 = (prov.clone(), m2.id.clone());
+        registry.aliases.insert("alias1".into(), id1.clone());
+        registry.aliases.insert("alias2".into(), id2.clone());
+        registry.models.insert(id1.clone(), m1.clone());
+        registry.models.insert(id2.clone(), m2.clone());
+        registry.providers.insert(prov.clone());
+
+        // provider/id
+        assert_eq!(registry.resolve("anthropic/id-1").unwrap(), id1);
+        // provider/display_name should NOT resolve
+        assert!(registry.resolve("anthropic/NiceName").is_err());
+        // provider/alias should resolve if alias maps to this provider
+        assert_eq!(registry.resolve("anthropic/alias2").unwrap(), id2);
+        // unknown
+        assert!(registry.resolve("anthropic/does-not-exist").is_err());
+    }
+
+    #[test]
+    fn test_resolve_by_display_name_is_not_supported() {
+        // Two models with same display name under same provider
+        let mut registry = ModelRegistry {
+            models: HashMap::new(),
+            aliases: HashMap::new(),
+            providers: HashSet::new(),
+        };
+        let prov = provider::anthropic();
+        let m1 = ModelConfig {
+            provider: prov.clone(),
+            id: "id-1".into(),
+            display_name: Some("Same".into()),
+            aliases: vec![],
+            recommended: false,
+            parameters: None,
+        };
+        let m2 = ModelConfig {
+            provider: prov.clone(),
+            id: "id-2".into(),
+            display_name: Some("Same".into()),
+            aliases: vec![],
+            recommended: false,
+            parameters: None,
+        };
+        let id1 = (prov.clone(), m1.id.clone());
+        let id2 = (prov.clone(), m2.id.clone());
+        registry.models.insert(id1, m1);
+        registry.models.insert(id2, m2);
+        registry.providers.insert(prov.clone());
+
+        // Resolving by display name should not work
+        let err = registry.resolve("anthropic/Same").unwrap_err();
+        match err {
+            Error::Configuration(msg) => assert!(msg.contains("Unknown model or alias")),
+            _ => panic!("unexpected error type"),
+        }
+    }
+
+    #[test]
+    fn test_load_rejects_invalid_or_duplicate_display_names() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let bad_path = dir.path().join("bad_catalog.toml");
+        let dup_path = dir.path().join("dup_catalog.toml");
+
+        // Invalid: empty display_name
+        let bad = r#"
+[[providers]]
+id = "custom"
+name = "Custom"
+api_format = "openai-responses"
+auth_schemes = ["api-key"]
+
+[[models]]
+provider = "custom"
+id = "m1"
+display_name = ""
+"#;
+        fs::write(&bad_path, bad).unwrap();
+        let res = ModelRegistry::load(&[bad_path.to_string_lossy().to_string()]);
+        assert!(matches!(res, Err(Error::Configuration(_))));
+
+        // Duplicate display_name within provider
+        let dup = r#"
+[[providers]]
+id = "custom"
+name = "Custom"
+api_format = "openai-responses"
+auth_schemes = ["api-key"]
+
+[[models]]
+provider = "custom"
+id = "m1"
+display_name = "Same"
+
+[[models]]
+provider = "custom"
+id = "m2"
+display_name = "Same"
+"#;
+        fs::write(&dup_path, dup).unwrap();
+        let res2 = ModelRegistry::load(&[dup_path.to_string_lossy().to_string()]);
+        assert!(matches!(res2, Err(Error::Configuration(_))));
+    }
+
+    #[test]
+    fn test_duplicate_aliases_across_providers_error() {
+        // Two providers, same alias used by different models => should error on load
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("alias_conflict.toml");
+        let toml = r#"
+[[providers]]
+id = "p1"
+name = "P1"
+api_format = "openai-responses"
+auth_schemes = ["api-key"]
+
+[[providers]]
+id = "p2"
+name = "P2"
+api_format = "openai-responses"
+auth_schemes = ["api-key"]
+
+[[models]]
+provider = "p1"
+id = "m1"
+aliases = ["shared"]
+
+[[models]]
+provider = "p2"
+id = "m2"
+aliases = ["shared"]
+"#;
+        fs::write(&path, toml).unwrap();
+        let res = ModelRegistry::load(&[path.to_string_lossy().to_string()]);
+        assert!(matches!(res, Err(Error::Configuration(_))));
     }
 }

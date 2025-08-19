@@ -119,19 +119,17 @@ impl Tui {
                                     .map(|m| {
                                         let model_id =
                                             (ProviderId(m.provider_id.clone()), m.model_id.clone());
-                                        let model_str = format!("{}/{}", m.provider_id, m.model_id);
                                         let display_name = m.display_name;
-                                        let display_full = format!(
-                                            "{}/{}",
-                                            model_id.0.storage_key(),
-                                            display_name
-                                        );
+                                        let prov = ProviderId(m.provider_id.clone()).storage_key();
+                                        let display_full = format!("{prov}/{display_name}");
                                         let display = if model_id == current_model {
                                             format!("{display_full} (current)")
                                         } else {
                                             display_full.clone()
                                         };
-                                        PickerItem::new(display, model_str)
+                                        // Insert provider/id for lookup
+                                        let insert = format!("{}/{}", prov, m.model_id);
+                                        PickerItem::new(display, insert)
                                     })
                                     .collect();
                                 self.input_panel_state
@@ -220,16 +218,18 @@ impl Tui {
                                                     ProviderId(m.provider_id.clone()),
                                                     m.model_id.clone(),
                                                 );
-                                                let model_str =
-                                                    format!("{}/{}", m.provider_id, m.model_id);
+                                                let prov =
+                                                    ProviderId(m.provider_id.clone()).storage_key();
                                                 let display_full =
-                                                    format!("{}/{}", m.provider_id, m.display_name);
+                                                    format!("{}/{}", prov, m.display_name);
                                                 let label = if model_id == current_model {
                                                     format!("{display_full} (current)")
                                                 } else {
                                                     display_full.clone()
                                                 };
-                                                PickerItem::new(label, model_str)
+                                                // Insert provider/id for lookup
+                                                let insert = format!("{}/{}", prov, m.model_id);
+                                                PickerItem::new(label, insert)
                                             })
                                             .collect();
                                         self.input_panel_state.fuzzy_finder.update_results(results);
@@ -342,26 +342,29 @@ impl Tui {
                     if let Ok(models) = self.client.list_models(None).await {
                         let matcher = SkimMatcherV2::default();
                         let current_model = self.current_model.clone();
-                        let mut scored_models: Vec<(i64, String)> = Vec::new();
+                        let mut scored_models: Vec<(i64, String, String)> = Vec::new();
 
                         for m in models {
                             let model_id = (ProviderId(m.provider_id.clone()), m.model_id.clone());
+                            let prov = ProviderId(m.provider_id.clone()).storage_key();
                             let full_label = if model_id == current_model {
-                                format!("{}/{} (current)", m.provider_id, m.display_name)
+                                format!("{}/{} (current)", prov, m.display_name)
                             } else {
-                                format!("{}/{}", m.provider_id, m.display_name)
+                                format!("{}/{}", prov, m.display_name)
                             };
+                            // Insert provider/id for command completion
+                            let insert = format!("{}/{}", prov, m.model_id);
 
-                            // Match against full label, display name, and aliases (alias and provider/alias)
+                            // Match against full label, display name, model id, and aliases (alias and provider/alias)
                             let full_score = matcher.fuzzy_match(&full_label, &query);
                             let name_score = matcher.fuzzy_match(&m.display_name, &query);
+                            let id_score = matcher.fuzzy_match(&m.model_id, &query);
                             let alias_score: Option<i64> = m
                                 .aliases
                                 .iter()
                                 .filter_map(|a| {
                                     let s1 = matcher.fuzzy_match(a, &query);
-                                    let s2 = matcher
-                                        .fuzzy_match(&format!("{}/{}", m.provider_id, a), &query);
+                                    let s2 = matcher.fuzzy_match(&format!("{prov}/{a}"), &query);
                                     match (s1, s2) {
                                         (Some(x), Some(y)) => Some(x.max(y)),
                                         (Some(x), None) => Some(x),
@@ -372,13 +375,13 @@ impl Tui {
                                 .max();
 
                             // Take the maximum score from all matches
-                            let best_score = [full_score, name_score, alias_score]
+                            let best_score = [full_score, name_score, id_score, alias_score]
                                 .into_iter()
                                 .flatten()
                                 .max();
 
                             if let Some(score) = best_score {
-                                scored_models.push((score, full_label));
+                                scored_models.push((score, full_label, insert));
                             }
                         }
 
@@ -387,8 +390,8 @@ impl Tui {
 
                         let results: Vec<_> = scored_models
                             .into_iter()
-                            .map(|(_, model)| {
-                                crate::tui::widgets::fuzzy_finder::PickerItem::simple(model)
+                            .map(|(_, label, insert)| {
+                                crate::tui::widgets::fuzzy_finder::PickerItem::new(label, insert)
                             })
                             .collect();
 
