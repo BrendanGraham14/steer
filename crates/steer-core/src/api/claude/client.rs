@@ -587,14 +587,24 @@ impl Provider for AnthropicClient {
             .unwrap_or(false);
 
         let request = if supports_thinking {
+            // Use catalog/call options to configure thinking budget when provided
+            let budget = call_options
+                .as_ref()
+                .and_then(|o| o.thinking_config)
+                .and_then(|tc| tc.budget_tokens)
+                .unwrap_or(4000);
             let thinking = Some(Thinking {
                 thinking_type: ThinkingType::Enabled,
-                budget_tokens: 4000,
+                budget_tokens: budget,
             });
             CompletionRequest {
                 model: model_id.1.clone(), // Use the model ID string
                 messages: claude_messages,
-                max_tokens: 32_000,
+                max_tokens: call_options
+                    .as_ref()
+                    .and_then(|o| o.max_tokens)
+                    .map(|v| v as usize)
+                    .unwrap_or(32_000),
                 system: system_content.clone(),
                 tools,
                 temperature: call_options

@@ -47,6 +47,7 @@ aliases = []
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.budget_tokens = 4000
 
 [[models]]
 provider = "anthropic"
@@ -61,6 +62,7 @@ aliases = ["sonnet"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.budget_tokens = 4000
 
 [[models]]
 provider = "anthropic"
@@ -69,6 +71,7 @@ aliases = []
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.budget_tokens = 4000
 
 [[models]]
 provider = "anthropic"
@@ -77,6 +80,7 @@ aliases = ["opus"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.budget_tokens = 4000
 
 [[models]]
 provider = "openai"
@@ -101,6 +105,7 @@ aliases = ["codex-mini"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.effort = "medium"
 
 [[models]]
 provider = "openai"
@@ -109,6 +114,7 @@ aliases = ["gpt-5", "gpt5", "gpt"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.effort = "high"
 
 [[models]]
 provider = "openai"
@@ -117,6 +123,7 @@ aliases = ["o3"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.effort = "high"
 
 [[models]]
 provider = "openai"
@@ -125,6 +132,7 @@ aliases = ["o3-pro"]
 recommended = false
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.effort = "high"
 
 [[models]]
 provider = "openai"
@@ -133,6 +141,7 @@ aliases = ["o4-mini"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.effort = "medium"
 
 [[models]]
 provider = "google"
@@ -147,6 +156,8 @@ aliases = ["gemini-pro", "gemini"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
+thinking_config.include_thoughts = true
+thinking_config.budget_tokens = 8192
 
 [[models]]
 provider = "xai"

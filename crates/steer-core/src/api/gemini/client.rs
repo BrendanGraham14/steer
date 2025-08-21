@@ -770,18 +770,40 @@ impl Provider for GeminiClient {
 
         let gemini_tools = tools.map(convert_tools);
 
+        // Derive generation config from call options, respecting model/catalog settings
+        let (temperature, top_p, max_output_tokens) = {
+            let opts = _call_options.as_ref();
+            (
+                opts.and_then(|o| o.temperature).or(Some(1.0)),
+                opts.and_then(|o| o.top_p).or(Some(0.95)),
+                opts.and_then(|o| o.max_tokens)
+                    .map(|v| v as i32)
+                    .or(Some(65536)),
+            )
+        };
+        let thinking_config = _call_options
+            .as_ref()
+            .and_then(|o| o.thinking_config)
+            .and_then(|tc| {
+                if !tc.enabled {
+                    None
+                } else {
+                    Some(GeminiThinkingConfig {
+                        include_thoughts: tc.include_thoughts,
+                        thinking_budget: tc.budget_tokens.map(|v| v as i32),
+                    })
+                }
+            });
+
         let request = GeminiRequest {
             contents: gemini_contents,
             system_instruction,
             tools: gemini_tools,
             generation_config: Some(GeminiGenerationConfig {
-                temperature: Some(1.0),
-                top_p: Some(0.95),
-                max_output_tokens: Some(65536),
-                thinking_config: Some(GeminiThinkingConfig {
-                    include_thoughts: Some(true),
-                    thinking_budget: Some(8192),
-                }),
+                temperature,
+                top_p,
+                max_output_tokens,
+                thinking_config,
                 ..Default::default()
             }),
         };

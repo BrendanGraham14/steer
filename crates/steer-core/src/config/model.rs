@@ -23,7 +23,17 @@ impl ModelParameters {
             temperature: other.temperature.or(self.temperature),
             max_tokens: other.max_tokens.or(self.max_tokens),
             top_p: other.top_p.or(self.top_p),
-            thinking_config: other.thinking_config.or(self.thinking_config),
+            thinking_config: match (self.thinking_config, other.thinking_config) {
+                (Some(a), Some(b)) => Some(ThinkingConfig {
+                    enabled: b.enabled,
+                    effort: b.effort.or(a.effort),
+                    budget_tokens: b.budget_tokens.or(a.budget_tokens),
+                    include_thoughts: b.include_thoughts.or(a.include_thoughts),
+                }),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            },
         }
     }
 }
@@ -98,7 +108,18 @@ impl ModelConfig {
                     self_params.top_p = Some(top_p);
                 }
                 if let Some(thinking) = other_params.thinking_config {
-                    self_params.thinking_config = Some(thinking);
+                    self_params.thinking_config = Some(super::toml_types::ThinkingConfig {
+                        enabled: thinking.enabled,
+                        effort: thinking
+                            .effort
+                            .or(self_params.thinking_config.and_then(|t| t.effort)),
+                        budget_tokens: thinking
+                            .budget_tokens
+                            .or(self_params.thinking_config.and_then(|t| t.budget_tokens)),
+                        include_thoughts: thinking
+                            .include_thoughts
+                            .or(self_params.thinking_config.and_then(|t| t.include_thoughts)),
+                    });
                 }
             }
             (None, Some(other_params)) => {

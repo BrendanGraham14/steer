@@ -456,16 +456,23 @@ impl Provider for XAIClient {
         let xai_messages = self.convert_messages(messages, system);
         let xai_tools = tools.map(|t| self.convert_tools(t));
 
-        // Extract thinking support from call options
-        let supports_thinking = call_options
+        // Extract thinking support and map optional effort
+        let (supports_thinking, reasoning_effort) = call_options
             .as_ref()
-            .and_then(|opts| opts.thinking_config.as_ref())
-            .map(|tc| tc.enabled)
-            .unwrap_or(false);
+            .and_then(|opts| opts.thinking_config)
+            .map(|tc| {
+                let effort = tc.effort.map(|e| match e {
+                    crate::config::toml_types::ThinkingEffort::Low => ReasoningEffort::Low,
+                    crate::config::toml_types::ThinkingEffort::Medium => ReasoningEffort::High, // xAI has Low/High only
+                    crate::config::toml_types::ThinkingEffort::High => ReasoningEffort::High,
+                });
+                (tc.enabled, effort)
+            })
+            .unwrap_or((false, None));
 
         // grok-4 supports thinking by default but not the reasoning_effort parameter
         let reasoning_effort = if supports_thinking && model_id.1 != "grok-4-0709" {
-            Some(ReasoningEffort::High)
+            reasoning_effort.or(Some(ReasoningEffort::High))
         } else {
             None
         };

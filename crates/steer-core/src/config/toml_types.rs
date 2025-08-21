@@ -41,9 +41,27 @@ pub struct ModelData {
     pub parameters: Option<ModelParameters>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThinkingEffort {
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy, Default)]
 pub struct ThinkingConfig {
+    /// Enables provider-specific reasoning/thinking features.
     pub enabled: bool,
+    /// Effort level for providers that support qualitative control (e.g., OpenAI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ThinkingEffort>,
+    /// Token budget for providers that support quantitative limits (e.g., Anthropic, Google).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u32>,
+    /// Include model thoughts in the visible output when supported (e.g., Gemini).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_thoughts: Option<bool>,
 }
 
 /// Model-specific parameters that can be configured.

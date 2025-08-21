@@ -82,19 +82,32 @@ impl Client {
         });
 
         // Configure reasoning for supported models based on call options
-        let reasoning = if call_options
+        let reasoning = call_options
             .as_ref()
             .and_then(|opts| opts.thinking_config.as_ref())
-            .map(|tc| tc.enabled)
-            .unwrap_or(false)
-        {
-            Some(ReasoningConfig {
-                effort: Some(crate::api::openai::responses_types::ReasoningEffort::Medium),
-                summary: Some(ReasoningSummary::Detailed),
-            })
-        } else {
-            None
-        };
+            .and_then(|tc| {
+                if !tc.enabled {
+                    return None;
+                }
+                let effort = match tc
+                    .effort
+                    .unwrap_or(crate::config::toml_types::ThinkingEffort::Medium)
+                {
+                    crate::config::toml_types::ThinkingEffort::Low => {
+                        Some(crate::api::openai::responses_types::ReasoningEffort::Low)
+                    }
+                    crate::config::toml_types::ThinkingEffort::Medium => {
+                        Some(crate::api::openai::responses_types::ReasoningEffort::Medium)
+                    }
+                    crate::config::toml_types::ThinkingEffort::High => {
+                        Some(crate::api::openai::responses_types::ReasoningEffort::High)
+                    }
+                };
+                Some(ReasoningConfig {
+                    effort,
+                    summary: Some(ReasoningSummary::Detailed),
+                })
+            });
 
         let tool_choice = if responses_tools.is_some() {
             Some(ResponsesToolChoice::Auto)
@@ -612,7 +625,10 @@ mod tests {
             temperature: None,
             max_tokens: None,
             top_p: None,
-            thinking_config: Some(crate::config::model::ThinkingConfig { enabled: true }),
+            thinking_config: Some(crate::config::model::ThinkingConfig {
+                enabled: true,
+                ..Default::default()
+            }),
         });
         let request = client.build_request(&model_id, messages.clone(), None, None, call_options);
 

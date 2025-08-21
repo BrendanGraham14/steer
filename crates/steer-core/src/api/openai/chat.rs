@@ -92,17 +92,25 @@ impl Client {
                 .collect()
         });
 
-        // Determine if we should use reasoning based on call options
-        let reasoning_effort = if call_options
+        // Determine reasoning effort from call options (catalog or per-call)
+        let reasoning_effort = call_options
             .as_ref()
             .and_then(|opts| opts.thinking_config.as_ref())
-            .map(|tc| tc.enabled)
-            .unwrap_or(false)
-        {
-            Some(ReasoningEffort::Medium)
-        } else {
-            None
-        };
+            .and_then(|tc| {
+                if !tc.enabled {
+                    return None;
+                }
+                match tc
+                    .effort
+                    .unwrap_or(crate::config::toml_types::ThinkingEffort::Medium)
+                {
+                    crate::config::toml_types::ThinkingEffort::Low => Some(ReasoningEffort::Low),
+                    crate::config::toml_types::ThinkingEffort::Medium => {
+                        Some(ReasoningEffort::Medium)
+                    }
+                    crate::config::toml_types::ThinkingEffort::High => Some(ReasoningEffort::High),
+                }
+            });
 
         let request = OpenAIRequest {
             model: model_id.1.clone(), // Use the model ID string
