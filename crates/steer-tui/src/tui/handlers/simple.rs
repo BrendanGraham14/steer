@@ -163,16 +163,6 @@ impl Tui {
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.chat_viewport.state_mut().toggle_view_mode();
             }
-
-            // Open update URL with 'U' when available
-            KeyCode::Char('U') => {
-                if let crate::tui::update::UpdateStatus::Available(ref info) = self.update_status {
-                    if let Err(e) = open::that(&info.url) {
-                        tracing::warn!("Failed to open update URL: {}", e);
-                    }
-                }
-            }
-
             _ => {
                 // Try common text manipulation first
                 if self.handle_text_manipulation(key)? {

@@ -323,14 +323,6 @@ impl Tui {
                 .move_cursor(CursorMove::Head),
             KeyCode::Char('$') => self.input_panel_state.textarea.move_cursor(CursorMove::End),
             KeyCode::Char('G') => self.chat_viewport.state_mut().scroll_to_bottom(),
-            KeyCode::Char('U') => {
-                // Open update URL when available
-                if let crate::tui::update::UpdateStatus::Available(ref info) = self.update_status {
-                    if let Err(e) = open::that(&info.url) {
-                        tracing::warn!("Failed to open update URL: {}", e);
-                    }
-                }
-            }
             KeyCode::Char('g') => {
                 if self.vim_state.pending_g {
                     self.chat_viewport.state_mut().scroll_to_top();

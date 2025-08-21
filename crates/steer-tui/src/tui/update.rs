@@ -12,13 +12,11 @@ pub enum UpdateStatus {
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub latest: String,
-    pub url: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
-    html_url: String,
 }
 
 fn normalize_tag(tag: &str) -> Option<String> {
@@ -82,7 +80,6 @@ pub async fn check_latest(repo_owner: &str, repo_name: &str, current: &str) -> U
     if latest_ver > current_ver {
         UpdateStatus::Available(UpdateInfo {
             latest: latest_ver.to_string(),
-            url: release.html_url,
         })
     } else {
         UpdateStatus::UpToDate
