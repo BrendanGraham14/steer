@@ -195,7 +195,7 @@ impl Command for HeadlessCommand {
         let json_output = serde_json::to_string_pretty(&result)
             .map_err(|e| eyre!("Failed to serialize result to JSON: {}", e))?;
 
-        println!("{}", json_output);
+        println!("{json_output}");
         Ok(())
     }
 }

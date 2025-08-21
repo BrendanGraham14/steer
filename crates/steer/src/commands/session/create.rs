@@ -78,7 +78,7 @@ impl Command for CreateSessionCommand {
             .await
             .map_err(|e| eyre!("Failed to create session: {}", e))?;
 
-        println!("Created session: {}", session_id);
+        println!("Created session: {session_id}");
         Ok(())
     }
 }

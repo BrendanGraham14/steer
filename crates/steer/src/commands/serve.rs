@@ -59,7 +59,7 @@ impl Command for ServeCommand {
             .map_err(|e| eyre!("Failed to start server: {}", e))?;
 
         info!("gRPC server started on {}", addr);
-        println!("Server listening on {}", addr);
+        println!("Server listening on {addr}");
         println!("Press Ctrl+C to shutdown");
 
         // Wait for shutdown signal
