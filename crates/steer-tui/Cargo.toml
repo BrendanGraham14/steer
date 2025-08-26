@@ -73,3 +73,9 @@ tracing-subscriber = "0.3"
 tonic = "0.12"
 tokio-stream = "0.1"
 http = "1.0"
+criterion = { version = "0.5" }
+
+[[bench]]
+name = "perf"
+harness = false
+
