@@ -9,8 +9,13 @@ use crate::tui::{
 pub struct RowWidget {
     gutter: Gutter,
     body: Box<dyn ChatRenderable + Send + Sync>,
-    /// Cached total height for the body
+    /// Cached decorated lines for current (width, mode, theme, gutter-state, body-state)
     cached_lines: Option<Vec<Line<'static>>>,
+    last_width: u16,
+    last_mode: ViewMode,
+    last_theme_name: String,
+    last_gutter_key: String,
+    last_body_fingerprint: u64,
 }
 
 impl RowWidget {
@@ -19,43 +24,82 @@ impl RowWidget {
             gutter,
             body,
             cached_lines: None,
+            last_width: 0,
+            last_mode: ViewMode::Compact,
+            last_theme_name: String::new(),
+            last_gutter_key: String::new(),
+            last_body_fingerprint: 0,
         }
     }
 }
 impl ChatRenderable for RowWidget {
     fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
-        if self.cached_lines.is_some() && self.cached_lines.as_ref().unwrap().is_empty() {
-            return self.cached_lines.as_ref().unwrap();
-        }
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Include theme and gutter state in cache key
+        let theme_key = theme.name.clone();
+        let gutter_key = self.gutter.cache_key();
 
         let gutter_span = self.gutter.span(theme);
         let body_width = width.saturating_sub(self.gutter.width);
         let body_lines = self.body.lines(body_width, mode, theme);
 
-        // Prefix first line with gutter, rest with spaces
-        self.cached_lines = Some(
-            body_lines
-                .iter()
-                .enumerate()
-                .map(|(i, line)| {
-                    let spans = line.spans.clone();
-                    if i == 0 {
-                        let mut first_line_spans = vec![gutter_span.clone()];
-                        first_line_spans.extend(spans);
-                        Line::from(first_line_spans)
-                    } else {
-                        let mut other_line_spans = vec![Span::raw(format!(
-                            "{:width$}",
-                            "",
-                            width = self.gutter.width as usize
-                        ))];
-                        other_line_spans.extend(spans);
-                        Line::from(other_line_spans)
-                    }
-                })
-                .collect(),
-        );
+        // Compute a lightweight fingerprint of the body's rendered lines
+        let mut hasher = DefaultHasher::new();
+        body_lines.len().hash(&mut hasher);
+        if let Some(first) = body_lines.first() {
+            for s in &first.spans {
+                s.content.hash(&mut hasher);
+            }
+        }
+        if body_lines.len() > 1 {
+            // hash last line too for basic change detection
+            if let Some(last) = body_lines.last() {
+                for s in &last.spans {
+                    s.content.hash(&mut hasher);
+                }
+            }
+        }
+        let body_fp = hasher.finish();
 
+        if self.last_width == width
+            && self.last_mode == mode
+            && self.last_theme_name == theme_key
+            && self.last_gutter_key == gutter_key
+            && self.last_body_fingerprint == body_fp
+        {
+            if let Some(ref lines) = self.cached_lines {
+                return lines;
+            }
+        }
+
+        // Prefix first line with gutter, rest with spaces
+        let decorated: Vec<Line<'static>> = body_lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let spans = line.spans.clone();
+                if i == 0 {
+                    let mut first_line_spans = Vec::with_capacity(1 + spans.len());
+                    first_line_spans.push(gutter_span.clone());
+                    first_line_spans.extend(spans);
+                    Line::from(first_line_spans)
+                } else {
+                    let mut other_line_spans = Vec::with_capacity(1 + spans.len());
+                    other_line_spans.push(Span::raw(" ".repeat(self.gutter.width as usize)));
+                    other_line_spans.extend(spans);
+                    Line::from(other_line_spans)
+                }
+            })
+            .collect();
+
+        self.last_width = width;
+        self.last_mode = mode;
+        self.last_theme_name = theme_key;
+        self.last_gutter_key = gutter_key;
+        self.last_body_fingerprint = body_fp;
+        self.cached_lines = Some(decorated);
         self.cached_lines.as_ref().unwrap()
     }
 }
