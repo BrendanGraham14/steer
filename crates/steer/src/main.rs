@@ -36,7 +36,7 @@ struct RemoteTuiParams {
 }
 
 #[cfg(feature = "ui")]
-use steer_tui::tui::{self, cleanup_terminal, setup_panic_hook};
+use steer_tui::tui::{self, setup_panic_hook};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -430,53 +430,39 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
 
 #[cfg(feature = "ui")]
 async fn setup_signal_handlers() {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    // Set up a flag to track terminal state for signal handlers
-    let terminal_in_raw_mode = Arc::new(AtomicBool::new(false));
-    let terminal_clone = terminal_in_raw_mode.clone();
-
     // Set up signal handler for SIGINT, SIGTERM
     #[cfg(not(windows))]
     {
         use tokio::signal::unix::{SignalKind, signal};
 
-        let sigterm_terminal = terminal_clone.clone();
         let _sigterm_task = tokio::spawn(async move {
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("Failed to set up SIGTERM handler");
             sigterm.recv().await;
 
-            // Clean up terminal if in raw mode
-            if sigterm_terminal.load(Ordering::Relaxed) {
-                cleanup_terminal();
-            }
+            // Always clean up terminal on SIGTERM
+            crate::tui::terminal::cleanup();
+
             std::process::exit(0);
         });
 
-        let sigint_terminal = terminal_clone.clone();
         let _sigint_task = tokio::spawn(async move {
             let mut sigint =
                 signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
             sigint.recv().await;
 
-            // Clean up terminal if in raw mode
-            if sigint_terminal.load(Ordering::Relaxed) {
-                cleanup_terminal();
-            }
+            // Always clean up terminal on SIGINT
+            crate::tui::terminal::cleanup();
             std::process::exit(130); // Standard exit code for SIGINT
         });
     }
 
     #[cfg(windows)]
     {
-        let windows_terminal = terminal_clone;
         let _ctrl_c_task = tokio::spawn(async move {
             tokio::signal::ctrl_c().await.ok();
-            if windows_terminal.load(Ordering::Relaxed) {
-                cleanup_terminal();
-            }
+            // Always clean up terminal on Ctrl+C
+            crate::tui::terminal::cleanup();
             std::process::exit(130);
         });
     }

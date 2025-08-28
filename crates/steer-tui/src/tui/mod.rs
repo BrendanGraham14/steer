@@ -14,18 +14,7 @@ use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, MouseEvent,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-};
-use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    terminal::SetTitle,
-};
+use ratatui::crossterm::event::{self, Event, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 use steer_core::app::io::AppEventSource;
@@ -49,6 +38,7 @@ use crate::tui::state::SetupState;
 use crate::tui::state::{ChatStore, ToolCallRegistry};
 
 use crate::tui::chat_viewport::ChatViewport;
+use crate::tui::terminal::{SetupGuard, cleanup};
 use crate::tui::ui_layout::UiLayout;
 use crate::tui::widgets::InputPanel;
 
@@ -56,6 +46,7 @@ pub mod commands;
 pub mod custom_commands;
 pub mod model;
 pub mod state;
+pub mod terminal;
 pub mod theme;
 pub mod widgets;
 
@@ -239,18 +230,11 @@ impl Tui {
         session_id: String,
         theme: Option<Theme>,
     ) -> Result<Self> {
-        enable_raw_mode()?;
+        // Set up terminal and ensure cleanup on early error
+        let mut guard = SetupGuard::new();
+
         let mut stdout = io::stdout();
-        execute!(
-            stdout,
-            EnterAlternateScreen,
-            EnableBracketedPaste,
-            PushKeyboardEnhancementFlags(
-                ratatui::crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            ),
-            EnableMouseCapture,
-            SetTitle("Steer")
-        )?;
+        terminal::setup(&mut stdout)?;
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
@@ -270,7 +254,6 @@ impl Tui {
             steer_core::preferences::EditingMode::Vim => InputMode::VimNormal,
         };
 
-        // Create TUI with restored messages
         let tui = Self {
             terminal,
             terminal_size,
@@ -302,6 +285,9 @@ impl Tui {
             last_revision: 0,
             update_status: UpdateStatus::Checking,
         };
+
+        // Disarm guard; Tui instance will handle cleanup
+        guard.disarm();
 
         Ok(tui)
     }
@@ -409,19 +395,7 @@ impl Tui {
         }
     }
 
-    pub fn cleanup_terminal(&mut self) -> Result<()> {
-        execute!(
-            self.terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableBracketedPaste,
-            PopKeyboardEnhancementFlags,
-            DisableMouseCapture
-        )?;
-        disable_raw_mode()?;
-        Ok(())
-    }
-
-    pub async fn run(&mut self, mut event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
+    pub async fn run(&mut self, event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
         // Log the current state of messages
         info!(
             "Starting TUI run with {} messages in view model",
@@ -432,14 +406,14 @@ impl Tui {
         self.load_file_cache().await;
 
         // Spawn update checker
-        let (update_tx, mut update_rx) = mpsc::channel::<UpdateStatus>(1);
+        let (update_tx, update_rx) = mpsc::channel::<UpdateStatus>(1);
         let current_version = env!("CARGO_PKG_VERSION").to_string();
         tokio::spawn(async move {
             let status = update::check_latest("BrendanGraham14", "steer", &current_version).await;
             let _ = update_tx.send(status).await;
         });
 
-        let (term_event_tx, mut term_event_rx) = mpsc::channel::<Result<Event>>(1);
+        let (term_event_tx, term_event_rx) = mpsc::channel::<Result<Event>>(1);
         let input_handle: JoinHandle<()> = tokio::spawn(async move {
             loop {
                 // Non-blocking poll
@@ -473,6 +447,23 @@ impl Tui {
             }
         });
 
+        // Run the main event loop
+        let run_result = self
+            .run_event_loop(event_rx, term_event_rx, update_rx)
+            .await;
+
+        // Always abort the input handle regardless of success or error
+        input_handle.abort();
+
+        run_result
+    }
+
+    async fn run_event_loop(
+        &mut self,
+        mut event_rx: mpsc::Receiver<AppEvent>,
+        mut term_event_rx: mpsc::Receiver<Result<Event>>,
+        mut update_rx: mpsc::Receiver<UpdateStatus>,
+    ) -> Result<()> {
         let mut should_exit = false;
         let mut needs_redraw = true; // Force initial draw
         let mut last_spinner_char = String::new();
@@ -489,13 +480,15 @@ impl Tui {
             }
 
             tokio::select! {
-                Some(status) = update_rx.recv() => {
-                    self.update_status = status;
-                    needs_redraw = true;
+                status = update_rx.recv() => {
+                    if let Some(status) = status {
+                        self.update_status = status;
+                        needs_redraw = true;
+                    }
                 }
-                Some(event_res) = term_event_rx.recv() => {
+                event_res = term_event_rx.recv() => {
                     match event_res {
-                        Ok(evt) => {
+                        Some(Ok(evt)) => {
                             match evt {
                                 Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                                     match self.handle_key_event(key_event).await {
@@ -565,15 +558,26 @@ impl Tui {
                                 _ => {}
                             }
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
+                            should_exit = true;
+                        }
+                        None => {
+                            // Input channel closed, request exit
                             should_exit = true;
                         }
                     }
                 }
-                Some(app_event) = event_rx.recv() => {
-                    self.handle_app_event(app_event).await;
-                    needs_redraw = true;
+                app_event_opt = event_rx.recv() => {
+                    match app_event_opt {
+                        Some(app_event) => {
+                            self.handle_app_event(app_event).await;
+                            needs_redraw = true;
+                        }
+                        None => {
+                            should_exit = true;
+                        }
+                    }
                 }
                 _ = tick.tick() => {
                     // Check if we should animate the spinner
@@ -594,9 +598,6 @@ impl Tui {
             }
         }
 
-        // Cleanup terminal on exit
-        self.cleanup_terminal()?;
-        input_handle.abort();
         Ok(())
     }
 
@@ -1344,27 +1345,17 @@ fn get_spinner_char(state: usize) -> &'static str {
     SPINNER_CHARS[state % SPINNER_CHARS.len()]
 }
 
-/// Free function for best-effort terminal cleanup (raw mode, alt screen, mouse, etc.)
-pub fn cleanup_terminal() {
-    use ratatui::crossterm::{
-        event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags},
-        execute,
-        terminal::{LeaveAlternateScreen, disable_raw_mode},
-    };
-    let _ = disable_raw_mode();
-    let _ = execute!(
-        std::io::stdout(),
-        LeaveAlternateScreen,
-        PopKeyboardEnhancementFlags,
-        DisableBracketedPaste,
-        DisableMouseCapture
-    );
+impl Drop for Tui {
+    fn drop(&mut self) {
+        // Use the same backend writer for reliable cleanup; idempotent via TERMINAL_STATE
+        crate::tui::terminal::cleanup_with_writer(self.terminal.backend_mut());
+    }
 }
 
 /// Helper to wrap terminal cleanup in panic handler
 pub fn setup_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
-        cleanup_terminal();
+        cleanup();
         // Print panic info to stderr after restoring terminal state
         eprintln!("Application panicked:");
         eprintln!("{panic_info}");
@@ -1472,6 +1463,15 @@ pub async fn run_tui(
     let event_rx = client.subscribe().await;
     let mut tui = Tui::new(client, model.clone(), session_id.clone(), theme.clone()).await?;
 
+    // Ensure terminal cleanup even if we error before entering the event loop
+    struct TuiCleanupGuard;
+    impl Drop for TuiCleanupGuard {
+        fn drop(&mut self) {
+            cleanup();
+        }
+    }
+    let _cleanup_guard = TuiCleanupGuard;
+
     if !messages.is_empty() {
         tui.restore_messages(messages.clone());
     }
@@ -1536,9 +1536,7 @@ pub async fn run_tui(
     }
 
     // Run the TUI
-    tui.run(event_rx).await?;
-
-    Ok(())
+    tui.run(event_rx).await
 }
 
 /// Run TUI in authentication setup mode
@@ -1580,7 +1578,7 @@ mod tests {
 
     impl Drop for TerminalCleanupGuard {
         fn drop(&mut self) {
-            cleanup_terminal();
+            cleanup();
         }
     }
 
