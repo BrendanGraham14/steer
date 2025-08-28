@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.7.0...steer-v0.8.0) - 2025-08-28
+
+### Fixed
+
+- clean up terminal properly in error states
+
 ## [0.7.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.6.0...steer-v0.7.0) - 2025-08-21
 
 ### Other
