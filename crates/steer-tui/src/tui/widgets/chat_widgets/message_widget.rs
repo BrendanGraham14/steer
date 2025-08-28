@@ -4,21 +4,101 @@ use steer_core::app::conversation::{Message, UserContent};
 
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
-use crate::tui::widgets::{ChatRenderable, HeightCache, ViewMode, markdown};
+use crate::tui::widgets::{ChatRenderable, ViewMode, markdown};
 
 pub struct MessageWidget {
     message: Message,
-    cache: HeightCache,
     rendered_lines: Option<Vec<Line<'static>>>,
+    last_width: u16,
+    last_mode: ViewMode,
+    last_theme_name: String,
+    last_content_hash: u64,
 }
 
 impl MessageWidget {
     pub fn new(message: Message) -> Self {
         Self {
             message,
-            cache: HeightCache::new(),
             rendered_lines: None,
+            last_width: 0,
+            last_mode: ViewMode::Compact,
+            last_theme_name: String::new(),
+            last_content_hash: 0,
         }
+    }
+
+    fn content_hash(message: &Message) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        // Hash over message data that affects rendering
+        match &message.data {
+            MessageData::User { content, .. } => {
+                for c in content {
+                    match c {
+                        UserContent::Text { text } => text.hash(&mut hasher),
+                        UserContent::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } => {
+                            command.hash(&mut hasher);
+                            stdout.hash(&mut hasher);
+                            stderr.hash(&mut hasher);
+                            exit_code.hash(&mut hasher);
+                        }
+                        UserContent::AppCommand { command, response } => {
+                            // App command type and response text
+                            std::mem::discriminant(command).hash(&mut hasher);
+                            if let Some(resp) = response {
+                                match resp {
+                                    steer_core::app::conversation::CommandResponse::Text(t) => {
+                                        t.hash(&mut hasher)
+                                    }
+                                    steer_core::app::conversation::CommandResponse::Compact(r) => {
+                                        std::mem::discriminant(r).hash(&mut hasher);
+                                        if let steer_core::app::conversation::CompactResult::Success(s) = r { s.hash(&mut hasher); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            MessageData::Assistant { content, .. } => {
+                for b in content {
+                    match b {
+                        AssistantContent::Text { text } => text.hash(&mut hasher),
+                        AssistantContent::ToolCall { tool_call } => {
+                            tool_call.id.hash(&mut hasher);
+                            tool_call.name.hash(&mut hasher);
+                            // parameters may be large; include their JSON string length and a hash of the string
+                            let s = tool_call.parameters.to_string();
+                            s.len().hash(&mut hasher);
+                            s.hash(&mut hasher);
+                        }
+                        AssistantContent::Thought { thought } => {
+                            thought.display_text().hash(&mut hasher);
+                        }
+                    }
+                }
+            }
+            MessageData::Tool {
+                tool_use_id,
+                result,
+                ..
+            } => {
+                tool_use_id.hash(&mut hasher);
+                // Hash variant and key fields via Debug (cheap and stable enough here)
+                use std::fmt::Write as _;
+                let mut s = String::new();
+                let _ = write!(&mut s, "{result:?}");
+                s.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
     }
 
     fn render_as_markdown(text: &str, theme: &Theme, max_width: usize) -> markdown::MarkedText {
@@ -28,9 +108,16 @@ impl MessageWidget {
 }
 
 impl ChatRenderable for MessageWidget {
-    fn lines(&mut self, width: u16, _mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
-        if self.rendered_lines.is_some() && self.cache.last_width == width {
-            return self.rendered_lines.as_ref().unwrap();
+    fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
+        let theme_key = theme.name.clone();
+        let content_hash = Self::content_hash(&self.message);
+        let cache_valid = self.rendered_lines.is_some()
+            && self.last_width == width
+            && self.last_mode == mode
+            && self.last_theme_name == theme_key
+            && self.last_content_hash == content_hash;
+        if cache_valid {
+            return self.rendered_lines.as_deref().unwrap();
         }
 
         let max_width = width.saturating_sub(4) as usize; // Account for gutters
@@ -225,7 +312,11 @@ impl ChatRenderable for MessageWidget {
         }
 
         self.rendered_lines = Some(lines);
-        self.rendered_lines.as_ref().unwrap()
+        self.last_width = width;
+        self.last_mode = mode;
+        self.last_theme_name = theme_key;
+        self.last_content_hash = content_hash;
+        self.rendered_lines.as_deref().unwrap()
     }
 }
 

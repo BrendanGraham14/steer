@@ -73,6 +73,14 @@ impl Gutter {
         self
     }
 
+    /// Produce a stable cache key capturing visual-affecting state
+    pub fn cache_key(&self) -> String {
+        format!(
+            "role={:?};spin={:?};hover={};w={}",
+            self.role, self.spinner, self.hovered, self.width
+        )
+    }
+
     // Just return a styled Span, not Lines
     pub fn span(&self, theme: &Theme) -> Span<'static> {
         let mut style = theme.style(self.role.theme_component());
@@ -84,7 +92,7 @@ impl Gutter {
             style = style.add_modifier(Modifier::BOLD);
         }
 
-        let char = if let Some(spinner) = self.spinner {
+        let glyph = if let Some(spinner) = self.spinner {
             spinner.to_string()
         } else {
             self.role.to_string()
@@ -95,9 +103,16 @@ impl Gutter {
             RoleGlyph::Assistant => 2,
             RoleGlyph::Tool => 2,
             RoleGlyph::Meta => 0,
-        };
-        let width = self.width - 1 - pad as u16;
-        let content = format!("{:pad$}{}{:width$}", "", char, "", width = width as usize);
+        } as usize;
+        let right = self.width.saturating_sub(1 + pad as u16) as usize;
+        let content = format!(
+            "{:pad$}{}{:right$}",
+            "",
+            glyph,
+            "",
+            pad = pad,
+            right = right
+        );
 
         Span::styled(content, style)
     }
