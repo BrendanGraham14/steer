@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.8.0...steer-core-v0.9.0) - 2025-09-22
+
+### Other
+
+- remove bash command filtering
+- increase openai request timeout from 5 -> 30 mins
+
 ## [0.7.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.6.0...steer-core-v0.7.0) - 2025-08-21
 
 ### Fixed
