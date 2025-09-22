@@ -22,8 +22,6 @@ pub struct ValidationResult {
 pub enum ValidationError {
     #[error("Invalid parameters: {0}")]
     InvalidParams(String),
-    #[error("Filter error: {0}")]
-    FilterError(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Other error: {0}")]
@@ -158,21 +156,6 @@ impl BashValidator {
 
         BANNED_COMMAND_REGEXES.iter().any(|re| re.is_match(command))
     }
-
-    /// Advanced command filtering using existing command_filter module
-    async fn is_command_allowed(
-        &self,
-        command: &str,
-        context: &ValidationContext,
-    ) -> Result<bool, ValidationError> {
-        crate::tools::command_filter::is_command_allowed(
-            command,
-            &context.llm_config_provider,
-            context.cancellation_token.clone(),
-        )
-        .await
-        .map_err(|e| ValidationError::FilterError(e.to_string()))
-    }
 }
 
 #[async_trait]
@@ -184,7 +167,7 @@ impl ToolValidator for BashValidator {
     async fn validate(
         &self,
         tool_call: &ToolCall,
-        context: &ValidationContext,
+        _context: &ValidationContext,
     ) -> Result<ValidationResult, ValidationError> {
         let params: BashParams = serde_json::from_value(tool_call.parameters.clone())
             .map_err(|e| ValidationError::InvalidParams(e.to_string()))?;
@@ -195,20 +178,6 @@ impl ToolValidator for BashValidator {
                 allowed: false,
                 reason: Some(format!(
                     "Command '{}' is disallowed for security reasons",
-                    params.command
-                )),
-                requires_user_approval: false,
-            });
-        }
-
-        // Advanced filter check using LLM (slower, more thorough)
-        let is_allowed = self.is_command_allowed(&params.command, context).await?;
-
-        if !is_allowed {
-            return Ok(ValidationResult {
-                allowed: false,
-                reason: Some(format!(
-                    "Command '{}' was blocked by the command filter",
                     params.command
                 )),
                 requires_user_approval: false,

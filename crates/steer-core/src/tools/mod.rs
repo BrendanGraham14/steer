@@ -1,5 +1,4 @@
 pub mod backend;
-pub mod command_filter;
 pub mod dispatch_agent;
 pub mod error;
 pub mod execution_context;
