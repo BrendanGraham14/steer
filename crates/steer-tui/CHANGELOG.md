@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.8.0...steer-tui-v0.8.1) - 2025-11-30
+
+### Fixed
+
+- stop update loop spin
+
+### Other
+
+- stream tui events
+
 ## [0.8.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.7.0...steer-tui-v0.8.0) - 2025-08-28
 
 ### Fixed
