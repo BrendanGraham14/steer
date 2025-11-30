@@ -429,6 +429,7 @@ impl Tui {
         let mut should_exit = false;
         let mut needs_redraw = true; // Force initial draw
         let mut last_spinner_char = String::new();
+        let mut update_rx_closed = false;
 
         // Create a tick interval for spinner updates
         let mut tick = tokio::time::interval(SPINNER_UPDATE_INTERVAL);
@@ -442,10 +443,16 @@ impl Tui {
             }
 
             tokio::select! {
-                status = update_rx.recv() => {
-                    if let Some(status) = status {
-                        self.update_status = status;
-                        needs_redraw = true;
+                status = update_rx.recv(), if !update_rx_closed => {
+                    match status {
+                        Some(status) => {
+                            self.update_status = status;
+                            needs_redraw = true;
+                        }
+                        None => {
+                            // Channel closed; stop polling this branch to avoid busy looping
+                            update_rx_closed = true;
+                        }
                     }
                 }
                 event_res = term_event_stream.next() => {
