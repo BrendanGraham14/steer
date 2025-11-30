@@ -979,6 +979,7 @@ checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
 dependencies = [
  "bitflags 2.9.3",
  "crossterm_winapi",
+ "futures-core",
  "mio",
  "parking_lot",
  "rustix 0.38.44",
@@ -5540,7 +5541,9 @@ dependencies = [
  "chrono",
  "clap",
  "criterion",
+ "crossterm",
  "directories",
+ "futures",
  "fuzzy-matcher",
  "http",
  "indexmap 2.11.0",
