@@ -13,8 +13,9 @@ use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
+use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, Event, KeyEventKind, MouseEvent};
+use ratatui::crossterm::event::{self, Event, EventStream, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 use steer_core::app::io::AppEventSource;
@@ -24,7 +25,6 @@ use steer_core::config::model::ModelId;
 use steer_grpc::AgentClient;
 use steer_tools::schema::ToolCall;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::tui::auth_controller::AuthController;
@@ -413,55 +413,17 @@ impl Tui {
             let _ = update_tx.send(status).await;
         });
 
-        let (term_event_tx, term_event_rx) = mpsc::channel::<Result<Event>>(1);
-        let input_handle: JoinHandle<()> = tokio::spawn(async move {
-            loop {
-                // Non-blocking poll
-                if event::poll(Duration::ZERO).unwrap_or(false) {
-                    match event::read() {
-                        Ok(evt) => {
-                            if term_event_tx.send(Ok(evt)).await.is_err() {
-                                break; // Receiver dropped
-                            }
-                        }
-                        Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                            // This is a non-fatal interrupted syscall, common on some
-                            // systems. We just ignore it and continue polling.
-                            debug!(target: "tui.input", "Ignoring interrupted syscall");
-                            continue;
-                        }
-                        Err(e) => {
-                            // A real I/O error occurred. Send it to the main loop
-                            // to handle, and then stop polling.
-                            warn!(target: "tui.input", "Input error: {}", e);
-                            if term_event_tx.send(Err(Error::from(e))).await.is_err() {
-                                break; // Receiver already dropped
-                            }
-                            break;
-                        }
-                    }
-                } else {
-                    // Async sleep that CAN be interrupted by abort
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-        });
+        let mut term_event_stream = EventStream::new();
 
         // Run the main event loop
-        let run_result = self
-            .run_event_loop(event_rx, term_event_rx, update_rx)
-            .await;
-
-        // Always abort the input handle regardless of success or error
-        input_handle.abort();
-
-        run_result
+        self.run_event_loop(event_rx, &mut term_event_stream, update_rx)
+            .await
     }
 
     async fn run_event_loop(
         &mut self,
         mut event_rx: mpsc::Receiver<AppEvent>,
-        mut term_event_rx: mpsc::Receiver<Result<Event>>,
+        term_event_stream: &mut EventStream,
         mut update_rx: mpsc::Receiver<UpdateStatus>,
     ) -> Result<()> {
         let mut should_exit = false;
@@ -486,84 +448,86 @@ impl Tui {
                         needs_redraw = true;
                     }
                 }
-                event_res = term_event_rx.recv() => {
+                event_res = term_event_stream.next() => {
                     match event_res {
-                        Some(Ok(evt)) => {
-                            match evt {
-                                Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                                    match self.handle_key_event(key_event).await {
-                                        Ok(exit) => {
-                                            if exit {
-                                                should_exit = true;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            // Display error as a system notice
-                                            use crate::tui::model::{ChatItem, ChatItemData, NoticeLevel, generate_row_id};
-                                            self.chat_store.push(ChatItem {
-                                                parent_chat_item_id: None,
-                                                data: ChatItemData::SystemNotice {
-                                                    id: generate_row_id(),
-                                                    level: NoticeLevel::Error,
-                                                    text: e.to_string(),
-                                                    ts: time::OffsetDateTime::now_utc(),
-                                                },
-                                            });
+                        Some(Ok(evt)) => match evt {
+                            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                                match self.handle_key_event(key_event).await {
+                                    Ok(exit) => {
+                                        if exit {
+                                            should_exit = true;
                                         }
                                     }
+                                    Err(e) => {
+                                        // Display error as a system notice
+                                        use crate::tui::model::{ChatItem, ChatItemData, NoticeLevel, generate_row_id};
+                                        self.chat_store.push(ChatItem {
+                                            parent_chat_item_id: None,
+                                            data: ChatItemData::SystemNotice {
+                                                id: generate_row_id(),
+                                                level: NoticeLevel::Error,
+                                                text: e.to_string(),
+                                                ts: time::OffsetDateTime::now_utc(),
+                                            },
+                                        });
+                                    }
+                                }
+                                needs_redraw = true;
+                            }
+                            Event::Mouse(mouse_event) => {
+                                if self.handle_mouse_event(mouse_event)? {
                                     needs_redraw = true;
                                 }
-                                Event::Mouse(mouse_event) => {
-                                    if self.handle_mouse_event(mouse_event)? {
+                            }
+                            Event::Resize(width, height) => {
+                                self.terminal_size = (width, height);
+                                // Terminal was resized, force redraw
+                                needs_redraw = true;
+                            }
+                            Event::Paste(data) => {
+                                // Handle paste in modes that accept text input
+                                if self.is_text_input_mode() {
+                                    if self.input_mode == InputMode::Setup {
+                                        // Handle paste in setup mode
+                                        if let Some(setup_state) = &mut self.setup_state {
+                                            match &setup_state.current_step {
+                                                crate::tui::state::SetupStep::Authentication(_) => {
+                                                    if setup_state.oauth_state.is_some() {
+                                                        // Pasting OAuth callback code
+                                                        setup_state.oauth_callback_input.push_str(&data);
+                                                    } else {
+                                                        // Pasting API key
+                                                        setup_state.api_key_input.push_str(&data);
+                                                    }
+                                                    debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
+                                                    needs_redraw = true;
+                                                }
+                                                _ => {
+                                                    // Other setup steps don't accept paste
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        let normalized_data =
+                                            data.replace("\r\n", "\n").replace('\r', "\n");
+                                        self.input_panel_state.insert_str(&normalized_data);
+                                        debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
                                         needs_redraw = true;
                                     }
                                 }
-                                Event::Resize(width, height) => {
-                                    self.terminal_size = (width, height);
-                                    // Terminal was resized, force redraw
-                                    needs_redraw = true;
-                                }
-                                Event::Paste(data) => {
-                                    // Handle paste in modes that accept text input
-                                    if self.is_text_input_mode() {
-                                        if self.input_mode == InputMode::Setup {
-                                            // Handle paste in setup mode
-                                            if let Some(setup_state) = &mut self.setup_state {
-                                                match &setup_state.current_step {
-                                                    crate::tui::state::SetupStep::Authentication(_) => {
-                                                        if setup_state.oauth_state.is_some() {
-                                                            // Pasting OAuth callback code
-                                                            setup_state.oauth_callback_input.push_str(&data);
-                                                        } else {
-                                                            // Pasting API key
-                                                            setup_state.api_key_input.push_str(&data);
-                                                        }
-                                                        debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
-                                                        needs_redraw = true;
-                                                    }
-                                                    _ => {
-                                                        // Other setup steps don't accept paste
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            let normalized_data =
-                                                data.replace("\r\n", "\n").replace('\r', "\n");
-                                            self.input_panel_state.insert_str(&normalized_data);
-                                            debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
-                                            needs_redraw = true;
-                                        }
-                                    }
-                                }
-                                _ => {}
+                            }
+                            _ => {}
+                        },
+                        Some(Err(e)) => {
+                            if e.kind() == io::ErrorKind::Interrupted {
+                                debug!(target: "tui.input", "Ignoring interrupted syscall");
+                            } else {
+                                error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
+                                should_exit = true;
                             }
                         }
-                        Some(Err(e)) => {
-                            error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
-                            should_exit = true;
-                        }
                         None => {
-                            // Input channel closed, request exit
+                            // Input stream ended, request exit
                             should_exit = true;
                         }
                     }
