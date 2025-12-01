@@ -55,8 +55,8 @@ jobs:
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
-      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      tag-flag: ${{ format('--tag={0}', github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
+      tag: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+      tag-flag: ${{ format('--tag={0}', github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name) }}
       publishing: true
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
