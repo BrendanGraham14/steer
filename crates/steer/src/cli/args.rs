@@ -13,8 +13,8 @@ pub struct Cli {
     pub directory: Option<std::path::PathBuf>,
 
     /// Model to use (e.g., 'opus', 'o3', 'gemini', 'grok', 'openai/custom-model')
-    #[arg(short, long, default_value = "opus")]
-    pub model: String,
+    #[arg(short, long)]
+    pub model: Option<String>,
 
     /// Connect to a remote gRPC server instead of running locally
     #[arg(long)]
