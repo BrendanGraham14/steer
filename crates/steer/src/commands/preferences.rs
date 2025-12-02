@@ -2,6 +2,8 @@ use super::Command;
 use crate::error::Error;
 use async_trait::async_trait;
 use eyre::Result;
+use shell_words::split;
+use std::process::Command as ProcessCommand;
 use steer_core::preferences::Preferences;
 
 pub struct PreferencesCommand {
@@ -44,18 +46,17 @@ impl PreferencesCommand {
             prefs.save()?;
         }
 
-        // Open in default editor
-        let editor = std::env::var("VISUAL")
-            .or_else(|_| std::env::var("EDITOR"))
-            .unwrap_or_else(|_| {
-                if cfg!(target_os = "windows") {
-                    "notepad".to_string()
-                } else {
-                    "vi".to_string()
-                }
-            });
+        let (editor, mut args) = Self::parse_editor_command()?;
+        args.push(path.to_string_lossy().to_string());
 
-        let status = std::process::Command::new(&editor).arg(&path).status()?;
+        let status = ProcessCommand::new(&editor)
+            .args(&args)
+            .status()
+            .map_err(|err| {
+                Error::Process(format!(
+                    "Failed to launch editor '{editor}': {err}. Set $VISUAL or $EDITOR to a valid editor."
+                ))
+            })?;
 
         if !status.success() {
             return Err(Error::Process(format!(
@@ -64,6 +65,42 @@ impl PreferencesCommand {
         }
 
         Ok(())
+    }
+
+    fn parse_editor_command() -> std::result::Result<(String, Vec<String>), Error> {
+        let editor = std::env::var("VISUAL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                std::env::var("EDITOR")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            })
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "windows") {
+                    "notepad".to_string()
+                } else {
+                    "vi".to_string()
+                }
+            });
+
+        Self::parse_editor_command_str(&editor)
+    }
+
+    fn parse_editor_command_str(editor: &str) -> std::result::Result<(String, Vec<String>), Error> {
+        let parts = split(editor).map_err(|err| {
+            Error::Process(format!(
+                "Failed to parse editor command '{editor}': {err}. Set $VISUAL or $EDITOR to a valid editor."
+            ))
+        })?;
+
+        let Some((command, args)) = parts.split_first() else {
+            return Err(Error::Process(
+                "Editor command is empty. Set $VISUAL or $EDITOR to a valid editor.".to_string(),
+            ));
+        };
+
+        Ok((command.to_string(), args.to_vec()))
     }
 
     async fn reset(&self) -> std::result::Result<(), Error> {
@@ -76,5 +113,25 @@ impl PreferencesCommand {
             println!("No preferences file found");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PreferencesCommand;
+
+    #[test]
+    fn parses_editor_with_arguments() {
+        let (command, args) =
+            PreferencesCommand::parse_editor_command_str(r#"code --wait --new-window"#).unwrap();
+        assert_eq!(command, "code");
+        assert_eq!(args, vec!["--wait", "--new-window"]);
+    }
+
+    #[test]
+    fn parses_editor_without_arguments() {
+        let (command, args) = PreferencesCommand::parse_editor_command_str("vim").unwrap();
+        assert_eq!(command, "vim");
+        assert!(args.is_empty());
     }
 }
