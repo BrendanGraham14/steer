@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/BrendanGraham14/steer/compare/steer-v0.8.1...steer-v0.8.2) - 2025-12-02
+
+### Fixed
+
+- respect preferred model on startup
+- handle editor args in preferences edit
+
 ## [0.8.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.7.0...steer-v0.8.0) - 2025-08-28
 
 ### Fixed
