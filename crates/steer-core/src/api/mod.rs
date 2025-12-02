@@ -36,6 +36,23 @@ pub struct Client {
 }
 
 impl Client {
+    /// Remove a cached provider so that future calls re-create it with fresh credentials.
+    fn invalidate_provider(&self, provider_id: &ProviderId) {
+        let mut map = self.provider_map.write().unwrap();
+        map.remove(provider_id);
+    }
+
+    /// Determine if an API error should invalidate the cached provider (typically auth failures).
+    fn should_invalidate_provider(error: &ApiError) -> bool {
+        matches!(
+            error,
+            ApiError::AuthenticationFailed { .. } | ApiError::AuthError(_)
+        ) || matches!(
+            error,
+            ApiError::ServerError { status_code, .. } if matches!(status_code, 401 | 403)
+        )
+    }
+
     /// Create a new Client with all dependencies injected.
     /// This is the preferred constructor to avoid internal registry loading.
     pub fn new_with_deps(
@@ -136,7 +153,7 @@ impl Client {
         // Get provider from model ID
         let provider_id = model_id.0.clone();
         let provider = self
-            .get_or_create_provider(provider_id)
+            .get_or_create_provider(provider_id.clone())
             .await
             .map_err(ApiError::from)?;
 
@@ -163,9 +180,17 @@ impl Client {
             "Final parameters for model"
         );
 
-        provider
+        let result = provider
             .complete(model_id, messages, system, tools, effective_params, token)
-            .await
+            .await;
+
+        if let Err(ref err) = result {
+            if Self::should_invalidate_provider(err) {
+                self.invalidate_provider(&provider_id);
+            }
+        }
+
+        result
     }
 
     pub async fn complete_with_retry(
@@ -237,6 +262,11 @@ impl Client {
                         attempts, max_attempts, model_id, error
                     );
 
+                    if Self::should_invalidate_provider(&error) {
+                        self.invalidate_provider(&provider_id);
+                        return Err(error);
+                    }
+
                     if attempts >= max_attempts {
                         return Err(error);
                     }
@@ -274,5 +304,143 @@ impl Client {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::provider::ProviderId;
+    use async_trait::async_trait;
+    use tokio_util::sync::CancellationToken;
+
+    #[derive(Clone, Copy)]
+    enum StubErrorKind {
+        Auth,
+        Server401,
+    }
+
+    #[derive(Clone)]
+    struct StubProvider {
+        error_kind: StubErrorKind,
+    }
+
+    impl StubProvider {
+        fn new(error_kind: StubErrorKind) -> Self {
+            Self { error_kind }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<String>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionResponse, ApiError> {
+            let err = match self.error_kind {
+                StubErrorKind::Auth => ApiError::AuthenticationFailed {
+                    provider: "stub".to_string(),
+                    details: "bad key".to_string(),
+                },
+                StubErrorKind::Server401 => ApiError::ServerError {
+                    provider: "stub".to_string(),
+                    status_code: 401,
+                    details: "unauthorized".to_string(),
+                },
+            };
+            Err(err)
+        }
+    }
+
+    fn test_client() -> Client {
+        let auth_storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
+        let config_provider = LlmConfigProvider::new(auth_storage);
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+
+        Client::new_with_deps(config_provider, provider_registry, model_registry)
+    }
+
+    fn insert_stub_provider(client: &Client, provider_id: ProviderId, error: StubErrorKind) {
+        client
+            .provider_map
+            .write()
+            .unwrap()
+            .insert(provider_id, Arc::new(StubProvider::new(error)));
+    }
+
+    #[tokio::test]
+    async fn invalidates_cached_provider_on_auth_failure() {
+        let client = test_client();
+        let provider_id = ProviderId("stub-auth".to_string());
+        let model_id = (provider_id.clone(), "stub-model".to_string());
+
+        insert_stub_provider(&client, provider_id.clone(), StubErrorKind::Auth);
+
+        let err = client
+            .complete(
+                &model_id,
+                vec![],
+                None,
+                None,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ApiError::AuthenticationFailed { .. }));
+        assert!(
+            !client
+                .provider_map
+                .read()
+                .unwrap()
+                .contains_key(&provider_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidates_cached_provider_on_unauthorized_status_code() {
+        let client = test_client();
+        let provider_id = ProviderId("stub-unauthorized".to_string());
+        let model_id = (provider_id.clone(), "stub-model".to_string());
+
+        insert_stub_provider(&client, provider_id.clone(), StubErrorKind::Server401);
+
+        let err = client
+            .complete(
+                &model_id,
+                vec![],
+                None,
+                None,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ApiError::ServerError {
+                status_code: 401,
+                ..
+            }
+        ));
+        assert!(
+            !client
+                .provider_map
+                .read()
+                .unwrap()
+                .contains_key(&provider_id)
+        );
     }
 }
