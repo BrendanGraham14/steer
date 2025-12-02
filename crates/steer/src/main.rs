@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 /// Parameters for running the TUI
 struct TuiParams {
     session_id: Option<String>,
-    model: String,
+    model: Option<String>,
     directory: Option<PathBuf>,
     system_prompt: Option<String>,
     session_db: Option<PathBuf>,
@@ -26,7 +26,7 @@ struct TuiParams {
 struct RemoteTuiParams {
     remote_addr: String,
     session_id: Option<String>,
-    model: String,
+    model: Option<String>,
     directory: Option<PathBuf>,
     system_prompt: Option<String>,
     session_config_path: Option<PathBuf>,
@@ -55,16 +55,13 @@ async fn main() -> Result<()> {
     let preferences = steer_core::preferences::Preferences::load().unwrap_or_default();
 
     // Determine which model to use:
-    // 1. CLI argument (if provided and not the default "opus")
+    // 1. CLI argument (if provided)
     // 2. Preferences default_model (if set)
     // 3. System default
-    let model = if !cli.model.is_empty() && cli.model != "opus" {
-        cli.model.clone()
-    } else if let Some(ref default_model_str) = preferences.default_model {
-        default_model_str.clone()
-    } else {
-        "opus".to_string()
-    };
+    let preferred_model = cli.model.clone().or(preferences.default_model.clone());
+    let chosen_model = preferred_model
+        .clone()
+        .unwrap_or_else(|| "opus".to_string());
 
     // Set up signal handlers for terminal cleanup if using TUI
     #[cfg(feature = "ui")]
@@ -116,7 +113,7 @@ async fn main() -> Result<()> {
                     run_tui_remote(RemoteTuiParams {
                         remote_addr: addr,
                         session_id: cli.session,
-                        model,
+                        model: preferred_model.clone(),
                         directory: cli.directory,
                         system_prompt: cli.system_prompt,
                         session_config_path,
@@ -129,7 +126,7 @@ async fn main() -> Result<()> {
                     // Launch with in-process server
                     run_tui_local(TuiParams {
                         session_id: cli.session,
-                        model,
+                        model: preferred_model.clone(),
                         directory: cli.directory,
                         system_prompt: cli.system_prompt,
                         session_db: cli.session_db,
@@ -170,7 +167,7 @@ async fn main() -> Result<()> {
             catalogs,
         } => {
             // Parse headless model if provided, otherwise use global model
-            let effective_model = headless_model.as_ref().unwrap_or(&model);
+            let effective_model = headless_model.as_ref().unwrap_or(&chosen_model);
             let remote_addr = remote.or(cli.remote.clone());
 
             let command = HeadlessCommand {
@@ -245,11 +242,40 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         std::env::set_current_dir(dir)?;
     }
 
-    // Use builtin default model for server startup
-    let default_model = steer_core::config::model::builtin::opus();
-
     // Normalize and warn for invalid catalog paths
     let catalog_paths: Vec<String> = normalize_catalogs(&params.catalogs);
+
+    // Prefer the requested model (CLI or preferences) as the server default so we
+    // don't immediately try to use the Anthropic builtin when the user wants
+    // something else.
+    let preferred_default_model = match (
+        &params.model,
+        steer_core::model_registry::ModelRegistry::load(&catalog_paths),
+    ) {
+        (Some(model_str), Ok(registry)) => match registry.resolve(model_str) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                warn!(
+                    "Failed to resolve preferred model '{}': {}. Falling back to builtin default.",
+                    model_str, e
+                );
+                None
+            }
+        },
+        (None, Ok(_)) => None,
+        (_, Err(e)) => {
+            warn!(
+                "Failed to load model registry for catalogs {:?}: {}. Falling back to builtin default.",
+                catalog_paths, e
+            );
+            None
+        }
+    };
+
+    // Use the preferred model if we resolved it, otherwise fall back to builtin default
+    let default_model = preferred_default_model
+        .clone()
+        .unwrap_or_else(steer_core::config::model::builtin::opus);
 
     // Create in-memory channel
     let (channel, _server_handle) = local_server::setup_local_grpc_with_catalog(
@@ -265,13 +291,20 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
 
-    let model_id = if params.model != "opus" {
-        client
-            .resolve_model(&params.model)
-            .await
-            .map_err(|e| eyre::eyre!("Failed to resolve model '{}': {}", params.model, e))?
+    let model_id = if let Some(model) = preferred_default_model {
+        model
+    } else if let Some(model_str) = params.model.as_deref() {
+        match client.resolve_model(model_str).await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(
+                    "Failed to resolve model '{}': {}. Falling back to default.",
+                    model_str, e
+                );
+                default_model
+            }
+        }
     } else {
-        // Use the default
         default_model
     };
 
@@ -389,21 +422,21 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     let default_model = steer_core::config::model::builtin::opus();
 
     // Try resolving via local catalogs first (if provided), then fall back to server
-    let model_id = if params.model != "opus" && !params.model.is_empty() {
+    let model_id = if let Some(model_str) = params.model.as_deref() {
         // Attempt local resolution using provided catalogs
         let catalog_paths: Vec<String> = normalize_catalogs(&params.catalogs);
         let locally_resolved: Option<steer_core::config::model::ModelId> =
-            resolve_model_locally(&params.model, &catalog_paths);
+            resolve_model_locally(model_str, &catalog_paths);
 
         if let Some(id) = locally_resolved {
             id
         } else {
-            match client.resolve_model(&params.model).await {
+            match client.resolve_model(model_str).await {
                 Ok(resolved) => resolved,
                 Err(e) => {
                     tracing::warn!(
                         "Failed to resolve model '{}' via server: {}, using default",
-                        params.model,
+                        model_str,
                         e
                     );
                     default_model
