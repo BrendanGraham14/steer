@@ -288,7 +288,7 @@ fn proto_to_tool_error(
 }
 
 /// Convert internal Message to protobuf
-pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, ConversionError> {
+pub(crate) fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, ConversionError> {
     let (message_variant, created_at) = match &message.data {
         MessageData::User { content, .. } => {
             let user_msg = proto::UserMessage {
@@ -439,7 +439,7 @@ pub fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, 
 }
 
 /// Convert internal ToolApprovalPolicy to protobuf
-pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::ToolApprovalPolicy {
+pub(crate) fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::ToolApprovalPolicy {
     use proto::{
         AlwaysAskPolicy, ApprovalDecision, MixedPolicy, PreApprovedPolicy,
         tool_approval_policy::Policy,
@@ -474,7 +474,7 @@ pub fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::Tool
 }
 
 /// Convert internal WorkspaceConfig to protobuf
-pub fn workspace_config_to_proto(config: &WorkspaceConfig) -> proto::WorkspaceConfig {
+pub(crate) fn workspace_config_to_proto(config: &WorkspaceConfig) -> proto::WorkspaceConfig {
     use proto::workspace_config::Config;
 
     let config_variant = match config {
@@ -496,7 +496,7 @@ pub fn workspace_config_to_proto(config: &WorkspaceConfig) -> proto::WorkspaceCo
 }
 
 /// Convert internal RemoteAuth to protobuf
-pub fn remote_auth_to_proto(auth: &RemoteAuth) -> proto::RemoteAuth {
+pub(crate) fn remote_auth_to_proto(auth: &RemoteAuth) -> proto::RemoteAuth {
     use proto::remote_auth::Auth;
 
     let auth_variant = match auth {
@@ -510,7 +510,7 @@ pub fn remote_auth_to_proto(auth: &RemoteAuth) -> proto::RemoteAuth {
 }
 
 /// Convert internal ToolFilter to protobuf
-pub fn tool_filter_to_proto(filter: &ToolFilter) -> proto::ToolFilter {
+pub(crate) fn tool_filter_to_proto(filter: &ToolFilter) -> proto::ToolFilter {
     use proto::tool_filter::Filter;
 
     let filter_variant = match filter {
@@ -529,7 +529,7 @@ pub fn tool_filter_to_proto(filter: &ToolFilter) -> proto::ToolFilter {
 }
 
 /// Convert internal ToolVisibility to protobuf
-pub fn tool_visibility_to_proto(visibility: &ToolVisibility) -> proto::ToolVisibility {
+pub(crate) fn tool_visibility_to_proto(visibility: &ToolVisibility) -> proto::ToolVisibility {
     use proto::tool_visibility::Visibility;
 
     let visibility_variant = match visibility {
@@ -549,7 +549,7 @@ pub fn tool_visibility_to_proto(visibility: &ToolVisibility) -> proto::ToolVisib
 }
 
 /// Convert internal BackendConfig to protobuf
-pub fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendConfig {
+pub(crate) fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendConfig {
     use proto::backend_config::Backend;
 
     let backend_variant = match config {
@@ -583,7 +583,7 @@ pub fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendConfig {
 }
 
 /// Convert internal SessionToolConfig to protobuf
-pub fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto::SessionToolConfig {
+pub(crate) fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto::SessionToolConfig {
     proto::SessionToolConfig {
         backends: config
             .backends
@@ -601,7 +601,7 @@ pub fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto::Sessio
     }
 }
 
-pub fn tool_specific_config_to_proto(config: &ToolSpecificConfig) -> proto::ToolSpecificConfig {
+pub(crate) fn tool_specific_config_to_proto(config: &ToolSpecificConfig) -> proto::ToolSpecificConfig {
     match config {
         ToolSpecificConfig::Bash(bash_config) => proto::ToolSpecificConfig {
             config: Some(proto::tool_specific_config::Config::Bash(
@@ -614,7 +614,7 @@ pub fn tool_specific_config_to_proto(config: &ToolSpecificConfig) -> proto::Tool
 }
 
 /// Convert internal SessionConfig to protobuf
-pub fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
+pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
     proto::SessionConfig {
         tool_policy: Some(tool_approval_policy_to_proto(
             &config.tool_config.approval_policy,
@@ -627,7 +627,7 @@ pub fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
 }
 
 /// Convert from protobuf WorkspaceConfig to internal WorkspaceConfig
-pub fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> WorkspaceConfig {
+pub(crate) fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> WorkspaceConfig {
     match proto_config.config {
         Some(proto::workspace_config::Config::Local(local)) => WorkspaceConfig::Local {
             path: if local.path.is_empty() {
@@ -654,7 +654,7 @@ pub fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> Worksp
 }
 
 /// Convert from protobuf ToolFilter to internal ToolFilter
-pub fn proto_to_tool_filter(proto_filter: Option<proto::ToolFilter>) -> ToolFilter {
+pub(crate) fn proto_to_tool_filter(proto_filter: Option<proto::ToolFilter>) -> ToolFilter {
     match proto_filter {
         Some(filter) => {
             match filter.filter {
@@ -673,7 +673,7 @@ pub fn proto_to_tool_filter(proto_filter: Option<proto::ToolFilter>) -> ToolFilt
 }
 
 /// Convert from protobuf ToolVisibility to internal ToolVisibility
-pub fn proto_to_tool_visibility(proto_visibility: Option<proto::ToolVisibility>) -> ToolVisibility {
+pub(crate) fn proto_to_tool_visibility(proto_visibility: Option<proto::ToolVisibility>) -> ToolVisibility {
     match proto_visibility {
         Some(visibility) => {
             match visibility.visibility {
@@ -693,7 +693,7 @@ pub fn proto_to_tool_visibility(proto_visibility: Option<proto::ToolVisibility>)
 }
 
 /// Convert from protobuf ToolApprovalPolicy to internal ToolApprovalPolicy
-pub fn proto_to_tool_approval_policy(
+pub(crate) fn proto_to_tool_approval_policy(
     proto_policy: Option<proto::ToolApprovalPolicy>,
 ) -> ToolApprovalPolicy {
     match proto_policy {
@@ -721,7 +721,7 @@ pub fn proto_to_tool_approval_policy(
 }
 
 /// Convert protobuf SessionToolConfig to internal SessionToolConfig
-pub fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> SessionToolConfig {
+pub(crate) fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> SessionToolConfig {
     let backends = proto_config
         .backends
         .into_iter()
@@ -776,7 +776,7 @@ pub fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> SessionTo
     }
 }
 
-pub fn proto_to_tool_specific_config(
+pub(crate) fn proto_to_tool_specific_config(
     proto_config: proto::ToolSpecificConfig,
 ) -> Option<ToolSpecificConfig> {
     match proto_config.config? {
@@ -789,7 +789,7 @@ pub fn proto_to_tool_specific_config(
 }
 
 /// Convert proto ToolCall to core ToolCall
-pub fn proto_tool_call_to_core(
+pub(crate) fn proto_tool_call_to_core(
     proto_tool_call: &proto::ToolCall,
 ) -> Result<ToolCall, ConversionError> {
     let parameters = serde_json::from_str(&proto_tool_call.parameters_json)?;
@@ -801,7 +801,7 @@ pub fn proto_tool_call_to_core(
 }
 
 /// Convert protobuf Message to internal Message
-pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage, ConversionError> {
+pub(crate) fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage, ConversionError> {
     use steer_core::app::conversation::{AssistantContent, ThoughtContent, UserContent};
     use steer_proto::agent::v1::{assistant_content, message, thought_content, user_content};
 
@@ -955,7 +955,7 @@ pub fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage
 }
 
 /// Convert AppEvent to protobuf StreamSessionResponse
-pub fn app_event_to_server_event(
+pub(crate) fn app_event_to_server_event(
     app_event: AppEvent,
     sequence_num: u64,
 ) -> Result<proto::StreamSessionResponse, ConversionError> {
@@ -1257,7 +1257,7 @@ fn proto_command_response_response_to_command_response(
 }
 
 /// Convert protobuf StreamSessionResponse to AppEvent
-pub fn server_event_to_app_event(
+pub(crate) fn server_event_to_app_event(
     server_event: proto::StreamSessionResponse,
 ) -> Result<AppEvent, ConversionError> {
     use steer_core::app::cancellation::ActiveTool;
@@ -1527,7 +1527,7 @@ pub fn server_event_to_app_event(
 }
 
 /// Convert TUI AppCommand to gRPC StreamSessionRequest
-pub fn convert_app_command_to_client_message(
+pub(crate) fn convert_app_command_to_client_message(
     command: AppCommand,
     session_id: &str,
 ) -> Result<Option<proto::StreamSessionRequest>, ConversionError> {
@@ -1616,6 +1616,8 @@ pub fn convert_app_command_to_client_message(
     }))
 }
 
+// TODO: These todo conversion functions are pub because steer-remote-workspace uses them.
+// This is a boundary violation - should be refactored to use shared proto conversion traits.
 pub fn convert_todo_item_to_proto(item: &TodoItem) -> common::TodoItem {
     common::TodoItem {
         id: item.id.clone(),
@@ -1633,7 +1635,7 @@ pub fn convert_todo_item_to_proto(item: &TodoItem) -> common::TodoItem {
     }
 }
 
-pub fn convert_proto_to_todo_item(item: common::TodoItem) -> TodoItem {
+pub(crate) fn convert_proto_to_todo_item(item: common::TodoItem) -> TodoItem {
     TodoItem {
         id: item.id.clone(),
         content: item.content.clone(),
@@ -1654,7 +1656,7 @@ pub fn convert_proto_to_todo_item(item: common::TodoItem) -> TodoItem {
     }
 }
 
-pub fn convert_proto_to_todo_write_file_operation(
+pub(crate) fn convert_proto_to_todo_write_file_operation(
     operation: common::TodoWriteFileOperation,
 ) -> TodoWriteFileOperation {
     match operation {
@@ -1673,7 +1675,7 @@ pub fn convert_todo_write_file_operation_to_proto(
     }
 }
 
-pub fn mcp_server_info_to_proto(
+pub(crate) fn mcp_server_info_to_proto(
     info: steer_core::session::state::McpServerInfo,
 ) -> proto::McpServerInfo {
     use steer_core::session::state::McpConnectionState;
@@ -1743,7 +1745,7 @@ fn mcp_transport_to_proto(transport: &steer_core::tools::McpTransport) -> proto:
     }
 }
 
-pub fn proto_to_mcp_server_info(
+pub(crate) fn proto_to_mcp_server_info(
     proto: proto::McpServerInfo,
 ) -> Result<steer_core::session::state::McpServerInfo, ConversionError> {
     use steer_core::session::state::McpConnectionState;
