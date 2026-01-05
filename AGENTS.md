@@ -26,6 +26,11 @@ just fix          # Auto-fix issues and format code
 # nix build .#steer-workspace        # Build all crates at once
 
 
+# Version Control
+This project uses `jj` (Jujutsu) for version control.
+
+Create new commits frequently as checkpoints during development. Small, incremental commits make it easier to track progress, revert problematic changes, and understand the evolution of the codebase. Don't wait until a feature is complete—commit working states along the way.
+
 # Commits
 Follow the conventional commits format.
 
