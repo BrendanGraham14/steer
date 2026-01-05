@@ -137,12 +137,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             let tx_clone = tx.clone();
             let current_model_clone = current_model.clone();
             let event_task = tokio::spawn(async move {
-                let mut seq = 0u64;
                 while let Some(envelope) = subscription.recv().await {
-                    seq = envelope.seq;
                     let server_event = match session_event_to_server_event(
                         envelope.event,
-                        seq,
+                        envelope.seq,
                         &current_model_clone,
                     ) {
                         Ok(event) => event,

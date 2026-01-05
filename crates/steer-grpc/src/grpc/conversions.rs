@@ -965,7 +965,7 @@ pub(crate) fn proto_to_message(
     }
 }
 
-/// Convert AppEvent to protobuf StreamSessionResponse
+#[cfg(test)]
 pub(crate) fn app_event_to_server_event(
     app_event: AppEvent,
     sequence_num: u64,
@@ -1801,38 +1801,6 @@ pub fn convert_todo_write_file_operation_to_proto(
     match operation {
         TodoWriteFileOperation::Created => common::TodoWriteFileOperation::Created,
         TodoWriteFileOperation::Modified => common::TodoWriteFileOperation::Modified,
-    }
-}
-
-pub(crate) fn mcp_server_info_to_proto(
-    info: steer_core::session::state::McpServerInfo,
-) -> proto::McpServerInfo {
-    use steer_core::session::state::McpConnectionState;
-
-    proto::McpServerInfo {
-        server_name: info.server_name,
-        transport: Some(mcp_transport_to_proto(&info.transport)),
-        state: Some(match info.state {
-            McpConnectionState::Connecting => proto::McpConnectionState {
-                state: Some(proto::mcp_connection_state::State::Connecting(
-                    proto::McpConnecting {},
-                )),
-            },
-            McpConnectionState::Connected { tool_names } => proto::McpConnectionState {
-                state: Some(proto::mcp_connection_state::State::Connected(
-                    proto::McpConnected { tool_names },
-                )),
-            },
-            McpConnectionState::Failed { error } => proto::McpConnectionState {
-                state: Some(proto::mcp_connection_state::State::Failed(
-                    proto::McpFailed { error },
-                )),
-            },
-        }),
-        last_updated: Some(prost_types::Timestamp {
-            seconds: info.last_updated.timestamp(),
-            nanos: info.last_updated.timestamp_subsec_nanos() as i32,
-        }),
     }
 }
 

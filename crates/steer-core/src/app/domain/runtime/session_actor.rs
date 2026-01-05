@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
@@ -51,9 +50,7 @@ pub enum SessionError {
 }
 
 pub(crate) struct SessionActorHandle {
-    pub session_id: SessionId,
     pub cmd_tx: mpsc::Sender<SessionCmd>,
-    pub task: JoinHandle<()>,
 }
 
 impl SessionActorHandle {
@@ -362,13 +359,9 @@ pub(crate) fn spawn_session_actor(
 
     let actor = SessionActor::new(session_id, state, event_store, api_client, tool_executor);
 
-    let task = tokio::spawn(actor.run(cmd_rx));
+    tokio::spawn(actor.run(cmd_rx));
 
-    SessionActorHandle {
-        session_id,
-        cmd_tx,
-        task,
-    }
+    SessionActorHandle { cmd_tx }
 }
 
 fn current_timestamp() -> u64 {
