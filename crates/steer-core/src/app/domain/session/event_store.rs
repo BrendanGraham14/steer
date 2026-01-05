@@ -159,7 +159,6 @@ impl EventStore for InMemoryEventStore {
 mod tests {
     use super::*;
     use crate::app::domain::event::SessionEvent;
-    use crate::app::domain::types::{MessageId, OpId};
 
     #[tokio::test]
     async fn test_in_memory_store_append_and_load() {

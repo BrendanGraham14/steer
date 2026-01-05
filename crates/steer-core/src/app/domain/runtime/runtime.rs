@@ -339,7 +339,6 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::domain::session::InMemoryEventStore;
     use crate::config::model::builtin;
 
     fn test_config() -> RuntimeConfig {
