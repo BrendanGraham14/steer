@@ -1,0 +1,104 @@
+use crate::app::conversation::Message;
+use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
+use crate::app::domain::types::{MessageId, OpId, RequestId, ToolCallId};
+use crate::config::model::ModelId;
+use serde::{Deserialize, Serialize};
+use steer_tools::result::ToolResult;
+use steer_tools::ToolCall;
+
+pub use crate::app::domain::state::OperationKind;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SessionEvent {
+    MessageAdded {
+        message: Message,
+        model: ModelId,
+    },
+
+    MessageUpdated {
+        id: MessageId,
+        content: String,
+    },
+
+    ToolCallStarted {
+        id: ToolCallId,
+        name: String,
+        parameters: serde_json::Value,
+    },
+
+    ToolCallCompleted {
+        id: ToolCallId,
+        name: String,
+        result: ToolResult,
+    },
+
+    ToolCallFailed {
+        id: ToolCallId,
+        name: String,
+        error: String,
+    },
+
+    ApprovalRequested {
+        request_id: RequestId,
+        tool_call: ToolCall,
+    },
+
+    ApprovalDecided {
+        request_id: RequestId,
+        decision: ApprovalDecision,
+        remember: Option<ApprovalMemory>,
+    },
+
+    OperationStarted {
+        op_id: OpId,
+        kind: OperationKind,
+    },
+
+    OperationCompleted {
+        op_id: OpId,
+    },
+
+    OperationCancelled {
+        op_id: OpId,
+        info: CancellationInfo,
+    },
+
+    ModelChanged {
+        model: ModelId,
+    },
+
+    WorkspaceChanged,
+
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancellationInfo {
+    pub pending_tool_calls: usize,
+}
+
+impl SessionEvent {
+    pub fn is_error(&self) -> bool {
+        matches!(self, SessionEvent::Error { .. } | SessionEvent::ToolCallFailed { .. })
+    }
+
+    pub fn operation_id(&self) -> Option<OpId> {
+        match self {
+            SessionEvent::OperationStarted { op_id, .. }
+            | SessionEvent::OperationCompleted { op_id }
+            | SessionEvent::OperationCancelled { op_id, .. } => Some(*op_id),
+            _ => None,
+        }
+    }
+
+    pub fn tool_call_id(&self) -> Option<&ToolCallId> {
+        match self {
+            SessionEvent::ToolCallStarted { id, .. }
+            | SessionEvent::ToolCallCompleted { id, .. }
+            | SessionEvent::ToolCallFailed { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+}

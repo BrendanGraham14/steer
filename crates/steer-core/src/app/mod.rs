@@ -27,6 +27,7 @@ pub mod cancellation;
 pub mod command;
 pub mod context;
 pub mod conversation;
+pub mod domain;
 pub mod io;
 
 pub mod validation;

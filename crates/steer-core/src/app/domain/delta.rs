@@ -1,0 +1,54 @@
+use crate::app::domain::types::{MessageId, OpId, ToolCallId};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StreamDelta {
+    TextChunk {
+        op_id: OpId,
+        message_id: MessageId,
+        delta: String,
+        is_first: bool,
+    },
+
+    ThinkingChunk {
+        op_id: OpId,
+        delta: String,
+    },
+
+    ToolCallChunk {
+        op_id: OpId,
+        tool_call_id: ToolCallId,
+        delta: ToolCallDelta,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ToolCallDelta {
+    Name(String),
+    ArgumentChunk(String),
+}
+
+impl StreamDelta {
+    pub fn op_id(&self) -> OpId {
+        match self {
+            StreamDelta::TextChunk { op_id, .. }
+            | StreamDelta::ThinkingChunk { op_id, .. }
+            | StreamDelta::ToolCallChunk { op_id, .. } => *op_id,
+        }
+    }
+
+    pub fn message_id(&self) -> Option<&MessageId> {
+        match self {
+            StreamDelta::TextChunk { message_id, .. } => Some(message_id),
+            _ => None,
+        }
+    }
+
+    pub fn is_text(&self) -> bool {
+        matches!(self, StreamDelta::TextChunk { .. })
+    }
+
+    pub fn is_thinking(&self) -> bool {
+        matches!(self, StreamDelta::ThinkingChunk { .. })
+    }
+}
