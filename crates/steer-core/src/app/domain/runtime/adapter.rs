@@ -126,6 +126,7 @@ fn convert_agent_event_to_action(session_id: SessionId, op_id: OpId, event: Agen
                     Action::ToolResult {
                         session_id,
                         tool_call_id,
+                        tool_name: String::new(),
                         result: match result {
                             steer_tools::ToolResult::Error(e) => Err(e.clone()),
                             other => Ok(other.clone()),
@@ -137,13 +138,15 @@ fn convert_agent_event_to_action(session_id: SessionId, op_id: OpId, event: Agen
         }
         AgentEvent::ExecutingTool {
             tool_call_id,
-            name: _,
-            parameters: _,
+            name,
+            parameters,
         } => {
             let tool_call_id = ToolCallId::from_string(tool_call_id);
             Action::ToolExecutionStarted {
                 session_id,
                 tool_call_id,
+                tool_name: name.to_string(),
+                tool_parameters: parameters.clone(),
             }
         }
     }

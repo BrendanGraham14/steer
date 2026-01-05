@@ -278,6 +278,8 @@ impl AppRuntime {
 
                 let tool_call_id =
                     crate::app::domain::types::ToolCallId::from_string(&tool_call.id);
+                let tool_name = tool_call.name.clone();
+                let tool_parameters = tool_call.parameters.clone();
 
                 let start_action = Action::ToolExecutionStarted {
                     session_id,

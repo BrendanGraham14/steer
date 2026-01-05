@@ -425,7 +425,6 @@ fn is_pre_approved(state: &AppState, tool_call: &steer_tools::ToolCall) -> bool 
         ) {
             return state.is_bash_pattern_approved(&params.command);
         }
-    }
 
     false
 }
@@ -458,29 +457,81 @@ fn handle_tool_result(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
-    if let Some(op) = &state.current_operation {
-        if state.cancelled_ops.contains(&op.op_id) {
-            tracing::debug!("Ignoring late tool result for cancelled op {:?}", op.op_id);
-            return effects;
+    let op_id = match &state.current_operation {
+        Some(op) => {
+            if state.cancelled_ops.contains(&op.op_id) {
+                tracing::debug!("Ignoring late tool result for cancelled op {:?}", op.op_id);
+                return effects;
+            }
+            op.op_id
         }
-    }
+        None => return effects,
+    };
 
     state.remove_pending_tool_call(&tool_call_id);
 
-    let event = match &result {
-        Ok(tool_result) => SessionEvent::ToolCallCompleted {
-            id: tool_call_id.clone(),
-            name: String::new(),
-            result: tool_result.clone(),
-        },
-        Err(e) => SessionEvent::ToolCallFailed {
+    let tool_result = match result {
+        Ok(r) => r,
+        Err(e) => ToolResult::Error(e),
+    };
+
+    let event = match &tool_result {
+        ToolResult::Error(e) => SessionEvent::ToolCallFailed {
             id: tool_call_id.clone(),
             name: tool_name.clone(),
             error: e.to_string(),
         },
+        _ => SessionEvent::ToolCallCompleted {
+            id: tool_call_id.clone(),
+            name: tool_name,
+            result: tool_result.clone(),
+        },
     };
 
     effects.push(Effect::EmitEvent { session_id, event });
+
+    let parent_id = state.conversation.active_message_id.clone();
+    let tool_message = Message {
+        data: MessageData::Tool {
+            tool_use_id: tool_call_id.0.clone(),
+            result: tool_result,
+        },
+        timestamp: 0,
+        id: format!("tool_result_{}", tool_call_id.0),
+        parent_message_id: parent_id,
+    };
+    state.conversation.add_message(tool_message.clone());
+
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::MessageAdded {
+            message: tool_message,
+            model: state.current_model.clone(),
+        },
+    });
+
+    let all_tools_complete = state
+        .current_operation
+        .as_ref()
+        .map(|op| op.pending_tool_calls.is_empty())
+        .unwrap_or(true);
+    let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
+
+    if all_tools_complete && no_pending_approvals {
+        effects.push(Effect::CallModel {
+            session_id,
+            op_id,
+            model: state.current_model.clone(),
+            messages: state
+                .conversation
+                .get_thread_messages()
+                .into_iter()
+                .cloned()
+                .collect(),
+            system_prompt: state.cached_system_prompt.clone(),
+            tools: state.tools.clone(),
+        });
+    }
 
     effects
 }
@@ -500,10 +551,23 @@ fn handle_model_response_complete(
         return effects;
     }
 
+    let tool_calls: Vec<_> = content
+        .iter()
+        .filter_map(|c| {
+            if let AssistantContent::ToolCall { tool_call } = c {
+                Some(tool_call.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let parent_id = state.conversation.active_message_id.clone();
 
     let message = Message {
-        data: MessageData::Assistant { content },
+        data: MessageData::Assistant {
+            content: content.clone(),
+        },
         timestamp,
         id: message_id.0.clone(),
         parent_message_id: parent_id,
@@ -519,6 +583,21 @@ fn handle_model_response_complete(
             model: state.current_model.clone(),
         },
     });
+
+    if tool_calls.is_empty() {
+        state.complete_operation();
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationCompleted { op_id },
+        });
+    } else {
+        for tool_call in tool_calls {
+            let request_id = crate::app::domain::types::RequestId::new();
+            effects.extend(handle_tool_approval_requested(
+                state, session_id, request_id, tool_call,
+            ));
+        }
+    }
 
     effects
 }
@@ -824,5 +903,179 @@ mod tests {
         );
 
         assert_eq!(state.approval_queue.len(), 1);
+    }
+
+    #[test]
+    fn test_model_response_with_tool_calls_requests_approval() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_1".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command": "ls"}),
+        };
+
+        let content = vec![
+            AssistantContent::Text {
+                text: "Let me list the files.".to_string(),
+            },
+            AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+            },
+        ];
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content,
+                timestamp: 12345,
+            },
+        );
+
+        assert!(state.pending_approval.is_some());
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
+        );
+        assert!(state.current_operation.is_some());
+    }
+
+    #[test]
+    fn test_model_response_no_tools_completes_operation() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+
+        let content = vec![AssistantContent::Text {
+            text: "Hello! How can I help?".to_string(),
+        }];
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content,
+                timestamp: 12345,
+            },
+        );
+
+        assert!(state.current_operation.is_none());
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCompleted { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_tool_result_continues_agent_loop() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let tool_call_id = ToolCallId::from_string("tc_1");
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: [tool_call_id.clone()].into_iter().collect(),
+        });
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolResult {
+                session_id,
+                tool_call_id,
+                tool_name: "bash".to_string(),
+                result: Ok(ToolResult::External(steer_tools::result::ExternalResult {
+                    tool_name: "bash".to_string(),
+                    payload: "file1.txt\nfile2.txt".to_string(),
+                })),
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
+    }
+
+    #[test]
+    fn test_tool_result_waits_for_pending_tools() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let tool_call_id_1 = ToolCallId::from_string("tc_1");
+        let tool_call_id_2 = ToolCallId::from_string("tc_2");
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: [tool_call_id_1.clone(), tool_call_id_2.clone()]
+                .into_iter()
+                .collect(),
+        });
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolResult {
+                session_id,
+                tool_call_id: tool_call_id_1,
+                tool_name: "bash".to_string(),
+                result: Ok(ToolResult::External(steer_tools::result::ExternalResult {
+                    tool_name: "bash".to_string(),
+                    payload: "done".to_string(),
+                })),
+            },
+        );
+
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolResult {
+                session_id,
+                tool_call_id: tool_call_id_2,
+                tool_name: "bash".to_string(),
+                result: Ok(ToolResult::External(steer_tools::result::ExternalResult {
+                    tool_name: "bash".to_string(),
+                    payload: "done".to_string(),
+                })),
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
     }
 }
