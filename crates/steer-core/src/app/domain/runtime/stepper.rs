@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::app::conversation::{AssistantContent, Message, MessageData};
-use crate::app::domain::types::{MessageId, OpId, ToolCallId};
+use crate::app::domain::types::{MessageId, ToolCallId};
 use crate::config::model::ModelId;
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 
@@ -118,19 +118,19 @@ impl AgentStepper {
                 (AgentState::Failed { error: error.clone() }, vec![AgentOutput::Error { error }])
             }
 
-            (AgentState::AwaitingToolApprovals { messages, pending_approvals, mut approved, denied }, AgentInput::ToolApproved { tool_call_id }) => {
+            (AgentState::AwaitingToolApprovals { messages, pending_approvals, approved, denied }, AgentInput::ToolApproved { tool_call_id }) => {
                 self.handle_tool_approved(messages, pending_approvals, approved, denied, tool_call_id)
             }
 
-            (AgentState::AwaitingToolApprovals { messages, pending_approvals, approved, mut denied }, AgentInput::ToolDenied { tool_call_id }) => {
+            (AgentState::AwaitingToolApprovals { messages, pending_approvals, approved, denied }, AgentInput::ToolDenied { tool_call_id }) => {
                 self.handle_tool_denied(messages, pending_approvals, approved, denied, tool_call_id)
             }
 
-            (AgentState::AwaitingToolResults { messages, pending_results, mut completed_results }, AgentInput::ToolCompleted { tool_call_id, result, message_id, timestamp }) => {
+            (AgentState::AwaitingToolResults { messages, pending_results, completed_results }, AgentInput::ToolCompleted { tool_call_id, result, message_id, timestamp }) => {
                 self.handle_tool_completed(messages, pending_results, completed_results, tool_call_id, result, message_id, timestamp)
             }
 
-            (AgentState::AwaitingToolResults { messages, pending_results, mut completed_results }, AgentInput::ToolFailed { tool_call_id, error, message_id, timestamp }) => {
+            (AgentState::AwaitingToolResults { messages, pending_results, completed_results }, AgentInput::ToolFailed { tool_call_id, error, message_id, timestamp }) => {
                 self.handle_tool_failed(messages, pending_results, completed_results, tool_call_id, error, message_id, timestamp)
             }
 
@@ -330,9 +330,9 @@ impl AgentStepper {
 
     fn handle_tool_failed(
         &self,
-        mut messages: Vec<Message>,
-        mut pending_results: HashMap<ToolCallId, ToolCall>,
-        mut completed_results: Vec<(ToolCallId, ToolResult)>,
+        messages: Vec<Message>,
+        pending_results: HashMap<ToolCallId, ToolCall>,
+        completed_results: Vec<(ToolCallId, ToolResult)>,
         tool_call_id: ToolCallId,
         error: ToolError,
         message_id: MessageId,
