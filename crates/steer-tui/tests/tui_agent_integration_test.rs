@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use steer_core::session::SessionManagerConfig;
 use steer_grpc::{ServiceHost, ServiceHostConfig};
 use steer_proto::agent::v1::{
     CreateSessionRequest, ListFilesRequest, SendMessageRequest, SubscribeRequest, WorkspaceConfig,
@@ -98,16 +97,11 @@ async fn test_tui_agent_service_file_listing() {
         .expect("Failed to setup test workspace");
     info!("Created test workspace at: {:?}", workspace_path);
 
-    // Create ServiceHost configuration with explicit port and test auth storage
     let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50051".parse().unwrap(); // Use fixed port for testing
+    let bind_addr = "127.0.0.1:50051".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        session_manager_config: SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
-            auto_persist: true,
-        },
+        default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -256,16 +250,11 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     // Setup
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
 
-    // Start service
     let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50052".parse().unwrap(); // Use different port for each test
+    let bind_addr = "127.0.0.1:50052".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        session_manager_config: SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
-            auto_persist: true,
-        },
+        default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -365,16 +354,11 @@ async fn test_workspace_changed_event_flow() {
     // Setup
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
 
-    // Start service
     let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50053".parse().unwrap(); // Use different port for each test
+    let bind_addr = "127.0.0.1:50053".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        session_manager_config: SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
-            auto_persist: true,
-        },
+        default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),

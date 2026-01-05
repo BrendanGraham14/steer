@@ -28,9 +28,12 @@ impl SessionId {
         Self(uuid)
     }
 
-    /// Get the inner UUID value.
     pub fn as_uuid(&self) -> Uuid {
         self.0
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Uuid::parse_str(s).ok().map(Self)
     }
 }
 

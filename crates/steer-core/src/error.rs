@@ -2,11 +2,8 @@ use steer_workspace::WorkspaceError;
 use thiserror::Error;
 
 use crate::{
-    api::ApiError,
-    app::AgentExecutorError,
-    auth::AuthError,
-    session::{manager::SessionManagerError, store::SessionStoreError},
-    tools::ToolError,
+    api::ApiError, app::AgentExecutorError, app::domain::session::SessionManagerError,
+    auth::AuthError, session::store::SessionStoreError, tools::ToolError,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
