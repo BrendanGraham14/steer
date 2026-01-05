@@ -29,15 +29,18 @@ impl EffectInterpreter {
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
     ) -> Result<Vec<AssistantContent>, String> {
-        let tools_option = if tools.is_empty() {
-            None
-        } else {
-            Some(tools)
-        };
+        let tools_option = if tools.is_empty() { None } else { Some(tools) };
 
         let result = self
             .api_client
-            .complete_with_retry(&model, &messages, &system_prompt, &tools_option, cancel_token, 3)
+            .complete_with_retry(
+                &model,
+                &messages,
+                &system_prompt,
+                &tools_option,
+                cancel_token,
+                3,
+            )
             .await;
 
         match result {

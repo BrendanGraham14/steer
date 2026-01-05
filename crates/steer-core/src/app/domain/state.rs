@@ -123,7 +123,11 @@ impl AppState {
     }
 
     pub fn is_bash_pattern_approved(&self, command: &str) -> bool {
-        for pattern in self.static_bash_patterns.iter().chain(self.approved_bash_patterns.iter()) {
+        for pattern in self
+            .static_bash_patterns
+            .iter()
+            .chain(self.approved_bash_patterns.iter())
+        {
             if pattern == command {
                 return true;
             }

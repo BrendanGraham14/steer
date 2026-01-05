@@ -206,6 +206,7 @@ pub struct App {
     pub api_client: ApiClient,
     agent_executor: AgentExecutor,
     event_sender: mpsc::Sender<AppEvent>,
+    command_sender: mpsc::Sender<AppCommand>, // Per-session command sender for tool approval requests
     approved_tools: Arc<tokio::sync::RwLock<HashSet<String>>>, // Tracks tools approved with "Always" for the session
     approved_bash_patterns: std::sync::Arc<tokio::sync::RwLock<HashSet<String>>>, // Tracks bash commands approved for the session
     current_op_context: Option<OpContext>,
@@ -233,6 +234,7 @@ impl App {
     pub async fn new_with_conversation(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
+        command_tx: mpsc::Sender<AppCommand>,
         initial_model: ModelId,
         workspace: Arc<dyn crate::workspace::Workspace>,
         tool_executor: Arc<crate::tools::ToolExecutor>,
@@ -246,7 +248,6 @@ impl App {
         );
         let agent_executor = AgentExecutor::new(Arc::new(api_client.clone()));
 
-        // Initialize approved_bash_patterns from session config
         let approved_bash_patterns = if let Some(ref sc) = session_config {
             if let Some(bash_config) = sc.tool_config.tools.get("bash") {
                 let crate::session::state::ToolSpecificConfig::Bash(bash) = bash_config;
@@ -267,6 +268,7 @@ impl App {
             api_client,
             agent_executor,
             event_sender: event_tx,
+            command_sender: command_tx,
             approved_tools: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
             approved_bash_patterns,
             current_op_context: None,
@@ -280,6 +282,7 @@ impl App {
     pub async fn new(
         config: AppConfig,
         event_tx: mpsc::Sender<AppEvent>,
+        command_tx: mpsc::Sender<AppCommand>,
         initial_model: ModelId,
         workspace: Arc<dyn crate::workspace::Workspace>,
         tool_executor: Arc<crate::tools::ToolExecutor>,
@@ -289,6 +292,7 @@ impl App {
         Self::new_with_conversation(
             config,
             event_tx,
+            command_tx,
             initial_model,
             workspace,
             tool_executor,
@@ -501,12 +505,11 @@ impl App {
         let current_model = self.current_model.clone();
         let agent_executor = self.agent_executor.clone();
 
-        // --- Tool Approval Callback ---
         let approved_tools_for_approval = self.approved_tools.clone();
         let tool_executor_for_approval = self.tool_executor.clone();
-        let command_tx_for_approval = OpContext::command_tx().clone();
-        let approved_bash_patterns_clone = self.approved_bash_patterns.clone(); // Clone for capture
-        let session_config_clone = self.session_config.clone(); // Clone for capture
+        let command_tx_for_approval = self.command_sender.clone();
+        let approved_bash_patterns_clone = self.approved_bash_patterns.clone();
+        let session_config_clone = self.session_config.clone();
 
         let tool_approval_callback = move |tool_call: ToolCall| {
             let approved_tools = approved_tools_for_approval.clone();

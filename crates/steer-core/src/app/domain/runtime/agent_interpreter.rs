@@ -56,7 +56,7 @@ impl AgentInterpreter {
                         match state {
                             AgentState::Complete { final_message } => return Ok(final_message),
                             AgentState::Failed { error } => {
-                                return Err(AgentInterpreterError::Agent(error))
+                                return Err(AgentInterpreterError::Agent(error));
                             }
                             AgentState::Cancelled => return Err(AgentInterpreterError::Cancelled),
                             _ => unreachable!(),

@@ -146,7 +146,11 @@ pub struct DualChannelDispatcher {
 }
 
 impl DualChannelDispatcher {
-    pub fn new() -> (Self, mpsc::Receiver<(SessionId, SessionEvent)>, broadcast::Receiver<StreamDelta>) {
+    pub fn new() -> (
+        Self,
+        mpsc::Receiver<(SessionId, SessionEvent)>,
+        broadcast::Receiver<StreamDelta>,
+    ) {
         let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_SIZE);
         let (delta_tx, delta_rx) = broadcast::channel(DELTA_CHANNEL_SIZE);
 
@@ -333,7 +337,12 @@ mod tests {
             SessionEvent::OperationCompleted { op_id: OpId::new() },
         );
 
-        dispatcher.dispatch_event(session_id, SessionEvent::Error { message: "keep".to_string() });
+        dispatcher.dispatch_event(
+            session_id,
+            SessionEvent::Error {
+                message: "keep".to_string(),
+            },
+        );
 
         for _ in 0..EVENT_OVERFLOW_MAX + 5 {
             dispatcher.dispatch_event(

@@ -213,7 +213,9 @@ impl AppRuntime {
     ) -> Result<Vec<Action>, RuntimeError> {
         match effect {
             Effect::EmitEvent { event, .. } => {
-                self.session_manager.persist_event(session_id, &event).await?;
+                self.session_manager
+                    .persist_event(session_id, &event)
+                    .await?;
 
                 self.event_tx
                     .send((session_id, event))
@@ -274,7 +276,8 @@ impl AppRuntime {
                     .cloned()
                     .unwrap_or_else(CancellationToken::new);
 
-                let tool_call_id = crate::app::domain::types::ToolCallId::from_string(&tool_call.id);
+                let tool_call_id =
+                    crate::app::domain::types::ToolCallId::from_string(&tool_call.id);
 
                 let start_action = Action::ToolExecutionStarted {
                     session_id,
@@ -283,10 +286,7 @@ impl AppRuntime {
                     tool_parameters,
                 };
 
-                let result = self
-                    .interpreter
-                    .execute_tool(tool_call, cancel_token)
-                    .await;
+                let result = self.interpreter.execute_tool(tool_call, cancel_token).await;
 
                 let result_action = Action::ToolResult {
                     session_id,

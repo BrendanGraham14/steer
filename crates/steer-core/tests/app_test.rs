@@ -1,6 +1,6 @@
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use dotenvy::dotenv;
-use steer_core::app::{App, AppConfig, AppEvent};
+use steer_core::app::{App, AppCommand, AppConfig, AppEvent};
 use steer_core::tools::ToolExecutor;
 
 use std::sync::Arc;
@@ -45,18 +45,18 @@ async fn test_tool_executor() -> Result<()> {
         provider_registry,
     };
 
-    // Initialize the app
-    // Create a channel for app events
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
+    let (command_tx, _command_rx) = mpsc::channel::<AppCommand>(32);
     let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
     let app = App::new(
         app_config,
         event_tx,
+        command_tx,
         steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
         workspace,
         tool_executor,
-        None, // No session config for test
+        None,
     )
     .await?;
 

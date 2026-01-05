@@ -288,7 +288,9 @@ fn proto_to_tool_error(
 }
 
 /// Convert internal Message to protobuf
-pub(crate) fn message_to_proto(message: ConversationMessage) -> Result<proto::Message, ConversionError> {
+pub(crate) fn message_to_proto(
+    message: ConversationMessage,
+) -> Result<proto::Message, ConversionError> {
     let (message_variant, created_at) = match &message.data {
         MessageData::User { content, .. } => {
             let user_msg = proto::UserMessage {
@@ -439,7 +441,9 @@ pub(crate) fn message_to_proto(message: ConversationMessage) -> Result<proto::Me
 }
 
 /// Convert internal ToolApprovalPolicy to protobuf
-pub(crate) fn tool_approval_policy_to_proto(policy: &ToolApprovalPolicy) -> proto::ToolApprovalPolicy {
+pub(crate) fn tool_approval_policy_to_proto(
+    policy: &ToolApprovalPolicy,
+) -> proto::ToolApprovalPolicy {
     use proto::{
         AlwaysAskPolicy, ApprovalDecision, MixedPolicy, PreApprovedPolicy,
         tool_approval_policy::Policy,
@@ -601,7 +605,9 @@ pub(crate) fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto:
     }
 }
 
-pub(crate) fn tool_specific_config_to_proto(config: &ToolSpecificConfig) -> proto::ToolSpecificConfig {
+pub(crate) fn tool_specific_config_to_proto(
+    config: &ToolSpecificConfig,
+) -> proto::ToolSpecificConfig {
     match config {
         ToolSpecificConfig::Bash(bash_config) => proto::ToolSpecificConfig {
             config: Some(proto::tool_specific_config::Config::Bash(
@@ -673,7 +679,9 @@ pub(crate) fn proto_to_tool_filter(proto_filter: Option<proto::ToolFilter>) -> T
 }
 
 /// Convert from protobuf ToolVisibility to internal ToolVisibility
-pub(crate) fn proto_to_tool_visibility(proto_visibility: Option<proto::ToolVisibility>) -> ToolVisibility {
+pub(crate) fn proto_to_tool_visibility(
+    proto_visibility: Option<proto::ToolVisibility>,
+) -> ToolVisibility {
     match proto_visibility {
         Some(visibility) => {
             match visibility.visibility {
@@ -801,7 +809,9 @@ pub(crate) fn proto_tool_call_to_core(
 }
 
 /// Convert protobuf Message to internal Message
-pub(crate) fn proto_to_message(proto_msg: proto::Message) -> Result<ConversationMessage, ConversionError> {
+pub(crate) fn proto_to_message(
+    proto_msg: proto::Message,
+) -> Result<ConversationMessage, ConversionError> {
     use steer_core::app::conversation::{AssistantContent, ThoughtContent, UserContent};
     use steer_proto::agent::v1::{assistant_content, message, thought_content, user_content};
 

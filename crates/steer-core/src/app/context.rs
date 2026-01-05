@@ -5,14 +5,7 @@ use tokio_util::sync::CancellationToken;
 use uuid;
 
 use crate::app::agent_executor::AgentExecutorError;
-use crate::app::command::AppCommand;
 use crate::app::conversation::Message;
-use once_cell::sync::OnceCell;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-
-// Global command sender for tool approval requests
-static COMMAND_TX: OnceCell<Arc<mpsc::Sender<AppCommand>>> = OnceCell::new();
 
 #[derive(Debug)]
 pub enum TaskOutcome {
@@ -87,19 +80,5 @@ impl OpContext {
         self.cancel_token.cancel();
         self.tasks.shutdown().await;
         self.active_tools.clear();
-        // Removed: self.agent_event_receiver = None;
-    }
-
-    /// Initialize the global command sender, should be called once during app setup
-    pub fn init_command_tx(tx: mpsc::Sender<AppCommand>) {
-        let _ = COMMAND_TX.set(Arc::new(tx));
-    }
-
-    /// Get the global command sender for tool approval requests
-    pub fn command_tx() -> Arc<mpsc::Sender<AppCommand>> {
-        COMMAND_TX
-            .get()
-            .expect("Command sender not initialized. Call OpContext::init_command_tx first")
-            .clone()
     }
 }

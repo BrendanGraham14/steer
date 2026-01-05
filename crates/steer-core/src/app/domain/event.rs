@@ -3,8 +3,8 @@ use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
 use crate::app::domain::types::{MessageId, OpId, RequestId, ToolCallId};
 use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
-use steer_tools::result::ToolResult;
 use steer_tools::ToolCall;
+use steer_tools::result::ToolResult;
 
 pub use crate::app::domain::state::OperationKind;
 
@@ -81,7 +81,10 @@ pub struct CancellationInfo {
 
 impl SessionEvent {
     pub fn is_error(&self) -> bool {
-        matches!(self, SessionEvent::Error { .. } | SessionEvent::ToolCallFailed { .. })
+        matches!(
+            self,
+            SessionEvent::Error { .. } | SessionEvent::ToolCallFailed { .. }
+        )
     }
 
     pub fn operation_id(&self) -> Option<OpId> {

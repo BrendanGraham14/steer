@@ -57,10 +57,9 @@ impl AgentExecutorAdapter {
                     tool_call: tool_call.clone(),
                 };
 
-                action_tx
-                    .send(action)
-                    .await
-                    .map_err(|_| ToolError::InternalError("Failed to send approval request".into()))?;
+                action_tx.send(action).await.map_err(|_| {
+                    ToolError::InternalError("Failed to send approval request".into())
+                })?;
 
                 Ok(crate::app::agent_executor::ApprovalDecision::Approved)
             }
@@ -85,9 +84,8 @@ impl AgentExecutorAdapter {
         };
 
         let executor = self.executor.clone();
-        let run_handle = tokio::spawn(async move {
-            executor.run(request, event_tx, token_clone).await
-        });
+        let run_handle =
+            tokio::spawn(async move { executor.run(request, event_tx, token_clone).await });
 
         while let Some(event) = event_rx.recv().await {
             let action = convert_agent_event_to_action(session_id, op_id, event);
@@ -120,7 +118,10 @@ fn convert_agent_event_to_action(session_id: SessionId, op_id: OpId, event: Agen
                         timestamp,
                     }
                 }
-                crate::app::conversation::MessageData::Tool { tool_use_id, result } => {
+                crate::app::conversation::MessageData::Tool {
+                    tool_use_id,
+                    result,
+                } => {
                     let tool_call_id = ToolCallId::from_string(tool_use_id);
                     Action::ToolResult {
                         session_id,

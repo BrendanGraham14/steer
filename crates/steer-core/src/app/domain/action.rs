@@ -1,8 +1,10 @@
 use crate::app::conversation::AppCommandType;
-use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId};
+use crate::app::domain::types::{
+    MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
+};
 use serde::{Deserialize, Serialize};
-use steer_tools::{ToolCall, ToolError, ToolSchema};
 use steer_tools::result::ToolResult;
+use steer_tools::{ToolCall, ToolError, ToolSchema};
 
 use super::event::SessionEvent;
 

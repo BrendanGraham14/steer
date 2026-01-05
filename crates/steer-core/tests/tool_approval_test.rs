@@ -68,12 +68,14 @@ async fn test_tool_executor_requires_approval_check() -> Result<()> {
         provider_registry,
     };
     let (event_tx, _event_rx) = mpsc::channel::<AppEvent>(100);
+    let (command_tx, _command_rx) = mpsc::channel::<AppCommand>(32);
     let (workspace, _temp_dir) = create_test_workspace().await;
     let tool_executor = create_test_tool_executor(workspace.clone());
 
     let app = App::new(
         app_config,
         event_tx,
+        command_tx,
         steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
         workspace,
         tool_executor,
@@ -145,6 +147,7 @@ async fn test_always_approve_cascades_to_pending_tool_calls() -> Result<()> {
     let app_for_actor = App::new(
         app_config_for_actor,
         event_tx.clone(),
+        command_tx_to_actor.clone(),
         steer_core::config::model::builtin::claude_3_7_sonnet_20250219(),
         workspace,
         tool_executor,

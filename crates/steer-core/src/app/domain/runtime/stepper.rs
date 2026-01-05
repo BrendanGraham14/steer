@@ -110,37 +110,98 @@ impl AgentStepper {
 
     pub fn step(&self, state: AgentState, input: AgentInput) -> (AgentState, Vec<AgentOutput>) {
         match (state, input) {
-            (AgentState::AwaitingModel { messages }, AgentInput::ModelResponse { content, tool_calls, message_id, timestamp }) => {
-                self.handle_model_response(messages, content, tool_calls, message_id, timestamp)
-            }
+            (
+                AgentState::AwaitingModel { messages },
+                AgentInput::ModelResponse {
+                    content,
+                    tool_calls,
+                    message_id,
+                    timestamp,
+                },
+            ) => self.handle_model_response(messages, content, tool_calls, message_id, timestamp),
 
-            (AgentState::AwaitingModel { .. }, AgentInput::ModelError { error }) => {
-                (AgentState::Failed { error: error.clone() }, vec![AgentOutput::Error { error }])
-            }
+            (AgentState::AwaitingModel { .. }, AgentInput::ModelError { error }) => (
+                AgentState::Failed {
+                    error: error.clone(),
+                },
+                vec![AgentOutput::Error { error }],
+            ),
 
-            (AgentState::AwaitingToolApprovals { messages, pending_approvals, approved, denied }, AgentInput::ToolApproved { tool_call_id }) => {
-                self.handle_tool_approved(messages, pending_approvals, approved, denied, tool_call_id)
-            }
+            (
+                AgentState::AwaitingToolApprovals {
+                    messages,
+                    pending_approvals,
+                    approved,
+                    denied,
+                },
+                AgentInput::ToolApproved { tool_call_id },
+            ) => self.handle_tool_approved(
+                messages,
+                pending_approvals,
+                approved,
+                denied,
+                tool_call_id,
+            ),
 
-            (AgentState::AwaitingToolApprovals { messages, pending_approvals, approved, denied }, AgentInput::ToolDenied { tool_call_id }) => {
+            (
+                AgentState::AwaitingToolApprovals {
+                    messages,
+                    pending_approvals,
+                    approved,
+                    denied,
+                },
+                AgentInput::ToolDenied { tool_call_id },
+            ) => {
                 self.handle_tool_denied(messages, pending_approvals, approved, denied, tool_call_id)
             }
 
-            (AgentState::AwaitingToolResults { messages, pending_results, completed_results }, AgentInput::ToolCompleted { tool_call_id, result, message_id, timestamp }) => {
-                self.handle_tool_completed(messages, pending_results, completed_results, tool_call_id, result, message_id, timestamp)
-            }
+            (
+                AgentState::AwaitingToolResults {
+                    messages,
+                    pending_results,
+                    completed_results,
+                },
+                AgentInput::ToolCompleted {
+                    tool_call_id,
+                    result,
+                    message_id,
+                    timestamp,
+                },
+            ) => self.handle_tool_completed(
+                messages,
+                pending_results,
+                completed_results,
+                tool_call_id,
+                result,
+                message_id,
+                timestamp,
+            ),
 
-            (AgentState::AwaitingToolResults { messages, pending_results, completed_results }, AgentInput::ToolFailed { tool_call_id, error, message_id, timestamp }) => {
-                self.handle_tool_failed(messages, pending_results, completed_results, tool_call_id, error, message_id, timestamp)
-            }
+            (
+                AgentState::AwaitingToolResults {
+                    messages,
+                    pending_results,
+                    completed_results,
+                },
+                AgentInput::ToolFailed {
+                    tool_call_id,
+                    error,
+                    message_id,
+                    timestamp,
+                },
+            ) => self.handle_tool_failed(
+                messages,
+                pending_results,
+                completed_results,
+                tool_call_id,
+                error,
+                message_id,
+                timestamp,
+            ),
 
-            (_, AgentInput::Cancel) => {
-                (AgentState::Cancelled, vec![AgentOutput::Cancelled])
-            }
+            (_, AgentInput::Cancel) => (AgentState::Cancelled, vec![AgentOutput::Cancelled]),
 
-            (state, _) => {
-                (state, vec![])
-            }
+            (state, _) => (state, vec![]),
         }
     }
 
@@ -163,16 +224,29 @@ impl AgentStepper {
 
         messages.push(assistant_message.clone());
 
-        let mut outputs = vec![AgentOutput::EmitMessage { message: assistant_message.clone() }];
+        let mut outputs = vec![AgentOutput::EmitMessage {
+            message: assistant_message.clone(),
+        }];
 
         if tool_calls.is_empty() {
             (
-                AgentState::Complete { final_message: assistant_message.clone() },
-                vec![AgentOutput::EmitMessage { message: assistant_message.clone() }, AgentOutput::Done { final_message: assistant_message }],
+                AgentState::Complete {
+                    final_message: assistant_message.clone(),
+                },
+                vec![
+                    AgentOutput::EmitMessage {
+                        message: assistant_message.clone(),
+                    },
+                    AgentOutput::Done {
+                        final_message: assistant_message,
+                    },
+                ],
             )
         } else {
             for tool_call in &tool_calls {
-                outputs.push(AgentOutput::RequestApproval { tool_call: tool_call.clone() });
+                outputs.push(AgentOutput::RequestApproval {
+                    tool_call: tool_call.clone(),
+                });
             }
 
             (
@@ -197,9 +271,14 @@ impl AgentStepper {
     ) -> (AgentState, Vec<AgentOutput>) {
         let mut outputs = vec![];
 
-        if let Some(pos) = pending_approvals.iter().position(|tc| tc.id == tool_call_id.0) {
+        if let Some(pos) = pending_approvals
+            .iter()
+            .position(|tc| tc.id == tool_call_id.0)
+        {
             let tool_call = pending_approvals.remove(pos);
-            outputs.push(AgentOutput::ExecuteTool { tool_call: tool_call.clone() });
+            outputs.push(AgentOutput::ExecuteTool {
+                tool_call: tool_call.clone(),
+            });
             approved.push(tool_call);
         }
 
@@ -238,7 +317,10 @@ impl AgentStepper {
         mut denied: Vec<ToolCall>,
         tool_call_id: ToolCallId,
     ) -> (AgentState, Vec<AgentOutput>) {
-        if let Some(pos) = pending_approvals.iter().position(|tc| tc.id == tool_call_id.0) {
+        if let Some(pos) = pending_approvals
+            .iter()
+            .position(|tc| tc.id == tool_call_id.0)
+        {
             let tool_call = pending_approvals.remove(pos);
             denied.push(tool_call);
         }
@@ -246,8 +328,12 @@ impl AgentStepper {
         if pending_approvals.is_empty() {
             if approved.is_empty() {
                 (
-                    AgentState::Failed { error: "All tools denied".to_string() },
-                    vec![AgentOutput::Error { error: "All tools denied".to_string() }],
+                    AgentState::Failed {
+                        error: "All tools denied".to_string(),
+                    },
+                    vec![AgentOutput::Error {
+                        error: "All tools denied".to_string(),
+                    }],
                 )
             } else {
                 let mut pending_results = HashMap::new();
@@ -303,7 +389,9 @@ impl AgentStepper {
             };
 
             messages.push(tool_message.clone());
-            outputs.push(AgentOutput::EmitMessage { message: tool_message });
+            outputs.push(AgentOutput::EmitMessage {
+                message: tool_message,
+            });
             completed_results.push((tool_call_id, result));
         }
 
@@ -339,7 +427,15 @@ impl AgentStepper {
         timestamp: u64,
     ) -> (AgentState, Vec<AgentOutput>) {
         let result = ToolResult::Error(error);
-        self.handle_tool_completed(messages, pending_results, completed_results, tool_call_id, result, message_id, timestamp)
+        self.handle_tool_completed(
+            messages,
+            pending_results,
+            completed_results,
+            tool_call_id,
+            result,
+            message_id,
+            timestamp,
+        )
     }
 
     pub fn needs_model_call(&self, state: &AgentState) -> bool {
@@ -347,7 +443,10 @@ impl AgentStepper {
     }
 
     pub fn is_terminal(&self, state: &AgentState) -> bool {
-        matches!(state, AgentState::Complete { .. } | AgentState::Failed { .. } | AgentState::Cancelled)
+        matches!(
+            state,
+            AgentState::Complete { .. } | AgentState::Failed { .. } | AgentState::Cancelled
+        )
     }
 }
 
@@ -386,7 +485,11 @@ mod tests {
         );
 
         assert!(matches!(new_state, AgentState::Complete { .. }));
-        assert!(outputs.iter().any(|o| matches!(o, AgentOutput::Done { .. })));
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, AgentOutput::Done { .. }))
+        );
     }
 
     #[test]
@@ -410,8 +513,15 @@ mod tests {
             },
         );
 
-        assert!(matches!(new_state, AgentState::AwaitingToolApprovals { .. }));
-        assert!(outputs.iter().any(|o| matches!(o, AgentOutput::RequestApproval { .. })));
+        assert!(matches!(
+            new_state,
+            AgentState::AwaitingToolApprovals { .. }
+        ));
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, AgentOutput::RequestApproval { .. }))
+        );
     }
 
     #[test]

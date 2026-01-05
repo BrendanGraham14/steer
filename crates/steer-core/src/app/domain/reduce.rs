@@ -3,9 +3,9 @@ use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory};
 use crate::app::domain::effect::Effect;
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
+use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
-use steer_tools::ToolError;
 
 pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
     match action {
@@ -79,7 +79,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             message_id,
             content,
             timestamp,
-        } => handle_model_response_complete(state, session_id, op_id, message_id, content, timestamp),
+        } => {
+            handle_model_response_complete(state, session_id, op_id, message_id, content, timestamp)
+        }
 
         Action::ModelResponseError {
             session_id,
@@ -171,7 +173,12 @@ fn handle_user_input(
         session_id,
         op_id,
         model: state.current_model.clone(),
-        messages: state.conversation.get_thread_messages().into_iter().cloned().collect(),
+        messages: state
+            .conversation
+            .get_thread_messages()
+            .into_iter()
+            .cloned()
+            .collect(),
         system_prompt: state.cached_system_prompt.clone(),
         tools: state.tools.clone(),
     });
@@ -231,7 +238,12 @@ fn handle_user_edited_message(
         session_id,
         op_id,
         model: state.current_model.clone(),
-        messages: state.conversation.get_thread_messages().into_iter().cloned().collect(),
+        messages: state
+            .conversation
+            .get_thread_messages()
+            .into_iter()
+            .cloned()
+            .collect(),
         system_prompt: state.cached_system_prompt.clone(),
         tools: state.tools.clone(),
     });
@@ -468,10 +480,7 @@ fn handle_tool_result(
         },
     };
 
-    effects.push(Effect::EmitEvent {
-        session_id,
-        event,
-    });
+    effects.push(Effect::EmitEvent { session_id, event });
 
     effects
 }
@@ -560,7 +569,7 @@ fn handle_cancel(
     if let Some(pending) = state.pending_approval.take() {
         let tool_result = ToolResult::Error(ToolError::Cancelled(pending.tool_call.name.clone()));
         let parent_id = state.conversation.active_message_id.clone();
-        
+
         let message = Message {
             data: MessageData::Tool {
                 tool_use_id: pending.tool_call.id.clone(),
@@ -655,7 +664,9 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
 mod tests {
     use super::*;
     use crate::app::domain::state::OperationState;
-    use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId};
+    use crate::app::domain::types::{
+        MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
+    };
     use crate::config::model::builtin;
     use std::collections::HashSet;
 
@@ -683,7 +694,11 @@ mod tests {
 
         assert_eq!(state.conversation.messages.len(), 1);
         assert!(state.current_operation.is_some());
-        assert!(effects.iter().any(|e| matches!(e, Effect::CallModel { .. })));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
     }
 
     #[test]
@@ -757,7 +772,11 @@ mod tests {
             },
         );
 
-        assert!(effects.iter().any(|e| matches!(e, Effect::ExecuteTool { .. })));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ExecuteTool { .. }))
+        );
         assert!(state.pending_approval.is_none());
     }
 

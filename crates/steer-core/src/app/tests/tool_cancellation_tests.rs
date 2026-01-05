@@ -2,7 +2,7 @@
 mod tests {
     use crate::app::validation::ValidatorRegistry;
     use crate::app::{
-        App,
+        App, AppCommand,
         conversation::{AssistantContent, MessageData},
     };
     use crate::test_utils;
@@ -40,12 +40,11 @@ mod tests {
         ))
     }
 
-    /// Test that incomplete tool calls are detected and cancelled tool results are injected
     #[tokio::test]
     async fn test_inject_cancelled_tool_results() {
-        // Create a minimal app configuration
         let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
+        let (command_tx, _command_rx) = mpsc::channel::<AppCommand>(32);
         let initial_model = crate::config::model::builtin::claude_3_7_sonnet_20250219();
 
         let workspace = create_test_workspace().await;
@@ -54,6 +53,7 @@ mod tests {
         let mut app = App::new(
             app_config,
             event_tx,
+            command_tx,
             initial_model,
             workspace,
             tool_executor,
@@ -123,12 +123,11 @@ mod tests {
         }
     }
 
-    /// Test that tool calls with existing results are not considered incomplete
     #[tokio::test]
     async fn test_complete_tool_calls_not_affected() {
-        // Create a minimal app configuration
         let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
+        let (command_tx, _command_rx) = mpsc::channel::<AppCommand>(32);
         let initial_model = crate::config::model::builtin::claude_3_7_sonnet_20250219();
 
         let workspace = create_test_workspace().await;
@@ -137,6 +136,7 @@ mod tests {
         let mut app = App::new(
             app_config,
             event_tx,
+            command_tx,
             initial_model,
             workspace,
             tool_executor,
@@ -186,12 +186,11 @@ mod tests {
         }
     }
 
-    /// Test multiple incomplete tool calls
     #[tokio::test]
     async fn test_multiple_incomplete_tool_calls() {
-        // Create a minimal app configuration
         let app_config = test_utils::test_app_config();
         let (event_tx, _event_rx) = mpsc::channel(100);
+        let (command_tx, _command_rx) = mpsc::channel::<AppCommand>(32);
         let initial_model = crate::config::model::builtin::claude_3_7_sonnet_20250219();
 
         let workspace = create_test_workspace().await;
@@ -200,6 +199,7 @@ mod tests {
         let mut app = App::new(
             app_config,
             event_tx,
+            command_tx,
             initial_model,
             workspace,
             tool_executor,

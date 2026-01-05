@@ -77,11 +77,7 @@ impl ManagedSession {
         let (app_event_tx, mut app_event_rx) = mpsc::channel(100);
         let (app_command_tx, app_command_rx) = mpsc::channel::<AppCommand>(32);
 
-        // Always create external event channel
         let (external_event_tx, external_event_rx) = mpsc::channel(100);
-
-        // Initialize the global command sender for tool approval requests
-        crate::app::OpContext::init_command_tx(app_command_tx.clone());
 
         // Build workspace from session config first
         let workspace = session.build_workspace().await?;
@@ -110,6 +106,7 @@ impl ManagedSession {
             App::new_with_conversation(
                 app_config.clone(),
                 app_event_tx,
+                app_command_tx.clone(),
                 default_model.clone(),
                 workspace.clone(),
                 tool_executor,
@@ -121,6 +118,7 @@ impl ManagedSession {
             App::new(
                 app_config.clone(),
                 app_event_tx,
+                app_command_tx.clone(),
                 default_model,
                 workspace.clone(),
                 tool_executor,

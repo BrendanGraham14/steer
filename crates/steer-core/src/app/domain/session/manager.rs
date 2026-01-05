@@ -137,7 +137,10 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager.
-    pub fn new(store: Arc<dyn EventStore>, config: SessionManagerConfig) -> Result<Self, SessionManagerError> {
+    pub fn new(
+        store: Arc<dyn EventStore>,
+        config: SessionManagerConfig,
+    ) -> Result<Self, SessionManagerError> {
         if config.max_active_sessions == 0 {
             return Err(SessionManagerError::InvalidConfig {
                 message: "max_active_sessions must be > 0".to_string(),
@@ -158,7 +161,10 @@ impl SessionManager {
     ///
     /// If the session is not in memory, it will be hydrated from the event store.
     /// If memory limits are exceeded, the least recently used session will be evicted.
-    pub async fn get_session(&mut self, session_id: SessionId) -> Result<&mut ActiveSession, SessionManagerError> {
+    pub async fn get_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<&mut ActiveSession, SessionManagerError> {
         if !self.active.contains(&session_id) {
             if !self.store.session_exists(session_id).await? {
                 return Err(SessionManagerError::not_found(session_id));
@@ -172,7 +178,10 @@ impl SessionManager {
             self.active.put(session_id, session);
         }
 
-        let session = self.active.get_mut(&session_id).expect("session inserted above");
+        let session = self
+            .active
+            .get_mut(&session_id)
+            .expect("session inserted above");
         session.touch();
         Ok(session)
     }
@@ -192,7 +201,10 @@ impl SessionManager {
     /// Create a new session.
     ///
     /// This creates the session in the event store and optionally loads it into memory.
-    pub async fn create_session(&mut self, session_id: SessionId) -> Result<&mut ActiveSession, SessionManagerError> {
+    pub async fn create_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<&mut ActiveSession, SessionManagerError> {
         if self.store.session_exists(session_id).await? {
             return Err(SessionManagerError::already_exists(session_id));
         }
@@ -208,10 +220,16 @@ impl SessionManager {
 
         self.active.put(session_id, session);
 
-        Ok(self.active.get_mut(&session_id).expect("session inserted above"))
+        Ok(self
+            .active
+            .get_mut(&session_id)
+            .expect("session inserted above"))
     }
 
-    pub async fn delete_session(&mut self, session_id: SessionId) -> Result<(), SessionManagerError> {
+    pub async fn delete_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<(), SessionManagerError> {
         self.active.pop(&session_id);
         self.store.delete_session(session_id).await?;
         Ok(())
@@ -265,7 +283,10 @@ impl SessionManager {
         Ok(self.store.list_session_ids().await?)
     }
 
-    async fn hydrate_session(&self, session_id: SessionId) -> Result<ActiveSession, SessionManagerError> {
+    async fn hydrate_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<ActiveSession, SessionManagerError> {
         let events = self.store.load_events(session_id).await?;
 
         let mut state = AppState::new(session_id, self.config.default_model.clone());
@@ -334,7 +355,10 @@ mod tests {
         let session_id = SessionId::new();
         let result = manager.get_session(session_id).await;
 
-        assert!(matches!(result, Err(SessionManagerError::SessionNotFound { .. })));
+        assert!(matches!(
+            result,
+            Err(SessionManagerError::SessionNotFound { .. })
+        ));
     }
 
     #[tokio::test]
@@ -346,7 +370,10 @@ mod tests {
         manager.create_session(session_id).await.unwrap();
 
         let result = manager.create_session(session_id).await;
-        assert!(matches!(result, Err(SessionManagerError::SessionAlreadyExists { .. })));
+        assert!(matches!(
+            result,
+            Err(SessionManagerError::SessionAlreadyExists { .. })
+        ));
     }
 
     #[tokio::test]
