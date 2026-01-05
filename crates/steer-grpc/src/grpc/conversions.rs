@@ -1934,3 +1934,195 @@ fn proto_to_mcp_transport(
         },
     })
 }
+
+pub(crate) fn proto_to_client_event(
+    server_event: proto::StreamSessionResponse,
+) -> Result<Option<crate::client_api::ClientEvent>, ConversionError> {
+    use crate::client_api::{ClientEvent, MessageId, OpId, RequestId, ToolCallId};
+    use steer_tools::ToolCall;
+
+    let event = match server_event.event {
+        None => return Ok(None),
+        Some(e) => e,
+    };
+
+    let client_event = match event {
+        proto::stream_session_response::Event::MessageAdded(e) => {
+            let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {
+                field: "message_added_event.message".to_string(),
+            })?;
+            let message = proto_to_message(proto_message)?;
+            let model = e
+                .model
+                .ok_or_else(|| ConversionError::MissingField {
+                    field: "model".to_string(),
+                })
+                .and_then(|spec| proto_to_model(&spec))?;
+            ClientEvent::MessageAdded { message, model }
+        }
+        proto::stream_session_response::Event::MessageUpdated(e) => ClientEvent::MessageUpdated {
+            id: MessageId::new(),
+            content: e.content,
+        },
+        proto::stream_session_response::Event::MessagePart(e) => ClientEvent::MessageDelta {
+            id: MessageId::new(),
+            delta: e.delta,
+        },
+        proto::stream_session_response::Event::ToolCallStarted(e) => {
+            let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
+                ConversionError::InvalidJson {
+                    field: "parameters_json".to_string(),
+                    error: err.to_string(),
+                }
+            })?;
+            ClientEvent::ToolStarted {
+                id: ToolCallId::new(),
+                name: e.name,
+                parameters,
+            }
+        }
+        proto::stream_session_response::Event::ToolCallCompleted(e) => {
+            let result = proto_to_steer_tools_result(e.result.ok_or_else(|| {
+                ConversionError::MissingField {
+                    field: "result".to_string(),
+                }
+            })?)?;
+            ClientEvent::ToolCompleted {
+                id: ToolCallId::new(),
+                name: e.name,
+                result,
+            }
+        }
+        proto::stream_session_response::Event::ToolCallFailed(e) => ClientEvent::ToolFailed {
+            id: ToolCallId::new(),
+            name: e.name,
+            error: e.error,
+        },
+        proto::stream_session_response::Event::ProcessingStarted(_) => {
+            ClientEvent::ProcessingStarted { op_id: OpId::new() }
+        }
+        proto::stream_session_response::Event::ProcessingCompleted(_) => {
+            ClientEvent::ProcessingCompleted { op_id: OpId::new() }
+        }
+        proto::stream_session_response::Event::RequestToolApproval(e) => {
+            let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
+                ConversionError::InvalidJson {
+                    field: "parameters_json".to_string(),
+                    error: err.to_string(),
+                }
+            })?;
+            ClientEvent::ApprovalRequested {
+                request_id: RequestId::new(),
+                tool_call: ToolCall {
+                    id: e.id,
+                    name: e.name,
+                    parameters,
+                },
+            }
+        }
+        proto::stream_session_response::Event::OperationCancelled(e) => {
+            let info = e.info.ok_or_else(|| ConversionError::MissingField {
+                field: "operation_cancelled.info".to_string(),
+            })?;
+            ClientEvent::OperationCancelled {
+                op_id: OpId::new(),
+                pending_tool_calls: info.active_tools.len(),
+            }
+        }
+        proto::stream_session_response::Event::ModelChanged(e) => {
+            let model = e
+                .model
+                .ok_or_else(|| ConversionError::MissingField {
+                    field: "model".to_string(),
+                })
+                .and_then(|spec| proto_to_model(&spec))?;
+            ClientEvent::ModelChanged { model }
+        }
+        proto::stream_session_response::Event::Error(e) => {
+            ClientEvent::Error { message: e.message }
+        }
+        proto::stream_session_response::Event::WorkspaceChanged(_) => ClientEvent::WorkspaceChanged,
+        proto::stream_session_response::Event::WorkspaceFiles(e) => {
+            ClientEvent::WorkspaceFiles { files: e.files }
+        }
+        proto::stream_session_response::Event::CommandResponse(_)
+        | proto::stream_session_response::Event::Started(_)
+        | proto::stream_session_response::Event::Finished(_)
+        | proto::stream_session_response::Event::ActiveMessageIdChanged(_) => {
+            return Ok(None);
+        }
+    };
+
+    Ok(Some(client_event))
+}
+
+pub(crate) fn client_command_to_proto(
+    command: crate::client_api::ClientCommand,
+    session_id: &str,
+) -> Option<proto::StreamSessionRequest> {
+    use crate::client_api::ClientCommand;
+    use proto::stream_session_request::Message;
+
+    let message = match command {
+        ClientCommand::SendMessage { content } => {
+            Some(Message::SendMessage(proto::SendMessageRequest {
+                session_id: session_id.to_string(),
+                message: content,
+                attachments: vec![],
+            }))
+        }
+        ClientCommand::EditMessage {
+            message_id,
+            new_content,
+        } => Some(Message::EditMessage(proto::EditMessageRequest {
+            session_id: session_id.to_string(),
+            message_id: message_id.to_string(),
+            new_content,
+        })),
+        ClientCommand::ExecuteSlashCommand { command } => {
+            Some(Message::ExecuteCommand(proto::ExecuteCommandRequest {
+                session_id: session_id.to_string(),
+                command,
+            }))
+        }
+        ClientCommand::ExecuteBashCommand { command } => Some(Message::ExecuteBashCommand(
+            proto::ExecuteBashCommandRequest {
+                session_id: session_id.to_string(),
+                command,
+            },
+        )),
+        ClientCommand::ApproveToolCall {
+            request_id,
+            decision,
+        } => {
+            use crate::client_api::ApprovalDecision;
+            use proto::approval_decision::DecisionType;
+
+            let decision_type = match decision {
+                ApprovalDecision::Deny => DecisionType::Deny(true),
+                ApprovalDecision::Once => DecisionType::Once(true),
+                ApprovalDecision::AlwaysTool => DecisionType::AlwaysTool(true),
+                ApprovalDecision::AlwaysBashPattern(pattern) => {
+                    DecisionType::AlwaysBashPattern(pattern)
+                }
+            };
+
+            Some(Message::ToolApproval(proto::ToolApprovalResponse {
+                tool_call_id: request_id.to_string(),
+                decision: Some(proto::ApprovalDecision {
+                    decision_type: Some(decision_type),
+                }),
+            }))
+        }
+        ClientCommand::Cancel => Some(Message::Cancel(proto::CancelOperationRequest {
+            session_id: session_id.to_string(),
+            operation_id: String::new(),
+        })),
+        ClientCommand::RequestWorkspaceFiles | ClientCommand::Shutdown => None,
+    };
+
+    message.map(|msg| proto::StreamSessionRequest {
+        session_id: session_id.to_string(),
+        message: Some(msg),
+    })
+}

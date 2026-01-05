@@ -1,3 +1,4 @@
+pub mod client_api;
 pub mod grpc;
 pub mod local_server;
 pub mod service_host;
