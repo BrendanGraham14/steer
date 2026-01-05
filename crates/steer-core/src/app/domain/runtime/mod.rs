@@ -4,12 +4,17 @@ mod dispatcher;
 mod interpreter;
 mod managed_session;
 mod runtime;
+mod session_actor;
 mod stepper;
+mod subscription;
+mod supervisor;
 
 pub use adapter::{AgentAdapterError, AgentExecutorAdapter};
 pub use agent_interpreter::{AgentInterpreter, AgentInterpreterError};
 pub use dispatcher::{ChannelMetrics, DeltaCoalescer, DualChannelDispatcher, MetricsSnapshot};
 pub use interpreter::EffectInterpreter;
 pub use managed_session::RuntimeManagedSession;
-pub use runtime::{AppRuntime, RuntimeConfig, RuntimeError};
+pub use runtime::AppRuntime;
 pub use stepper::{AgentConfig, AgentInput, AgentOutput, AgentState, AgentStepper};
+pub use subscription::{SessionEventEnvelope, SessionEventSubscription};
+pub use supervisor::{RuntimeConfig, RuntimeError, RuntimeHandle, RuntimeService};

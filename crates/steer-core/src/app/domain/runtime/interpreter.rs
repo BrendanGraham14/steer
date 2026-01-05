@@ -8,6 +8,7 @@ use crate::config::model::ModelId;
 use crate::tools::ToolExecutor;
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 
+#[derive(Clone)]
 pub struct EffectInterpreter {
     api_client: Arc<ApiClient>,
     tool_executor: Arc<ToolExecutor>,
