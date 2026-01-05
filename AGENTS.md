@@ -46,6 +46,37 @@ Follow the conventional commits format.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
 - The workspace Cargo.toml uses glob pattern `crates/*` to include all crates in the workspace.
 
+# Type-Safe Identifiers
+
+When using primitive types (integers, UUIDs, strings) as identifiers, **always wrap them in dedicated newtype structs** to ensure type safety.
+
+```rust
+// BAD: Raw primitives are easily confused
+fn get_user(user_id: i64, org_id: i64) -> User { ... }
+get_user(org_id, user_id); // Compiles but wrong!
+
+// GOOD: Newtype wrappers prevent mistakes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UserId(pub i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OrgId(pub i64);
+
+fn get_user(user_id: UserId, org_id: OrgId) -> User { ... }
+get_user(org_id, user_id); // Compile error!
+```
+
+**When to use typed identifiers:**
+- Database primary/foreign keys
+- External API identifiers (Stripe IDs, GitHub IDs, etc.)
+- Session/request/correlation IDs
+- Any identifier that could be confused with another of the same primitive type
+
+**Recommended derives:**
+- `Debug`, `Clone`, `Copy` (for small types), `PartialEq`, `Eq`, `Hash`
+- `serde::{Serialize, Deserialize}` with `#[serde(transparent)]` for seamless JSON
+- `sqlx::Type` or equivalent for database types
+
 # UI Theming
 - **NEVER hardcode colors** in TUI code. Always use the theme system to fetch colors.
 - Use `theme.component_style(Component::...)` to get the appropriate style for UI components.
