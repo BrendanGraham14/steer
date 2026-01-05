@@ -1,39 +1,29 @@
-//! EventPipeline implementation.
-//!
-//! The pipeline orchestrates multiple EventProcessors and runs them in priority order
-//! to handle AppEvents in a modular, composable way.
-
 use crate::error::{Error, Result};
 use tracing::warn;
 
 use super::processor::{EventProcessor, ProcessingContext, ProcessingResult};
-use steer_core::app::AppEvent;
+use steer_grpc::client_api::ClientEvent;
 
-/// Pipeline that orchestrates multiple event processors
 pub struct EventPipeline {
     processors: Vec<Box<dyn EventProcessor>>,
 }
 
 impl EventPipeline {
-    /// Create a new empty pipeline
     pub fn new() -> Self {
         Self {
             processors: Vec::new(),
         }
     }
 
-    /// Add a processor to the pipeline
     pub fn add_processor(mut self, processor: Box<dyn EventProcessor>) -> Self {
         self.processors.push(processor);
-        // Sort by priority to ensure consistent ordering
         self.processors.sort_by_key(|p| p.priority());
         self
     }
 
-    /// Process an event through the pipeline
     pub async fn process_event<'a>(
         &mut self,
-        event: AppEvent,
+        event: ClientEvent,
         ctx: &mut ProcessingContext<'a>,
     ) -> Result<()> {
         for processor in &mut self.processors {
@@ -43,13 +33,13 @@ impl EventPipeline {
 
             match processor.process(event.clone(), ctx).await {
                 ProcessingResult::Handled => {
-                    continue; // Try next processor
+                    continue;
                 }
                 ProcessingResult::HandledAndComplete => {
-                    return Ok(()); // Stop processing
+                    return Ok(());
                 }
                 ProcessingResult::NotHandled => {
-                    continue; // Try next processor
+                    continue;
                 }
                 ProcessingResult::Failed(error) => {
                     warn!(target: "tui.pipeline", "Processor {} failed: {}", processor.name(), error);
@@ -65,12 +55,10 @@ impl EventPipeline {
         Ok(())
     }
 
-    /// Get the number of processors in the pipeline
     pub fn processor_count(&self) -> usize {
         self.processors.len()
     }
 
-    /// Get processor names for debugging
     pub fn processor_names(&self) -> Vec<&'static str> {
         self.processors.iter().map(|p| p.name()).collect()
     }

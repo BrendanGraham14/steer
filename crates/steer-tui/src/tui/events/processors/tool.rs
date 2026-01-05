@@ -6,9 +6,9 @@ use crate::notifications::{NotificationConfig, NotificationSound, notify_with_so
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
-use steer_core::app::AppEvent;
-use steer_core::app::conversation::ToolResult;
-use steer_tools::error::ToolError;
+use steer_grpc::client_api::{
+    ClientEvent, Message, MessageData, ToolCall, ToolCallId, ToolError, ToolResult,
+};
 
 /// Processor for tool-related events
 pub struct ToolEventProcessor {
@@ -29,141 +29,52 @@ impl EventProcessor for ToolEventProcessor {
         75 // After message events but before system events
     }
 
-    fn can_handle(&self, event: &AppEvent) -> bool {
+    fn can_handle(&self, event: &ClientEvent) -> bool {
         matches!(
             event,
-            AppEvent::ToolCallStarted { .. }
-                | AppEvent::ToolCallCompleted { .. }
-                | AppEvent::ToolCallFailed { .. }
-                | AppEvent::RequestToolApproval { .. }
+            ClientEvent::ToolStarted { .. }
+                | ClientEvent::ToolCompleted { .. }
+                | ClientEvent::ToolFailed { .. }
+                | ClientEvent::ApprovalRequested { .. }
         )
     }
 
-    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(
+        &mut self,
+        event: ClientEvent,
+        ctx: &mut ProcessingContext,
+    ) -> ProcessingResult {
         match event {
-            AppEvent::ToolCallStarted {
+            ClientEvent::ToolStarted {
                 name,
                 id,
                 parameters,
-                ..
             } => {
-                tracing::debug!(
-                    target: "tui.tool_event",
-                    "ToolCallStarted: id={}, name={}, parameters={:?}",
-                    id, name, parameters
-                );
-
-                // Debug: dump registry state
-                ctx.tool_registry.debug_dump("At ToolCallStarted");
-
-                *ctx.spinner_state = 0;
-                *ctx.progress_message = Some(format!("Executing tool: {name}"));
-
-                // Create a ToolCall struct with the parameters
-                let tool_call = steer_tools::schema::ToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    parameters: parameters.clone(),
-                };
-
-                // Store the tool call in the registry with full parameters
-                ctx.tool_registry.register_call(tool_call.clone());
-
-                // Move the tool call from pending to active since it's starting
-                ctx.tool_registry.start_execution(&id);
-
-                // Add a pending tool call item
-                let pending = crate::tui::model::ChatItem {
-                    parent_chat_item_id: None, // Will be set by push()
-                    data: ChatItemData::PendingToolCall {
-                        id: crate::tui::model::generate_row_id(),
-                        tool_call,
-                        ts: time::OffsetDateTime::now_utc(),
-                    },
-                };
-
-                ctx.chat_store.add_pending_tool(pending);
-
-                *ctx.messages_updated = true;
+                self.handle_tool_started(id, name, parameters, ctx);
                 ProcessingResult::Handled
             }
-            AppEvent::ToolCallCompleted {
+            ClientEvent::ToolCompleted {
                 name: _,
                 result,
                 id,
-                ..
             } => {
-                *ctx.progress_message = None;
-
-                ctx.chat_store.remove_pending_tool(&id);
-
-                // Create a complete tool message
-                let tool_msg = steer_core::app::conversation::Message {
-                    data: steer_core::app::conversation::MessageData::Tool {
-                        tool_use_id: id.clone(),
-                        result: result.clone(),
-                    },
-                    id: crate::tui::model::generate_row_id(),
-                    timestamp: chrono::Utc::now().timestamp() as u64,
-                    parent_message_id: None,
-                };
-
-                let _idx = ctx.chat_store.add_message(tool_msg);
-
-                // Complete the tool execution in registry
-                ctx.tool_registry.complete_execution(&id, result);
-
-                *ctx.messages_updated = true;
+                self.handle_tool_completed(id, result, ctx);
                 ProcessingResult::Handled
             }
-            AppEvent::ToolCallFailed {
-                name, error, id, ..
-            } => {
-                *ctx.progress_message = None;
-
-                ctx.chat_store.remove_pending_tool(&id);
-
-                // Create a complete tool message with error
-                let tool_msg = steer_core::app::conversation::Message {
-                    data: steer_core::app::conversation::MessageData::Tool {
-                        tool_use_id: id.clone(),
-                        result: ToolResult::Error(ToolError::Execution {
-                            tool_name: name.clone(),
-                            message: error.clone(),
-                        }),
-                    },
-                    id: crate::tui::model::generate_row_id(),
-                    timestamp: chrono::Utc::now().timestamp() as u64,
-                    parent_message_id: None,
-                };
-
-                let _idx = ctx.chat_store.add_message(tool_msg);
-
-                // Complete the tool execution in registry with error
-                ctx.tool_registry.fail_execution(&id, error);
-
-                *ctx.messages_updated = true;
+            ClientEvent::ToolFailed { name, error, id } => {
+                self.handle_tool_failed(id, name, error, ctx);
                 ProcessingResult::Handled
             }
-            AppEvent::RequestToolApproval {
-                name,
-                parameters,
-                id,
-                ..
+            ClientEvent::ApprovalRequested {
+                request_id: _,
+                tool_call,
             } => {
-                let approval_info = steer_tools::schema::ToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    parameters: parameters.clone(),
-                };
+                *ctx.current_tool_approval = Some(tool_call.clone());
 
-                *ctx.current_tool_approval = Some(approval_info);
-
-                // Notify user about tool approval request
                 notify_with_sound(
                     &self.notification_config,
                     NotificationSound::ToolApproval,
-                    &format!("Tool approval needed: {name}"),
+                    &format!("Tool approval needed: {}", tool_call.name),
                 )
                 .await;
 
@@ -175,6 +86,99 @@ impl EventProcessor for ToolEventProcessor {
 
     fn name(&self) -> &'static str {
         "ToolEventProcessor"
+    }
+}
+
+impl ToolEventProcessor {
+    fn handle_tool_started(
+        &self,
+        id: ToolCallId,
+        name: String,
+        parameters: serde_json::Value,
+        ctx: &mut ProcessingContext,
+    ) {
+        tracing::debug!(
+            target: "tui.tool_event",
+            "ToolStarted: id={}, name={}, parameters={:?}",
+            id, name, parameters
+        );
+
+        ctx.tool_registry.debug_dump("At ToolStarted");
+
+        *ctx.spinner_state = 0;
+        *ctx.progress_message = Some(format!("Executing tool: {name}"));
+
+        let tool_call = ToolCall {
+            id: id.to_string(),
+            name: name.clone(),
+            parameters: parameters.clone(),
+        };
+
+        ctx.tool_registry.register_call(tool_call.clone());
+        ctx.tool_registry.start_execution(id.as_str());
+
+        let pending = crate::tui::model::ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::PendingToolCall {
+                id: crate::tui::model::generate_row_id(),
+                tool_call,
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        };
+
+        ctx.chat_store.add_pending_tool(pending);
+        *ctx.messages_updated = true;
+    }
+
+    fn handle_tool_completed(
+        &self,
+        id: ToolCallId, result: ToolResult, ctx: &mut ProcessingContext) {
+        *ctx.progress_message = None;
+
+        ctx.chat_store.remove_pending_tool(id.as_str());
+
+        let tool_msg = Message {
+            data: MessageData::Tool {
+                tool_use_id: id.to_string(),
+                result: result.clone(),
+            },
+            id: crate::tui::model::generate_row_id(),
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            parent_message_id: None,
+        };
+
+        let _idx = ctx.chat_store.add_message(tool_msg);
+        ctx.tool_registry.complete_execution(id.as_str(), result);
+        *ctx.messages_updated = true;
+    }
+
+    fn handle_tool_failed(
+        &self,
+        id: ToolCallId,
+        name: String,
+        error: String,
+        ctx: &mut ProcessingContext,
+    ) {
+        *ctx.progress_message = None;
+
+        ctx.chat_store.remove_pending_tool(id.as_str());
+
+        let tool_msg = Message {
+            data: MessageData::Tool {
+                tool_use_id: id.to_string(),
+                result: ToolResult::Error(ToolError::Execution {
+                    tool_name: name.clone(),
+                    message: error.clone(),
+                }),
+            },
+            id: crate::tui::model::generate_row_id(),
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            parent_message_id: None,
+        };
+
+        let _idx = ctx.chat_store.add_message(tool_msg);
+        ctx.tool_registry.fail_execution(id.as_str(), error);
+        *ctx.messages_updated = true;
     }
 }
 
@@ -191,15 +195,12 @@ mod tests {
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
-    use steer_core::config::model::ModelId;
+    use steer_grpc::client_api::{AssistantContent, ModelId, OpId};
 
     use serde_json::json;
     use std::collections::HashSet;
 
-    use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-
     use steer_grpc::AgentClient;
-    use steer_tools::schema::ToolCall;
 
     struct TestContext {
         chat_store: ChatStore,
@@ -212,7 +213,7 @@ mod tests {
         current_tool_approval: Option<ToolCall>,
         current_model: ModelId,
         messages_updated: bool,
-        in_flight_operations: HashSet<uuid::Uuid>,
+        in_flight_operations: HashSet<OpId>,
     }
     async fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
@@ -247,14 +248,12 @@ mod tests {
         let mut msg_proc = MessageEventProcessor::new();
         let mut ctx = create_test_context().await;
 
-        // Full tool call we expect to keep
         let full_call = ToolCall {
             id: "id123".to_string(),
             name: "view".to_string(),
             parameters: json!({"file_path": "/tmp/x", "offset": 1}),
         };
 
-        // 1. Assistant message first - populates registry with full params
         let assistant = Message {
             data: MessageData::Assistant {
                 content: vec![AssistantContent::ToolCall {
@@ -284,7 +283,7 @@ mod tests {
             };
             let _ = msg_proc
                 .process(
-                    steer_core::app::AppEvent::MessageAdded {
+                    ClientEvent::MessageAdded {
                         message: assistant,
                         model: model.clone(),
                     },
@@ -293,7 +292,6 @@ mod tests {
                 .await;
         }
 
-        // 2. ToolCallStarted arrives afterwards
         {
             let mut ctx = ProcessingContext {
                 chat_store: &mut ctx.chat_store,
@@ -310,18 +308,16 @@ mod tests {
             };
             let _ = tool_proc
                 .process(
-                    steer_core::app::AppEvent::ToolCallStarted {
+                    ClientEvent::ToolStarted {
                         name: "view".to_string(),
-                        id: "id123".to_string(),
+                        id: "id123".into(),
                         parameters: serde_json::Value::Null,
-                        model: model.clone(),
                     },
                     &mut ctx,
                 )
                 .await;
         }
 
-        // Assert the tool was registered and stored properly
         let stored_call = ctx
             .tool_registry
             .get_tool_call("id123")

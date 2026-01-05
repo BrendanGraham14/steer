@@ -7,7 +7,7 @@ use crate::notifications::{NotificationConfig, NotificationSound, notify_with_so
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
-use steer_core::app::AppEvent;
+use steer_grpc::client_api::ClientEvent;
 
 /// Processor for system-level events
 pub struct SystemEventProcessor {
@@ -20,25 +20,6 @@ impl SystemEventProcessor {
             notification_config: NotificationConfig::from_env(),
         }
     }
-
-    /// Handle command response by adding it to the chat store
-    fn handle_command_response(
-        &self,
-        command: steer_core::app::conversation::AppCommandType,
-        response: steer_core::app::conversation::CommandResponse,
-        ctx: &mut ProcessingContext,
-    ) {
-        let chat_item = crate::tui::model::ChatItem {
-            parent_chat_item_id: None, // Will be set by push()
-            data: ChatItemData::CoreCmdResponse {
-                id: generate_row_id(),
-                command,
-                response,
-                ts: time::OffsetDateTime::now_utc(),
-            },
-        };
-        ctx.chat_store.push(chat_item);
-    }
 }
 
 #[async_trait]
@@ -47,34 +28,26 @@ impl EventProcessor for SystemEventProcessor {
         90 // Low priority - run after most other processors
     }
 
-    fn can_handle(&self, event: &AppEvent) -> bool {
+    fn can_handle(&self, event: &ClientEvent) -> bool {
         matches!(
             event,
-            AppEvent::ModelChanged { .. }
-                | AppEvent::CommandResponse { .. }
-                | AppEvent::Error { .. }
+            ClientEvent::ModelChanged { .. } | ClientEvent::Error { .. }
         )
     }
 
-    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(
+        &mut self,
+        event: ClientEvent,
+        ctx: &mut ProcessingContext,
+    ) -> ProcessingResult {
         match event {
-            AppEvent::ModelChanged { model } => {
+            ClientEvent::ModelChanged { model } => {
                 *ctx.current_model = model;
                 ProcessingResult::Handled
             }
-            AppEvent::CommandResponse {
-                command,
-                response,
-                id: _,
-            } => {
-                self.handle_command_response(command, response, ctx);
-                *ctx.messages_updated = true;
-                ProcessingResult::Handled
-            }
-            AppEvent::Error { message } => {
-                // Add error as a system notice
+            ClientEvent::Error { message } => {
                 let chat_item = crate::tui::model::ChatItem {
-                    parent_chat_item_id: None, // Will be set by push()
+                    parent_chat_item_id: None,
                     data: ChatItemData::SystemNotice {
                         id: generate_row_id(),
                         level: NoticeLevel::Error,
@@ -85,7 +58,6 @@ impl EventProcessor for SystemEventProcessor {
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
 
-                // Trigger error notification with sound
                 notify_with_sound(
                     &self.notification_config,
                     NotificationSound::Error,

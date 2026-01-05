@@ -6,7 +6,7 @@
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use async_trait::async_trait;
-use steer_core::app::AppEvent;
+use steer_grpc::client_api::ClientEvent;
 
 /// Processor for events that affect the overall processing state
 pub struct ProcessingStateProcessor {
@@ -27,45 +27,34 @@ impl EventProcessor for ProcessingStateProcessor {
         10 // High priority - state changes should happen early
     }
 
-    fn can_handle(&self, event: &AppEvent) -> bool {
+    fn can_handle(&self, event: &ClientEvent) -> bool {
         matches!(
             event,
-            AppEvent::ProcessingStarted
-                | AppEvent::ProcessingCompleted
-                | AppEvent::Error { .. }
-                | AppEvent::OperationCancelled { .. }
-                | AppEvent::Started {
-                    op: steer_core::app::Operation::Bash { .. },
-                    ..
-                }
-                | AppEvent::Started {
-                    op: steer_core::app::Operation::Compact,
-                    ..
-                }
-                | AppEvent::Finished {
-                    outcome: steer_core::app::OperationOutcome::Bash { .. },
-                    ..
-                }
-                | AppEvent::Finished {
-                    outcome: steer_core::app::OperationOutcome::Compact { .. },
-                    ..
-                }
+            ClientEvent::ProcessingStarted { .. }
+                | ClientEvent::ProcessingCompleted { .. }
+                | ClientEvent::Error { .. }
+                | ClientEvent::OperationCancelled { .. }
         )
     }
 
-    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(
+        &mut self,
+        event: ClientEvent,
+        ctx: &mut ProcessingContext,
+    ) -> ProcessingResult {
         match event {
-            AppEvent::ProcessingStarted => {
+            ClientEvent::ProcessingStarted { op_id } => {
                 *ctx.is_processing = true;
                 *ctx.spinner_state = 0;
+                ctx.in_flight_operations.insert(op_id);
                 ProcessingResult::Handled
             }
-            AppEvent::ProcessingCompleted => {
+            ClientEvent::ProcessingCompleted { op_id } => {
                 let was_processing = *ctx.is_processing;
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
+                ctx.in_flight_operations.remove(&op_id);
 
-                // Trigger notification if we were processing
                 if was_processing {
                     notify_with_sound(
                         &self.notification_config,
@@ -77,31 +66,33 @@ impl EventProcessor for ProcessingStateProcessor {
 
                 ProcessingResult::Handled
             }
-            AppEvent::Error { .. } => {
+            ClientEvent::Error { message } => {
                 let was_processing = *ctx.is_processing;
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
 
-                // Trigger error notification if we were processing
                 if was_processing {
                     notify_with_sound(
                         &self.notification_config,
                         NotificationSound::Error,
-                        "An error occurred",
+                        &message,
                     )
                     .await;
                 }
 
                 ProcessingResult::Handled
             }
-            AppEvent::OperationCancelled { op_id: _, info: _ } => {
+            ClientEvent::OperationCancelled {
+                op_id,
+                pending_tool_calls: _,
+            } => {
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
                 *ctx.current_tool_approval = None;
+                ctx.in_flight_operations.remove(&op_id);
 
-                // Add cancellation message to the UI
                 let chat_item = crate::tui::model::ChatItem {
-                    parent_chat_item_id: None, // Will be set by push()
+                    parent_chat_item_id: None,
                     data: crate::tui::model::ChatItemData::SystemNotice {
                         id: crate::tui::model::generate_row_id(),
                         level: crate::tui::model::NoticeLevel::Info,
@@ -111,53 +102,6 @@ impl EventProcessor for ProcessingStateProcessor {
                 };
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
-
-                // Remove any in-flight operation rows (stops spinners)
-                let operations_to_remove: Vec<uuid::Uuid> =
-                    ctx.in_flight_operations.iter().cloned().collect();
-                ctx.in_flight_operations.clear();
-
-                for operation_id in operations_to_remove {
-                    ctx.chat_store.remove_in_flight_op(&operation_id);
-                    *ctx.messages_updated = true;
-                }
-
-                ProcessingResult::Handled
-            }
-            AppEvent::Started { id, op } => {
-                // Only handle non-tool operations
-                let label = match op {
-                    steer_core::app::Operation::Bash { cmd } => {
-                        format!("Running command: {cmd}")
-                    }
-                    steer_core::app::Operation::Compact => {
-                        "Compressing conversation...".to_string()
-                    }
-                };
-
-                // Add in-flight operation row
-                let row_id = crate::tui::model::generate_row_id();
-                let chat_item = crate::tui::model::ChatItem {
-                    parent_chat_item_id: None, // Will be set by push()
-                    data: crate::tui::model::ChatItemData::InFlightOperation {
-                        id: row_id.clone(),
-                        operation_id: id,
-                        label,
-                        ts: time::OffsetDateTime::now_utc(),
-                    },
-                };
-                ctx.chat_store.push(chat_item);
-                *ctx.messages_updated = true;
-                ctx.in_flight_operations.insert(id);
-
-                ProcessingResult::Handled
-            }
-            AppEvent::Finished { id, outcome: _ } => {
-                // Remove the in-flight operation if it exists
-                if ctx.in_flight_operations.remove(&id) {
-                    ctx.chat_store.remove_in_flight_op(&id);
-                    *ctx.messages_updated = true;
-                }
 
                 ProcessingResult::Handled
             }

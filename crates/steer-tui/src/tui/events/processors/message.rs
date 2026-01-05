@@ -6,8 +6,7 @@
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
-use steer_core::app::AppEvent;
-use steer_core::app::conversation::AssistantContent;
+use steer_grpc::client_api::{AssistantContent, ClientEvent, Message, MessageData, MessageId};
 
 /// Processor for message-related events
 pub struct MessageEventProcessor;
@@ -24,92 +23,31 @@ impl EventProcessor for MessageEventProcessor {
         50 // Medium priority - after state changes but before tool events
     }
 
-    fn can_handle(&self, event: &AppEvent) -> bool {
+    fn can_handle(&self, event: &ClientEvent) -> bool {
         matches!(
             event,
-            AppEvent::MessageAdded { .. }
-                | AppEvent::MessageUpdated { .. }
-                | AppEvent::MessagePart { .. }
-                | AppEvent::ActiveMessageIdChanged { .. }
+            ClientEvent::MessageAdded { .. }
+                | ClientEvent::MessageUpdated { .. }
+                | ClientEvent::MessageDelta { .. }
         )
     }
 
-    async fn process(&mut self, event: AppEvent, ctx: &mut ProcessingContext) -> ProcessingResult {
+    async fn process(
+        &mut self,
+        event: ClientEvent,
+        ctx: &mut ProcessingContext,
+    ) -> ProcessingResult {
         match event {
-            AppEvent::MessageAdded { message, .. } => {
+            ClientEvent::MessageAdded { message, .. } => {
                 self.handle_message_added(message, ctx);
                 ProcessingResult::Handled
             }
-            AppEvent::MessageUpdated { id, content } => {
-                // Find the message in the chat store
-                let mut found = false;
-                for item in ctx.chat_store.iter_mut() {
-                    if let ChatItemData::Message(message) = &mut item.data {
-                        if message.id() == id {
-                            if let steer_core::app::conversation::MessageData::Assistant {
-                                content: blocks,
-                                ..
-                            } = &mut message.data
-                            {
-                                blocks.clear();
-                                blocks.push(AssistantContent::Text { text: content });
-                                *ctx.messages_updated = true;
-                                found = true;
-                                break;
-                            } else {
-                                tracing::warn!(target: "tui.message", "MessageUpdated for non-assistant message: {}", id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if !found {
-                    tracing::warn!(target: "tui.message", "MessageUpdated for unknown ID: {}", id);
-                }
+            ClientEvent::MessageUpdated { id, content } => {
+                self.handle_message_updated(&id, content, ctx);
                 ProcessingResult::Handled
             }
-            AppEvent::MessagePart { id, delta } => {
-                // For streaming messages, append to existing text blocks
-                let mut found = false;
-                for item in ctx.chat_store.iter_mut() {
-                    if let ChatItemData::Message(message) = &mut item.data {
-                        if message.id() == id {
-                            if let steer_core::app::conversation::MessageData::Assistant {
-                                content: blocks,
-                                ..
-                            } = &mut message.data
-                            {
-                                if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
-                                    text.push_str(&delta);
-                                    *ctx.messages_updated = true;
-                                } else {
-                                    blocks.push(AssistantContent::Text { text: delta });
-                                    *ctx.messages_updated = true;
-                                }
-                                found = true;
-                                break;
-                            } else {
-                                tracing::warn!(target: "tui.message", "MessagePart for non-assistant message: {}", id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if !found {
-                    tracing::warn!(target: "tui.message", "MessagePart received for unknown ID: {}", id);
-                }
-                ProcessingResult::Handled
-            }
-            AppEvent::ActiveMessageIdChanged { message_id } => {
-                tracing::debug!(
-                    target: "tui.message_event",
-                    "ActiveMessageIdChanged: {:?}",
-                    message_id
-                );
-
-                ctx.chat_store.set_active_message_id(message_id);
-                *ctx.messages_updated = true;
-
+            ClientEvent::MessageDelta { id, delta } => {
+                self.handle_message_delta(&id, delta, ctx);
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,
@@ -122,8 +60,8 @@ impl EventProcessor for MessageEventProcessor {
 }
 
 impl MessageEventProcessor {
-    fn handle_message_added(&self, message: steer_core::app::Message, ctx: &mut ProcessingContext) {
-        if let steer_core::app::MessageData::Assistant { content, .. } = &message.data {
+    fn handle_message_added(&self, message: Message, ctx: &mut ProcessingContext) {
+        if let MessageData::Assistant { content, .. } = &message.data {
             tracing::debug!(
                 target: "tui.message_event",
                 "Processing Assistant message id={}",
@@ -146,6 +84,99 @@ impl MessageEventProcessor {
         ctx.chat_store.add_message(message);
         *ctx.messages_updated = true;
     }
+
+    fn handle_message_updated(&self, id: &MessageId, content: String, ctx: &mut ProcessingContext) {
+        // Find the message in the chat store
+        let mut found = false;
+        for item in ctx.chat_store.iter_mut() {
+            if let ChatItemData::Message(message) = &mut item.data {
+                if message.id() == id.as_str() {
+                    if let MessageData::Assistant {
+                        content: blocks, ..
+                    } = &mut message.data
+                    {
+                        blocks.clear();
+                        blocks.push(AssistantContent::Text { text: content });
+                        *ctx.messages_updated = true;
+                        found = true;
+                        break;
+                    } else {
+                        tracing::warn!(target: "tui.message", "MessageUpdated for non-assistant message: {}", id);
+                        break;
+                    }
+                }
+            }
+        }
+        if !found {
+            tracing::warn!(target: "tui.message", "MessageUpdated for unknown ID: {}", id);
+        }
+    }
+
+    fn handle_message_delta(&self, id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
+        // For streaming messages, append to existing text blocks
+        let mut found = false;
+        for item in ctx.chat_store.iter_mut() {
+            if let ChatItemData::Message(message) = &mut item.data
+                && message.id() == id.as_str()
+            {
+                if let MessageData::Assistant {
+                    content: blocks, ..
+                } = &mut message.data
+                {
+                    if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
+                        text.push_str(delta);
+                    } else {
+                        blocks.push(AssistantContent::Text {
+                            text: delta.to_string(),
+                        });
+                    }
+                    *ctx.messages_updated = true;
+                    return true;
+                }
+                tracing::warn!(
+                    target: "tui.message",
+                    "TextDelta for non-assistant message: {}",
+                    id
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    fn append_thinking_delta(id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
+        for item in ctx.chat_store.iter_mut() {
+            if let ChatItemData::Message(message) = &mut item.data
+                && message.id() == id.as_str()
+            {
+                if let MessageData::Assistant {
+                    content: blocks, ..
+                } = &mut message.data
+                {
+                    if let Some(AssistantContent::Thought {
+                        thought: ThoughtContent::Simple { text },
+                    }) = blocks.last_mut()
+                    {
+                        if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
+                            text.push_str(&delta);
+                            *ctx.messages_updated = true;
+                        } else {
+                            blocks.push(AssistantContent::Text { text: delta });
+                            *ctx.messages_updated = true;
+                        }
+                        found = true;
+                        break;
+                    } else {
+                        tracing::warn!(target: "tui.message", "MessageDelta for non-assistant message: {}", id);
+                        break;
+                    }
+                }
+            }
+        }
+        if !found {
+            tracing::warn!(target: "tui.message", "MessageDelta received for unknown ID: {}", id);
+        }
+    }
 }
 
 impl Default for MessageEventProcessor {
@@ -163,11 +194,8 @@ mod tests {
 
     use serde_json::json;
 
-    use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-
-    use steer_core::config::model::ModelId;
     use steer_grpc::AgentClient;
-    use steer_tools::schema::ToolCall;
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData, ModelId, OpId, ToolCall};
 
     struct TestContext {
         chat_store: ChatStore,
@@ -213,7 +241,7 @@ mod tests {
         let mut processor = MessageEventProcessor::new();
         let mut ctx = create_test_context().await;
 
-        // First, create a placeholder Tool message (simulating what happens during ToolCallStarted)
+        // First, create a placeholder Tool message (simulating what happens during ToolStarted)
         let tool_id = "test_tool_123".to_string();
         let placeholder_call = ToolCall {
             id: tool_id.clone(),
@@ -225,10 +253,12 @@ mod tests {
         let placeholder_msg = Message {
             data: MessageData::Tool {
                 tool_use_id: tool_id.clone(),
-                result: steer_tools::ToolResult::External(steer_tools::result::ExternalResult {
-                    tool_name: "unknown".to_string(),
-                    payload: "Pending...".to_string(),
-                }),
+                result: steer_grpc::client_api::ToolResult::External(
+                    steer_grpc::client_api::ExternalResult {
+                        tool_name: "unknown".to_string(),
+                        payload: "Pending...".to_string(),
+                    },
+                ),
             },
             id: "tool_msg_id".to_string(),
             timestamp: chrono::Utc::now().timestamp() as u64,
@@ -280,7 +310,7 @@ mod tests {
         // Process the Assistant message
         let result = processor
             .process(
-                steer_core::app::AppEvent::MessageAdded {
+                ClientEvent::MessageAdded {
                     message: assistant_message,
                     model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
                 },

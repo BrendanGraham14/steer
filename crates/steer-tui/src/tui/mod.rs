@@ -17,13 +17,11 @@ use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
+use steer_core::app::AppCommand;
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-use steer_core::app::io::AppEventSource;
-use steer_core::app::{AppCommand, AppEvent};
 
-use steer_core::config::model::ModelId;
 use steer_grpc::AgentClient;
-use steer_tools::schema::ToolCall;
+use steer_grpc::client_api::{ClientEvent, ModelId, OpId, ToolCall};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -147,7 +145,7 @@ pub struct Tui {
     /// Authentication controller (if active)
     auth_controller: Option<AuthController>,
     /// Track in-flight operations (operation_id -> chat_store_index)
-    in_flight_operations: HashSet<uuid::Uuid>,
+    in_flight_operations: HashSet<OpId>,
     /// Command registry for slash commands
     command_registry: CommandRegistry,
     /// User preferences
@@ -395,7 +393,7 @@ impl Tui {
         }
     }
 
-    pub async fn run(&mut self, event_rx: mpsc::Receiver<AppEvent>) -> Result<()> {
+    pub async fn run(&mut self, event_rx: mpsc::Receiver<ClientEvent>) -> Result<()> {
         // Log the current state of messages
         info!(
             "Starting TUI run with {} messages in view model",
@@ -422,7 +420,7 @@ impl Tui {
 
     async fn run_event_loop(
         &mut self,
-        mut event_rx: mpsc::Receiver<AppEvent>,
+        mut event_rx: mpsc::Receiver<ClientEvent>,
         term_event_stream: &mut EventStream,
         mut update_rx: mpsc::Receiver<UpdateStatus>,
     ) -> Result<()> {
@@ -539,10 +537,10 @@ impl Tui {
                         }
                     }
                 }
-                app_event_opt = event_rx.recv() => {
-                    match app_event_opt {
-                        Some(app_event) => {
-                            self.handle_app_event(app_event).await;
+                client_event_opt = event_rx.recv() => {
+                    match client_event_opt {
+                        Some(client_event) => {
+                            self.handle_client_event(client_event).await;
                             needs_redraw = true;
                         }
                         None => {
@@ -880,17 +878,15 @@ impl Tui {
             .add_processor(Box::new(SystemEventProcessor::new()))
     }
 
-    async fn handle_app_event(&mut self, event: AppEvent) {
+    async fn handle_client_event(&mut self, event: ClientEvent) {
         let mut messages_updated = false;
 
-        // Handle workspace events before processing through pipeline
         match &event {
-            AppEvent::WorkspaceChanged => {
+            ClientEvent::WorkspaceChanged => {
                 self.load_file_cache().await;
             }
-            AppEvent::WorkspaceFiles { files } => {
-                // Update file cache with the new file list
-                info!(target: "tui.handle_app_event", "Received workspace files event with {} files", files.len());
+            ClientEvent::WorkspaceFiles { files } => {
+                info!(target: "tui.handle_client_event", "Received workspace files event with {} files", files.len());
                 self.input_panel_state
                     .file_cache
                     .update(files.clone())
@@ -899,7 +895,6 @@ impl Tui {
             _ => {}
         }
 
-        // Create processing context
         let mut ctx = crate::tui::events::processor::ProcessingContext {
             chat_store: &mut self.chat_store,
             chat_list_state: self.chat_viewport.state_mut(),
@@ -914,14 +909,10 @@ impl Tui {
             in_flight_operations: &mut self.in_flight_operations,
         };
 
-        // Process the event through the pipeline
         if let Err(e) = self.event_pipeline.process_event(event, &mut ctx).await {
-            tracing::error!(target: "tui.handle_app_event", "Event processing failed: {}", e);
+            tracing::error!(target: "tui.handle_client_event", "Event processing failed: {}", e);
         }
 
-        // Sync doesn't need to happen anymore since we don't track threads
-
-        // Handle special input mode changes for tool approval
         if self.current_tool_approval.is_some() && self.input_mode != InputMode::AwaitingApproval {
             self.switch_mode(InputMode::AwaitingApproval);
         } else if self.current_tool_approval.is_none()
@@ -930,10 +921,7 @@ impl Tui {
             self.restore_previous_mode();
         }
 
-        // Auto-scroll if messages were added
         if messages_updated {
-            // Clear cache for any updated messages
-            // Scroll to bottom if we were already at the bottom
             if self.chat_viewport.state_mut().is_at_bottom() {
                 self.chat_viewport.state_mut().scroll_to_bottom();
             }
@@ -1430,8 +1418,8 @@ pub async fn run_tui(
         (session_id, vec![])
     };
 
-    client.start_streaming().await.map_err(Box::new)?;
-    let event_rx = client.subscribe().await;
+    client.start_client_streaming().await.map_err(Box::new)?;
+    let event_rx = client.subscribe_client_events().await;
     let mut tui = Tui::new(client, model.clone(), session_id.clone(), theme.clone()).await?;
 
     // Ensure terminal cleanup even if we error before entering the event loop

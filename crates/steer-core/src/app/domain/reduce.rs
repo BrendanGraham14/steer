@@ -422,9 +422,10 @@ fn is_pre_approved(state: &AppState, tool_call: &steer_tools::ToolCall) -> bool 
     if tool_call.name == BASH_TOOL_NAME
         && let Ok(params) = serde_json::from_value::<steer_tools::tools::bash::BashParams>(
             tool_call.parameters.clone(),
-        ) {
-            return state.is_bash_pattern_approved(&params.command);
-        }
+        )
+    {
+        return state.is_bash_pattern_approved(&params.command);
+    }
 
     false
 }
