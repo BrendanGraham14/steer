@@ -277,14 +277,14 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         .clone()
         .unwrap_or_else(steer_core::config::model::builtin::opus);
 
-    // Create in-memory channel
-    let (channel, _server_handle) = local_server::setup_local_grpc_with_catalog(
+    let local_grpc_setup = local_server::setup_local_grpc_with_catalog(
         default_model.clone(),
         params.session_db.clone(),
         steer_core::catalog::CatalogConfig::with_catalogs(catalog_paths),
     )
     .await
     .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;
+    let channel = local_grpc_setup.channel;
 
     // Create gRPC client
     let client = steer_grpc::AgentClient::from_channel(channel)

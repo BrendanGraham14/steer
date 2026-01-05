@@ -1836,7 +1836,9 @@ pub(crate) fn mcp_server_info_to_proto(
     }
 }
 
-fn mcp_transport_to_proto(transport: &steer_core::tools::McpTransport) -> proto::McpTransportInfo {
+pub(crate) fn mcp_transport_to_proto(
+    transport: &steer_core::tools::McpTransport,
+) -> proto::McpTransportInfo {
     use steer_core::tools::McpTransport;
 
     proto::McpTransportInfo {
