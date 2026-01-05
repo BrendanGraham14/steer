@@ -4,7 +4,7 @@ use eyre::{Result, eyre};
 
 use super::super::Command;
 
-use steer_core::session::{SessionFilter, SessionManager, SessionManagerConfig, SessionStatus};
+use steer_core::app::domain::session::{SessionCatalog, SessionFilter, SqliteEventStore};
 
 pub struct ListSessionCommand {
     pub active: bool,
@@ -16,35 +16,25 @@ pub struct ListSessionCommand {
 #[async_trait]
 impl Command for ListSessionCommand {
     async fn execute(&self) -> Result<()> {
-        // If remote is specified, handle via gRPC
         if let Some(_remote_addr) = &self.remote {
             return self.handle_remote().await;
         }
 
-        // Local session handling
-        let store_config =
-            steer_core::utils::session::resolve_session_store_config(self.session_db.clone())?;
-        let session_store =
-            steer_core::utils::session::create_session_store_with_config(store_config).await?;
-        let session_manager_config = SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model: steer_core::config::model::builtin::opus(),
-            auto_persist: true,
+        let db_path = match &self.session_db {
+            Some(path) => path.clone(),
+            None => steer_core::utils::session::create_session_store_path()?,
         };
 
-        let session_manager = SessionManager::new(session_store, session_manager_config);
+        let catalog = SqliteEventStore::new(&db_path)
+            .await
+            .map_err(|e| eyre!("Failed to open session database: {}", e))?;
 
         let filter = SessionFilter {
-            status_filter: if self.active {
-                Some(SessionStatus::Active)
-            } else {
-                None
-            },
-            limit: self.limit,
-            ..Default::default()
+            limit: self.limit.map(|l| l as usize),
+            offset: None,
         };
 
-        let sessions = session_manager
+        let sessions = catalog
             .list_sessions(filter)
             .await
             .map_err(|e| eyre!("Failed to list sessions: {}", e))?;
@@ -59,13 +49,10 @@ impl Command for ListSessionCommand {
             "{:<36} {:<20} {:<20} {:<10} {:<30}",
             "ID", "Created", "Updated", "Messages", "Last Model"
         );
-        println!("{}", "-".repeat(106));
+        println!("{}", "-".repeat(116));
 
         for session in sessions {
-            let model_str = session
-                .last_model
-                .map(|(provider, model)| format!("{provider}/{model}"))
-                .unwrap_or_else(|| "N/A".to_string());
+            let model_str = session.last_model.unwrap_or_else(|| "N/A".to_string());
 
             println!(
                 "{:<36} {:<20} {:<20} {:<10} {:<30}",
@@ -93,7 +80,6 @@ impl ListSessionCommand {
 
         let remote_addr = self.remote.as_ref().unwrap();
 
-        // Connect to the gRPC server
         let client = AgentClient::connect(remote_addr).await.map_err(|e| {
             eyre!(
                 "Failed to connect to remote server at {}: {}",
@@ -102,7 +88,6 @@ impl ListSessionCommand {
             )
         })?;
 
-        // List remote sessions via gRPC
         let sessions = client
             .list_sessions()
             .await

@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use chrono::{Local, TimeZone, Utc};
 use eyre::{Result, eyre};
+use uuid::Uuid;
 
 use super::super::Command;
 
-use steer_core::session::{SessionManager, SessionManagerConfig};
-use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
+use steer_core::app::domain::session::{SessionCatalog, SqliteEventStore};
+use steer_core::app::domain::types::SessionId;
 
 pub struct ShowSessionCommand {
     pub session_id: String,
@@ -16,28 +17,29 @@ pub struct ShowSessionCommand {
 #[async_trait]
 impl Command for ShowSessionCommand {
     async fn execute(&self) -> Result<()> {
-        // If remote is specified, handle via gRPC
         if let Some(remote_addr) = &self.remote {
             return self.handle_remote(remote_addr).await;
         }
 
-        // Local session handling
-        let store_config = resolve_session_store_config(self.session_db.clone())?;
-        let session_store = create_session_store_with_config(store_config).await?;
-        let session_manager_config = SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model: steer_core::config::model::builtin::opus(),
-            auto_persist: true,
+        let db_path = match &self.session_db {
+            Some(path) => path.clone(),
+            None => steer_core::utils::session::create_session_store_path()?,
         };
 
-        let session_manager = SessionManager::new(session_store, session_manager_config);
+        let catalog = SqliteEventStore::new(&db_path)
+            .await
+            .map_err(|e| eyre!("Failed to open session database: {}", e))?;
 
-        let session_info = session_manager
-            .get_session(&self.session_id)
+        let session_id = Uuid::parse_str(&self.session_id)
+            .map(SessionId::from)
+            .map_err(|_| eyre!("Invalid session ID: {}", self.session_id))?;
+
+        let summary = catalog
+            .get_session_summary(session_id)
             .await
             .map_err(|e| eyre!("Failed to get session: {}", e))?;
 
-        match session_info {
+        match summary {
             Some(info) => {
                 println!("Session Details:");
                 println!("ID: {}", info.id);
@@ -56,17 +58,8 @@ impl Command for ShowSessionCommand {
                 println!("Messages: {}", info.message_count);
                 println!(
                     "Last Model: {}",
-                    info.last_model
-                        .map(|(provider, model)| format!("{}/{}", provider.storage_key(), model))
-                        .unwrap_or_else(|| "N/A".to_string())
+                    info.last_model.unwrap_or_else(|| "N/A".to_string())
                 );
-
-                if !info.metadata.is_empty() {
-                    println!("Metadata:");
-                    for (key, value) in &info.metadata {
-                        println!("  {key}: {value}");
-                    }
-                }
             }
             None => {
                 return Err(eyre!("Session not found: {}", self.session_id));
@@ -81,7 +74,6 @@ impl ShowSessionCommand {
     async fn handle_remote(&self, remote_addr: &str) -> Result<()> {
         use steer_grpc::AgentClient;
 
-        // Connect to the gRPC server
         let client = AgentClient::connect(remote_addr).await.map_err(|e| {
             eyre!(
                 "Failed to connect to remote server at {}: {}",

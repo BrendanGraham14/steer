@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
 use std::io::{self, Write};
+use uuid::Uuid;
 
 use super::super::Command;
 
-use steer_core::session::{SessionManager, SessionManagerConfig};
-use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
+use steer_core::app::domain::session::{EventStore, SqliteEventStore};
+use steer_core::app::domain::types::SessionId;
 
 pub struct DeleteSessionCommand {
     pub session_id: String,
@@ -17,12 +18,10 @@ pub struct DeleteSessionCommand {
 #[async_trait]
 impl Command for DeleteSessionCommand {
     async fn execute(&self) -> Result<()> {
-        // If remote is specified, handle via gRPC
         if let Some(remote_addr) = &self.remote {
             return self.handle_remote(remote_addr).await;
         }
 
-        // Local session handling
         if !self.force {
             print!(
                 "Are you sure you want to delete session {}? (y/N): ",
@@ -39,27 +38,34 @@ impl Command for DeleteSessionCommand {
             }
         }
 
-        let store_config = resolve_session_store_config(self.session_db.clone())?;
-        let session_store = create_session_store_with_config(store_config).await?;
-        let session_manager_config = SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model: steer_core::config::model::builtin::opus(),
-            auto_persist: true,
+        let db_path = match &self.session_db {
+            Some(path) => path.clone(),
+            None => steer_core::utils::session::create_session_store_path()?,
         };
 
-        let session_manager = SessionManager::new(session_store, session_manager_config);
-
-        let deleted = session_manager
-            .delete_session(&self.session_id)
+        let event_store = SqliteEventStore::new(&db_path)
             .await
-            .map_err(|e| eyre!("Failed to delete session: {}", e))?;
+            .map_err(|e| eyre!("Failed to open session database: {}", e))?;
 
-        if deleted {
-            println!("Session {} deleted.", self.session_id);
-        } else {
+        let session_id = Uuid::parse_str(&self.session_id)
+            .map(SessionId::from)
+            .map_err(|_| eyre!("Invalid session ID: {}", self.session_id))?;
+
+        let exists = event_store
+            .session_exists(session_id)
+            .await
+            .map_err(|e| eyre!("Failed to check session: {}", e))?;
+
+        if !exists {
             return Err(eyre!("Session not found: {}", self.session_id));
         }
 
+        event_store
+            .delete_session(session_id)
+            .await
+            .map_err(|e| eyre!("Failed to delete session: {}", e))?;
+
+        println!("Session {} deleted.", self.session_id);
         Ok(())
     }
 }
@@ -68,7 +74,6 @@ impl DeleteSessionCommand {
     async fn handle_remote(&self, remote_addr: &str) -> Result<()> {
         use steer_grpc::AgentClient;
 
-        // Connect to the gRPC server
         let client = AgentClient::connect(remote_addr).await.map_err(|e| {
             eyre!(
                 "Failed to connect to remote server at {}: {}",

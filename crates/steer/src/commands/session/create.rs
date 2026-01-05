@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
+use std::sync::Arc;
 
 use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 
-use steer_core::session::{SessionManager, SessionManagerConfig};
-use steer_core::utils::session::{create_session_store_with_config, resolve_session_store_config};
+use steer_core::api::Client as ApiClient;
+use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeService};
+use steer_core::app::domain::session::SqliteEventStore;
+use steer_core::tools::ToolExecutor;
 
 pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
@@ -19,7 +22,6 @@ pub struct CreateSessionCommand {
 #[async_trait]
 impl Command for CreateSessionCommand {
     async fn execute(&self) -> Result<()> {
-        // Create the loader with optional config path
         let overrides = SessionConfigOverrides {
             system_prompt: self.system_prompt.clone(),
             metadata: self.metadata.clone(),
@@ -30,53 +32,82 @@ impl Command for CreateSessionCommand {
 
         let session_config = loader.load().await?;
 
-        // If remote is specified, handle via gRPC
         if let Some(remote_addr) = &self.remote {
             println!("Creating remote session at {remote_addr}");
 
-            // TODO: The TUI functionality has been moved to steer-tui crate
-            // For now, just create the session without launching the TUI
             return Err(eyre!(
                 "Remote session creation with TUI is not available in this command. Use the steer-tui binary instead."
             ));
         }
 
-        // Local session handling
-        let store_config = resolve_session_store_config(self.session_db.clone())?;
-        let session_store = create_session_store_with_config(store_config).await?;
+        let db_path = match &self.session_db {
+            Some(path) => path.clone(),
+            None => steer_core::utils::session::create_session_store_path()?,
+        };
 
-        // Create AppConfig with both registries
-        let auth_storage = std::sync::Arc::new(
+        let event_store = Arc::new(
+            SqliteEventStore::new(&db_path)
+                .await
+                .map_err(|e| eyre!("Failed to open session database: {}", e))?,
+        );
+
+        let auth_storage = Arc::new(
             steer_core::auth::DefaultAuthStorage::new()
                 .map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
         );
-        let app_config = steer_core::app::AppConfig::from_auth_storage(auth_storage)
-            .map_err(|e| eyre!("Failed to create app config: {}", e))?;
 
-        // Extract the registries for reuse
-        let model_registry = app_config.model_registry.clone();
+        let model_registry = Arc::new(
+            steer_core::model_registry::ModelRegistry::load(&[])
+                .map_err(|e| eyre!("Failed to load model registry: {}", e))?,
+        );
+
+        let provider_registry = Arc::new(
+            steer_core::auth::ProviderRegistry::load(&[])
+                .map_err(|e| eyre!("Failed to load provider registry: {}", e))?,
+        );
+
+        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
+
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            llm_config_provider,
+            provider_registry,
+            model_registry.clone(),
+        ));
+
+        let workspace = steer_core::workspace::create_workspace(
+            &steer_core::workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            },
+        )
+        .await
+        .map_err(|e| eyre!("Failed to create workspace: {}", e))?;
+
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            workspace,
+            Arc::new(steer_core::tools::BackendRegistry::new()),
+            Arc::new(steer_core::app::validation::ValidatorRegistry::new()),
+        ));
 
         let default_model = if let Some(ref model_str) = self.model {
             model_registry
                 .resolve(model_str)
                 .map_err(|e| eyre!("Invalid model: {}", e))?
         } else {
-            // Default to opus (which now points to opus-4.1 via build.rs)
             steer_core::config::model::builtin::opus()
         };
 
-        let session_manager_config = SessionManagerConfig {
-            max_concurrent_sessions: 10,
-            default_model,
-            auto_persist: true,
-        };
+        let runtime_config = RuntimeConfig::new(default_model);
 
-        let session_manager = SessionManager::new(session_store, session_manager_config);
+        let runtime_service =
+            RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
 
-        let (session_id, _) = session_manager
-            .create_session(session_config, app_config)
+        let session_id = runtime_service
+            .handle()
+            .create_session(session_config)
             .await
             .map_err(|e| eyre!("Failed to create session: {}", e))?;
+
+        runtime_service.shutdown().await;
 
         println!("Created session: {session_id}");
         Ok(())
