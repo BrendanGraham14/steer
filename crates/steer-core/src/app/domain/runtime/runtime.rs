@@ -186,7 +186,7 @@ impl AppRuntime {
         self.session_manager.active_count()
     }
 
-    async fn dispatch_action(
+    pub async fn dispatch_action(
         &mut self,
         session_id: SessionId,
         action: Action,
