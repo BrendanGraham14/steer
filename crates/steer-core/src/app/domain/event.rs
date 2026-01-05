@@ -2,7 +2,9 @@ use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
 use crate::app::domain::types::{MessageId, OpId, RequestId, ToolCallId};
 use crate::config::model::ModelId;
+use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use steer_tools::ToolCall;
 use steer_tools::result::ToolResult;
 
@@ -10,6 +12,11 @@ pub use crate::app::domain::state::OperationKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEvent {
+    SessionCreated {
+        config: SessionConfig,
+        metadata: HashMap<String, String>,
+    },
+
     MessageAdded {
         message: Message,
         model: ModelId,

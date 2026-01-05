@@ -8,11 +8,13 @@ use tokio::task::JoinHandle;
 
 use crate::api::Client as ApiClient;
 use crate::app::domain::action::Action;
+use crate::app::domain::event::SessionEvent;
 use crate::app::domain::reduce::apply_event_to_state;
 use crate::app::domain::session::EventStore;
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId};
 use crate::config::model::ModelId;
+use crate::session::state::SessionConfig;
 use crate::tools::ToolExecutor;
 
 use super::session_actor::{SessionActorHandle, SessionError, spawn_session_actor};
@@ -61,6 +63,7 @@ impl RuntimeConfig {
 
 pub(crate) enum SupervisorCmd {
     CreateSession {
+        config: SessionConfig,
         reply: oneshot::Sender<Result<SessionId, RuntimeError>>,
     },
     ResumeSession {
@@ -95,6 +98,13 @@ pub(crate) enum SupervisorCmd {
     ListActiveSessions {
         reply: oneshot::Sender<Vec<SessionId>>,
     },
+    ListAllSessions {
+        reply: oneshot::Sender<Result<Vec<SessionId>, RuntimeError>>,
+    },
+    SessionExists {
+        session_id: SessionId,
+        reply: oneshot::Sender<Result<bool, RuntimeError>>,
+    },
     Shutdown,
 }
 
@@ -127,8 +137,8 @@ impl RuntimeSupervisor {
             tokio::select! {
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
-                        SupervisorCmd::CreateSession { reply } => {
-                            let result = self.create_session().await;
+                        SupervisorCmd::CreateSession { config, reply } => {
+                            let result = self.create_session(config).await;
                             let _ = reply.send(result);
                         }
                         SupervisorCmd::ResumeSession { session_id, reply } => {
@@ -163,6 +173,16 @@ impl RuntimeSupervisor {
                             let sessions: Vec<SessionId> = self.sessions.keys().copied().collect();
                             let _ = reply.send(sessions);
                         }
+                        SupervisorCmd::ListAllSessions { reply } => {
+                            let result = self.event_store.list_session_ids().await
+                                .map_err(RuntimeError::from);
+                            let _ = reply.send(result);
+                        }
+                        SupervisorCmd::SessionExists { session_id, reply } => {
+                            let result = self.event_store.session_exists(session_id).await
+                                .map_err(RuntimeError::from);
+                            let _ = reply.send(result);
+                        }
                         SupervisorCmd::Shutdown => {
                             self.shutdown_all().await;
                             break;
@@ -176,12 +196,21 @@ impl RuntimeSupervisor {
         tracing::info!("Runtime supervisor stopped");
     }
 
-    async fn create_session(&mut self) -> Result<SessionId, RuntimeError> {
+    async fn create_session(&mut self, config: SessionConfig) -> Result<SessionId, RuntimeError> {
         let session_id = SessionId::new();
 
         self.event_store.create_session(session_id).await?;
 
-        let state = AppState::new(session_id, self.config.default_model.clone());
+        let session_created_event = SessionEvent::SessionCreated {
+            config: config.clone(),
+            metadata: config.metadata.clone(),
+        };
+        self.event_store
+            .append(session_id, &session_created_event)
+            .await?;
+
+        let mut state = AppState::new(session_id, self.config.default_model.clone());
+        state.session_config = Some(config);
 
         let handle = spawn_session_actor(
             session_id,
@@ -327,10 +356,13 @@ pub struct RuntimeHandle {
 }
 
 impl RuntimeHandle {
-    pub async fn create_session(&self) -> Result<SessionId, RuntimeError> {
+    pub async fn create_session(&self, config: SessionConfig) -> Result<SessionId, RuntimeError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
-            .send(SupervisorCmd::CreateSession { reply: reply_tx })
+            .send(SupervisorCmd::CreateSession {
+                config,
+                reply: reply_tx,
+            })
             .await
             .map_err(|_| RuntimeError::ChannelClosed)?;
         reply_rx.await.map_err(|_| RuntimeError::ChannelClosed)?
@@ -506,6 +538,27 @@ impl RuntimeHandle {
         self.dispatch_action(session_id, action).await
     }
 
+    pub async fn list_all_sessions(&self) -> Result<Vec<SessionId>, RuntimeError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(SupervisorCmd::ListAllSessions { reply: reply_tx })
+            .await
+            .map_err(|_| RuntimeError::ChannelClosed)?;
+        reply_rx.await.map_err(|_| RuntimeError::ChannelClosed)?
+    }
+
+    pub async fn session_exists(&self, session_id: SessionId) -> Result<bool, RuntimeError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(SupervisorCmd::SessionExists {
+                session_id,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| RuntimeError::ChannelClosed)?;
+        reply_rx.await.map_err(|_| RuntimeError::ChannelClosed)?
+    }
+
     pub fn shutdown(&self) {
         let _ = self.tx.try_send(SupervisorCmd::Shutdown);
     }
@@ -593,12 +646,27 @@ mod tests {
         (event_store, api_client, tool_executor, config)
     }
 
+    fn test_session_config() -> SessionConfig {
+        SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            },
+            tool_config: crate::session::state::SessionToolConfig::default(),
+            system_prompt: None,
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
     #[tokio::test]
     async fn test_create_session() {
         let (event_store, api_client, tool_executor, config) = create_test_deps().await;
         let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
 
-        let session_id = service.handle.create_session().await.unwrap();
+        let session_id = service
+            .handle
+            .create_session(test_session_config())
+            .await
+            .unwrap();
 
         assert!(service.handle.is_session_active(session_id).await.unwrap());
 
@@ -610,7 +678,11 @@ mod tests {
         let (event_store, api_client, tool_executor, config) = create_test_deps().await;
         let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
 
-        let session_id = service.handle.create_session().await.unwrap();
+        let session_id = service
+            .handle
+            .create_session(test_session_config())
+            .await
+            .unwrap();
 
         service.handle.suspend_session(session_id).await.unwrap();
         assert!(!service.handle.is_session_active(session_id).await.unwrap());
@@ -626,7 +698,11 @@ mod tests {
         let (event_store, api_client, tool_executor, config) = create_test_deps().await;
         let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
 
-        let session_id = service.handle.create_session().await.unwrap();
+        let session_id = service
+            .handle
+            .create_session(test_session_config())
+            .await
+            .unwrap();
 
         service.handle.delete_session(session_id).await.unwrap();
         assert!(!service.handle.is_session_active(session_id).await.unwrap());
@@ -642,7 +718,11 @@ mod tests {
         let (event_store, api_client, tool_executor, config) = create_test_deps().await;
         let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
 
-        let session_id = service.handle.create_session().await.unwrap();
+        let session_id = service
+            .handle
+            .create_session(test_session_config())
+            .await
+            .unwrap();
 
         let _subscription = service.handle.subscribe_events(session_id).await.unwrap();
 

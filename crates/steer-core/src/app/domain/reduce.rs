@@ -701,6 +701,9 @@ fn handle_hydrate(
 
 pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
+        SessionEvent::SessionCreated { config, .. } => {
+            state.session_config = Some(config.clone());
+        }
         SessionEvent::MessageAdded { message, model } => {
             state.conversation.add_message(message.clone());
             state.current_model = model.clone();

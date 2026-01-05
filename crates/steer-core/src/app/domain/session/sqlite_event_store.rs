@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::{
     Row,
     sqlite::{
@@ -8,9 +9,11 @@ use sqlx::{
 use std::path::Path;
 use std::str::FromStr;
 
+use super::catalog::{SessionCatalog, SessionCatalogError, SessionFilter, SessionSummary};
 use super::event_store::{EventStore, EventStoreError};
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::types::SessionId;
+use crate::session::state::SessionConfig;
 
 pub struct SqliteEventStore {
     pool: SqlitePool,
@@ -71,7 +74,11 @@ impl SqliteEventStore {
             r#"
             CREATE TABLE IF NOT EXISTS domain_sessions (
                 id TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                config_json TEXT,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                last_model TEXT
             )
             "#,
         )
@@ -113,11 +120,57 @@ impl SqliteEventStore {
             message: format!("Failed to create index: {e}"),
         })?;
 
+        self.migrate_add_catalog_columns().await?;
+
+        Ok(())
+    }
+
+    async fn migrate_add_catalog_columns(&self) -> Result<(), EventStoreError> {
+        let has_updated_at: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('domain_sessions') WHERE name = 'updated_at'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(false);
+
+        if !has_updated_at {
+            sqlx::query("ALTER TABLE domain_sessions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| EventStoreError::Migration {
+                    message: format!("Failed to add updated_at column: {e}"),
+                })?;
+
+            sqlx::query("ALTER TABLE domain_sessions ADD COLUMN config_json TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| EventStoreError::Migration {
+                    message: format!("Failed to add config_json column: {e}"),
+                })?;
+
+            sqlx::query(
+                "ALTER TABLE domain_sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| EventStoreError::Migration {
+                message: format!("Failed to add message_count column: {e}"),
+            })?;
+
+            sqlx::query("ALTER TABLE domain_sessions ADD COLUMN last_model TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| EventStoreError::Migration {
+                    message: format!("Failed to add last_model column: {e}"),
+                })?;
+        }
+
         Ok(())
     }
 
     fn event_type_string(event: &SessionEvent) -> &'static str {
         match event {
+            SessionEvent::SessionCreated { .. } => "session_created",
             SessionEvent::MessageAdded { .. } => "message_added",
             SessionEvent::MessageUpdated { .. } => "message_updated",
             SessionEvent::ToolCallStarted { .. } => "tool_call_started",
@@ -309,6 +362,197 @@ impl EventStore for SqliteEventStore {
         }
 
         Ok(session_ids)
+    }
+}
+
+#[async_trait]
+impl SessionCatalog for SqliteEventStore {
+    async fn get_session_config(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionConfig>, SessionCatalogError> {
+        let session_id_str = session_id.0.to_string();
+
+        let row = sqlx::query("SELECT config_json FROM domain_sessions WHERE id = ?1")
+            .bind(&session_id_str)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| SessionCatalogError::database(format!("Failed to get session: {e}")))?;
+
+        match row {
+            Some(row) => {
+                let config_json: Option<String> = row.get("config_json");
+                match config_json {
+                    Some(json) => {
+                        let config: SessionConfig = serde_json::from_str(&json).map_err(|e| {
+                            SessionCatalogError::serialization(format!(
+                                "Failed to parse config: {e}"
+                            ))
+                        })?;
+                        Ok(Some(config))
+                    }
+                    None => Ok(None),
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn get_session_summary(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionSummary>, SessionCatalogError> {
+        let session_id_str = session_id.0.to_string();
+
+        let row = sqlx::query(
+            "SELECT id, created_at, updated_at, message_count, last_model FROM domain_sessions WHERE id = ?1",
+        )
+        .bind(&session_id_str)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| SessionCatalogError::database(format!("Failed to get session: {e}")))?;
+
+        match row {
+            Some(row) => {
+                let id_str: String = row.get("id");
+                let created_at_str: String = row.get("created_at");
+                let updated_at_str: String = row.get("updated_at");
+                let message_count: i64 = row.get("message_count");
+                let last_model: Option<String> = row.get("last_model");
+
+                let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
+                    SessionCatalogError::serialization(format!("Invalid session ID: {e}"))
+                })?;
+
+                let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now());
+
+                let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now());
+
+                Ok(Some(SessionSummary {
+                    id: SessionId(uuid),
+                    created_at,
+                    updated_at,
+                    message_count: message_count as u32,
+                    last_model,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list_sessions(
+        &self,
+        filter: SessionFilter,
+    ) -> Result<Vec<SessionSummary>, SessionCatalogError> {
+        let limit = filter.limit.unwrap_or(100) as i64;
+        let offset = filter.offset.unwrap_or(0) as i64;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, created_at, updated_at, message_count, last_model 
+            FROM domain_sessions 
+            ORDER BY updated_at DESC
+            LIMIT ?1 OFFSET ?2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| SessionCatalogError::database(format!("Failed to list sessions: {e}")))?;
+
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id_str: String = row.get("id");
+            let created_at_str: String = row.get("created_at");
+            let updated_at_str: String = row.get("updated_at");
+            let message_count: i64 = row.get("message_count");
+            let last_model: Option<String> = row.get("last_model");
+
+            let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
+                SessionCatalogError::serialization(format!("Invalid session ID: {e}"))
+            })?;
+
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            summaries.push(SessionSummary {
+                id: SessionId(uuid),
+                created_at,
+                updated_at,
+                message_count: message_count as u32,
+                last_model,
+            });
+        }
+
+        Ok(summaries)
+    }
+
+    async fn update_session_catalog(
+        &self,
+        session_id: SessionId,
+        config: Option<&SessionConfig>,
+        increment_message_count: bool,
+        new_model: Option<&str>,
+    ) -> Result<(), SessionCatalogError> {
+        let session_id_str = session_id.0.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        if let Some(cfg) = config {
+            let config_json = serde_json::to_string(cfg).map_err(|e| {
+                SessionCatalogError::serialization(format!("Failed to serialize config: {e}"))
+            })?;
+
+            sqlx::query(
+                "UPDATE domain_sessions SET config_json = ?1, updated_at = ?2 WHERE id = ?3",
+            )
+            .bind(&config_json)
+            .bind(&now)
+            .bind(&session_id_str)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                SessionCatalogError::database(format!("Failed to update session config: {e}"))
+            })?;
+        }
+
+        if increment_message_count {
+            sqlx::query(
+                "UPDATE domain_sessions SET message_count = message_count + 1, updated_at = ?1 WHERE id = ?2",
+            )
+            .bind(&now)
+            .bind(&session_id_str)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                SessionCatalogError::database(format!("Failed to increment message count: {e}"))
+            })?;
+        }
+
+        if let Some(model) = new_model {
+            sqlx::query(
+                "UPDATE domain_sessions SET last_model = ?1, updated_at = ?2 WHERE id = ?3",
+            )
+            .bind(model)
+            .bind(&now)
+            .bind(&session_id_str)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                SessionCatalogError::database(format!("Failed to update last model: {e}"))
+            })?;
+        }
+
+        Ok(())
     }
 }
 

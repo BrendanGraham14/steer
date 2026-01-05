@@ -2,6 +2,7 @@ use crate::app::conversation::Conversation;
 use crate::app::domain::action::McpServerState;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
+use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use steer_tools::{ToolCall, ToolSchema};
@@ -9,6 +10,7 @@ use steer_tools::{ToolCall, ToolSchema};
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub session_id: SessionId,
+    pub session_config: Option<SessionConfig>,
 
     pub conversation: Conversation,
 
@@ -90,6 +92,7 @@ impl AppState {
     pub fn new(session_id: SessionId, initial_model: ModelId) -> Self {
         Self {
             session_id,
+            session_config: None,
             conversation: Conversation::new(),
             current_model: initial_model,
             cached_system_prompt: None,

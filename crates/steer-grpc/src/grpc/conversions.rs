@@ -6,6 +6,7 @@ use steer_core::app::conversation::{
     AppCommandType, AssistantContent, CommandResponse, CompactResult,
     Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
+use steer_core::app::domain::SessionEvent;
 use steer_core::app::{AppCommand, AppEvent, BashError, CompactError, Operation, OperationOutcome};
 use steer_core::session::state::{
     BackendConfig, BashToolConfig, RemoteAuth, SessionConfig, SessionToolConfig,
@@ -1215,6 +1216,124 @@ pub(crate) fn app_event_to_server_event(
                 proto::ActiveMessageIdChangedEvent { message_id },
             ),
         ),
+    };
+
+    Ok(proto::StreamSessionResponse {
+        sequence_num,
+        timestamp,
+        event,
+    })
+}
+
+/// Convert domain SessionEvent to protobuf StreamSessionResponse
+///
+/// This is used by the new RuntimeService architecture to convert events
+/// from the pure reducer-based domain model to the gRPC protocol.
+pub(crate) fn session_event_to_server_event(
+    session_event: SessionEvent,
+    sequence_num: u64,
+    current_model: &steer_core::config::model::ModelId,
+) -> Result<proto::StreamSessionResponse, ConversionError> {
+    let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
+
+    let event = match session_event {
+        SessionEvent::SessionCreated { .. } => None,
+        SessionEvent::MessageAdded { message, model } => {
+            let proto_message = message_to_proto(message)?;
+            Some(proto::stream_session_response::Event::MessageAdded(
+                proto::MessageAddedEvent {
+                    message: Some(proto_message),
+                    model: Some(model_to_proto(model)),
+                },
+            ))
+        }
+        SessionEvent::MessageUpdated { id, content } => Some(
+            proto::stream_session_response::Event::MessageUpdated(proto::MessageUpdatedEvent {
+                id: id.to_string(),
+                content,
+            }),
+        ),
+        SessionEvent::ToolCallStarted {
+            id,
+            name,
+            parameters,
+        } => Some(proto::stream_session_response::Event::ToolCallStarted(
+            proto::ToolCallStartedEvent {
+                name,
+                id: id.to_string(),
+                model: Some(model_to_proto(current_model.clone())),
+                parameters_json: serde_json::to_string(&parameters).unwrap_or_default(),
+            },
+        )),
+        SessionEvent::ToolCallCompleted { id, name, result } => {
+            let proto_result = steer_tools_result_to_proto(&result)
+                .map_err(|e| ConversionError::ToolResultConversion(e.to_string()))?;
+            Some(proto::stream_session_response::Event::ToolCallCompleted(
+                proto::ToolCallCompletedEvent {
+                    name,
+                    result: Some(proto_result),
+                    id: id.to_string(),
+                    model: Some(model_to_proto(current_model.clone())),
+                },
+            ))
+        }
+        SessionEvent::ToolCallFailed { id, name, error } => Some(
+            proto::stream_session_response::Event::ToolCallFailed(proto::ToolCallFailedEvent {
+                name,
+                error,
+                id: id.to_string(),
+                model: Some(model_to_proto(current_model.clone())),
+            }),
+        ),
+        SessionEvent::ApprovalRequested {
+            request_id,
+            tool_call,
+        } => Some(proto::stream_session_response::Event::RequestToolApproval(
+            proto::RequestToolApprovalEvent {
+                name: tool_call.name.clone(),
+                parameters_json: serde_json::to_string(&tool_call.parameters).unwrap_or_default(),
+                id: request_id.to_string(),
+            },
+        )),
+        SessionEvent::ApprovalDecided { .. } => {
+            // This is an internal state change, not typically sent to clients
+            // The client already knows about their own approval decision
+            None
+        }
+        SessionEvent::OperationStarted { op_id: _, kind: _ } => {
+            Some(proto::stream_session_response::Event::ProcessingStarted(
+                proto::ProcessingStartedEvent {},
+            ))
+        }
+        SessionEvent::OperationCompleted { op_id: _ } => {
+            Some(proto::stream_session_response::Event::ProcessingCompleted(
+                proto::ProcessingCompletedEvent {},
+            ))
+        }
+        SessionEvent::OperationCancelled { op_id: _, info } => {
+            Some(proto::stream_session_response::Event::OperationCancelled(
+                proto::OperationCancelledEvent {
+                    info: Some(proto::CancellationInfo {
+                        api_call_in_progress: false,
+                        active_tools: vec![],
+                        pending_tool_approvals: info.pending_tool_calls > 0,
+                    }),
+                },
+            ))
+        }
+        SessionEvent::ModelChanged { model } => Some(
+            proto::stream_session_response::Event::ModelChanged(proto::ModelChangedEvent {
+                model: Some(model_to_proto(model)),
+            }),
+        ),
+        SessionEvent::WorkspaceChanged => {
+            Some(proto::stream_session_response::Event::WorkspaceChanged(
+                proto::WorkspaceChangedEvent {},
+            ))
+        }
+        SessionEvent::Error { message } => Some(proto::stream_session_response::Event::Error(
+            proto::ErrorEvent { message },
+        )),
     };
 
     Ok(proto::StreamSessionResponse {
