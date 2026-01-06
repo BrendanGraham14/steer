@@ -3,7 +3,7 @@ use crate::tui::InputMode;
 use crate::tui::Tui;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
-use steer_core::app::AppCommand;
+use steer_grpc::client_api::ClientCommand;
 use tui_textarea::Input;
 
 impl Tui {
@@ -41,9 +41,7 @@ impl Tui {
                     // Single ESC - cancel operation if processing, otherwise just record for double-tap
                     self.double_tap_tracker.record_key(KeyCode::Esc);
                     if self.is_processing {
-                        self.client
-                            .send_command(AppCommand::CancelProcessing)
-                            .await?;
+                        self.client.send(ClientCommand::Cancel).await?;
                     }
                     // Don't trigger confirm exit - that's only for Ctrl+C
                 }
@@ -69,7 +67,7 @@ impl Tui {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();
                         self.client
-                            .send_command(AppCommand::ExecuteBashCommand { command })
+                            .send(ClientCommand::ExecuteBashCommand { command })
                             .await?;
                     } else if content.starts_with('/') {
                         // Handle as slash command
@@ -151,9 +149,7 @@ impl Tui {
 
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_processing {
-                    self.client
-                        .send_command(AppCommand::CancelProcessing)
-                        .await?;
+                    self.client.send(ClientCommand::Cancel).await?;
                 } else {
                     self.switch_mode(InputMode::ConfirmExit);
                 }

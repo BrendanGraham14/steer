@@ -204,6 +204,7 @@ impl RuntimeSupervisor {
         let session_created_event = SessionEvent::SessionCreated {
             config: config.clone(),
             metadata: config.metadata.clone(),
+            parent_session_id: None,
         };
         self.event_store
             .append(session_id, &session_created_event)

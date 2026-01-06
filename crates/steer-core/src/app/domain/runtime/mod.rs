@@ -10,7 +10,7 @@ mod subscription;
 mod supervisor;
 
 pub use adapter::{AgentAdapterError, AgentExecutorAdapter};
-pub use agent_interpreter::{AgentInterpreter, AgentInterpreterError};
+pub use agent_interpreter::{AgentInterpreter, AgentInterpreterConfig, AgentInterpreterError};
 pub use dispatcher::{ChannelMetrics, DeltaCoalescer, DualChannelDispatcher, MetricsSnapshot};
 pub use interpreter::EffectInterpreter;
 pub use managed_session::RuntimeManagedSession;

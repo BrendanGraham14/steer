@@ -194,8 +194,9 @@ mod tests {
 
     use serde_json::json;
 
+    use crate::tui::events::processor::PendingToolApproval;
     use steer_grpc::AgentClient;
-    use steer_grpc::client_api::{AssistantContent, Message, MessageData, ModelId, OpId, ToolCall};
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData, ModelId, ToolCall};
 
     struct TestContext {
         chat_store: ChatStore,
@@ -205,7 +206,7 @@ mod tests {
         is_processing: bool,
         progress_message: Option<String>,
         spinner_state: usize,
-        current_tool_approval: Option<ToolCall>,
+        current_tool_approval: Option<PendingToolApproval>,
         current_model: ModelId,
         messages_updated: bool,
     }

@@ -1,5 +1,3 @@
-use async_trait::async_trait;
-use steer_core::error::Result;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -9,8 +7,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::client_api::{ClientCommand, ClientEvent};
 use crate::grpc::conversions::{
-    client_command_to_proto, convert_app_command_to_client_message, proto_to_client_event,
-    proto_to_mcp_server_info, proto_to_message, server_event_to_app_event,
+    client_command_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
@@ -18,8 +15,6 @@ use crate::grpc::error::GrpcError;
 type GrpcResult<T> = std::result::Result<T, GrpcError>;
 
 use steer_core::app::conversation::Message;
-use steer_core::app::io::{AppCommandSink, AppEventSource};
-use steer_core::app::{AppCommand, AppEvent};
 use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
@@ -32,7 +27,6 @@ pub struct AgentClient {
     client: Mutex<AgentServiceClient<Channel>>,
     session_id: Mutex<Option<String>>,
     command_tx: Mutex<Option<mpsc::Sender<StreamSessionRequest>>>,
-    event_rx: Mutex<Option<mpsc::Receiver<AppEvent>>>,
     client_event_rx: Mutex<Option<mpsc::Receiver<ClientEvent>>>,
     stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -51,7 +45,6 @@ impl AgentClient {
             session_id: Mutex::new(None),
             command_tx: Mutex::new(None),
             stream_handle: Mutex::new(None),
-            event_rx: Mutex::new(None),
             client_event_rx: Mutex::new(None),
         })
     }
@@ -66,7 +59,6 @@ impl AgentClient {
             session_id: Mutex::new(None),
             command_tx: Mutex::new(None),
             stream_handle: Mutex::new(None),
-            event_rx: Mutex::new(None),
             client_event_rx: Mutex::new(None),
         })
     }
@@ -156,106 +148,7 @@ impl AgentClient {
         Ok((messages, approved_tools))
     }
 
-    /// Start bidirectional streaming with the server
-    pub async fn start_streaming(&self) -> GrpcResult<()> {
-        let session_id = self
-            .session_id
-            .lock()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "No session ID - call create_session or activate_session first".to_string(),
-            })?;
-
-        debug!("Starting bidirectional stream for session: {}", session_id);
-
-        // Create channels for command and event communication
-        let (cmd_tx, cmd_rx) = mpsc::channel::<StreamSessionRequest>(32);
-        let (evt_tx, evt_rx) = mpsc::channel::<AppEvent>(100);
-
-        // Create the bidirectional stream
-        let outbound_stream = ReceiverStream::new(cmd_rx);
-        let request = Request::new(outbound_stream);
-
-        let response = self
-            .client
-            .lock()
-            .await
-            .stream_session(request)
-            .await
-            .map_err(Box::new)?;
-        let mut inbound_stream = response.into_inner();
-
-        // Send initial subscribe message
-        let subscribe_msg = StreamSessionRequest {
-            session_id: session_id.clone(),
-            message: Some(StreamSessionRequestType::Subscribe(SubscribeRequest {
-                event_types: vec![], // Subscribe to all events
-                since_sequence: None,
-            })),
-        };
-
-        cmd_tx
-            .send(subscribe_msg)
-            .await
-            .map_err(|_| GrpcError::StreamError("Failed to send subscribe message".to_string()))?;
-
-        // Spawn task to handle incoming server events
-        let session_id_clone = session_id.clone();
-        let stream_handle = tokio::spawn(async move {
-            info!(
-                "Started event stream handler for session: {}",
-                session_id_clone
-            );
-
-            while let Some(result) = inbound_stream.message().await.transpose() {
-                match result {
-                    Ok(server_event) => {
-                        debug!(
-                            "Received server event: sequence {}",
-                            server_event.sequence_num
-                        );
-
-                        match server_event_to_app_event(server_event) {
-                            Ok(app_event) => {
-                                if let Err(e) = evt_tx.send(app_event).await {
-                                    warn!("Failed to forward event to TUI: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to convert server event: {}", e);
-                                // Continue processing other events instead of breaking
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("gRPC stream error: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            info!(
-                "Event stream handler ended for session: {}",
-                session_id_clone
-            );
-        });
-
-        // Store the handles
-        *self.command_tx.lock().await = Some(cmd_tx);
-        *self.stream_handle.lock().await = Some(stream_handle);
-        // store receiver
-        *self.event_rx.lock().await = Some(evt_rx);
-
-        info!(
-            "Bidirectional streaming started for session: {}",
-            session_id
-        );
-        Ok(())
-    }
-
+    /// Start bidirectional streaming with the server using the new ClientEvent API
     pub async fn start_client_streaming(&self) -> GrpcResult<()> {
         let session_id = self
             .session_id
@@ -375,38 +268,6 @@ impl AgentClient {
             .await
             .take()
             .expect("Client event receiver already taken - only supports single subscription")
-    }
-
-    pub async fn send_command(&self, command: AppCommand) -> GrpcResult<()> {
-        let session_id = self
-            .session_id
-            .lock()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "No active session".to_string(),
-            })?;
-
-        let command_tx = self
-            .command_tx
-            .lock()
-            .await
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "Streaming not started - call start_streaming first".to_string(),
-            })?;
-
-        let message = convert_app_command_to_client_message(command, &session_id)?;
-
-        if let Some(message) = message {
-            command_tx.send(message).await.map_err(|_| {
-                GrpcError::StreamError("Failed to send command - stream may be closed".to_string())
-            })?;
-        }
-
-        Ok(())
     }
 
     /// Get the current session ID
@@ -693,29 +554,8 @@ impl AgentClient {
     }
 }
 
-#[async_trait]
-impl AppCommandSink for AgentClient {
-    async fn send_command(&self, command: AppCommand) -> Result<()> {
-        self.send_command(command)
-            .await
-            .map_err(|e| steer_core::error::Error::InvalidOperation(e.to_string()))
-    }
-}
-
-#[async_trait]
-impl AppEventSource for AgentClient {
-    async fn subscribe(&self) -> mpsc::Receiver<AppEvent> {
-        // This is a blocking operation in a trait that doesn't support async
-        // We need to use block_on here
-        self.event_rx.lock().await.take().expect(
-            "Event receiver already taken - GrpcClientAdapter only supports single subscription",
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::grpc::conversions::tool_approval_policy_to_proto;
     use steer_core::session::ToolApprovalPolicy;
     use steer_proto::agent::v1::tool_approval_policy::Policy;
@@ -731,18 +571,5 @@ mod tests {
         let policy = ToolApprovalPolicy::PreApproved { tools };
         let proto_policy = tool_approval_policy_to_proto(&policy);
         assert!(matches!(proto_policy.policy, Some(Policy::PreApproved(_))));
-    }
-
-    #[test]
-    fn test_convert_app_command_to_client_message() {
-        let session_id = "test-session";
-
-        let command = AppCommand::ProcessUserInput("Hello".to_string());
-        let result = convert_app_command_to_client_message(command, session_id).unwrap();
-        assert!(result.is_some());
-
-        let command = AppCommand::Shutdown;
-        let result = convert_app_command_to_client_message(command, session_id).unwrap();
-        assert!(result.is_none());
     }
 }

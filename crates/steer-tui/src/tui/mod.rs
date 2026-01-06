@@ -17,11 +17,12 @@ use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
-use steer_core::app::AppCommand;
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 
 use steer_grpc::AgentClient;
-use steer_grpc::client_api::{ClientEvent, ModelId, OpId, ToolCall};
+use steer_grpc::client_api::{ClientCommand, ClientEvent, ModelId, OpId};
+
+use crate::tui::events::processor::PendingToolApproval;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -124,8 +125,7 @@ pub struct Tui {
     progress_message: Option<String>,
     /// Animation frame for spinner
     spinner_state: usize,
-    /// Current tool approval request
-    current_tool_approval: Option<ToolCall>,
+    current_tool_approval: Option<PendingToolApproval>,
     /// Current model in use
     current_model: ModelId,
     /// Event processing pipeline
@@ -384,11 +384,7 @@ impl Tui {
     async fn load_file_cache(&mut self) {
         // Request workspace files from the server
         info!(target: "tui.file_cache", "Requesting workspace files for session {}", self.session_id);
-        if let Err(e) = self
-            .client
-            .send_command(AppCommand::RequestWorkspaceFiles)
-            .await
-        {
+        if let Err(e) = self.client.send(ClientCommand::RequestWorkspaceFiles).await {
             warn!(target: "tui.file_cache", "Failed to request workspace files: {}", e);
         }
     }
@@ -649,7 +645,7 @@ impl Tui {
             let input_mode = self.input_mode;
             let is_processing = self.is_processing;
             let spinner_state = self.spinner_state;
-            let current_tool_approval = self.current_tool_approval.as_ref();
+            let current_tool_call = self.current_tool_approval.as_ref().map(|(_, tc)| tc);
             let current_model_owned = self.current_model.clone();
 
             // Check if ChatStore has changed and trigger rebuild if needed
@@ -665,7 +661,7 @@ impl Tui {
             let terminal_size = f.area();
 
             let input_area_height = self.input_panel_state.required_height(
-                current_tool_approval,
+                current_tool_call,
                 terminal_size.width,
                 terminal_size.height,
             );
@@ -696,7 +692,7 @@ impl Tui {
 
             let input_panel = InputPanel::new(
                 input_mode,
-                current_tool_approval,
+                current_tool_call,
                 is_processing,
                 spinner_state,
                 &self.theme,
@@ -718,7 +714,7 @@ impl Tui {
                 let results = self.input_panel_state.fuzzy_finder.results().to_vec();
                 let selected = self.input_panel_state.fuzzy_finder.selected_index();
                 let input_height = self.input_panel_state.required_height(
-                    current_tool_approval,
+                    current_tool_call,
                     terminal_size.width,
                     10,
                 );
@@ -939,8 +935,8 @@ impl Tui {
             // Send edit command which creates a new branch
             if let Err(e) = self
                 .client
-                .send_command(AppCommand::EditMessage {
-                    message_id: message_id_to_edit,
+                .send(ClientCommand::EditMessage {
+                    message_id: message_id_to_edit.into(),
                     new_content: content,
                 })
                 .await
@@ -951,7 +947,7 @@ impl Tui {
             // Send regular message
             if let Err(e) = self
                 .client
-                .send_command(AppCommand::ProcessUserInput(content))
+                .send(ClientCommand::SendMessage { content })
                 .await
             {
                 self.push_notice(NoticeLevel::Error, format!("Cannot send message: {e}"));
@@ -986,7 +982,7 @@ impl Tui {
                             } => {
                                 // Forward prompt directly as user input to avoid recursive slash handling
                                 self.client
-                                    .send_command(AppCommand::ProcessUserInput(prompt))
+                                    .send(ClientCommand::SendMessage { content: prompt })
                                     .await?
                             } // Future custom command types can be handled here
                         }
@@ -1017,10 +1013,7 @@ impl Tui {
                         self.input_panel_state.file_cache.clear().await;
                         info!(target: "tui.slash_command", "Cleared file cache, will reload on next access");
                         // Request workspace files again
-                        if let Err(e) = self
-                            .client
-                            .send_command(AppCommand::RequestWorkspaceFiles)
-                            .await
+                        if let Err(e) = self.client.send(ClientCommand::RequestWorkspaceFiles).await
                         {
                             self.push_notice(
                                 NoticeLevel::Error,
@@ -1207,7 +1200,7 @@ impl Tui {
                             } => {
                                 // Forward prompt directly as user input to avoid recursive slash handling
                                 self.client
-                                    .send_command(AppCommand::ProcessUserInput(prompt))
+                                    .send(ClientCommand::SendMessage { content: prompt })
                                     .await?;
                             } // Future custom command types can be handled here
                         }
@@ -1216,9 +1209,10 @@ impl Tui {
             }
             TuiAppCommand::Core(core_cmd) => {
                 // Pass core commands through to the backend
+                let command = core_cmd.to_string();
                 if let Err(e) = self
                     .client
-                    .send_command(AppCommand::ExecuteCommand(core_cmd))
+                    .send(ClientCommand::ExecuteSlashCommand { command })
                     .await
                 {
                     self.push_notice(NoticeLevel::Error, e.to_string());

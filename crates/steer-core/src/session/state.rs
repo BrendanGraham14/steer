@@ -44,7 +44,7 @@ pub struct McpServerInfo {
 }
 
 /// Defines the primary execution environment for a session's workspace
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceConfig {
     Local {
@@ -289,7 +289,7 @@ impl SessionConfig {
 }
 
 /// Tool visibility configuration - controls which tools are shown to the AI agent
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolVisibility {
     /// Show all registered tools to the AI
@@ -320,7 +320,7 @@ pub struct BashToolConfig {
 }
 
 /// Tool approval policy configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolApprovalPolicy {
     /// Always ask for approval before executing any tool
@@ -361,7 +361,7 @@ impl ToolApprovalPolicy {
 }
 
 /// Authentication configuration for remote backends
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum RemoteAuth {
     Bearer { token: String },
     ApiKey { key: String },

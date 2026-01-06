@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::tui::Tui;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use steer_core::app::AppCommand;
+use steer_grpc::client_api::ClientCommand;
 use tui_textarea::CursorMove;
 
 impl Tui {
@@ -10,9 +10,7 @@ impl Tui {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.is_processing {
                 // Cancel processing
-                self.client
-                    .send_command(AppCommand::CancelProcessing)
-                    .await?;
+                self.client.send(ClientCommand::Cancel).await?;
             } else {
                 // Cancel bash mode and return to normal without clearing text
                 self.input_mode = self.default_input_mode();
@@ -66,7 +64,7 @@ impl Tui {
             let command = self.input_panel_state.content();
             if !command.trim().is_empty() {
                 self.client
-                    .send_command(AppCommand::ExecuteBashCommand { command })
+                    .send(ClientCommand::ExecuteBashCommand { command })
                     .await?;
                 self.input_panel_state.clear(); // Clear after executing
                 self.input_mode = self.default_input_mode();

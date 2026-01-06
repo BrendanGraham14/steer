@@ -1,6 +1,6 @@
 use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
-use crate::app::domain::types::{MessageId, OpId, RequestId, ToolCallId};
+use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
@@ -12,9 +12,14 @@ pub use crate::app::domain::state::OperationKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEvent {
+    /// Session was created. For sub-agent sessions, `parent_session_id` links
+    /// to the parent session for auditability.
     SessionCreated {
         config: SessionConfig,
         metadata: HashMap<String, String>,
+        /// If this is a sub-agent session, the parent session ID
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_session_id: Option<SessionId>,
     },
 
     MessageAdded {

@@ -66,10 +66,10 @@ impl EventProcessor for ToolEventProcessor {
                 ProcessingResult::Handled
             }
             ClientEvent::ApprovalRequested {
-                request_id: _,
+                request_id,
                 tool_call,
             } => {
-                *ctx.current_tool_approval = Some(tool_call.clone());
+                *ctx.current_tool_approval = Some((request_id, tool_call.clone()));
 
                 notify_with_sound(
                     &self.notification_config,
@@ -200,6 +200,7 @@ mod tests {
     use serde_json::json;
     use std::collections::HashSet;
 
+    use crate::tui::events::processor::PendingToolApproval;
     use steer_grpc::AgentClient;
 
     struct TestContext {
@@ -210,7 +211,7 @@ mod tests {
         is_processing: bool,
         progress_message: Option<String>,
         spinner_state: usize,
-        current_tool_approval: Option<ToolCall>,
+        current_tool_approval: Option<PendingToolApproval>,
         current_model: ModelId,
         messages_updated: bool,
         in_flight_operations: HashSet<OpId>,
