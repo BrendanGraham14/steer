@@ -1,4 +1,4 @@
-use crate::app::conversation::Conversation;
+use crate::app::conversation::MessageGraph;
 use crate::app::domain::action::McpServerState;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
@@ -12,7 +12,7 @@ pub struct AppState {
     pub session_id: SessionId,
     pub session_config: Option<SessionConfig>,
 
-    pub conversation: Conversation,
+    pub conversation: MessageGraph,
 
     pub current_model: ModelId,
     pub cached_system_prompt: Option<String>,
@@ -93,7 +93,7 @@ impl AppState {
         Self {
             session_id,
             session_config: None,
-            conversation: Conversation::new(),
+            conversation: MessageGraph::new(),
             current_model: initial_model,
             cached_system_prompt: None,
             tools: Vec::new(),

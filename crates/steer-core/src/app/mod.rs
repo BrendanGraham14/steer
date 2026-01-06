@@ -9,7 +9,7 @@ pub mod conversation;
 pub mod domain;
 pub mod validation;
 
-pub use conversation::{Conversation, Message, MessageData};
+pub use conversation::{Message, MessageData, MessageGraph};
 pub use steer_workspace::EnvironmentInfo;
 
 #[derive(Clone)]
