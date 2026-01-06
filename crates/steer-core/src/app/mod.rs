@@ -10,7 +10,6 @@ use std::time::Duration;
 use steer_tools::ToolResult;
 
 pub mod adapters;
-mod agent_executor;
 pub mod cancellation;
 pub mod command;
 pub mod context;
@@ -25,11 +24,6 @@ pub use command::AppCommand;
 pub use context::OpContext;
 pub use conversation::{Conversation, Message, MessageData};
 pub use steer_workspace::EnvironmentInfo;
-
-#[allow(deprecated)]
-pub use agent_executor::{
-    AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
-};
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
