@@ -221,6 +221,25 @@ impl ChatRenderable for CommandResponseWidget {
                                                 }
                                             }
                                         }
+                                        McpConnectionState::Disconnected { reason } => {
+                                            lines.push(Line::from(vec![
+                                                Span::raw("   Status: "),
+                                                Span::styled(
+                                                    "Disconnected",
+                                                    theme.style(Component::DimText),
+                                                ),
+                                            ]));
+
+                                            if let Some(reason) = reason {
+                                                lines.push(Line::from(vec![
+                                                    Span::raw("   Reason: "),
+                                                    Span::styled(
+                                                        reason.clone(),
+                                                        theme.style(Component::CommandText),
+                                                    ),
+                                                ]));
+                                            }
+                                        }
                                         McpConnectionState::Failed { error } => {
                                             lines.push(Line::from(vec![
                                                 Span::raw("   Status: "),
@@ -230,7 +249,6 @@ impl ChatRenderable for CommandResponseWidget {
                                                 ),
                                             ]));
 
-                                            // Wrap error message
                                             let error_prefix = "   Error: ";
                                             let error_wrap_width =
                                                 wrap_width.saturating_sub(error_prefix.len());

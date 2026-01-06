@@ -63,6 +63,7 @@ pub enum Effect {
 pub struct McpServerConfig {
     pub server_name: String,
     pub transport: crate::tools::McpTransport,
+    pub tool_filter: crate::session::state::ToolFilter,
 }
 
 impl Effect {

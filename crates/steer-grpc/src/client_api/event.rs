@@ -77,4 +77,8 @@ pub enum ClientEvent {
     Error {
         message: String,
     },
+    McpServerStateChanged {
+        server_name: String,
+        state: McpServerState,
+    },
 }

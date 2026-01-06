@@ -1,8 +1,9 @@
 use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
-use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory};
-use crate::app::domain::effect::Effect;
+use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpServerState};
+use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
+use crate::session::state::BackendConfig;
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
@@ -126,12 +127,45 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::McpServerStateChanged {
+            session_id,
             server_name,
             state: new_state,
-            ..
         } => {
-            state.mcp_servers.insert(server_name, new_state);
-            vec![]
+            // When connected, merge MCP tools into state.tools
+            if let McpServerState::Connected { tools } = &new_state {
+                let tools = state
+                    .session_config
+                    .as_ref()
+                    .map(|config| config.filter_tools_by_visibility(tools.clone()))
+                    .unwrap_or_else(|| tools.clone());
+
+                // Add MCP tools that aren't already present (by name)
+                for tool in tools {
+                    if !state.tools.iter().any(|t| t.name == tool.name) {
+                        state.tools.push(tool.clone());
+                    }
+                }
+            }
+
+            // When disconnected or failed, remove tools from that server
+            if matches!(
+                &new_state,
+                McpServerState::Disconnected { .. } | McpServerState::Failed { .. }
+            ) {
+                let prefix = format!("mcp__{}__", server_name);
+                state.tools.retain(|t| !t.name.starts_with(&prefix));
+            }
+
+            state
+                .mcp_servers
+                .insert(server_name.clone(), new_state.clone());
+            vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::McpServerStateChanged {
+                    server_name,
+                    state: new_state,
+                },
+            }]
         }
 
         Action::CompactionComplete {
@@ -985,7 +1019,7 @@ fn handle_cancel(
 
 fn handle_hydrate(
     state: &mut AppState,
-    _session_id: crate::app::domain::types::SessionId,
+    session_id: crate::app::domain::types::SessionId,
     events: Vec<SessionEvent>,
     starting_sequence: u64,
 ) -> Vec<Effect> {
@@ -995,7 +1029,7 @@ fn handle_hydrate(
 
     state.event_sequence = starting_sequence;
 
-    vec![]
+    emit_mcp_connect_effects(state, session_id)
 }
 
 pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
@@ -1036,6 +1070,14 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
         SessionEvent::OperationCancelled { op_id, .. } => {
             state.record_cancelled_op(*op_id);
             state.complete_operation();
+        }
+        SessionEvent::McpServerStateChanged {
+            server_name,
+            state: mcp_state,
+        } => {
+            state
+                .mcp_servers
+                .insert(server_name.clone(), mcp_state.clone());
         }
         _ => {}
     }
@@ -1155,6 +1197,45 @@ fn handle_compaction_failed(
     ]
 }
 
+fn emit_mcp_connect_effects(
+    state: &AppState,
+    session_id: crate::app::domain::types::SessionId,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+
+    let Some(ref config) = state.session_config else {
+        return effects;
+    };
+
+    for backend_config in &config.tool_config.backends {
+        let BackendConfig::Mcp {
+            server_name,
+            transport,
+            tool_filter,
+        } = backend_config;
+
+        let already_connected = state.mcp_servers.get(server_name).is_some_and(|s| {
+            matches!(
+                s,
+                McpServerState::Connecting | McpServerState::Connected { .. }
+            )
+        });
+
+        if !already_connected {
+            effects.push(Effect::ConnectMcpServer {
+                session_id,
+                config: McpServerConfig {
+                    server_name: server_name.clone(),
+                    transport: transport.clone(),
+                    tool_filter: tool_filter.clone(),
+                },
+            });
+        }
+    }
+
+    effects
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1163,10 +1244,24 @@ mod tests {
         MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
     };
     use crate::config::model::builtin;
+    use crate::session::state::{SessionConfig, ToolVisibility};
     use std::collections::HashSet;
+    use steer_tools::{InputSchema, ToolSchema};
 
     fn test_state() -> AppState {
         AppState::new(SessionId::new())
+    }
+
+    fn test_schema(name: &str) -> ToolSchema {
+        ToolSchema {
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: InputSchema {
+                properties: Default::default(),
+                required: Vec::new(),
+                schema_type: "object".to_string(),
+            },
+        }
     }
 
     #[test]
@@ -1431,6 +1526,50 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn test_mcp_tool_visibility_and_disconnect_removal() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+
+        let mut allowed = HashSet::new();
+        allowed.insert("mcp__alpha__allowed".to_string());
+
+        let mut config = SessionConfig::read_only();
+        config.tool_config.visibility = ToolVisibility::Whitelist(allowed);
+        state.session_config = Some(config);
+
+        state.tools.push(test_schema("bash"));
+
+        let _ = reduce(
+            &mut state,
+            Action::McpServerStateChanged {
+                session_id,
+                server_name: "alpha".to_string(),
+                state: McpServerState::Connected {
+                    tools: vec![
+                        test_schema("mcp__alpha__allowed"),
+                        test_schema("mcp__alpha__blocked"),
+                    ],
+                },
+            },
+        );
+
+        assert!(state.tools.iter().any(|t| t.name == "mcp__alpha__allowed"));
+        assert!(!state.tools.iter().any(|t| t.name == "mcp__alpha__blocked"));
+
+        let _ = reduce(
+            &mut state,
+            Action::McpServerStateChanged {
+                session_id,
+                server_name: "alpha".to_string(),
+                state: McpServerState::Disconnected { error: None },
+            },
+        );
+
+        assert!(!state.tools.iter().any(|t| t.name.starts_with("mcp__alpha__")));
+        assert!(state.tools.iter().any(|t| t.name == "bash"));
     }
 
     #[test]

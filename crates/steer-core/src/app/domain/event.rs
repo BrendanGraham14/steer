@@ -1,5 +1,5 @@
 use crate::app::conversation::Message;
-use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
+use crate::app::domain::action::{ApprovalDecision, ApprovalMemory, McpServerState};
 use crate::app::domain::types::{CompactionRecord, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
@@ -100,6 +100,11 @@ pub enum SessionEvent {
 
     Error {
         message: String,
+    },
+
+    McpServerStateChanged {
+        server_name: String,
+        state: McpServerState,
     },
 }
 

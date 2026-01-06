@@ -22,3 +22,5 @@ pub use steer_core::app::domain::types::{
 pub use steer_core::session::state::{SessionConfig, SessionToolConfig};
 
 pub use steer_core::session::McpServerInfo;
+
+pub use steer_core::app::domain::action::McpServerState;

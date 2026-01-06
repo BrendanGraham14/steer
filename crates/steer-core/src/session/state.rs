@@ -23,6 +23,11 @@ pub enum McpConnectionState {
         /// Names of tools available from this server
         tool_names: Vec<String>,
     },
+    /// Gracefully disconnected
+    Disconnected {
+        /// Optional reason for disconnection
+        reason: Option<String>,
+    },
     /// Failed to connect
     Failed {
         /// Error message describing the failure

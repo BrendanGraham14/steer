@@ -7,6 +7,7 @@ use tracing::{Span, debug, error, instrument};
 
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
 use crate::tools::registry::ToolRegistry;
+use crate::tools::resolver::BackendResolver;
 use crate::tools::services::ToolServices;
 use crate::tools::static_tool::{StaticToolContext, StaticToolError};
 use crate::tools::{BackendRegistry, ExecutionContext};
@@ -99,9 +100,29 @@ impl ToolExecutor {
             .await
     }
 
+    pub async fn get_tool_schemas_with_resolver(
+        &self,
+        session_resolver: Option<&dyn BackendResolver>,
+    ) -> Vec<ToolSchema> {
+        self.get_tool_schemas_with_capabilities_and_resolver(
+            super::Capabilities::all(),
+            session_resolver,
+        )
+        .await
+    }
+
     pub async fn get_tool_schemas_with_capabilities(
         &self,
         capabilities: super::Capabilities,
+    ) -> Vec<ToolSchema> {
+        self.get_tool_schemas_with_capabilities_and_resolver(capabilities, None)
+            .await
+    }
+
+    pub async fn get_tool_schemas_with_capabilities_and_resolver(
+        &self,
+        capabilities: super::Capabilities,
+        session_resolver: Option<&dyn BackendResolver>,
     ) -> Vec<ToolSchema> {
         let mut schemas = Vec::new();
         let mut static_tool_names = std::collections::HashSet::new();
@@ -117,6 +138,14 @@ impl ToolExecutor {
         for schema in self.workspace.available_tools().await {
             if !static_tool_names.contains(&schema.name) {
                 schemas.push(schema);
+            }
+        }
+
+        if let Some(resolver) = session_resolver {
+            for schema in resolver.get_tool_schemas().await {
+                if !static_tool_names.contains(&schema.name) {
+                    schemas.push(schema);
+                }
             }
         }
 
@@ -153,6 +182,18 @@ impl ToolExecutor {
         session_id: SessionId,
         token: CancellationToken,
     ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
+        self.execute_tool_with_session_resolver(tool_call, session_id, token, None)
+            .await
+    }
+
+    #[instrument(skip(self, tool_call, session_id, token, session_resolver), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
+    pub async fn execute_tool_with_session_resolver(
+        &self,
+        tool_call: &ToolCall,
+        session_id: SessionId,
+        token: CancellationToken,
+        session_resolver: Option<&dyn BackendResolver>,
+    ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
         let tool_name = &tool_call.name;
 
         if let Some((registry, services)) =
@@ -165,7 +206,8 @@ impl ToolExecutor {
                 .await;
         }
 
-        self.execute_tool_with_cancellation(tool_call, token).await
+        self.execute_tool_with_resolver(tool_call, token, session_resolver)
+            .await
     }
 
     #[instrument(skip(self, tool_call, token), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
@@ -173,6 +215,17 @@ impl ToolExecutor {
         &self,
         tool_call: &ToolCall,
         token: CancellationToken,
+    ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
+        self.execute_tool_with_resolver(tool_call, token, None)
+            .await
+    }
+
+    #[instrument(skip(self, tool_call, token, session_resolver), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
+    pub async fn execute_tool_with_resolver(
+        &self,
+        tool_call: &ToolCall,
+        token: CancellationToken,
+        session_resolver: Option<&dyn BackendResolver>,
     ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
         let tool_name = &tool_call.name;
         let tool_id = &tool_call.id;
@@ -223,6 +276,13 @@ impl ToolExecutor {
             return self
                 .execute_workspace_tool(&self.workspace, tool_call, &context)
                 .await;
+        }
+
+        if let Some(resolver) = session_resolver
+            && let Some(backend) = resolver.resolve(tool_name).await
+        {
+            debug!(target: "tool_executor", "Executing session MCP tool: {} ({})", tool_name, tool_id);
+            return backend.execute(tool_call, &context).await;
         }
 
         let backend = self

@@ -8,6 +8,7 @@ pub mod factory;
 pub mod mcp;
 pub mod model_caller_impl;
 pub mod registry;
+pub mod resolver;
 pub mod services;
 pub mod static_tool;
 pub mod static_tools;
@@ -21,6 +22,7 @@ pub use executor::ToolExecutor;
 pub use mcp::{McpBackend, McpError, McpTransport};
 pub use model_caller_impl::DefaultModelCaller;
 pub use registry::ToolRegistry;
+pub use resolver::{BackendResolver, OverlayResolver, SessionMcpBackends};
 pub use services::{
     AgentSpawner, ModelCaller, SubAgentConfig, SubAgentError, SubAgentResult, ToolServices,
 };

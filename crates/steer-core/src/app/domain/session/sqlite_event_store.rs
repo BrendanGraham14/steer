@@ -187,6 +187,7 @@ impl SqliteEventStore {
             SessionEvent::ConversationCompacted { .. } => "conversation_compacted",
             SessionEvent::WorkspaceChanged => "workspace_changed",
             SessionEvent::Error { .. } => "error",
+            SessionEvent::McpServerStateChanged { .. } => "mcp_server_state_changed",
         }
     }
 }

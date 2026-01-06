@@ -225,7 +225,6 @@ impl RuntimeSupervisor {
             self.api_client.clone(),
             self.tool_executor.clone(),
         );
-
         self.sessions.insert(session_id, handle);
 
         tracing::info!(session_id = %session_id, "Created session");

@@ -136,6 +136,9 @@ mod tests {
                         "ConversationCompacted".to_string()
                     }
                     SessionEvent::CompactResult { .. } => "CompactResult".to_string(),
+                    SessionEvent::McpServerStateChanged { .. } => {
+                        "McpServerStateChanged".to_string()
+                    }
                 },
             },
             Effect::CallModel { .. } => EffectSnapshot::CallModel,

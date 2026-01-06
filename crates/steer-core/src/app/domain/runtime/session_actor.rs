@@ -14,7 +14,7 @@ use crate::app::domain::reduce::reduce;
 use crate::app::domain::session::{EventStore, EventStoreError};
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, OpId, SessionId};
-use crate::tools::{McpBackend, ToolBackend, ToolExecutor};
+use crate::tools::{McpBackend, SessionMcpBackends, ToolBackend, ToolExecutor};
 
 use super::interpreter::{DeltaStreamContext, EffectInterpreter};
 use super::subscription::{SessionEventEnvelope, SessionEventSubscription, UnsubscribeSignal};
@@ -126,7 +126,7 @@ struct SessionActor {
     unsubscribe_tx: mpsc::UnboundedSender<UnsubscribeSignal>,
     internal_action_tx: mpsc::Sender<Action>,
     internal_action_rx: mpsc::Receiver<Action>,
-    mcp_backends: HashMap<String, Arc<McpBackend>>,
+    session_mcp_backends: Arc<SessionMcpBackends>,
 }
 
 impl SessionActor {
@@ -141,7 +141,10 @@ impl SessionActor {
         let (delta_broadcast, _) = broadcast::channel(DELTA_BROADCAST_CAPACITY);
         let (unsubscribe_tx, unsubscribe_rx) = mpsc::unbounded_channel();
         let (internal_action_tx, internal_action_rx) = mpsc::channel(64);
-        let interpreter = EffectInterpreter::new(api_client, tool_executor.clone());
+        let session_mcp_backends = Arc::new(SessionMcpBackends::new());
+        let interpreter = EffectInterpreter::new(api_client, tool_executor.clone())
+            .with_session(session_id)
+            .with_session_backends(session_mcp_backends.clone());
 
         Self {
             session_id,
@@ -157,12 +160,13 @@ impl SessionActor {
             unsubscribe_tx,
             internal_action_tx,
             internal_action_rx,
-            mcp_backends: HashMap::new(),
+            session_mcp_backends,
         }
     }
 
     async fn run(mut self, mut cmd_rx: mpsc::Receiver<SessionCmd>) {
         self.load_initial_tool_schemas().await;
+        self.initialize_mcp_connections().await;
 
         loop {
             tokio::select! {
@@ -186,13 +190,13 @@ impl SessionActor {
                             let _ = reply.send(self.state.clone());
                         }
                         SessionCmd::Suspend { reply } => {
-                            self.cleanup_mcp_backends();
+                            self.cleanup_mcp_backends().await;
                             let _ = reply.send(());
                             break;
                         }
                         SessionCmd::Shutdown => {
                             self.cancel_all_operations();
-                            self.cleanup_mcp_backends();
+                            self.cleanup_mcp_backends().await;
                             break;
                         }
                     }
@@ -243,6 +247,50 @@ impl SessionActor {
                 error = %e,
                 "Failed to load initial tool schemas"
             );
+        }
+    }
+
+    async fn initialize_mcp_connections(&mut self) {
+        use crate::app::domain::effect::McpServerConfig;
+        use crate::session::state::BackendConfig;
+
+        let effects: Vec<_> = self
+            .state
+            .session_config
+            .as_ref()
+            .map(|config| {
+                config
+                    .tool_config
+                    .backends
+                    .iter()
+                    .map(|backend_config| {
+                        let BackendConfig::Mcp {
+                            server_name,
+                            transport,
+                            tool_filter,
+                        } = backend_config;
+
+                        Effect::ConnectMcpServer {
+                            session_id: self.session_id,
+                            config: McpServerConfig {
+                                server_name: server_name.clone(),
+                                transport: transport.clone(),
+                                tool_filter: tool_filter.clone(),
+                            },
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for effect in effects {
+            if let Err(e) = self.handle_effect(effect).await {
+                tracing::error!(
+                    session_id = %self.session_id,
+                    error = %e,
+                    "Failed to initiate MCP connection"
+                );
+            }
         }
     }
 
@@ -491,10 +539,12 @@ impl SessionActor {
         }
     }
 
-    async fn handle_connect_mcp_server(&mut self, config: McpServerConfig) {
+    async fn handle_connect_mcp_server(&self, config: McpServerConfig) {
         let server_name = config.server_name.clone();
         let session_id = self.session_id;
         let action_tx = self.internal_action_tx.clone();
+        let session_backends = self.session_mcp_backends.clone();
+        let generation = session_backends.next_generation(&server_name).await;
 
         action_tx
             .send(Action::McpServerStateChanged {
@@ -505,63 +555,90 @@ impl SessionActor {
             .await
             .ok();
 
-        let result = McpBackend::new(
-            config.server_name.clone(),
-            config.transport,
-            crate::session::state::ToolFilter::All,
-        )
-        .await;
+        tokio::spawn(async move {
+            let result = McpBackend::new(
+                config.server_name.clone(),
+                config.transport,
+                config.tool_filter,
+            )
+            .await;
 
-        match result {
-            Ok(backend) => {
-                let tools = backend.get_tool_schemas().await;
-                let backend = Arc::new(backend);
-                self.mcp_backends.insert(server_name.clone(), backend);
-
-                action_tx
-                    .send(Action::McpServerStateChanged {
-                        session_id,
-                        server_name,
-                        state: McpServerState::Connected { tools },
-                    })
-                    .await
-                    .ok();
+            if !session_backends
+                .is_current_generation(&server_name, generation)
+                .await
+            {
+                return;
             }
-            Err(e) => {
-                tracing::error!(
-                    session_id = %session_id,
-                    server_name = %server_name,
-                    error = %e,
-                    "Failed to connect to MCP server"
-                );
 
-                action_tx
-                    .send(Action::McpServerStateChanged {
-                        session_id,
-                        server_name,
-                        state: McpServerState::Failed {
-                            error: e.to_string(),
-                        },
-                    })
-                    .await
-                    .ok();
+            match result {
+                Ok(backend) => {
+                    let tools = backend.get_tool_schemas().await;
+                    let backend = Arc::new(backend);
+                    session_backends
+                        .register(server_name.clone(), backend)
+                        .await;
+
+                    if !session_backends
+                        .is_current_generation(&server_name, generation)
+                        .await
+                    {
+                        let _ = session_backends.unregister(&server_name).await;
+                        return;
+                    }
+
+                    action_tx
+                        .send(Action::McpServerStateChanged {
+                            session_id,
+                            server_name,
+                            state: McpServerState::Connected { tools },
+                        })
+                        .await
+                        .ok();
+                }
+                Err(e) => {
+                    tracing::error!(
+                        session_id = %session_id,
+                        server_name = %server_name,
+                        error = %e,
+                        "Failed to connect to MCP server"
+                    );
+
+                    if session_backends
+                        .is_current_generation(&server_name, generation)
+                        .await
+                    {
+                        action_tx
+                            .send(Action::McpServerStateChanged {
+                                session_id,
+                                server_name,
+                                state: McpServerState::Failed {
+                                    error: e.to_string(),
+                                },
+                            })
+                            .await
+                            .ok();
+                    }
+                }
             }
-        }
+        });
     }
 
-    async fn handle_disconnect_mcp_server(&mut self, server_name: String) {
+    async fn handle_disconnect_mcp_server(&self, server_name: String) {
         let session_id = self.session_id;
 
-        if self.mcp_backends.remove(&server_name).is_some() {
-            self.internal_action_tx
-                .send(Action::McpServerStateChanged {
-                    session_id,
-                    server_name,
-                    state: McpServerState::Disconnected { error: None },
-                })
-                .await
-                .ok();
-        }
+        self.session_mcp_backends
+            .next_generation(&server_name)
+            .await;
+        let _ = self.session_mcp_backends.unregister(&server_name).await;
+
+        self.internal_action_tx
+            .send(Action::McpServerStateChanged {
+                session_id,
+                server_name,
+                state: McpServerState::Disconnected { error: None },
+            })
+            .await
+            .ok();
     }
 
     fn create_subscription(&mut self) -> SessionEventSubscription {
@@ -582,8 +659,8 @@ impl SessionActor {
         }
     }
 
-    fn cleanup_mcp_backends(&mut self) {
-        self.mcp_backends.clear();
+    async fn cleanup_mcp_backends(&self) {
+        self.session_mcp_backends.clear().await;
     }
 }
 

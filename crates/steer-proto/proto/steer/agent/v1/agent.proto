@@ -60,6 +60,7 @@ message SessionEvent {
     ConversationCompactedEvent conversation_compacted = 19;
     StreamDeltaEvent stream_delta = 20;
     CompactResultEvent compact_result = 21;
+    McpServerStateChangedEvent mcp_server_state_changed = 22;
   }
 
   reserved 13;
@@ -750,6 +751,11 @@ message RemoteWorkspaceConfig {
 }
 
 // MCP server status
+message McpServerStateChangedEvent {
+  string server_name = 1;
+  McpConnectionState state = 2;
+}
+
 message McpServerInfo {
   string server_name = 1;
   McpTransportInfo transport = 2;
@@ -796,6 +802,7 @@ message McpConnectionState {
     McpConnecting connecting = 1;
     McpConnected connected = 2;
     McpFailed failed = 3;
+    McpDisconnected disconnected = 4;
   }
 }
 
@@ -809,6 +816,10 @@ message McpConnected {
 
 message McpFailed {
   string error = 1;
+}
+
+message McpDisconnected {
+  optional string reason = 1;
 }
 
 // Provider and model configuration

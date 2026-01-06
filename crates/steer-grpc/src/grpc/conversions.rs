@@ -1271,6 +1271,12 @@ pub(crate) fn session_event_to_proto(
                 message,
             }))
         }
+        SessionEvent::McpServerStateChanged { server_name, state } => Some(
+            proto::session_event::Event::McpServerStateChanged(proto::McpServerStateChangedEvent {
+                server_name,
+                state: Some(mcp_server_state_to_proto(&state)),
+            }),
+        ),
     };
 
     Ok(proto::SessionEvent {
@@ -1405,6 +1411,79 @@ pub fn convert_todo_write_file_operation_to_proto(
     }
 }
 
+pub(crate) fn mcp_server_state_to_proto(
+    state: &steer_core::app::domain::action::McpServerState,
+) -> proto::McpConnectionState {
+    use steer_core::app::domain::action::McpServerState;
+
+    match state {
+        McpServerState::Connecting => proto::McpConnectionState {
+            state: Some(proto::mcp_connection_state::State::Connecting(
+                proto::McpConnecting {},
+            )),
+        },
+        McpServerState::Connected { tools } => {
+            let tool_names = tools.iter().map(|t| t.name.clone()).collect();
+            proto::McpConnectionState {
+                state: Some(proto::mcp_connection_state::State::Connected(
+                    proto::McpConnected { tool_names },
+                )),
+            }
+        }
+        McpServerState::Disconnected { error } => proto::McpConnectionState {
+            state: Some(proto::mcp_connection_state::State::Disconnected(
+                proto::McpDisconnected {
+                    reason: error.clone(),
+                },
+            )),
+        },
+        McpServerState::Failed { error } => proto::McpConnectionState {
+            state: Some(proto::mcp_connection_state::State::Failed(
+                proto::McpFailed {
+                    error: error.clone(),
+                },
+            )),
+        },
+    }
+}
+
+pub(crate) fn proto_to_mcp_server_state(
+    proto: proto::McpConnectionState,
+) -> Result<steer_core::app::domain::action::McpServerState, ConversionError> {
+    use steer_core::app::domain::action::McpServerState;
+
+    match proto.state {
+        Some(proto::mcp_connection_state::State::Connecting(_)) => Ok(McpServerState::Connecting),
+        Some(proto::mcp_connection_state::State::Connected(connected)) => {
+            let tools = connected
+                .tool_names
+                .into_iter()
+                .map(|name| steer_tools::ToolSchema {
+                    name,
+                    description: String::new(),
+                    input_schema: steer_tools::InputSchema {
+                        properties: Default::default(),
+                        required: Vec::new(),
+                        schema_type: "object".to_string(),
+                    },
+                })
+                .collect();
+            Ok(McpServerState::Connected { tools })
+        }
+        Some(proto::mcp_connection_state::State::Failed(failed)) => Ok(McpServerState::Failed {
+            error: failed.error,
+        }),
+        Some(proto::mcp_connection_state::State::Disconnected(disconnected)) => {
+            Ok(McpServerState::Disconnected {
+                error: disconnected.reason,
+            })
+        }
+        None => Err(ConversionError::MissingField {
+            field: "state.state".to_string(),
+        }),
+    }
+}
+
 pub(crate) fn mcp_transport_to_proto(
     transport: &steer_core::tools::McpTransport,
 ) -> proto::McpTransportInfo {
@@ -1465,6 +1544,11 @@ pub(crate) fn proto_to_mcp_server_info(
         Some(proto::mcp_connection_state::State::Connected(connected)) => {
             McpConnectionState::Connected {
                 tool_names: connected.tool_names,
+            }
+        }
+        Some(proto::mcp_connection_state::State::Disconnected(disconnected)) => {
+            McpConnectionState::Disconnected {
+                reason: disconnected.reason,
             }
         }
         Some(proto::mcp_connection_state::State::Failed(failed)) => McpConnectionState::Failed {
@@ -1721,6 +1805,16 @@ pub(crate) fn proto_to_client_event(
         }
         proto::session_event::Event::Error(e) => ClientEvent::Error { message: e.message },
         proto::session_event::Event::WorkspaceChanged(_) => ClientEvent::WorkspaceChanged,
+        proto::session_event::Event::McpServerStateChanged(e) => {
+            let state = e.state.ok_or_else(|| ConversionError::MissingField {
+                field: "mcp_server_state_changed.state".to_string(),
+            })?;
+            let mcp_state = proto_to_mcp_server_state(state)?;
+            ClientEvent::McpServerStateChanged {
+                server_name: e.server_name,
+                state: mcp_state,
+            }
+        }
     };
 
     Ok(Some(client_event))

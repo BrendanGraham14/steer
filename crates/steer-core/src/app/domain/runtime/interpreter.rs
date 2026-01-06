@@ -10,7 +10,7 @@ use crate::app::conversation::{AssistantContent, Message};
 use crate::app::domain::delta::{StreamDelta, ToolCallDelta};
 use crate::app::domain::types::{MessageId, OpId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
-use crate::tools::ToolExecutor;
+use crate::tools::{SessionMcpBackends, ToolExecutor};
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 
 #[derive(Clone)]
@@ -18,6 +18,7 @@ pub struct EffectInterpreter {
     api_client: Arc<ApiClient>,
     tool_executor: Arc<ToolExecutor>,
     session_id: Option<SessionId>,
+    session_backends: Option<Arc<SessionMcpBackends>>,
 }
 
 pub(crate) struct DeltaStreamContext {
@@ -37,11 +38,17 @@ impl EffectInterpreter {
             api_client,
             tool_executor,
             session_id: None,
+            session_backends: None,
         }
     }
 
     pub fn with_session(mut self, session_id: SessionId) -> Self {
         self.session_id = Some(session_id);
+        self
+    }
+
+    pub fn with_session_backends(mut self, backends: Arc<SessionMcpBackends>) -> Self {
+        self.session_backends = Some(backends);
         self
     }
 
@@ -143,14 +150,30 @@ impl EffectInterpreter {
         tool_call: ToolCall,
         cancel_token: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
+        let resolver = self
+            .session_backends
+            .as_ref()
+            .map(|b| b.as_ref() as &dyn crate::tools::BackendResolver);
+
         if let Some(session_id) = self.session_id {
             self.tool_executor
-                .execute_tool_with_session(&tool_call, session_id, cancel_token)
+                .execute_tool_with_session_resolver(&tool_call, session_id, cancel_token, resolver)
                 .await
         } else {
             self.tool_executor
-                .execute_tool_with_cancellation(&tool_call, cancel_token)
+                .execute_tool_with_resolver(&tool_call, cancel_token, resolver)
                 .await
         }
+    }
+
+    pub async fn get_tool_schemas(&self) -> Vec<ToolSchema> {
+        let resolver = self
+            .session_backends
+            .as_ref()
+            .map(|b| b.as_ref() as &dyn crate::tools::BackendResolver);
+
+        self.tool_executor
+            .get_tool_schemas_with_resolver(resolver)
+            .await
     }
 }
