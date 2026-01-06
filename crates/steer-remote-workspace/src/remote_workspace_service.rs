@@ -28,9 +28,7 @@ use steer_proto::common::v1::{
     TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
 };
 
-use steer_grpc::grpc::conversions::{
-    convert_todo_item_to_proto, convert_todo_write_file_operation_to_proto,
-};
+use steer_grpc::grpc::{convert_todo_item_to_proto, convert_todo_write_file_operation_to_proto};
 
 /// Agent service implementation that executes tools locally
 ///
