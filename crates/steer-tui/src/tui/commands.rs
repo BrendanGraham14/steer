@@ -19,6 +19,8 @@ pub enum TuiCommandError {
 /// TUI-specific commands that don't belong in the core
 #[derive(Debug, Clone, PartialEq)]
 pub enum TuiCommand {
+    /// Start a new conversation session
+    New,
     /// Reload files in the TUI
     ReloadFiles,
     /// Change or list themes
@@ -40,6 +42,7 @@ pub enum TuiCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum TuiCommandType {
+    New,
     ReloadFiles,
     Theme,
     Auth,
@@ -49,9 +52,9 @@ pub enum TuiCommandType {
 }
 
 impl TuiCommandType {
-    /// Get the command name as it appears in slash commands
     pub fn command_name(&self) -> String {
         match self {
+            TuiCommandType::New => self.to_string(),
             TuiCommandType::ReloadFiles => self.to_string(),
             TuiCommandType::Theme => self.to_string(),
             TuiCommandType::Auth => self.to_string(),
@@ -61,9 +64,9 @@ impl TuiCommandType {
         }
     }
 
-    /// Get the command description
     pub fn description(&self) -> &'static str {
         match self {
+            TuiCommandType::New => "Start a new conversation session",
             TuiCommandType::ReloadFiles => "Reload file cache in the TUI",
             TuiCommandType::Theme => "Change or list available themes",
             TuiCommandType::Auth => "Manage authentication settings",
@@ -73,9 +76,9 @@ impl TuiCommandType {
         }
     }
 
-    /// Get the command usage
     pub fn usage(&self) -> String {
         match self {
+            TuiCommandType::New => format!("/{}", self.command_name()),
             TuiCommandType::ReloadFiles => format!("/{}", self.command_name()),
             TuiCommandType::Theme => format!("/{} [theme_name]", self.command_name()),
             TuiCommandType::Auth => format!("/{}", self.command_name()),
@@ -86,46 +89,35 @@ impl TuiCommandType {
     }
 }
 
-/// Enum representing all Core command types (without parameters)
-/// This mirrors steer_core::app::conversation::AppCommandType
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum CoreCommandType {
     Model,
-    Clear,
     Compact,
 }
 
 impl CoreCommandType {
-    /// Get the command name as it appears in slash commands
     pub fn command_name(&self) -> String {
         match self {
             CoreCommandType::Model => self.to_string(),
-            CoreCommandType::Clear => self.to_string(),
             CoreCommandType::Compact => self.to_string(),
         }
     }
 
-    /// Get the command description
     pub fn description(&self) -> &'static str {
         match self {
             CoreCommandType::Model => "Show or change the current model",
-            CoreCommandType::Clear => "Clear conversation history and tool approvals",
             CoreCommandType::Compact => "Summarize the current conversation",
         }
     }
 
-    /// Get the command usage
     pub fn usage(&self) -> String {
         match self {
             CoreCommandType::Model => format!("/{} [model_name]", self.command_name()),
-            CoreCommandType::Clear => format!("/{}", self.command_name()),
             CoreCommandType::Compact => format!("/{}", self.command_name()),
         }
     }
 
-    /// Convert to the actual core AppCommandType
-    /// Returns None if the command requires parameters that aren't provided
     pub fn to_core_command(&self, args: &[&str]) -> Option<CoreCommand> {
         match self {
             CoreCommandType::Model => {
@@ -136,7 +128,6 @@ impl CoreCommandType {
                 };
                 Some(CoreCommand::Model { target })
             }
-            CoreCommandType::Clear => Some(CoreCommand::Clear),
             CoreCommandType::Compact => Some(CoreCommand::Compact),
         }
     }
@@ -157,10 +148,10 @@ impl TuiCommand {
         let parts: Vec<&str> = command.split_whitespace().collect();
         let cmd_name = parts.first().copied().unwrap_or("");
 
-        // Try to match against all TuiCommandType variants
         for cmd_type in TuiCommandType::iter() {
             if cmd_name == cmd_type.command_name() {
                 return match cmd_type {
+                    TuiCommandType::New => Ok(TuiCommand::New),
                     TuiCommandType::ReloadFiles => Ok(TuiCommand::ReloadFiles),
                     TuiCommandType::Theme => {
                         let theme_name = parts.get(1).map(|s| s.to_string());
@@ -183,9 +174,9 @@ impl TuiCommand {
         Err(TuiCommandError::UnknownCommand(command.to_string()))
     }
 
-    /// Convert the command to its string representation (without leading slash)
     pub fn as_command_str(&self) -> String {
         match self {
+            TuiCommand::New => TuiCommandType::New.command_name().to_string(),
             TuiCommand::ReloadFiles => TuiCommandType::ReloadFiles.command_name().to_string(),
             TuiCommand::Theme(None) => TuiCommandType::Theme.command_name().to_string(),
             TuiCommand::Theme(Some(name)) => {
@@ -300,12 +291,20 @@ mod tests {
             AppCommand::Tui(TuiCommand::Help(None))
         ));
         assert!(matches!(
-            AppCommand::parse("/clear").unwrap(),
-            AppCommand::Core(CoreCommand::Clear)
-        ));
-        assert!(matches!(
             AppCommand::parse("/model opus").unwrap(),
             AppCommand::Core(CoreCommand::Model { .. })
+        ));
+        assert!(matches!(
+            AppCommand::parse("/compact").unwrap(),
+            AppCommand::Core(CoreCommand::Compact)
+        ));
+    }
+
+    #[test]
+    fn test_parse_new_command() {
+        assert!(matches!(
+            AppCommand::parse("/new").unwrap(),
+            AppCommand::Tui(TuiCommand::New)
         ));
     }
 

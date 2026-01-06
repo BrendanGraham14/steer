@@ -1033,8 +1033,10 @@ mod tests {
         let message = Message {
             data: MessageData::User {
                 content: vec![UserContent::AppCommand {
-                    command: AppCommandType::Clear,
-                    response: Some(CommandResponse::Text("Available commands...".to_string())),
+                    command: AppCommandType::Model { target: None },
+                    response: Some(CommandResponse::Text(
+                        "Current model: claude-sonnet".to_string(),
+                    )),
                 }],
             },
             timestamp: chrono::Utc::now().timestamp_millis() as u64,
@@ -1048,7 +1050,7 @@ mod tests {
         match &result[0] {
             OpenAIMessage::User { content, .. } => match content {
                 OpenAIContent::String(text) => {
-                    assert!(text.contains("App command: Clear"));
+                    assert!(text.contains("App command: Model"));
                     assert!(text.contains("Response: Text"));
                 }
                 _ => unreachable!("Expected string content"),

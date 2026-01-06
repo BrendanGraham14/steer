@@ -104,9 +104,9 @@ message AppCommand {
 message AppCommandType {
   oneof command_type {
     ModelCommand model = 1;
-    bool clear = 2;
     bool compact = 3;
   }
+  reserved 2;
 }
 
 message ModelCommand {

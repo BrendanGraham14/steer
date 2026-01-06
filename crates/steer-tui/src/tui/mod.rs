@@ -366,7 +366,6 @@ impl Tui {
         });
     }
 
-    /// Helper to push a TUI command response to the chat store
     fn push_tui_response(&mut self, command: String, response: TuiCommandResponse) {
         use crate::tui::model::{ChatItem, ChatItemData, generate_row_id};
         self.chat_store.push(ChatItem {
@@ -380,9 +379,46 @@ impl Tui {
         });
     }
 
-    /// Load file list into cache
+    async fn start_new_session(&mut self) -> Result<()> {
+        use std::collections::HashMap;
+        use steer_core::session::state::{SessionConfig, SessionToolConfig, WorkspaceConfig};
+
+        let session_config = SessionConfig {
+            workspace: WorkspaceConfig::default(),
+            tool_config: SessionToolConfig::default(),
+            system_prompt: None,
+            metadata: HashMap::new(),
+        };
+
+        let new_session_id = self
+            .client
+            .create_session(session_config)
+            .await
+            .map_err(|e| Error::Generic(format!("Failed to create new session: {e}")))?;
+
+        self.session_id = new_session_id.clone();
+        self.chat_store = ChatStore::new();
+        self.tool_registry = ToolCallRegistry::new();
+        self.chat_viewport = ChatViewport::new();
+        self.in_flight_operations.clear();
+        self.input_panel_state =
+            crate::tui::widgets::input_panel::InputPanelState::new(new_session_id.clone());
+        self.is_processing = false;
+        self.progress_message = None;
+        self.current_tool_approval = None;
+        self.editing_message_id = None;
+
+        self.push_notice(
+            NoticeLevel::Info,
+            format!("Started new session: {}", new_session_id),
+        );
+
+        self.load_file_cache().await;
+
+        Ok(())
+    }
+
     async fn load_file_cache(&mut self) {
-        // Request workspace files from the server
         info!(target: "tui.file_cache", "Requesting workspace files for session {}", self.session_id);
         if let Err(e) = self.client.send(ClientCommand::RequestWorkspaceFiles).await {
             warn!(target: "tui.file_cache", "Failed to request workspace files: {}", e);
@@ -1192,18 +1228,15 @@ impl Tui {
                             TuiCommandResponse::ListMcpServers(servers),
                         );
                     }
-                    TuiCommand::Custom(custom_cmd) => {
-                        // Handle custom command based on its type
-                        match custom_cmd {
-                            crate::tui::custom_commands::CustomCommand::Prompt {
-                                prompt, ..
-                            } => {
-                                // Forward prompt directly as user input to avoid recursive slash handling
-                                self.client
-                                    .send(ClientCommand::SendMessage { content: prompt })
-                                    .await?;
-                            } // Future custom command types can be handled here
+                    TuiCommand::Custom(custom_cmd) => match custom_cmd {
+                        crate::tui::custom_commands::CustomCommand::Prompt { prompt, .. } => {
+                            self.client
+                                .send(ClientCommand::SendMessage { content: prompt })
+                                .await?;
                         }
+                    },
+                    TuiCommand::New => {
+                        self.start_new_session().await?;
                     }
                 }
             }

@@ -315,7 +315,6 @@ pub(crate) fn message_to_proto(
                                     target: target.clone(),
                                 }))
                             }
-                            AppCommandType::Clear => Some(proto::app_command_type::CommandType::Clear(true)),
                             AppCommandType::Compact => Some(proto::app_command_type::CommandType::Compact(true)),
                         };
 
@@ -828,7 +827,6 @@ pub(crate) fn proto_to_message(
                                             target: model.target.clone(),
                                         }
                                     }
-                                    app_command_type::CommandType::Clear(_) => AppCommandType::Clear,
                                     app_command_type::CommandType::Compact(_) => AppCommandType::Compact,
                                 })
                             });

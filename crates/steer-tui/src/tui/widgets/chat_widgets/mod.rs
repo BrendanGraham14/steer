@@ -37,7 +37,6 @@ pub fn format_app_command(cmd: &AppCommandType) -> String {
             }
         }
         AppCommandType::Compact => "/compact".to_string(),
-        AppCommandType::Clear => "/clear".to_string(),
     }
 }
 
@@ -66,7 +65,6 @@ mod tests {
 
     #[test]
     fn test_format_helpers() {
-        assert_eq!(format_app_command(&AppCommandType::Clear), "/clear");
         assert_eq!(format_app_command(&AppCommandType::Compact), "/compact");
         assert_eq!(
             format_app_command(&AppCommandType::Model {

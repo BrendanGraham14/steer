@@ -201,7 +201,6 @@ impl ChatRenderable for MessageWidget {
                                     }
                                 }
                                 AppCommandType::Compact => "/compact".to_string(),
-                                AppCommandType::Clear => "/clear".to_string(),
                             };
                             lines.push(Line::from(Span::styled(cmd_text, cmd_style)));
 

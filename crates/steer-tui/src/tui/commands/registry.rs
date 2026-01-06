@@ -182,10 +182,9 @@ mod tests {
     fn test_fuzzy_search_multiple_matches() {
         let registry = CommandRegistry::new();
         let results = registry.search("c");
-        // Should find "clear", "compact"
-        assert!(results.len() >= 2);
+        // Should find "compact" (and possibly others like "mcp")
+        assert!(!results.is_empty());
         let names: Vec<&str> = results.iter().map(|cmd| cmd.name.as_str()).collect();
-        assert!(names.contains(&"clear"));
         assert!(names.contains(&"compact"));
     }
 
@@ -207,10 +206,10 @@ mod tests {
     #[test]
     fn test_command_name_prefix_boost() {
         let registry = CommandRegistry::new();
-        let results = registry.search("cl");
-        // "clear" should come before other matches because it starts with "cl"
+        let results = registry.search("ne");
+        // "new" should come before other matches because it starts with "ne"
         assert!(!results.is_empty());
-        assert_eq!(results[0].name, "clear");
+        assert_eq!(results[0].name, "new");
     }
 
     #[test]

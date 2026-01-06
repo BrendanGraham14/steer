@@ -21,7 +21,6 @@ pub enum CommandResponse {
 #[serde(tag = "command_type", rename_all = "snake_case")]
 pub enum AppCommandType {
     Model { target: Option<String> },
-    Clear,
     Compact,
 }
 
@@ -46,7 +45,6 @@ impl AppCommandType {
                 };
                 Ok(AppCommandType::Model { target })
             }
-            "clear" => Ok(AppCommandType::Clear),
             "compact" => Ok(AppCommandType::Compact),
             cmd => Err(SlashCommandError::UnknownCommand(cmd.to_string())),
         }
@@ -61,7 +59,6 @@ impl AppCommandType {
                     "model".to_string()
                 }
             }
-            AppCommandType::Clear => "clear".to_string(),
             AppCommandType::Compact => "compact".to_string(),
         }
     }
