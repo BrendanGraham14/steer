@@ -127,6 +127,39 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             vec![]
         }
 
+        Action::ModelResolved { session_id, model } => {
+            handle_model_resolved(state, session_id, model)
+        }
+
+        Action::CompactionComplete {
+            session_id,
+            op_id,
+            compaction_id,
+            summary_message_id,
+            summary,
+            compacted_head_message_id,
+            previous_active_message_id,
+            model,
+            timestamp,
+        } => handle_compaction_complete(
+            state,
+            session_id,
+            op_id,
+            compaction_id,
+            summary_message_id,
+            summary,
+            compacted_head_message_id,
+            previous_active_message_id,
+            model,
+            timestamp,
+        ),
+
+        Action::CompactionFailed {
+            session_id,
+            op_id,
+            error,
+        } => handle_compaction_failed(state, session_id, op_id, error),
+
         Action::Shutdown => vec![],
     }
 }
@@ -258,12 +291,64 @@ fn handle_user_edited_message(
 }
 
 fn handle_slash_command(
-    _state: &mut AppState,
-    _session_id: crate::app::domain::types::SessionId,
-    _command: crate::app::conversation::AppCommandType,
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    command: crate::app::conversation::AppCommandType,
     _timestamp: u64,
 ) -> Vec<Effect> {
-    vec![]
+    use crate::app::conversation::{AppCommandType, CommandResponse};
+    use crate::app::domain::event::SessionEvent;
+
+    match command {
+        AppCommandType::Model { target: None } => {
+            let (provider, model_id) = &state.current_model;
+            let response = CommandResponse::Text(format!(
+                "Current model: {} ({})",
+                model_id,
+                provider.storage_key()
+            ));
+            vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::SlashCommandResponse { response },
+            }]
+        }
+        AppCommandType::Model {
+            target: Some(target),
+        } => {
+            vec![Effect::ResolveModel { session_id, target }]
+        }
+        AppCommandType::Compact => {
+            const MIN_MESSAGES_FOR_COMPACT: usize = 3;
+            let message_count = state.conversation.get_thread_messages().len();
+
+            if message_count < MIN_MESSAGES_FOR_COMPACT {
+                let response = CommandResponse::Compact(
+                    crate::app::conversation::CompactResult::InsufficientMessages,
+                );
+                return vec![Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::SlashCommandResponse { response },
+                }];
+            }
+
+            let op_id = crate::app::domain::types::OpId::new();
+            state.current_operation = Some(crate::app::domain::state::OperationState {
+                op_id,
+                kind: crate::app::domain::state::OperationKind::Compact,
+                pending_tool_calls: std::collections::HashSet::new(),
+            });
+            vec![
+                Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::OperationStarted {
+                        op_id,
+                        kind: crate::app::domain::state::OperationKind::Compact,
+                    },
+                },
+                Effect::RequestCompaction { session_id, op_id },
+            ]
+        }
+    }
 }
 
 fn handle_tool_approval_requested(
@@ -787,6 +872,102 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     }
 
     state.event_sequence += 1;
+}
+
+fn handle_model_resolved(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    model: crate::config::model::ModelId,
+) -> Vec<Effect> {
+    state.current_model = model.clone();
+    vec![Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::ModelChanged { model },
+    }]
+}
+
+fn handle_compaction_complete(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    op_id: crate::app::domain::types::OpId,
+    compaction_id: crate::app::domain::types::CompactionId,
+    summary_message_id: crate::app::domain::types::MessageId,
+    summary: String,
+    compacted_head_message_id: crate::app::domain::types::MessageId,
+    previous_active_message_id: Option<crate::app::domain::types::MessageId>,
+    model_name: String,
+    timestamp: u64,
+) -> Vec<Effect> {
+    use crate::app::conversation::{AssistantContent, Message, MessageData};
+    use crate::app::domain::types::CompactionRecord;
+
+    let summary_message = Message {
+        data: MessageData::Assistant {
+            content: vec![AssistantContent::Text { text: summary }],
+        },
+        id: summary_message_id.to_string(),
+        parent_message_id: None,
+        timestamp,
+    };
+
+    state.conversation.add_message(summary_message.clone());
+
+    let record = CompactionRecord::with_timestamp(
+        compaction_id,
+        summary_message_id,
+        compacted_head_message_id,
+        previous_active_message_id,
+        model_name,
+        timestamp,
+    );
+
+    state.current_operation = None;
+
+    vec![
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::MessageAdded {
+                message: summary_message,
+                model: state.current_model.clone(),
+            },
+        },
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::ConversationCompacted { record },
+        },
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationCompleted { op_id },
+        },
+    ]
+}
+
+fn handle_compaction_failed(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    op_id: crate::app::domain::types::OpId,
+    error: String,
+) -> Vec<Effect> {
+    use crate::app::conversation::{CommandResponse, CompactResult};
+
+    state.current_operation = None;
+
+    vec![
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::SlashCommandResponse {
+                response: CommandResponse::Compact(CompactResult::Cancelled),
+            },
+        },
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error { message: error },
+        },
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationCompleted { op_id },
+        },
+    ]
 }
 
 #[cfg(test)]

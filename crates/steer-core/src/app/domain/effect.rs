@@ -51,6 +51,16 @@ pub enum Effect {
         session_id: SessionId,
         server_name: String,
     },
+
+    ResolveModel {
+        session_id: SessionId,
+        target: String,
+    },
+
+    RequestCompaction {
+        session_id: SessionId,
+        op_id: OpId,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -69,7 +79,9 @@ impl Effect {
             | Effect::ListWorkspaceFiles { session_id }
             | Effect::CancelOperation { session_id, .. }
             | Effect::ConnectMcpServer { session_id, .. }
-            | Effect::DisconnectMcpServer { session_id, .. } => *session_id,
+            | Effect::DisconnectMcpServer { session_id, .. }
+            | Effect::ResolveModel { session_id, .. }
+            | Effect::RequestCompaction { session_id, .. } => *session_id,
         }
     }
 

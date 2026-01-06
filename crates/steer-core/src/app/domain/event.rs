@@ -1,6 +1,8 @@
-use crate::app::conversation::Message;
+use crate::app::conversation::{CommandResponse, Message};
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
-use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
+use crate::app::domain::types::{
+    CompactionRecord, MessageId, OpId, RequestId, SessionId, ToolCallId,
+};
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
@@ -77,6 +79,14 @@ pub enum SessionEvent {
 
     ModelChanged {
         model: ModelId,
+    },
+
+    SlashCommandResponse {
+        response: CommandResponse,
+    },
+
+    ConversationCompacted {
+        record: CompactionRecord,
     },
 
     WorkspaceChanged,

@@ -947,6 +947,51 @@ pub(crate) fn proto_to_message(
     }
 }
 
+fn command_response_to_proto(response: &CommandResponse) -> proto::CommandResponse {
+    let response_type = match response {
+        CommandResponse::Text(text) => Some(proto::command_response::Response::Text(text.clone())),
+        CommandResponse::Compact(result) => {
+            let compact_type = match result {
+                CompactResult::Success(summary) => {
+                    Some(proto::compact_result::ResultType::Success(summary.clone()))
+                }
+                CompactResult::Cancelled => {
+                    Some(proto::compact_result::ResultType::Cancelled(true))
+                }
+                CompactResult::InsufficientMessages => Some(
+                    proto::compact_result::ResultType::InsufficientMessages(true),
+                ),
+            };
+            Some(proto::command_response::Response::Compact(
+                proto::CompactResult {
+                    result_type: compact_type,
+                },
+            ))
+        }
+    };
+    proto::CommandResponse {
+        response: response_type,
+    }
+}
+
+fn compaction_record_to_proto(
+    record: &steer_core::app::domain::types::CompactionRecord,
+) -> proto::CompactionRecord {
+    proto::CompactionRecord {
+        id: record.id.to_string(),
+        summary_message_id: record.summary_message_id.to_string(),
+        compacted_head_message_id: record.compacted_head_message_id.to_string(),
+        previous_active_message_id: record
+            .previous_active_message_id
+            .as_ref()
+            .map(|id| id.to_string()),
+        model: record.model.clone(),
+        created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::from(
+            record.created_at,
+        ))),
+    }
+}
+
 /// Convert domain SessionEvent to protobuf StreamSessionResponse
 ///
 /// This is used by the new RuntimeService architecture to convert events
@@ -1052,6 +1097,21 @@ pub(crate) fn session_event_to_server_event(
             proto::stream_session_response::Event::ModelChanged(proto::ModelChangedEvent {
                 model: Some(model_to_proto(model)),
             }),
+        ),
+        SessionEvent::SlashCommandResponse { response } => Some(
+            proto::stream_session_response::Event::CommandResponse(proto::CommandResponseEvent {
+                content: String::new(),
+                id: String::new(),
+                command: None,
+                response: Some(command_response_to_proto(&response)),
+            }),
+        ),
+        SessionEvent::ConversationCompacted { record } => Some(
+            proto::stream_session_response::Event::ConversationCompacted(
+                proto::ConversationCompactedEvent {
+                    record: Some(compaction_record_to_proto(&record)),
+                },
+            ),
         ),
         SessionEvent::WorkspaceChanged => {
             Some(proto::stream_session_response::Event::WorkspaceChanged(
@@ -1394,7 +1454,8 @@ pub(crate) fn proto_to_client_event(
         | proto::stream_session_response::Event::Started(_)
         | proto::stream_session_response::Event::Finished(_)
         | proto::stream_session_response::Event::ActiveMessageIdChanged(_)
-        | proto::stream_session_response::Event::StreamDelta(_) => {
+        | proto::stream_session_response::Event::StreamDelta(_)
+        | proto::stream_session_response::Event::ConversationCompacted(_) => {
             return Ok(None);
         }
     };

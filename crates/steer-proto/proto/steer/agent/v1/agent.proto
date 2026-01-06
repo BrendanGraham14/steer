@@ -80,6 +80,7 @@ message StreamSessionResponse {
     FinishedEvent finished = 19;
     ActiveMessageIdChangedEvent active_message_id_changed = 20;
     StreamDeltaEvent stream_delta = 21;
+    ConversationCompactedEvent conversation_compacted = 22;
   }
 }
 
@@ -257,7 +258,7 @@ message StreamDeltaEvent {
   string op_id = 1;
   string message_id = 2;
   bool is_first = 3;
-  
+
   oneof delta_type {
     TextDelta text = 4;
     ThinkingDelta thinking = 5;
@@ -281,6 +282,18 @@ message ToolCallDelta {
   }
 }
 
+message ConversationCompactedEvent {
+  CompactionRecord record = 1;
+}
+
+message CompactionRecord {
+  string id = 1;
+  string summary_message_id = 2;
+  string compacted_head_message_id = 3;
+  optional string previous_active_message_id = 4;
+  string model = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
 // Request/Response message definitions
 message CreateSessionRequest {
   optional ToolApprovalPolicy tool_policy = 1;

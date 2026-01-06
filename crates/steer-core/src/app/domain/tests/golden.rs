@@ -129,6 +129,10 @@ mod tests {
                     SessionEvent::MessageUpdated { .. } => "MessageUpdated".to_string(),
                     SessionEvent::ModelChanged { .. } => "ModelChanged".to_string(),
                     SessionEvent::WorkspaceChanged => "WorkspaceChanged".to_string(),
+                    SessionEvent::SlashCommandResponse { .. } => "SlashCommandResponse".to_string(),
+                    SessionEvent::ConversationCompacted { .. } => {
+                        "ConversationCompacted".to_string()
+                    }
                 },
             },
             Effect::CallModel { .. } => EffectSnapshot::CallModel,

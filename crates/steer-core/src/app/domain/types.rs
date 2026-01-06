@@ -3,6 +3,7 @@
 //! These newtypes ensure compile-time safety against mixing different kinds of IDs
 //! and provide validation for constrained types like NonEmptyString.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
@@ -335,9 +336,97 @@ impl AsRef<str> for NonEmptyString {
     }
 }
 
+/// Compaction identifier - unique per conversation compaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CompactionId(pub Uuid);
+
+impl CompactionId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+impl Default for CompactionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for CompactionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<Uuid> for CompactionId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
+impl From<CompactionId> for Uuid {
+    fn from(id: CompactionId) -> Self {
+        id.0
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionRecord {
+    pub id: CompactionId,
+    pub summary_message_id: MessageId,
+    pub compacted_head_message_id: MessageId,
+    pub previous_active_message_id: Option<MessageId>,
+    pub model: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl CompactionRecord {
+    pub fn new(
+        id: CompactionId,
+        summary_message_id: MessageId,
+        compacted_head_message_id: MessageId,
+        previous_active_message_id: Option<MessageId>,
+        model: String,
+    ) -> Self {
+        Self {
+            id,
+            summary_message_id,
+            compacted_head_message_id,
+            previous_active_message_id,
+            model,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_timestamp(
+        id: CompactionId,
+        summary_message_id: MessageId,
+        compacted_head_message_id: MessageId,
+        previous_active_message_id: Option<MessageId>,
+        model: String,
+        timestamp: u64,
+    ) -> Self {
+        Self {
+            id,
+            summary_message_id,
+            compacted_head_message_id,
+            previous_active_message_id,
+            model,
+            created_at: DateTime::from_timestamp(timestamp as i64, 0).unwrap_or_else(Utc::now),
+        }
+    }
+}
+
 /// Unix timestamp in seconds since epoch.
-///
-/// Used for message timestamps and event ordering.
 pub type Timestamp = u64;
 
 /// Event sequence number for ordering and replay.

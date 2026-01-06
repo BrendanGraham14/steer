@@ -1,6 +1,6 @@
 use crate::app::conversation::AppCommandType;
 use crate::app::domain::types::{
-    MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
+    CompactionId, MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
 };
 use serde::{Deserialize, Serialize};
 use steer_tools::result::ToolResult;
@@ -114,6 +114,29 @@ pub enum Action {
         session_id: SessionId,
         files: Vec<String>,
     },
+
+    ModelResolved {
+        session_id: SessionId,
+        model: crate::config::model::ModelId,
+    },
+
+    CompactionComplete {
+        session_id: SessionId,
+        op_id: OpId,
+        compaction_id: CompactionId,
+        summary_message_id: MessageId,
+        summary: String,
+        compacted_head_message_id: MessageId,
+        previous_active_message_id: Option<MessageId>,
+        model: String,
+        timestamp: u64,
+    },
+
+    CompactionFailed {
+        session_id: SessionId,
+        op_id: OpId,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,7 +184,10 @@ impl Action {
             | Action::Cancel { session_id, .. }
             | Action::DirectBashCommand { session_id, .. }
             | Action::Hydrate { session_id, .. }
-            | Action::WorkspaceFilesListed { session_id, .. } => Some(*session_id),
+            | Action::WorkspaceFilesListed { session_id, .. }
+            | Action::ModelResolved { session_id, .. }
+            | Action::CompactionComplete { session_id, .. }
+            | Action::CompactionFailed { session_id, .. } => Some(*session_id),
             Action::Shutdown => None,
         }
     }
@@ -172,7 +198,9 @@ impl Action {
             | Action::UserEditedMessage { op_id, .. }
             | Action::DirectBashCommand { op_id, .. }
             | Action::ModelResponseComplete { op_id, .. }
-            | Action::ModelResponseError { op_id, .. } => Some(*op_id),
+            | Action::ModelResponseError { op_id, .. }
+            | Action::CompactionComplete { op_id, .. }
+            | Action::CompactionFailed { op_id, .. } => Some(*op_id),
             Action::Cancel { op_id, .. } => *op_id,
             _ => None,
         }

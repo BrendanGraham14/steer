@@ -383,6 +383,102 @@ impl SessionActor {
                 self.handle_disconnect_mcp_server(server_name).await;
                 Ok(())
             }
+
+            Effect::ResolveModel { session_id, target } => {
+                let event = SessionEvent::SlashCommandResponse {
+                    response: crate::app::conversation::CommandResponse::Text(format!(
+                        "Model resolution not yet implemented: {}",
+                        target
+                    )),
+                };
+                let seq = self.event_store.append(session_id, &event).await?;
+                let envelope = SessionEventEnvelope { seq, event };
+                let _ = self.event_broadcast.send(envelope);
+                Ok(())
+            }
+
+            Effect::RequestCompaction { session_id, op_id } => {
+                let cancel_token = self
+                    .active_operations
+                    .entry(op_id)
+                    .or_insert_with(CancellationToken::new)
+                    .clone();
+
+                let interpreter = self.interpreter.clone();
+                let action_tx = self.internal_action_tx.clone();
+
+                let messages: Vec<crate::app::conversation::Message> = self
+                    .state
+                    .conversation
+                    .get_thread_messages()
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                let compacted_head = self
+                    .state
+                    .conversation
+                    .active_message_id
+                    .clone()
+                    .map(MessageId::from)
+                    .unwrap_or_else(MessageId::new);
+                let previous_active = self
+                    .state
+                    .conversation
+                    .active_message_id
+                    .clone()
+                    .map(MessageId::from);
+                let model = self.state.current_model.clone();
+
+                tokio::spawn(async move {
+                    let summary_prompt = build_compaction_prompt(&messages);
+
+                    let result = interpreter
+                        .call_model(
+                            model.clone(),
+                            vec![summary_prompt],
+                            None,
+                            vec![],
+                            cancel_token,
+                        )
+                        .await;
+
+                    let action = match result {
+                        Ok(content) => {
+                            let summary_text = content
+                                .iter()
+                                .filter_map(|c| match c {
+                                    crate::app::conversation::AssistantContent::Text { text } => {
+                                        Some(text.as_str())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+
+                            Action::CompactionComplete {
+                                session_id,
+                                op_id,
+                                compaction_id: crate::app::domain::types::CompactionId::new(),
+                                summary_message_id: MessageId::new(),
+                                summary: summary_text,
+                                compacted_head_message_id: compacted_head,
+                                previous_active_message_id: previous_active,
+                                model: model.1.clone(),
+                                timestamp: current_timestamp(),
+                            }
+                        }
+                        Err(e) => Action::CompactionFailed {
+                            session_id,
+                            op_id,
+                            error: e,
+                        },
+                    };
+
+                    let _ = action_tx.send(action).await;
+                });
+
+                Ok(())
+            }
         }
     }
 
@@ -503,4 +599,66 @@ fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn build_compaction_prompt(
+    messages: &[crate::app::conversation::Message],
+) -> crate::app::conversation::Message {
+    use crate::app::conversation::{Message, MessageData, UserContent};
+
+    let conversation_text = messages
+        .iter()
+        .map(|m| format_message_for_summary(m))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let prompt = format!(
+        "Summarize this conversation concisely, preserving:\n\
+         1. Key decisions and conclusions\n\
+         2. Important context established\n\
+         3. Current task state\n\
+         4. Critical information needed to continue\n\n\
+         Conversation:\n{}\n\n\
+         Summary:",
+        conversation_text
+    );
+
+    Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text { text: prompt }],
+        },
+        id: uuid::Uuid::new_v4().to_string(),
+        parent_message_id: None,
+        timestamp: current_timestamp(),
+    }
+}
+
+fn format_message_for_summary(message: &crate::app::conversation::Message) -> String {
+    use crate::app::conversation::{AssistantContent, MessageData, UserContent};
+
+    match &message.data {
+        MessageData::User { content } => {
+            let text = content
+                .iter()
+                .filter_map(|c| match c {
+                    UserContent::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("User: {}", text)
+        }
+        MessageData::Assistant { content } => {
+            let text = content
+                .iter()
+                .filter_map(|c| match c {
+                    AssistantContent::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("Assistant: {}", text)
+        }
+        MessageData::Tool { .. } => String::new(),
+    }
 }
