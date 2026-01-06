@@ -112,6 +112,7 @@ steer-workspace.workspace = true
 steer-workspace-client.workspace = true
 directories = "6.0.0"
 lru = "0.16.2"
+bitflags = { version = "2.10.0", features = ["serde"] }
 
 [build-dependencies]
 serde = { version = "1.0", features = ["derive"] }

@@ -257,6 +257,17 @@ impl McpBackend {
         }
     }
 
+    pub fn has_tool(&self, tool_name: &str) -> bool {
+        let prefixed_name = format!("mcp__{}__", self.server_name);
+        if tool_name.starts_with(&prefixed_name) {
+            let actual_name = &tool_name[prefixed_name.len()..];
+            if let Ok(tools) = self.tools.try_read() {
+                return tools.contains_key(actual_name);
+            }
+        }
+        false
+    }
+
     fn mcp_tool_to_schema(&self, tool: &Tool) -> ToolSchema {
         let description = match &tool.description {
             Some(desc) if !desc.is_empty() => desc.to_string(),
@@ -425,7 +436,6 @@ impl ToolBackend for McpBackend {
     }
 
     async fn health_check(&self) -> bool {
-        // Check if service is connected
         let service_guard = self.client.read().await;
         service_guard.is_some()
     }
