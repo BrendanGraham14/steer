@@ -47,7 +47,7 @@ Usage notes:
     )
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DispatchAgentParams {
     pub prompt: String,
 }

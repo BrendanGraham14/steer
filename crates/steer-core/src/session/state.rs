@@ -232,17 +232,6 @@ impl SessionConfig {
             }
         }
 
-        // 2. Register SERVER tools (like dispatch_agent and web_fetch).
-        // These are external tools, not workspace tools.
-        let server_backend = LocalBackend::server_only(llm_config_provider.clone(), workspace);
-        if !server_backend.supported_tools().await.is_empty() {
-            registry
-                .register("server".to_string(), Arc::new(server_backend))
-                .await;
-        }
-
-        // Note: Workspace tools are handled directly by the Workspace implementation.
-
         Ok((registry, mcp_servers))
     }
 

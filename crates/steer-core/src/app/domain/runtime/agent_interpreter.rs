@@ -75,7 +75,8 @@ impl AgentInterpreter {
             .await
             .map_err(|e| AgentInterpreterError::EventStore(e.to_string()))?;
 
-        let effect_interpreter = EffectInterpreter::new(api_client, tool_executor);
+        let effect_interpreter =
+            EffectInterpreter::new(api_client, tool_executor).with_session(session_id);
 
         Ok(Self {
             session_id,

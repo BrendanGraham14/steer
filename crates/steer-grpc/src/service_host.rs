@@ -14,7 +14,7 @@ use steer_core::app::domain::session::{SessionCatalog, SqliteEventStore};
 use steer_core::auth::storage::AuthStorage;
 use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
-use steer_core::tools::ToolExecutor;
+use steer_core::tools::ToolSystemBuilder;
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
 
 #[derive(Clone)]
@@ -134,11 +134,13 @@ impl ServiceHost {
             reason: format!("Failed to create workspace: {e}"),
         })?;
 
-        let tool_executor = Arc::new(ToolExecutor::with_components(
+        let tool_executor = ToolSystemBuilder::new(
             workspace,
-            Arc::new(steer_core::tools::BackendRegistry::new()),
-            Arc::new(steer_core::app::validation::ValidatorRegistry::new()),
-        ));
+            event_store.clone(),
+            api_client.clone(),
+            model_registry.clone(),
+        )
+        .build();
 
         let runtime_config = RuntimeConfig::new(config.default_model.clone());
 

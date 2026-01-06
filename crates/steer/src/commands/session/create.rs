@@ -8,7 +8,7 @@ use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use steer_core::api::Client as ApiClient;
 use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeService};
 use steer_core::app::domain::session::SqliteEventStore;
-use steer_core::tools::ToolExecutor;
+use steer_core::tools::ToolSystemBuilder;
 
 pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
@@ -82,11 +82,13 @@ impl Command for CreateSessionCommand {
         .await
         .map_err(|e| eyre!("Failed to create workspace: {}", e))?;
 
-        let tool_executor = Arc::new(ToolExecutor::with_components(
+        let tool_executor = ToolSystemBuilder::new(
             workspace,
-            Arc::new(steer_core::tools::BackendRegistry::new()),
-            Arc::new(steer_core::app::validation::ValidatorRegistry::new()),
-        ));
+            event_store.clone(),
+            api_client.clone(),
+            model_registry.clone(),
+        )
+        .build();
 
         let default_model = if let Some(ref model_str) = self.model {
             model_registry

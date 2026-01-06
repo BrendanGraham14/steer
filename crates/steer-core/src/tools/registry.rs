@@ -91,6 +91,7 @@ impl Default for ToolRegistry {
 mod tests {
     use super::*;
     use crate::tools::capability::Capabilities;
+    use crate::tools::static_tool::{StaticToolContext, StaticToolError};
     use async_trait::async_trait;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};

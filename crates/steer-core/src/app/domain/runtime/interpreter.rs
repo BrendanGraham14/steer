@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
 use crate::app::conversation::{AssistantContent, Message};
+use crate::app::domain::types::SessionId;
 use crate::config::model::ModelId;
 use crate::tools::ToolExecutor;
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
@@ -12,6 +13,7 @@ use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 pub struct EffectInterpreter {
     api_client: Arc<ApiClient>,
     tool_executor: Arc<ToolExecutor>,
+    session_id: Option<SessionId>,
 }
 
 impl EffectInterpreter {
@@ -19,7 +21,13 @@ impl EffectInterpreter {
         Self {
             api_client,
             tool_executor,
+            session_id: None,
         }
+    }
+
+    pub fn with_session(mut self, session_id: SessionId) -> Self {
+        self.session_id = Some(session_id);
+        self
     }
 
     pub async fn call_model(
@@ -55,8 +63,14 @@ impl EffectInterpreter {
         tool_call: ToolCall,
         cancel_token: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
-        self.tool_executor
-            .execute_tool_with_cancellation(&tool_call, cancel_token)
-            .await
+        if let Some(session_id) = self.session_id {
+            self.tool_executor
+                .execute_tool_with_session(&tool_call, session_id, cancel_token)
+                .await
+        } else {
+            self.tool_executor
+                .execute_tool_with_cancellation(&tool_call, cancel_token)
+                .await
+        }
     }
 }

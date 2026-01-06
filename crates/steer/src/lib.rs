@@ -11,10 +11,9 @@ use steer_core::api::Client as ApiClient;
 use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeHandle, RuntimeService};
 use steer_core::app::domain::session::SqliteEventStore;
 use steer_core::app::domain::types::SessionId;
-use steer_core::app::validation::ValidatorRegistry;
 use steer_core::runners::{OneShotRunner, RunOnceResult};
 use steer_core::session::state::SessionConfig;
-use steer_core::tools::{BackendRegistry, ToolExecutor};
+use steer_core::tools::ToolSystemBuilder;
 
 pub async fn run_once_in_session(
     runtime: &RuntimeHandle,
@@ -89,11 +88,13 @@ impl RuntimeBuilder {
                 .await
                 .map_err(|e| eyre::eyre!("Failed to create workspace: {}", e))?;
 
-        let tool_executor = Arc::new(ToolExecutor::with_components(
+        let tool_executor = ToolSystemBuilder::new(
             workspace,
-            Arc::new(BackendRegistry::new()),
-            Arc::new(ValidatorRegistry::new()),
-        ));
+            event_store.clone(),
+            api_client.clone(),
+            app_config.model_registry.clone(),
+        )
+        .build();
 
         let runtime_config = RuntimeConfig::new(model_id);
 

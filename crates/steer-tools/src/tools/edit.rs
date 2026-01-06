@@ -25,7 +25,7 @@ async fn get_file_lock(file_path: &str) -> Arc<Mutex<()>> {
         .clone()
 }
 
-#[derive(Deserialize, Debug, JsonSchema, Clone)]
+#[derive(Deserialize, Serialize, Debug, JsonSchema, Clone)]
 pub struct SingleEditOperation {
     /// The exact string to find and replace. Must be unique within the current state of the file content.
     /// If this is the first operation in a MultiEditTool call for a new file, or for EditTool if the file
@@ -306,7 +306,7 @@ pub mod multi_edit {
     use super::*;
     use crate::result::MultiEditResult;
 
-    #[derive(Deserialize, Debug, JsonSchema)]
+    #[derive(Deserialize, Serialize, Debug, JsonSchema)]
     pub struct MultiEditParams {
         /// The absolute path to the file to edit.
         pub file_path: String,

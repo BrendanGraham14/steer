@@ -1,5 +1,5 @@
 use crate::prompts::MEMORY_FILE_NAME;
-use crate::tools::dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
+use crate::tools::DISPATCH_AGENT_TOOL_NAME;
 use steer_tools::tools::{AST_GREP_TOOL_NAME, BASH_TOOL_NAME, GREP_TOOL_NAME};
 
 /// Returns the GPT-5-specific system prompt  
