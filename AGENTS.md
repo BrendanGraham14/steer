@@ -1,29 +1,24 @@
 # Commands
 
-just check        # Quick compilation check without building
-just test         # Run all tests with all features
-just run          # Run steer CLI (can add args like: just run --help)
-just build        # Build the project with all features
-just ci           # Run all checks (fmt, clippy, test)
-just fix          # Auto-fix issues and format code
+**IMPORTANT**: All build, test, and development commands MUST be run inside `nix develop` to ensure the correct toolchain and dependencies are available.
 
-# Other useful commands:
-# just              # Show all available commands
-# just release      # Build release version
-# just test-package steer-core  # Test specific package
-# just test-specific test_name      # Run specific test
-# just fmt          # Format code
-# just clippy       # Run clippy linting
-# just clean        # Clean build artifacts
+```bash
+nix develop --command just check
+nix develop --command just test
+nix develop --command just build
 
-# Nix commands:
-# nix develop       # Enter development shell
-# nix build         # Build the project with Nix (uses crane for better caching)
-# nix flake check   # Run all checks
-# nix run           # Run steer directly
-# nix build .#steer                  # Build just the CLI
-# nix build .#steer-remote-workspace # Build just the remote workspace
-# nix build .#steer-workspace        # Build all crates at once
+# For multiple commands
+nix develop --command sh -c "just check && just test"
+```
+
+This ensures the Nix environment is properly loaded without requiring an interactive shell session.
+
+## When to use which command
+
+- **`just check`** - Fast feedback loop: runs `cargo clippy` and `cargo fmt --check`. Use this during development.
+- **`just test`** - Runs the test suite. Use after making functional changes.
+- **`just build`** - Builds the project. Use when you need to verify compilation.
+- **`just ci`** - Runs a full `nix flake check`, which is comprehensive but slow. **Agents should almost never need this.** It's primarily for CI pipelines and final verification before merging. Prefer `just check` and `just test` for normal development.
 
 
 # Version Control
