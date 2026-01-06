@@ -1,5 +1,6 @@
 use dotenvy::dotenv;
-use steer_core::api::{ApiError, Client};
+use futures::StreamExt;
+use steer_core::api::{ApiError, Client, StreamChunk};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 
 use steer_core::test_utils;
@@ -26,7 +27,7 @@ async fn test_api_basic() {
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
         steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
         steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
         steer_core::config::model::builtin::grok_3_mini(),
     ];
@@ -137,7 +138,7 @@ async fn test_api_with_tools() {
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
         steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
         steer_core::config::model::builtin::grok_3_mini(),
     ];
 
@@ -293,7 +294,7 @@ async fn test_api_with_tool_response() {
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
         steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
         steer_core::config::model::builtin::grok_3_mini(),
     ];
     let mut tasks = Vec::new();
@@ -451,7 +452,7 @@ async fn test_gemini_system_instructions() {
 
     let response = client
         .complete(
-            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_3_flash_preview(), // Use Gemini model
             messages,
             system,
             None,
@@ -542,7 +543,7 @@ async fn test_gemini_api_tool_result_error() {
 
     let response = client
         .complete(
-            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_3_flash_preview(), // Use Gemini model
             messages,
             None,
             None, // No tools needed here as we are providing the tool result
@@ -622,7 +623,7 @@ async fn test_gemini_api_complex_tool_schema() {
 
     let response = client
         .complete(
-            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+            &steer_core::config::model::builtin::gemini_3_flash_preview(),
             messages,
             None,
             Some(vec![complex_tool]), // Send the complex tool definition
@@ -716,7 +717,7 @@ async fn test_gemini_api_tool_result_json() {
 
     let response = client
         .complete(
-            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_3_flash_preview(), // Use Gemini model
             messages,
             None,
             None, // No tools needed here as we are providing the tool result
@@ -845,7 +846,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 
     let response = client
         .complete(
-            &steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(), // Use Gemini model
+            &steer_core::config::model::builtin::gemini_3_flash_preview(), // Use Gemini model
             messages,
             None,
             Some(tools), // Provide tools including the dummy weather tool
@@ -876,7 +877,7 @@ async fn test_api_with_cancelled_tool_execution() {
     let models_to_test = vec![
         steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
         steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_2_5_flash_preview_04_17(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
         steer_core::config::model::builtin::grok_3_mini(),
     ];
     let mut tasks = Vec::new();
@@ -1011,5 +1012,528 @@ async fn test_api_with_cancelled_tool_execution() {
         failures.is_empty(),
         "One or more cancelled tool execution test tasks failed:\n{}",
         failures.join("\n")
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_streaming_basic() {
+    dotenv().ok();
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
+
+    let models_to_test = vec![
+        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
+        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
+        steer_core::config::model::builtin::grok_3_mini(),
+    ];
+
+    let mut tasks = Vec::new();
+
+    // Create the simple message once
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What is 2+2? Answer in one word.".to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    for model in models_to_test {
+        let client = client.clone();
+        let messages = messages.clone();
+        let task = tokio::spawn(async move {
+            println!("Testing streaming API for model: {model:?}");
+
+            // Call streaming API with specified model
+            let stream_result = client
+                .stream_complete(
+                    &model.clone(),
+                    messages,
+                    None,
+                    None,
+                    None,
+                    CancellationToken::new(),
+                )
+                .await;
+
+            let mut stream = stream_result.map_err(|e| {
+                eprintln!("Streaming API call failed for model {model:?}: {e:?}");
+                e
+            })?;
+
+            let mut text_chunks = Vec::new();
+            let mut got_complete = false;
+            let mut final_response = None;
+
+            // Consume the stream
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    StreamChunk::TextDelta(text) => {
+                        println!("{model:?} delta: {text}");
+                        text_chunks.push(text);
+                    }
+                    StreamChunk::ThinkingDelta(text) => {
+                        println!("{model:?} thinking: {text}");
+                    }
+                    StreamChunk::MessageComplete(response) => {
+                        println!("{model:?} complete");
+                        got_complete = true;
+                        final_response = Some(response);
+                    }
+                    StreamChunk::Error(e) => {
+                        eprintln!("{model:?} stream error: {e:?}");
+                        return Err(ApiError::StreamError {
+                            provider: format!("{model:?}"),
+                            details: format!("{e:?}"),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            // Verify we got some text deltas (streaming is working)
+            assert!(
+                !text_chunks.is_empty(),
+                "Should have received text deltas for model {model:?}"
+            );
+
+            // Verify we got a complete message
+            assert!(
+                got_complete,
+                "Should have received MessageComplete for model {model:?}"
+            );
+
+            // Verify the final response contains the answer
+            let final_text = final_response
+                .as_ref()
+                .map(|r| r.extract_text())
+                .unwrap_or_default();
+            assert!(
+                final_text.contains("4") || final_text.to_lowercase().contains("four"),
+                "Response for model {model:?} should contain '4', got: '{final_text}'"
+            );
+
+            println!("Streaming API test for {model:?} passed successfully!");
+            Ok::<_, ApiError>(model)
+        });
+        tasks.push(task);
+    }
+
+    // Wait for all tasks to complete
+    let results = futures::future::join_all(tasks).await;
+
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(model)) => {
+                println!("Task for {model:?} finished successfully.");
+            }
+            Ok(Err(e)) => {
+                let msg = format!("Streaming API call failed within task: {e:?}");
+                failures.push(msg);
+            }
+            Err(e) => {
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}");
+                failures.push(msg);
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "One or more streaming API test tasks failed:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_streaming_with_tools() {
+    dotenv().ok();
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
+
+    let models_to_test = vec![
+        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
+        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
+        steer_core::config::model::builtin::grok_3_mini(),
+    ];
+
+    let mut tasks = Vec::new();
+
+    // Get tools from workspace
+    let temp_dir = TempDir::new().unwrap();
+    let workspace = Arc::new(
+        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap(),
+    );
+
+    let tools = workspace.available_tools().await;
+    let pwd = temp_dir.path().to_path_buf();
+
+    for model in models_to_test {
+        let client = client.clone();
+        let tools = tools.clone();
+        let pwd_display = pwd.display().to_string();
+
+        let task = tokio::spawn(async move {
+            println!("Testing streaming API with tools for model: {model:?}");
+
+            // Create a message that will trigger tool use
+            let timestamp = Message::current_timestamp();
+            let messages = vec![Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: format!("Please list the files in {pwd_display} using the LS tool"),
+                    }],
+                },
+                timestamp,
+                id: Message::generate_id("user", timestamp),
+                parent_message_id: None,
+            }];
+
+            let stream_result = client
+                .stream_complete(
+                    &model.clone(),
+                    messages,
+                    None,
+                    Some(tools),
+                    None,
+                    CancellationToken::new(),
+                )
+                .await;
+
+            let mut stream = stream_result.map_err(|e| {
+                eprintln!("Streaming API call failed for model {model:?}: {e:?}");
+                e
+            })?;
+
+            let mut tool_starts = Vec::new();
+            let mut tool_deltas = Vec::new();
+            let mut got_complete = false;
+            let mut final_response = None;
+
+            // Consume the stream
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    StreamChunk::ToolUseStart { id, name } => {
+                        println!("{model:?} tool start: {name} (id: {id})");
+                        tool_starts.push((id, name));
+                    }
+                    StreamChunk::ToolUseInputDelta { id, delta } => {
+                        println!("{model:?} tool delta: {delta}");
+                        tool_deltas.push((id, delta));
+                    }
+                    StreamChunk::TextDelta(text) => {
+                        println!("{model:?} text delta: {text}");
+                    }
+                    StreamChunk::MessageComplete(response) => {
+                        println!("{model:?} complete");
+                        got_complete = true;
+                        final_response = Some(response);
+                    }
+                    StreamChunk::Error(e) => {
+                        eprintln!("{model:?} stream error: {e:?}");
+                        return Err(ApiError::StreamError {
+                            provider: format!("{model:?}"),
+                            details: format!("{e:?}"),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            // Verify we got tool events (streaming tool use is working)
+            assert!(
+                !tool_starts.is_empty(),
+                "Should have received ToolUseStart for model {model:?}"
+            );
+
+            // Verify we got a complete message
+            assert!(
+                got_complete,
+                "Should have received MessageComplete for model {model:?}"
+            );
+
+            // Verify the final response contains tool calls
+            let response = final_response.expect("Should have final response");
+            assert!(
+                response.has_tool_calls(),
+                "Final response for model {model:?} should contain tool calls"
+            );
+
+            // Verify the tool call is for 'ls'
+            let tool_calls = response.extract_tool_calls();
+            assert!(
+                tool_calls.iter().any(|tc| tc.name == "ls"),
+                "Should have an ls tool call for model {model:?}"
+            );
+
+            println!("Streaming API with tools test for {model:?} passed successfully!");
+            Ok::<_, ApiError>(model)
+        });
+        tasks.push(task);
+    }
+
+    // Wait for all tasks to complete
+    let results = futures::future::join_all(tasks).await;
+
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(model)) => {
+                println!("Task for {model:?} finished successfully.");
+            }
+            Ok(Err(e)) => {
+                let msg = format!("Streaming API call failed within task: {e:?}");
+                failures.push(msg);
+            }
+            Err(e) => {
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}");
+                failures.push(msg);
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "One or more streaming API with tools test tasks failed:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_streaming_with_reasoning() {
+    dotenv().ok();
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
+
+    // Test reasoning models that support extended thinking
+    let models_to_test = vec![
+        steer_core::config::model::builtin::o3_2025_04_16(),
+        steer_core::config::model::builtin::o4_mini_2025_04_16(),
+        steer_core::config::model::builtin::gemini_3_flash_preview(),
+    ];
+
+    let mut tasks = Vec::new();
+
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What is the sum of the first 10 prime numbers? Think step by step."
+                    .to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    for model in models_to_test {
+        let client = client.clone();
+        let messages = messages.clone();
+        let task = tokio::spawn(async move {
+            println!("Testing streaming API with reasoning for model: {model:?}");
+
+            let stream_result = client
+                .stream_complete(
+                    &model.clone(),
+                    messages,
+                    None,
+                    None,
+                    None,
+                    CancellationToken::new(),
+                )
+                .await;
+
+            let mut stream = stream_result.map_err(|e| {
+                eprintln!("Streaming API call failed for model {model:?}: {e:?}");
+                e
+            })?;
+
+            let mut thinking_chunks = Vec::new();
+            let mut text_chunks = Vec::new();
+            let mut got_complete = false;
+
+            // Consume the stream
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    StreamChunk::ThinkingDelta(text) => {
+                        println!(
+                            "{model:?} thinking: {}",
+                            text.chars().take(50).collect::<String>()
+                        );
+                        thinking_chunks.push(text);
+                    }
+                    StreamChunk::TextDelta(text) => {
+                        println!("{model:?} text delta: {text}");
+                        text_chunks.push(text);
+                    }
+                    StreamChunk::MessageComplete(_) => {
+                        println!("{model:?} complete");
+                        got_complete = true;
+                    }
+                    StreamChunk::Error(e) => {
+                        eprintln!("{model:?} stream error: {e:?}");
+                        return Err(ApiError::StreamError {
+                            provider: format!("{model:?}"),
+                            details: format!("{e:?}"),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            // Verify we got a complete message
+            assert!(
+                got_complete,
+                "Should have received MessageComplete for model {model:?}"
+            );
+
+            // For reasoning models, we should get either thinking or text chunks
+            let got_content = !thinking_chunks.is_empty() || !text_chunks.is_empty();
+            assert!(
+                got_content,
+                "Should have received thinking or text content for model {model:?}"
+            );
+
+            println!(
+                "Streaming with reasoning test for {model:?} passed! Thinking chunks: {}, Text chunks: {}",
+                thinking_chunks.len(),
+                text_chunks.len()
+            );
+            Ok::<_, ApiError>(model)
+        });
+        tasks.push(task);
+    }
+
+    // Wait for all tasks to complete
+    let results = futures::future::join_all(tasks).await;
+
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(model)) => {
+                println!("Task for {model:?} finished successfully.");
+            }
+            Ok(Err(e)) => {
+                let msg = format!("Streaming API call failed within task: {e:?}");
+                failures.push(msg);
+            }
+            Err(e) => {
+                let msg = format!("Task panicked: {e:?}");
+                eprintln!("{msg}");
+                failures.push(msg);
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "One or more streaming with reasoning test tasks failed:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_api_streaming_cancellation() {
+    dotenv().ok();
+    let app_config = test_utils::test_app_config();
+    let client = Client::new_with_deps(
+        app_config.llm_config_provider,
+        app_config.provider_registry,
+        app_config.model_registry,
+    );
+
+    // Test cancellation with a model that generates longer responses
+    let model = steer_core::config::model::builtin::claude_3_5_haiku_20241022();
+
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "Write a 500 word essay about the history of computing.".to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    let token = CancellationToken::new();
+    let token_clone = token.clone();
+
+    let stream_result = client
+        .stream_complete(&model, messages, None, None, None, token)
+        .await;
+
+    let mut stream = stream_result.expect("Should get stream");
+
+    let mut chunks_before_cancel = 0;
+    let mut got_cancelled = false;
+
+    // Consume a few chunks then cancel
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            StreamChunk::TextDelta(_) => {
+                chunks_before_cancel += 1;
+                // Cancel after receiving a few chunks
+                if chunks_before_cancel >= 3 {
+                    println!("Cancelling stream after {} chunks", chunks_before_cancel);
+                    token_clone.cancel();
+                }
+            }
+            StreamChunk::Error(steer_core::api::StreamError::Cancelled) => {
+                println!("Received cancellation signal");
+                got_cancelled = true;
+                break;
+            }
+            StreamChunk::MessageComplete(_) => {
+                // If we got complete before cancellation took effect, that's okay
+                println!("Got complete before cancellation took effect");
+                break;
+            }
+            StreamChunk::Error(e) => {
+                // Some providers may return different errors on cancellation
+                println!("Got error during cancellation: {e:?}");
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        chunks_before_cancel > 0,
+        "Should have received at least one chunk before cancellation"
+    );
+
+    println!(
+        "Cancellation test passed! Chunks before cancel: {}, Got cancelled signal: {}",
+        chunks_before_cancel, got_cancelled
     );
 }

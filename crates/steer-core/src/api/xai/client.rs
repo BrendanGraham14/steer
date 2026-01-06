@@ -1,12 +1,14 @@
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::error::ApiError;
-use crate::api::provider::{CompletionResponse, Provider};
+use crate::api::error::{ApiError, StreamError};
+use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
+use crate::api::sse::parse_sse_stream;
 use crate::api::util::normalize_chat_url;
 use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
 use crate::config::model::{ModelId, ModelParameters};
@@ -266,6 +268,49 @@ struct DebugOutput {
     prompt: String,
     request: String,
     responses: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIStreamChunk {
+    #[allow(dead_code)]
+    id: String,
+    choices: Vec<XAIStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIStreamChoice {
+    #[allow(dead_code)]
+    index: u32,
+    delta: XAIStreamDelta,
+    #[allow(dead_code)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIStreamDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<XAIStreamToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIStreamToolCall {
+    index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function: Option<XAIStreamFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XAIStreamFunction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arguments: Option<String>,
 }
 
 impl XAIClient {
@@ -620,6 +665,240 @@ impl Provider for XAIClient {
             Err(ApiError::NoChoices {
                 provider: self.name().to_string(),
             })
+        }
+    }
+
+    async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<AppMessage>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        let xai_messages = self.convert_messages(messages, system);
+        let xai_tools = tools.map(|t| self.convert_tools(t));
+
+        let (supports_thinking, reasoning_effort) = call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config)
+            .map(|tc| {
+                let effort = tc.effort.map(|e| match e {
+                    crate::config::toml_types::ThinkingEffort::Low => ReasoningEffort::Low,
+                    crate::config::toml_types::ThinkingEffort::Medium => ReasoningEffort::High,
+                    crate::config::toml_types::ThinkingEffort::High => ReasoningEffort::High,
+                });
+                (tc.enabled, effort)
+            })
+            .unwrap_or((false, None));
+
+        let reasoning_effort = if supports_thinking && model_id.1 != "grok-4-0709" {
+            reasoning_effort.or(Some(ReasoningEffort::High))
+        } else {
+            None
+        };
+
+        let request = CompletionRequest {
+            model: model_id.1.clone(),
+            messages: xai_messages,
+            deferred: None,
+            frequency_penalty: None,
+            logit_bias: None,
+            logprobs: None,
+            max_completion_tokens: Some(32768),
+            max_tokens: None,
+            n: None,
+            parallel_tool_calls: None,
+            presence_penalty: None,
+            reasoning_effort,
+            response_format: None,
+            search_parameters: None,
+            seed: None,
+            stop: None,
+            stream: Some(true),
+            stream_options: None,
+            temperature: call_options
+                .as_ref()
+                .and_then(|o| o.temperature)
+                .or(Some(1.0)),
+            tool_choice: None,
+            tools: xai_tools,
+            top_logprobs: None,
+            top_p: call_options.as_ref().and_then(|o| o.top_p),
+            user: None,
+            web_search_options: None,
+        };
+
+        let response = self
+            .http_client
+            .post(&self.base_url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(ApiError::Network)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| String::new());
+
+            debug!(
+                target: "xai::stream",
+                "xAI API error - Status: {}, Body: {}",
+                status,
+                error_text
+            );
+
+            return match status.as_u16() {
+                429 => Err(ApiError::RateLimited {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                }),
+                400 => Err(ApiError::InvalidRequest {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                }),
+                401 => Err(ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                }),
+                _ => Err(ApiError::ServerError {
+                    provider: self.name().to_string(),
+                    status_code: status.as_u16(),
+                    details: error_text,
+                }),
+            };
+        }
+
+        let byte_stream = response.bytes_stream();
+        let sse_stream = parse_sse_stream(byte_stream);
+
+        Ok(Box::pin(XAIClient::convert_xai_stream(sse_stream, token)))
+    }
+}
+
+impl XAIClient {
+    fn convert_xai_stream(
+        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
+        + Unpin
+        + Send
+        + 'static,
+        token: CancellationToken,
+    ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
+        async_stream::stream! {
+            let mut text_buffer = String::new();
+            let mut thinking_buffer = String::new();
+            let mut tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
+            loop {
+                if token.is_cancelled() {
+                    yield StreamChunk::Error(StreamError::Cancelled);
+                    break;
+                }
+
+                let event_result = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        yield StreamChunk::Error(StreamError::Cancelled);
+                        break;
+                    }
+                    event = sse_stream.next() => event
+                };
+
+                let Some(event_result) = event_result else {
+                    break;
+                };
+
+                let event = match event_result {
+                    Ok(e) => e,
+                    Err(e) => {
+                        yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                        break;
+                    }
+                };
+
+                if event.data == "[DONE]" {
+                    let mut content = Vec::new();
+
+                    if !thinking_buffer.is_empty() {
+                        content.push(AssistantContent::Thought {
+                            thought: crate::app::conversation::ThoughtContent::Simple {
+                                text: std::mem::take(&mut thinking_buffer),
+                            },
+                        });
+                    }
+
+                    if !text_buffer.is_empty() {
+                        content.push(AssistantContent::Text {
+                            text: std::mem::take(&mut text_buffer),
+                        });
+                    }
+
+                    for (_idx, (id, name, args)) in std::mem::take(&mut tool_calls) {
+                        let parameters = serde_json::from_str(&args)
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        content.push(AssistantContent::ToolCall {
+                            tool_call: steer_tools::ToolCall {
+                                id,
+                                name,
+                                parameters,
+                            },
+                        });
+                    }
+
+                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    break;
+                }
+
+                let chunk: XAIStreamChunk = match serde_json::from_str(&event.data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        debug!(target: "xai::stream", "Failed to parse chunk: {} data: {}", e, event.data);
+                        continue;
+                    }
+                };
+
+                if let Some(choice) = chunk.choices.first() {
+                    if let Some(content) = &choice.delta.content {
+                        text_buffer.push_str(content);
+                        yield StreamChunk::TextDelta(content.clone());
+                    }
+
+                    if let Some(reasoning) = &choice.delta.reasoning_content {
+                        thinking_buffer.push_str(reasoning);
+                        yield StreamChunk::ThinkingDelta(reasoning.clone());
+                    }
+
+                    if let Some(tcs) = &choice.delta.tool_calls {
+                        for tc in tcs {
+                            let entry = tool_calls.entry(tc.index).or_insert_with(|| {
+                                (String::new(), String::new(), String::new())
+                            });
+
+                            if let Some(id) = &tc.id {
+                                entry.0 = id.clone();
+                            }
+                            if let Some(func) = &tc.function {
+                                if let Some(name) = &func.name {
+                                    if entry.1.is_empty() {
+                                        entry.1 = name.clone();
+                                        yield StreamChunk::ToolUseStart {
+                                            id: entry.0.clone(),
+                                            name: name.clone(),
+                                        };
+                                    }
+                                }
+                                if let Some(args) = &func.arguments {
+                                    entry.2.push_str(args);
+                                    yield StreamChunk::ToolUseInputDelta {
+                                        id: entry.0.clone(),
+                                        delta: args.clone(),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

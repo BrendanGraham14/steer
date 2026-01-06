@@ -2,7 +2,7 @@ use super::OpenAIMode;
 use super::chat;
 use super::responses;
 use crate::api::error::ApiError;
-use crate::api::provider::{CompletionResponse, Provider};
+use crate::api::provider::{CompletionResponse, CompletionStream, Provider};
 use crate::app::conversation::Message;
 use crate::config::model::{ModelId, ModelParameters};
 use async_trait::async_trait;
@@ -63,6 +63,29 @@ impl Provider for OpenAIClient {
             OpenAIMode::Chat => {
                 self.chat_client
                     .complete(model_id, messages, system, tools, call_options, token)
+                    .await
+            }
+        }
+    }
+
+    async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<Message>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        match self.default_mode {
+            OpenAIMode::Responses => {
+                self.responses_client
+                    .stream_complete(model_id, messages, system, tools, call_options, token)
+                    .await
+            }
+            OpenAIMode::Chat => {
+                self.chat_client
+                    .stream_complete(model_id, messages, system, tools, call_options, token)
                     .await
             }
         }

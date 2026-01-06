@@ -1,11 +1,13 @@
+use futures::StreamExt;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::error::ApiError;
-use crate::api::provider::CompletionResponse;
+use crate::api::error::{ApiError, StreamError};
+use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
+use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
@@ -338,6 +340,245 @@ impl Client {
 
         CompletionResponse { content }
     }
+
+    pub(super) async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<AppMessage>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        let mut openai_messages = Vec::new();
+
+        if let Some(system_content) = system {
+            openai_messages.push(OpenAIMessage::System {
+                content: OpenAIContent::String(system_content),
+                name: None,
+            });
+        }
+
+        for message in messages {
+            openai_messages.extend(self.convert_message(message)?);
+        }
+
+        let openai_tools = tools.map(|tools| {
+            tools
+                .into_iter()
+                .map(|tool| OpenAITool {
+                    tool_type: "function".to_string(),
+                    function: OpenAIFunction {
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: serde_json::json!({
+                            "type": tool.input_schema.schema_type,
+                            "properties": tool.input_schema.properties,
+                            "required": tool.input_schema.required
+                        }),
+                    },
+                })
+                .collect()
+        });
+
+        let reasoning_effort = call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config.as_ref())
+            .and_then(|tc| {
+                if !tc.enabled {
+                    return None;
+                }
+                match tc
+                    .effort
+                    .unwrap_or(crate::config::toml_types::ThinkingEffort::Medium)
+                {
+                    crate::config::toml_types::ThinkingEffort::Low => Some(ReasoningEffort::Low),
+                    crate::config::toml_types::ThinkingEffort::Medium => {
+                        Some(ReasoningEffort::Medium)
+                    }
+                    crate::config::toml_types::ThinkingEffort::High => Some(ReasoningEffort::High),
+                }
+            });
+
+        let request = OpenAIRequest {
+            model: model_id.1.clone(),
+            messages: openai_messages,
+            temperature: call_options
+                .as_ref()
+                .and_then(|o| o.temperature)
+                .or(Some(1.0)),
+            max_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
+            top_p: call_options.as_ref().and_then(|o| o.top_p).or(Some(1.0)),
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            stream: Some(true),
+            n: None,
+            logit_bias: None,
+            tools: openai_tools,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            response_format: None,
+            reasoning_effort,
+            audio: None,
+            stream_options: None,
+            service_tier: None,
+            user: None,
+        };
+
+        let response = self
+            .http_client
+            .post(&self.base_url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(ApiError::Network)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            debug!(
+                target: "openai::chat::stream",
+                "API error status={} body={}", status, body
+            );
+            return Err(ApiError::ServerError {
+                provider: super::PROVIDER_NAME.to_string(),
+                status_code: status.as_u16(),
+                details: body,
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+        let sse_stream = parse_sse_stream(byte_stream);
+
+        Ok(Box::pin(Self::convert_openai_stream(sse_stream, token)))
+    }
+
+    fn convert_openai_stream(
+        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
+        + Unpin
+        + Send
+        + 'static,
+        token: CancellationToken,
+    ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
+        async_stream::stream! {
+            let mut text_buffer = String::new();
+            let mut thinking_buffer = String::new();
+            let mut tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
+            loop {
+                if token.is_cancelled() {
+                    yield StreamChunk::Error(StreamError::Cancelled);
+                    break;
+                }
+
+                let event_result = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        yield StreamChunk::Error(StreamError::Cancelled);
+                        break;
+                    }
+                    event = sse_stream.next() => event
+                };
+
+                let Some(event_result) = event_result else {
+                    break;
+                };
+
+                let event = match event_result {
+                    Ok(e) => e,
+                    Err(e) => {
+                        yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                        break;
+                    }
+                };
+
+                if event.data == "[DONE]" {
+                    let mut content = Vec::new();
+
+                    if !thinking_buffer.is_empty() {
+                        content.push(AssistantContent::Thought {
+                            thought: ThoughtContent::Simple {
+                                text: std::mem::take(&mut thinking_buffer),
+                            },
+                        });
+                    }
+
+                    if !text_buffer.is_empty() {
+                        content.push(AssistantContent::Text {
+                            text: std::mem::take(&mut text_buffer),
+                        });
+                    }
+
+                    for (_idx, (id, name, args)) in std::mem::take(&mut tool_calls) {
+                        let parameters = serde_json::from_str(&args)
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        content.push(AssistantContent::ToolCall {
+                            tool_call: steer_tools::ToolCall {
+                                id,
+                                name,
+                                parameters,
+                            },
+                        });
+                    }
+
+                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    break;
+                }
+
+                let chunk: OpenAIStreamChunk = match serde_json::from_str(&event.data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        debug!(target: "openai::chat::stream", "Failed to parse chunk: {} data: {}", e, event.data);
+                        continue;
+                    }
+                };
+
+                if let Some(choice) = chunk.choices.first() {
+                    if let Some(content) = &choice.delta.content {
+                        text_buffer.push_str(content);
+                        yield StreamChunk::TextDelta(content.clone());
+                    }
+
+                    if let Some(reasoning) = &choice.delta.reasoning_content {
+                        thinking_buffer.push_str(reasoning);
+                        yield StreamChunk::ThinkingDelta(reasoning.clone());
+                    }
+
+                    if let Some(tcs) = &choice.delta.tool_calls {
+                        for tc in tcs {
+                            let entry = tool_calls.entry(tc.index).or_insert_with(|| {
+                                (String::new(), String::new(), String::new())
+                            });
+
+                            if let Some(id) = &tc.id {
+                                entry.0 = id.clone();
+                            }
+                            if let Some(func) = &tc.function {
+                                if let Some(name) = &func.name {
+                                    if entry.1.is_empty() {
+                                        entry.1 = name.clone();
+                                        yield StreamChunk::ToolUseStart {
+                                            id: entry.0.clone(),
+                                            name: name.clone(),
+                                        };
+                                    }
+                                }
+                                if let Some(args) = &func.arguments {
+                                    entry.2.push_str(args);
+                                    if !args.is_empty() {
+                                        yield StreamChunk::ToolUseInputDelta {
+                                            id: entry.0.clone(),
+                                            delta: args.clone(),
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // OpenAI-specific message format
@@ -514,12 +755,220 @@ struct OpenAIUsage {
     total_tokens: u32,
 }
 
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamChunk {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    object: String,
+    choices: Vec<OpenAIStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamChoice {
+    #[allow(dead_code)]
+    index: u32,
+    delta: OpenAIStreamDelta,
+    #[allow(dead_code)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAIStreamToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamToolCall {
+    index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function: Option<OpenAIStreamFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamFunction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arguments: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::sse::SseEvent;
     use crate::app::conversation::{
         AppCommandType, CommandResponse, Message, MessageData, UserContent,
     };
+    use futures::stream;
+    use std::pin::pin;
+
+    #[tokio::test]
+    async fn test_convert_openai_stream_text_deltas() {
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: "[DONE]".to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_openai_stream(sse_stream, token));
+
+        let first_delta = stream.next().await.unwrap();
+        assert!(matches!(first_delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let second_delta = stream.next().await.unwrap();
+        assert!(matches!(second_delta, StreamChunk::TextDelta(ref t) if t == " world"));
+
+        let complete = stream.next().await.unwrap();
+        assert!(matches!(complete, StreamChunk::MessageComplete(_)));
+    }
+
+    #[tokio::test]
+    async fn test_convert_openai_stream_with_reasoning() {
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":"Let me think..."},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"The answer is 42"},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: "[DONE]".to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_openai_stream(sse_stream, token));
+
+        let thinking_delta = stream.next().await.unwrap();
+        assert!(
+            matches!(thinking_delta, StreamChunk::ThinkingDelta(ref t) if t == "Let me think...")
+        );
+
+        let text_delta = stream.next().await.unwrap();
+        assert!(matches!(text_delta, StreamChunk::TextDelta(ref t) if t == "The answer is 42"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 2);
+            assert!(matches!(
+                &response.content[0],
+                AssistantContent::Thought { .. }
+            ));
+            assert!(
+                matches!(&response.content[1], AssistantContent::Text { text } if text == "The answer is 42")
+            );
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_openai_stream_with_tool_calls() {
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"loc"}}]},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ation\":\"NYC\"}"}}]},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: "[DONE]".to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_openai_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref id, ref name } if id == "call_abc" && name == "get_weather")
+        );
+
+        let arg_delta_1 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_1, StreamChunk::ToolUseInputDelta { ref delta, .. } if delta == "{\"loc")
+        );
+
+        let arg_delta_2 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_2, StreamChunk::ToolUseInputDelta { ref delta, .. } if delta == "ation\":\"NYC\"}")
+        );
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+                assert_eq!(tool_call.name, "get_weather");
+                assert_eq!(tool_call.id, "call_abc");
+            } else {
+                panic!("Expected ToolCall");
+            }
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_openai_stream_cancellation() {
+        let events = vec![Ok(SseEvent {
+            event_type: None,
+            data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#.to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let mut stream = pin!(Client::convert_openai_stream(sse_stream, token));
+
+        let cancelled = stream.next().await.unwrap();
+        assert!(matches!(
+            cancelled,
+            StreamChunk::Error(StreamError::Cancelled)
+        ));
+    }
 
     #[test]
     fn test_convert_message_with_command_execution() {
@@ -606,5 +1055,65 @@ mod tests {
             },
             _ => unreachable!("Expected user message"),
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires OPENAI_API_KEY environment variable"]
+    async fn test_stream_complete_real_api() {
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
+        let client = Client::new(api_key);
+
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Say exactly: Hello".to_string(),
+                }],
+            },
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            id: "test-msg".to_string(),
+            parent_message_id: None,
+        };
+
+        let model_id = (
+            crate::config::provider::openai(),
+            "gpt-4.1-mini-2025-04-14".to_string(),
+        );
+        let token = CancellationToken::new();
+
+        let mut stream = client
+            .stream_complete(&model_id, vec![message], None, None, None, token)
+            .await
+            .expect("stream_complete should succeed");
+
+        let mut got_text_delta = false;
+        let mut got_message_complete = false;
+        let mut accumulated_text = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                StreamChunk::TextDelta(text) => {
+                    got_text_delta = true;
+                    accumulated_text.push_str(&text);
+                }
+                StreamChunk::MessageComplete(response) => {
+                    got_message_complete = true;
+                    assert!(!response.content.is_empty());
+                }
+                StreamChunk::Error(e) => panic!("Unexpected error: {:?}", e),
+                _ => {}
+            }
+        }
+
+        assert!(got_text_delta, "Should receive at least one TextDelta");
+        assert!(
+            got_message_complete,
+            "Should receive MessageComplete at the end"
+        );
+        assert!(
+            accumulated_text.to_lowercase().contains("hello"),
+            "Response should contain 'hello', got: {}",
+            accumulated_text
+        );
     }
 }

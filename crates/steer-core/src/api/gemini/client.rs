@@ -1,12 +1,14 @@
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::{Client as HttpClient, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::api::error::ApiError;
-use crate::api::provider::{CompletionResponse, Provider};
+use crate::api::error::{ApiError, StreamError};
+use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
+use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
@@ -869,6 +871,226 @@ impl Provider for GeminiClient {
             }
         }
     }
+
+    async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<AppMessage>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        _call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        let model_name = &model_id.1;
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?alt=sse&key={}",
+            GEMINI_API_BASE, model_name, self.api_key
+        );
+
+        let gemini_contents = convert_messages(messages);
+
+        let system_instruction = system.map(|instructions| GeminiSystemInstruction {
+            parts: vec![GeminiRequestPart::Text { text: instructions }],
+        });
+
+        let gemini_tools = tools.map(convert_tools);
+
+        let (temperature, top_p, max_output_tokens) = {
+            let opts = _call_options.as_ref();
+            (
+                opts.and_then(|o| o.temperature).or(Some(1.0)),
+                opts.and_then(|o| o.top_p).or(Some(0.95)),
+                opts.and_then(|o| o.max_tokens)
+                    .map(|v| v as i32)
+                    .or(Some(65536)),
+            )
+        };
+        let thinking_config = _call_options
+            .as_ref()
+            .and_then(|o| o.thinking_config)
+            .and_then(|tc| {
+                if !tc.enabled {
+                    None
+                } else {
+                    Some(GeminiThinkingConfig {
+                        include_thoughts: tc.include_thoughts,
+                        thinking_budget: tc.budget_tokens.map(|v| v as i32),
+                    })
+                }
+            });
+
+        let request = GeminiRequest {
+            contents: gemini_contents,
+            system_instruction,
+            tools: gemini_tools,
+            generation_config: Some(GeminiGenerationConfig {
+                temperature,
+                top_p,
+                max_output_tokens,
+                thinking_config,
+                ..Default::default()
+            }),
+        };
+
+        let response = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+            }
+            res = self.client.post(&url).json(&request).send() => {
+                res.map_err(ApiError::Network)?
+            }
+        };
+
+        let status = response.status();
+        if status != StatusCode::OK {
+            let error_text = response.text().await.map_err(ApiError::Network)?;
+            error!(target: "gemini::stream", "API error - Status: {}, Body: {}", status, error_text);
+            return Err(match status.as_u16() {
+                401 | 403 => ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                429 => ApiError::RateLimited {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                400 | 404 => ApiError::InvalidRequest {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                500..=599 => ApiError::ServerError {
+                    provider: self.name().to_string(),
+                    status_code: status.as_u16(),
+                    details: error_text,
+                },
+                _ => ApiError::Unknown {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+        let sse_stream = parse_sse_stream(byte_stream);
+
+        Ok(Box::pin(Self::convert_gemini_stream(sse_stream, token)))
+    }
+}
+
+impl GeminiClient {
+    fn convert_gemini_stream(
+        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
+        + Unpin
+        + Send
+        + 'static,
+        token: CancellationToken,
+    ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
+        async_stream::stream! {
+            let mut text_buffer = String::new();
+            let mut thinking_buffer = String::new();
+            let mut tool_calls: Vec<(String, String, Value)> = Vec::new();
+            loop {
+                if token.is_cancelled() {
+                    yield StreamChunk::Error(StreamError::Cancelled);
+                    break;
+                }
+
+                let event_result = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        yield StreamChunk::Error(StreamError::Cancelled);
+                        break;
+                    }
+                    event = sse_stream.next() => event
+                };
+
+                let Some(event_result) = event_result else {
+                    let mut content = Vec::new();
+
+                    if !thinking_buffer.is_empty() {
+                        content.push(AssistantContent::Thought {
+                            thought: ThoughtContent::Simple {
+                                text: std::mem::take(&mut thinking_buffer),
+                            },
+                        });
+                    }
+
+                    if !text_buffer.is_empty() {
+                        content.push(AssistantContent::Text {
+                            text: std::mem::take(&mut text_buffer),
+                        });
+                    }
+
+                    for (id, name, args) in std::mem::take(&mut tool_calls) {
+                        content.push(AssistantContent::ToolCall {
+                            tool_call: steer_tools::ToolCall {
+                                id,
+                                name,
+                                parameters: args,
+                            },
+                        });
+                    }
+
+                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    break;
+                };
+
+                let event = match event_result {
+                    Ok(e) => e,
+                    Err(e) => {
+                        yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                        break;
+                    }
+                };
+
+                let chunk: GeminiResponse = match serde_json::from_str(&event.data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        debug!(target: "gemini::stream", "Failed to parse chunk: {} data: {}", e, event.data);
+                        continue;
+                    }
+                };
+
+                if let Some(candidates) = chunk.candidates {
+                    for candidate in candidates {
+                        for part in candidate.content.parts {
+                            if part.thought {
+                                if let GeminiResponsePartData::Text { text } = part.data {
+                                    thinking_buffer.push_str(&text);
+                                    yield StreamChunk::ThinkingDelta(text);
+                                }
+                            } else {
+                                match part.data {
+                                    GeminiResponsePartData::Text { text } => {
+                                        text_buffer.push_str(&text);
+                                        yield StreamChunk::TextDelta(text);
+                                    }
+                                    GeminiResponsePartData::FunctionCall { function_call } => {
+                                        let id = uuid::Uuid::new_v4().to_string();
+                                        tool_calls.push((
+                                            id.clone(),
+                                            function_call.name.clone(),
+                                            function_call.args.clone(),
+                                        ));
+                                        yield StreamChunk::ToolUseStart {
+                                            id: id.clone(),
+                                            name: function_call.name,
+                                        };
+                                        yield StreamChunk::ToolUseInputDelta {
+                                            id,
+                                            delta: function_call.args.to_string(),
+                                        };
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1108,5 +1330,233 @@ mod tests {
 
         let result = convert_tools(vec![tool]);
         assert_eq!(result, expected_tools);
+    }
+
+    #[tokio::test]
+    async fn test_convert_gemini_stream_text_deltas() {
+        use crate::api::error::StreamError;
+        use crate::api::provider::StreamChunk;
+        use crate::api::sse::SseEvent;
+        use futures::StreamExt;
+        use futures::stream;
+        use std::pin::pin;
+        use tokio_util::sync::CancellationToken;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}"#
+                    .to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data:
+                    r#"{"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]}}]}"#
+                        .to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(GeminiClient::convert_gemini_stream(sse_stream, token));
+
+        let first_delta = stream.next().await.unwrap();
+        assert!(matches!(first_delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let second_delta = stream.next().await.unwrap();
+        assert!(matches!(second_delta, StreamChunk::TextDelta(ref t) if t == " world"));
+
+        let complete = stream.next().await.unwrap();
+        assert!(matches!(complete, StreamChunk::MessageComplete(_)));
+    }
+
+    #[tokio::test]
+    async fn test_convert_gemini_stream_with_thinking() {
+        use crate::api::provider::StreamChunk;
+        use crate::api::sse::SseEvent;
+        use futures::StreamExt;
+        use futures::stream;
+        use std::pin::pin;
+        use tokio_util::sync::CancellationToken;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"Let me think..."}]}}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"The answer"}]}}]}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(GeminiClient::convert_gemini_stream(sse_stream, token));
+
+        let thinking_delta = stream.next().await.unwrap();
+        assert!(
+            matches!(thinking_delta, StreamChunk::ThinkingDelta(ref t) if t == "Let me think...")
+        );
+
+        let text_delta = stream.next().await.unwrap();
+        assert!(matches!(text_delta, StreamChunk::TextDelta(ref t) if t == "The answer"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 2);
+            assert!(matches!(
+                &response.content[0],
+                AssistantContent::Thought { .. }
+            ));
+            assert!(matches!(
+                &response.content[1],
+                AssistantContent::Text { .. }
+            ));
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_gemini_stream_with_function_call() {
+        use crate::api::provider::StreamChunk;
+        use crate::api::sse::SseEvent;
+        use futures::StreamExt;
+        use futures::stream;
+        use std::pin::pin;
+        use tokio_util::sync::CancellationToken;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"NYC"}}}]}}]}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(GeminiClient::convert_gemini_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref name, .. } if name == "get_weather")
+        );
+
+        let tool_input = stream.next().await.unwrap();
+        assert!(matches!(tool_input, StreamChunk::ToolUseInputDelta { .. }));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+                assert_eq!(tool_call.name, "get_weather");
+            } else {
+                panic!("Expected ToolCall");
+            }
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_gemini_stream_cancellation() {
+        use crate::api::error::StreamError;
+        use crate::api::provider::StreamChunk;
+        use crate::api::sse::SseEvent;
+        use futures::StreamExt;
+        use futures::stream;
+        use std::pin::pin;
+        use tokio_util::sync::CancellationToken;
+
+        let events = vec![Ok(SseEvent {
+            event_type: None,
+            data: r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}"#
+                .to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let mut stream = pin!(GeminiClient::convert_gemini_stream(sse_stream, token));
+
+        let cancelled = stream.next().await.unwrap();
+        assert!(matches!(
+            cancelled,
+            StreamChunk::Error(StreamError::Cancelled)
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires GOOGLE_API_KEY environment variable"]
+    async fn test_stream_complete_real_api() {
+        use crate::api::Provider;
+        use crate::api::provider::StreamChunk;
+        use crate::app::conversation::{Message, MessageData, UserContent};
+        use futures::StreamExt;
+        use tokio_util::sync::CancellationToken;
+
+        dotenvy::dotenv().ok();
+        let api_key = std::env::var("GOOGLE_API_KEY").expect("GOOGLE_API_KEY must be set");
+        let client = GeminiClient::new(api_key);
+
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Say exactly: Hello".to_string(),
+                }],
+            },
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            id: "test-msg".to_string(),
+            parent_message_id: None,
+        };
+
+        let model_id = (
+            crate::config::provider::google(),
+            "gemini-2.5-flash-preview-04-17".to_string(),
+        );
+        let token = CancellationToken::new();
+
+        let mut stream = client
+            .stream_complete(&model_id, vec![message], None, None, None, token)
+            .await
+            .expect("stream_complete should succeed");
+
+        let mut got_text_delta = false;
+        let mut got_message_complete = false;
+        let mut accumulated_text = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                StreamChunk::TextDelta(text) => {
+                    got_text_delta = true;
+                    accumulated_text.push_str(&text);
+                }
+                StreamChunk::MessageComplete(response) => {
+                    got_message_complete = true;
+                    assert!(!response.content.is_empty());
+                }
+                StreamChunk::Error(e) => panic!("Unexpected error: {:?}", e),
+                _ => {}
+            }
+        }
+
+        assert!(got_text_delta, "Should receive at least one TextDelta");
+        assert!(
+            got_message_complete,
+            "Should receive MessageComplete at the end"
+        );
+        assert!(
+            accumulated_text.to_lowercase().contains("hello"),
+            "Response should contain 'hello', got: {}",
+            accumulated_text
+        );
     }
 }

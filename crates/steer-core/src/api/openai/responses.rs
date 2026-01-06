@@ -1,15 +1,17 @@
+use futures::StreamExt;
 use reqwest::{self, header};
 use serde_json;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::error::ApiError;
+use crate::api::error::{ApiError, StreamError};
 use crate::api::openai::responses_types::{
     InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig, ReasoningSummary,
     ReasoningSummaryPart, ResponseOutputItem, ResponsesApiResponse, ResponsesFunctionTool,
     ResponsesRequest, ResponsesToolChoice,
 };
-use crate::api::provider::CompletionResponse;
+use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
+use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
@@ -490,6 +492,202 @@ impl Client {
 
         Ok(self.convert_response(parsed))
     }
+
+    pub(super) async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<AppMessage>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        let mut request = self.build_request(model_id, messages, system, tools, call_options);
+        request.stream = Some(true);
+
+        let response = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(ApiError::Cancelled{ provider: "openai".to_string()});
+            }
+            res = self.http_client.post(&self.base_url).json(&request).send() => {
+                res.map_err(ApiError::Network)?
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!(
+                target: "openai::responses::stream",
+                "Request failed with status {}: {}", status, body
+            );
+            return Err(ApiError::ServerError {
+                provider: "openai".to_string(),
+                status_code: status.as_u16(),
+                details: body,
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+        let sse_stream = parse_sse_stream(byte_stream);
+
+        Ok(Box::pin(Self::convert_responses_stream(sse_stream, token)))
+    }
+
+    fn convert_responses_stream(
+        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
+        + Unpin
+        + Send
+        + 'static,
+        token: CancellationToken,
+    ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
+        async_stream::stream! {
+            let mut text_buffer = String::new();
+            let mut thinking_buffer = String::new();
+            let mut tool_calls: std::collections::HashMap<String, (String, String)> =
+                std::collections::HashMap::new();
+
+            loop {
+                if token.is_cancelled() {
+                    yield StreamChunk::Error(StreamError::Cancelled);
+                    break;
+                }
+
+                let event_result = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        yield StreamChunk::Error(StreamError::Cancelled);
+                        break;
+                    }
+                    event = sse_stream.next() => event
+                };
+
+                let Some(event_result) = event_result else {
+                    break;
+                };
+
+                let event = match event_result {
+                    Ok(e) => e,
+                    Err(e) => {
+                        yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                        break;
+                    }
+                };
+
+                match event.event_type.as_deref() {
+                    Some("response.output_text.delta") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                text_buffer.push_str(delta);
+                                yield StreamChunk::TextDelta(delta.to_string());
+                            }
+                        }
+                    }
+                    Some("response.reasoning.delta") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                thinking_buffer.push_str(delta);
+                                yield StreamChunk::ThinkingDelta(delta.to_string());
+                            }
+                        }
+                    }
+                    Some("response.function_call_arguments.delta") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            let call_id = data.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
+                            if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                let entry = tool_calls.entry(call_id.to_string())
+                                    .or_insert_with(|| (String::new(), String::new()));
+                                entry.1.push_str(delta);
+                                yield StreamChunk::ToolUseInputDelta {
+                                    id: call_id.to_string(),
+                                    delta: delta.to_string(),
+                                };
+                            }
+                        }
+                    }
+                    Some("response.function_call.created") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            let call_id = data.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
+                            let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            tool_calls.insert(call_id.to_string(), (name.to_string(), String::new()));
+                            yield StreamChunk::ToolUseStart {
+                                id: call_id.to_string(),
+                                name: name.to_string(),
+                            };
+                        }
+                    }
+                    Some("response.output_item.added") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            if let Some(item) = data.get("item") {
+                                let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                if item_type == "function_call" {
+                                    let call_id = item.get("id").and_then(|c| c.as_str()).unwrap_or("");
+                                    let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                    tool_calls.insert(call_id.to_string(), (name.to_string(), String::new()));
+                                    yield StreamChunk::ToolUseStart {
+                                        id: call_id.to_string(),
+                                        name: name.to_string(),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                    Some("response.completed") => {
+                        let mut content = Vec::new();
+
+                        if !thinking_buffer.is_empty() {
+                            content.push(AssistantContent::Thought {
+                                thought: ThoughtContent::Simple {
+                                    text: std::mem::take(&mut thinking_buffer),
+                                },
+                            });
+                        }
+
+                        if !text_buffer.is_empty() {
+                            content.push(AssistantContent::Text {
+                                text: std::mem::take(&mut text_buffer),
+                            });
+                        }
+
+                        for (id, (name, args)) in std::mem::take(&mut tool_calls) {
+                            let parameters = serde_json::from_str(&args)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                            content.push(AssistantContent::ToolCall {
+                                tool_call: steer_tools::ToolCall {
+                                    id,
+                                    name,
+                                    parameters,
+                                },
+                            });
+                        }
+
+                        yield StreamChunk::MessageComplete(CompletionResponse { content });
+                        break;
+                    }
+                    Some("error") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            let message = data.get("message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("Unknown error");
+                            yield StreamChunk::Error(StreamError::Provider {
+                                provider: "openai".into(),
+                                error_type: "stream_error".into(),
+                                message: message.to_string(),
+                            });
+                            break;
+                        }
+                    }
+                    _ => {
+                        debug!(
+                            target: "openai::responses::stream",
+                            "Unhandled event type: {:?}", event.event_type
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -794,5 +992,179 @@ mod tests {
         };
 
         assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_text_deltas() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.output_text.delta".to_string()),
+                data: r#"{"delta":"Hello"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.output_text.delta".to_string()),
+                data: r#"{"delta":" world"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let first_delta = stream.next().await.unwrap();
+        assert!(matches!(first_delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let second_delta = stream.next().await.unwrap();
+        assert!(matches!(second_delta, StreamChunk::TextDelta(ref t) if t == " world"));
+
+        let complete = stream.next().await.unwrap();
+        assert!(matches!(complete, StreamChunk::MessageComplete(_)));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_with_reasoning() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.reasoning.delta".to_string()),
+                data: r#"{"delta":"Thinking..."}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.output_text.delta".to_string()),
+                data: r#"{"delta":"Result"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let thinking_delta = stream.next().await.unwrap();
+        assert!(matches!(thinking_delta, StreamChunk::ThinkingDelta(ref t) if t == "Thinking..."));
+
+        let text_delta = stream.next().await.unwrap();
+        assert!(matches!(text_delta, StreamChunk::TextDelta(ref t) if t == "Result"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 2);
+            assert!(matches!(
+                &response.content[0],
+                AssistantContent::Thought { .. }
+            ));
+            assert!(
+                matches!(&response.content[1], AssistantContent::Text { text } if text == "Result")
+            );
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_with_function_call() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.function_call.created".to_string()),
+                data: r#"{"call_id":"call_123","name":"get_weather"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"{\"city\":"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"\"NYC\"}"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref id, ref name } if id == "call_123" && name == "get_weather")
+        );
+
+        let arg_delta_1 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_1, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "{\"city\":")
+        );
+
+        let arg_delta_2 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_2, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "\"NYC\"}")
+        );
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+                assert_eq!(tool_call.id, "call_123");
+                assert_eq!(tool_call.name, "get_weather");
+            } else {
+                panic!("Expected ToolCall");
+            }
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_cancellation() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![Ok(SseEvent {
+            event_type: Some("response.output_text.delta".to_string()),
+            data: r#"{"delta":"Hello"}"#.to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let cancelled = stream.next().await.unwrap();
+        assert!(matches!(
+            cancelled,
+            StreamChunk::Error(StreamError::Cancelled)
+        ));
     }
 }
