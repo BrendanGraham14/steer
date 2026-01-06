@@ -1,21 +1,15 @@
 use crate::auth::ProviderRegistry;
 use crate::catalog::CatalogConfig;
 use crate::config::LlmConfigProvider;
-use crate::config::model::ModelId;
 use crate::error::Result;
 use crate::model_registry::ModelRegistry;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
-use steer_tools::ToolResult;
 
-pub mod adapters;
 pub mod cancellation;
 pub mod command;
 pub mod context;
 pub mod conversation;
 pub mod domain;
-pub mod io;
 
 pub mod validation;
 
@@ -24,111 +18,6 @@ pub use command::AppCommand;
 pub use context::OpContext;
 pub use conversation::{Conversation, Message, MessageData};
 pub use steer_workspace::EnvironmentInfo;
-
-#[derive(Debug, Clone)]
-pub enum AppEvent {
-    MessageAdded {
-        message: Message,
-        model: ModelId,
-    },
-    MessageUpdated {
-        id: String,
-        content: String,
-    },
-    MessagePart {
-        id: String,
-        delta: String,
-    },
-
-    ToolCallStarted {
-        name: String,
-        id: String,
-        parameters: serde_json::Value,
-        model: ModelId,
-    },
-    ToolCallCompleted {
-        name: String,
-        result: ToolResult,
-        id: String,
-        model: ModelId,
-    },
-    ToolCallFailed {
-        name: String,
-        error: String,
-        id: String,
-        model: ModelId,
-    },
-
-    ProcessingStarted,
-    ProcessingCompleted,
-
-    CommandResponse {
-        command: conversation::AppCommandType,
-        response: conversation::CommandResponse,
-        id: String,
-    },
-
-    RequestToolApproval {
-        name: String,
-        parameters: serde_json::Value,
-        id: String,
-    },
-    OperationCancelled {
-        op_id: Option<uuid::Uuid>,
-        info: CancellationInfo,
-    },
-
-    ModelChanged {
-        model: ModelId,
-    },
-    Error {
-        message: String,
-    },
-    WorkspaceChanged,
-    WorkspaceFiles {
-        files: Vec<String>,
-    },
-    Started {
-        id: uuid::Uuid,
-        op: Operation,
-    },
-    Finished {
-        id: uuid::Uuid,
-        outcome: OperationOutcome,
-    },
-    ActiveMessageIdChanged {
-        message_id: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Operation {
-    Bash { cmd: String },
-    Compact,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum OperationOutcome {
-    Bash {
-        elapsed: Duration,
-        result: std::result::Result<(), BashError>,
-    },
-    Compact {
-        elapsed: Duration,
-        result: std::result::Result<(), CompactError>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BashError {
-    pub exit_code: i32,
-    pub stderr: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactError {
-    pub message: String,
-}
 
 #[derive(Clone)]
 pub struct AppConfig {

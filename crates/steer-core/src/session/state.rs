@@ -548,55 +548,6 @@ impl SessionState {
 
         tool_call_ids
     }
-
-    /// Apply an event to the session state
-    pub fn apply_event(
-        &mut self,
-        event: &crate::events::StreamEvent,
-    ) -> std::result::Result<(), String> {
-        use crate::events::StreamEvent;
-
-        match event {
-            StreamEvent::MessageComplete { message, .. } => {
-                self.add_message(message.clone());
-            }
-            StreamEvent::ToolCallStarted { tool_call, .. } => {
-                self.add_tool_call(tool_call.clone());
-            }
-            StreamEvent::ToolCallCompleted {
-                tool_call_id,
-                result,
-                ..
-            } => {
-                self.update_tool_call_status(tool_call_id, ToolCallStatus::Completed)?;
-                if let Some(tool_call_state) = self.tool_calls.get_mut(tool_call_id) {
-                    tool_call_state.result = Some(result.clone());
-                }
-            }
-            StreamEvent::ToolCallFailed {
-                tool_call_id,
-                error,
-                ..
-            } => {
-                self.update_tool_call_status(
-                    tool_call_id,
-                    ToolCallStatus::Failed {
-                        error: error.clone(),
-                    },
-                )?;
-            }
-            StreamEvent::ToolApprovalRequired { tool_call, .. } => {
-                // Tool call should already be added with PendingApproval status
-                if !self.tool_calls.contains_key(&tool_call.id) {
-                    self.add_tool_call(tool_call.clone());
-                }
-            }
-            // Other events don't modify state directly
-            _ => {}
-        }
-
-        Ok(())
-    }
 }
 
 /// Tool call state tracking

@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
 use crate::app::conversation::Message;
-use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
+use crate::app::domain::action::ApprovalDecision;
 use crate::app::domain::event::{CancellationInfo, OperationKind, SessionEvent};
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
@@ -232,21 +232,20 @@ impl AgentInterpreter {
                     })
                     .await?;
 
-                    let decision = ApprovalDecision::Approved;
-                    let remember: Option<ApprovalMemory> = None;
+                    if !self.config.auto_approve_tools {
+                        return Err(AgentInterpreterError::Agent(
+                            "Interactive tool approval not supported in AgentInterpreter".into(),
+                        ));
+                    }
 
                     self.emit_event(SessionEvent::ApprovalDecided {
                         request_id,
-                        decision,
-                        remember,
+                        decision: ApprovalDecision::Approved,
+                        remember: None,
                     })
                     .await?;
 
-                    let input = if decision == ApprovalDecision::Approved {
-                        AgentInput::ToolApproved { tool_call_id }
-                    } else {
-                        AgentInput::ToolDenied { tool_call_id }
-                    };
+                    let input = AgentInput::ToolApproved { tool_call_id };
 
                     let (new_state, outputs) = stepper.step(state, input);
                     state = new_state;

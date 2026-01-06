@@ -68,18 +68,14 @@ prop_compose! {
 
 prop_compose! {
     fn arb_backend_config()(
-        variant in 0..2usize,
         server_name in "[a-z]+",
         transport in arb_mcp_transport(),
         tool_filter in arb_tool_filter(),
     ) -> BackendConfig {
-        match variant {
-            0 => BackendConfig::Local { tool_filter },
-            _ => BackendConfig::Mcp {
-                server_name,
-                transport,
-                tool_filter,
-            },
+        BackendConfig::Mcp {
+            server_name,
+            transport,
+            tool_filter,
         }
     }
 }
@@ -137,9 +133,6 @@ proptest! {
         prop_assert_eq!(config.backends.len(), roundtrip.backends.len());
         for (b1, b2) in config.backends.iter().zip(roundtrip.backends.iter()) {
             match (b1, b2) {
-                (BackendConfig::Local { tool_filter: tf1 }, BackendConfig::Local { tool_filter: tf2 }) => {
-                    prop_assert_eq!(tf1, tf2);
-                }
                 (BackendConfig::Mcp { server_name: sn1, transport: t1, tool_filter: tf1 },
                  BackendConfig::Mcp { server_name: sn2, transport: t2, tool_filter: tf2 }) => {
                     prop_assert_eq!(sn1, sn2);
@@ -158,7 +151,6 @@ proptest! {
                     }
                     prop_assert_eq!(tf1, tf2);
                 }
-                _ => prop_assert!(false, "Backend variant mismatch"),
             }
         }
 

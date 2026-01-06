@@ -7,7 +7,6 @@ pub mod auth_utils;
 pub mod catalog;
 pub mod config;
 pub mod error;
-pub mod events;
 pub mod model_registry;
 pub mod preferences;
 pub mod prompts;

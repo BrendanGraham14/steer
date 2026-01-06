@@ -3,7 +3,7 @@ pub mod commands;
 pub mod error;
 pub mod session_config;
 
-pub use steer_core::{api, app, config, events, runners, session, tools, utils, workspace};
+pub use steer_core::{api, app, config, runners, session, tools, utils, workspace};
 
 use eyre::Result;
 use std::sync::Arc;
