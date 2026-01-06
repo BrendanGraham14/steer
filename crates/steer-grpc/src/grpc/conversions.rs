@@ -5,6 +5,7 @@ use steer_core::app::conversation::{
     Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
 use steer_core::app::domain::SessionEvent;
+use steer_core::app::domain::delta::{StreamDelta, ToolCallDelta};
 use steer_core::session::state::{
     BackendConfig, BashToolConfig, RemoteAuth, SessionConfig, SessionToolConfig,
     ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
@@ -1394,7 +1395,8 @@ pub(crate) fn proto_to_client_event(
         proto::stream_session_response::Event::CommandResponse(_)
         | proto::stream_session_response::Event::Started(_)
         | proto::stream_session_response::Event::Finished(_)
-        | proto::stream_session_response::Event::ActiveMessageIdChanged(_) => {
+        | proto::stream_session_response::Event::ActiveMessageIdChanged(_)
+        | proto::stream_session_response::Event::StreamDelta(_) => {
             return Ok(None);
         }
     };
@@ -1476,4 +1478,107 @@ pub(crate) fn client_command_to_proto(
         session_id: session_id.to_string(),
         message: Some(msg),
     })
+}
+
+pub(crate) fn stream_delta_to_proto(delta: StreamDelta) -> proto::StreamDeltaEvent {
+    match delta {
+        StreamDelta::TextChunk {
+            op_id,
+            message_id,
+            delta,
+            is_first,
+        } => proto::StreamDeltaEvent {
+            op_id: op_id.to_string(),
+            message_id: message_id.to_string(),
+            is_first,
+            delta_type: Some(proto::stream_delta_event::DeltaType::Text(
+                proto::TextDelta { content: delta },
+            )),
+        },
+        StreamDelta::ThinkingChunk { op_id, delta } => proto::StreamDeltaEvent {
+            op_id: op_id.to_string(),
+            message_id: String::new(),
+            is_first: false,
+            delta_type: Some(proto::stream_delta_event::DeltaType::Thinking(
+                proto::ThinkingDelta { content: delta },
+            )),
+        },
+        StreamDelta::ToolCallChunk {
+            op_id,
+            tool_call_id,
+            delta,
+        } => {
+            let tool_delta = match delta {
+                ToolCallDelta::Name(name) => proto::ToolCallDelta {
+                    tool_call_id: tool_call_id.to_string(),
+                    delta: Some(proto::tool_call_delta::Delta::Name(name)),
+                },
+                ToolCallDelta::ArgumentChunk(chunk) => proto::ToolCallDelta {
+                    tool_call_id: tool_call_id.to_string(),
+                    delta: Some(proto::tool_call_delta::Delta::ArgumentChunk(chunk)),
+                },
+            };
+            proto::StreamDeltaEvent {
+                op_id: op_id.to_string(),
+                message_id: String::new(),
+                is_first: false,
+                delta_type: Some(proto::stream_delta_event::DeltaType::ToolCall(tool_delta)),
+            }
+        }
+    }
+}
+
+pub(crate) fn proto_to_stream_delta(
+    proto: proto::StreamDeltaEvent,
+) -> Result<StreamDelta, ConversionError> {
+    use steer_core::app::domain::types::{MessageId, OpId, ToolCallId};
+
+    let op_id = uuid::Uuid::parse_str(&proto.op_id)
+        .map(OpId::from)
+        .map_err(|_| ConversionError::InvalidData {
+            message: format!("Invalid op_id: {}", proto.op_id),
+        })?;
+
+    let delta_type = proto
+        .delta_type
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "delta_type".to_string(),
+        })?;
+
+    match delta_type {
+        proto::stream_delta_event::DeltaType::Text(text) => {
+            let message_id = MessageId::from_string(&proto.message_id);
+            Ok(StreamDelta::TextChunk {
+                op_id,
+                message_id,
+                delta: text.content,
+                is_first: proto.is_first,
+            })
+        }
+        proto::stream_delta_event::DeltaType::Thinking(thinking) => {
+            Ok(StreamDelta::ThinkingChunk {
+                op_id,
+                delta: thinking.content,
+            })
+        }
+        proto::stream_delta_event::DeltaType::ToolCall(tool_call) => {
+            let tool_call_id = ToolCallId::from_string(&tool_call.tool_call_id);
+            let delta = match tool_call.delta {
+                Some(proto::tool_call_delta::Delta::Name(name)) => ToolCallDelta::Name(name),
+                Some(proto::tool_call_delta::Delta::ArgumentChunk(chunk)) => {
+                    ToolCallDelta::ArgumentChunk(chunk)
+                }
+                None => {
+                    return Err(ConversionError::MissingField {
+                        field: "tool_call.delta".to_string(),
+                    });
+                }
+            };
+            Ok(StreamDelta::ToolCallChunk {
+                op_id,
+                tool_call_id,
+                delta,
+            })
+        }
+    }
 }

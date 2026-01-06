@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::api::Client as ApiClient;
 use crate::app::domain::action::Action;
+use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::reduce::apply_event_to_state;
 use crate::app::domain::session::EventStore;
@@ -87,6 +88,10 @@ pub(crate) enum SupervisorCmd {
         session_id: SessionId,
         reply: oneshot::Sender<Result<SessionEventSubscription, RuntimeError>>,
     },
+    SubscribeDeltas {
+        session_id: SessionId,
+        reply: oneshot::Sender<Result<broadcast::Receiver<StreamDelta>, RuntimeError>>,
+    },
     GetSessionState {
         session_id: SessionId,
         reply: oneshot::Sender<Result<AppState, RuntimeError>>,
@@ -159,6 +164,10 @@ impl RuntimeSupervisor {
                         }
                         SupervisorCmd::SubscribeEvents { session_id, reply } => {
                             let result = self.subscribe_events(session_id).await;
+                            let _ = reply.send(result);
+                        }
+                        SupervisorCmd::SubscribeDeltas { session_id, reply } => {
+                            let result = self.subscribe_deltas(session_id).await;
                             let _ = reply.send(result);
                         }
                         SupervisorCmd::GetSessionState { session_id, reply } => {
@@ -326,6 +335,26 @@ impl RuntimeSupervisor {
         Ok(subscription)
     }
 
+    async fn subscribe_deltas(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<broadcast::Receiver<StreamDelta>, RuntimeError> {
+        if !self.sessions.contains_key(&session_id) {
+            self.resume_session(session_id).await?;
+        }
+
+        let handle =
+            self.sessions
+                .get(&session_id)
+                .ok_or_else(|| RuntimeError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
+
+        let delta_rx = handle.subscribe_deltas().await?;
+
+        Ok(delta_rx)
+    }
+
     async fn get_session_state(&mut self, session_id: SessionId) -> Result<AppState, RuntimeError> {
         if !self.sessions.contains_key(&session_id) {
             self.resume_session(session_id).await?;
@@ -429,6 +458,21 @@ impl RuntimeHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(SupervisorCmd::SubscribeEvents {
+                session_id,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| RuntimeError::ChannelClosed)?;
+        reply_rx.await.map_err(|_| RuntimeError::ChannelClosed)?
+    }
+
+    pub async fn subscribe_deltas(
+        &self,
+        session_id: SessionId,
+    ) -> Result<broadcast::Receiver<StreamDelta>, RuntimeError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(SupervisorCmd::SubscribeDeltas {
                 session_id,
                 reply: reply_tx,
             })

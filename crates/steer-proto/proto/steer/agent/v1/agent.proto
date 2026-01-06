@@ -79,6 +79,7 @@ message StreamSessionResponse {
     StartedEvent started = 18;
     FinishedEvent finished = 19;
     ActiveMessageIdChangedEvent active_message_id_changed = 20;
+    StreamDeltaEvent stream_delta = 21;
   }
 }
 
@@ -250,6 +251,34 @@ message OperationCancelledEvent {
 
 message ActiveMessageIdChangedEvent {
   optional string message_id = 1;
+}
+
+message StreamDeltaEvent {
+  string op_id = 1;
+  string message_id = 2;
+  bool is_first = 3;
+  
+  oneof delta_type {
+    TextDelta text = 4;
+    ThinkingDelta thinking = 5;
+    ToolCallDelta tool_call = 6;
+  }
+}
+
+message TextDelta {
+  string content = 1;
+}
+
+message ThinkingDelta {
+  string content = 1;
+}
+
+message ToolCallDelta {
+  string tool_call_id = 1;
+  oneof delta {
+    string name = 2;
+    string argument_chunk = 3;
+  }
 }
 
 // Request/Response message definitions

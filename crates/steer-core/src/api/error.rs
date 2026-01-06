@@ -1,5 +1,21 @@
 use thiserror::Error;
 
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum StreamError {
+    #[error("Request cancelled")]
+    Cancelled,
+
+    #[error("SSE parse error: {0}")]
+    SseParse(String),
+
+    #[error("{provider} error ({error_type}): {message}")]
+    Provider {
+        provider: String,
+        error_type: String,
+        message: String,
+    },
+}
+
 #[derive(Error, Debug)]
 pub enum ApiError {
     #[error("Network error: {0}")]
@@ -44,6 +60,9 @@ pub enum ApiError {
 
     #[error("Configuration error: {0}")]
     Configuration(String),
+
+    #[error("Stream error from {provider}: {details}")]
+    StreamError { provider: String, details: String },
 }
 
 impl From<crate::error::Error> for ApiError {

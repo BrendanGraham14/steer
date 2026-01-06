@@ -1,16 +1,30 @@
 use async_trait::async_trait;
+use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::api::error::ApiError;
+use crate::api::error::{ApiError, StreamError};
 use crate::app::conversation::{AssistantContent, Message};
 use crate::auth::{AuthStorage, DynAuthenticationFlow};
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::{ToolCall, ToolSchema};
 
-/// Response from the provider's completion API
+#[derive(Debug, Clone)]
+pub enum StreamChunk {
+    TextDelta(String),
+    ThinkingDelta(String),
+    ToolUseStart { id: String, name: String },
+    ToolUseInputDelta { id: String, delta: String },
+    ContentBlockStop { index: usize },
+    MessageComplete(CompletionResponse),
+    Error(StreamError),
+}
+
+pub type CompletionStream = Pin<Box<dyn Stream<Item = StreamChunk> + Send>>;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompletionResponse {
     pub content: Vec<AssistantContent>,
@@ -53,13 +67,10 @@ impl CompletionResponse {
     }
 }
 
-/// Provider trait that all LLM providers must implement
 #[async_trait]
 pub trait Provider: Send + Sync + 'static {
-    /// Get the name of the provider
     fn name(&self) -> &'static str;
 
-    /// Complete a prompt with the LLM
     async fn complete(
         &self,
         model_id: &ModelId,
@@ -70,8 +81,23 @@ pub trait Provider: Send + Sync + 'static {
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError>;
 
-    /// Create an authentication flow for this provider
-    /// Returns None if the provider doesn't support authentication
+    async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<Message>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        let response = self
+            .complete(model_id, messages, system, tools, call_options, token)
+            .await?;
+        Ok(Box::pin(futures_util::stream::once(async move {
+            StreamChunk::MessageComplete(response)
+        })))
+    }
+
     fn create_auth_flow(
         &self,
         _storage: Arc<dyn AuthStorage>,

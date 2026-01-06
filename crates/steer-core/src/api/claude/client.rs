@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -6,6 +7,9 @@ use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+use crate::api::error::StreamError;
+use crate::api::provider::{CompletionStream, StreamChunk};
+use crate::api::sse::parse_sse_stream;
 use crate::api::{CompletionResponse, Provider, error::ApiError};
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
@@ -15,7 +19,7 @@ use crate::auth::{
     anthropic::{AnthropicOAuth, AnthropicOAuthFlow, refresh_if_needed},
 };
 use crate::config::model::{ModelId, ModelParameters};
-use steer_tools::ToolSchema;
+use steer_tools::{ToolCall, ToolSchema};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -213,6 +217,81 @@ struct ClaudeUsage {
     cache_creation_input_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_read_input_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum ClaudeStreamEvent {
+    #[serde(rename = "message_start")]
+    MessageStart { message: ClaudeMessageStart },
+    #[serde(rename = "content_block_start")]
+    ContentBlockStart {
+        index: usize,
+        content_block: ClaudeContentBlockStart,
+    },
+    #[serde(rename = "content_block_delta")]
+    ContentBlockDelta { index: usize, delta: ClaudeDelta },
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop { index: usize },
+    #[serde(rename = "message_delta")]
+    MessageDelta {
+        delta: ClaudeMessageDeltaData,
+        #[serde(default)]
+        usage: Option<ClaudeUsage>,
+    },
+    #[serde(rename = "message_stop")]
+    MessageStop,
+    #[serde(rename = "ping")]
+    Ping,
+    #[serde(rename = "error")]
+    Error { error: ClaudeStreamError },
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeMessageStart {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    model: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeContentBlockStart {
+    #[serde(rename = "type")]
+    block_type: String,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum ClaudeDelta {
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta { thinking: String },
+    #[serde(rename = "input_json_delta")]
+    InputJsonDelta { partial_json: String },
+    #[serde(rename = "signature_delta")]
+    SignatureDelta { signature: String },
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeMessageDeltaData {
+    #[serde(default)]
+    stop_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeStreamError {
+    #[serde(default)]
+    message: String,
+    #[serde(rename = "type", default)]
+    error_type: String,
 }
 
 impl AnthropicClient {
@@ -732,6 +811,331 @@ impl Provider for AnthropicClient {
         };
 
         Ok(completion)
+    }
+
+    async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<AppMessage>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<ModelParameters>,
+        token: CancellationToken,
+    ) -> Result<CompletionStream, ApiError> {
+        let mut claude_messages = convert_messages(messages)?;
+
+        if claude_messages.is_empty() {
+            return Err(ApiError::InvalidRequest {
+                provider: self.name().to_string(),
+                details: "No messages provided".to_string(),
+            });
+        }
+
+        let last_message = claude_messages.last_mut().unwrap();
+        let cache_setting = Some(CacheControl {
+            cache_type: "ephemeral".to_string(),
+        });
+
+        let system_content = match (system, &self.auth) {
+            (Some(sys), AuthMethod::ApiKey(_)) => Some(System::Content(vec![SystemContentBlock {
+                content_type: "text".to_string(),
+                text: sys,
+                cache_control: cache_setting.clone(),
+            }])),
+            (Some(sys), AuthMethod::OAuth(_)) => Some(System::Content(vec![
+                SystemContentBlock {
+                    content_type: "text".to_string(),
+                    text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
+                    cache_control: cache_setting.clone(),
+                },
+                SystemContentBlock {
+                    content_type: "text".to_string(),
+                    text: sys,
+                    cache_control: cache_setting.clone(),
+                },
+            ])),
+            (None, AuthMethod::ApiKey(_)) => None,
+            (None, AuthMethod::OAuth(_)) => Some(System::Content(vec![SystemContentBlock {
+                content_type: "text".to_string(),
+                text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
+                cache_control: cache_setting.clone(),
+            }])),
+        };
+
+        match &mut last_message.content {
+            ClaudeMessageContent::StructuredContent { content } => {
+                for block in content.0.iter_mut() {
+                    if let ClaudeContentBlock::ToolResult { cache_control, .. } = block {
+                        *cache_control = cache_setting.clone();
+                    }
+                }
+            }
+            ClaudeMessageContent::Text { content } => {
+                let text_content = content.clone();
+                last_message.content = ClaudeMessageContent::StructuredContent {
+                    content: ClaudeStructuredContent(vec![ClaudeContentBlock::Text {
+                        text: text_content,
+                        cache_control: cache_setting,
+                        extra: Default::default(),
+                    }]),
+                };
+            }
+        }
+
+        let supports_thinking = call_options
+            .as_ref()
+            .and_then(|opts| opts.thinking_config.as_ref())
+            .map(|tc| tc.enabled)
+            .unwrap_or(false);
+
+        let request = if supports_thinking {
+            let budget = call_options
+                .as_ref()
+                .and_then(|o| o.thinking_config)
+                .and_then(|tc| tc.budget_tokens)
+                .unwrap_or(4000);
+            let thinking = Some(Thinking {
+                thinking_type: ThinkingType::Enabled,
+                budget_tokens: budget,
+            });
+            CompletionRequest {
+                model: model_id.1.clone(),
+                messages: claude_messages,
+                max_tokens: call_options
+                    .as_ref()
+                    .and_then(|o| o.max_tokens)
+                    .map(|v| v as usize)
+                    .unwrap_or(32_000),
+                system: system_content.clone(),
+                tools,
+                temperature: call_options
+                    .as_ref()
+                    .and_then(|o| o.temperature)
+                    .or(Some(1.0)),
+                top_p: call_options.as_ref().and_then(|o| o.top_p),
+                top_k: None,
+                stream: Some(true),
+                thinking,
+            }
+        } else {
+            CompletionRequest {
+                model: model_id.1.clone(),
+                messages: claude_messages,
+                max_tokens: call_options
+                    .as_ref()
+                    .and_then(|o| o.max_tokens)
+                    .map(|v| v as usize)
+                    .unwrap_or(8000),
+                system: system_content,
+                tools,
+                temperature: call_options
+                    .as_ref()
+                    .and_then(|o| o.temperature)
+                    .or(Some(0.7)),
+                top_p: call_options.as_ref().and_then(|o| o.top_p),
+                top_k: None,
+                stream: Some(true),
+                thinking: None,
+            }
+        };
+
+        let auth_headers = self.get_auth_headers().await?;
+        let mut request_builder = self.http_client.post(API_URL).json(&request);
+
+        for (name, value) in auth_headers {
+            request_builder = request_builder.header(&name, &value);
+        }
+
+        if supports_thinking && matches!(&self.auth, AuthMethod::ApiKey(_)) {
+            request_builder =
+                request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
+        }
+
+        let response = tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(ApiError::Cancelled { provider: self.name().to_string() });
+            }
+            res = request_builder.send() => {
+                res?
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await?;
+            return Err(match status.as_u16() {
+                401 | 403 => ApiError::AuthenticationFailed {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                429 => ApiError::RateLimited {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                400..=499 => ApiError::InvalidRequest {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+                500..=599 => ApiError::ServerError {
+                    provider: self.name().to_string(),
+                    status_code: status.as_u16(),
+                    details: error_text,
+                },
+                _ => ApiError::Unknown {
+                    provider: self.name().to_string(),
+                    details: error_text,
+                },
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+        let sse_stream = parse_sse_stream(byte_stream);
+
+        let stream = convert_claude_stream(sse_stream, token);
+
+        Ok(Box::pin(stream))
+    }
+}
+
+fn convert_claude_stream(
+    sse_stream: crate::api::sse::SseStream,
+    token: CancellationToken,
+) -> impl futures_core::Stream<Item = StreamChunk> + Send {
+    async_stream::stream! {
+        let mut accumulated_content: Vec<AssistantContent> = vec![];
+        let mut current_tool_id: Option<String> = None;
+        let mut current_tool_name: Option<String> = None;
+        let mut current_tool_input = String::new();
+        let mut accumulated_text = String::new();
+        let mut current_thinking = String::new();
+        let mut current_thinking_signature: Option<String> = None;
+
+        tokio::pin!(sse_stream);
+
+        while let Some(event_result) = sse_stream.next().await {
+            if token.is_cancelled() {
+                yield StreamChunk::Error(StreamError::Cancelled);
+                break;
+            }
+
+            let event = match event_result {
+                Ok(e) => e,
+                Err(e) => {
+                    yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                    break;
+                }
+            };
+
+            let parsed: Result<ClaudeStreamEvent, _> = serde_json::from_str(&event.data);
+            let stream_event = match parsed {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            match stream_event {
+                ClaudeStreamEvent::ContentBlockDelta {
+                    delta: ClaudeDelta::TextDelta { text },
+                    ..
+                } => {
+                    accumulated_text.push_str(&text);
+                    yield StreamChunk::TextDelta(text);
+                }
+                ClaudeStreamEvent::ContentBlockDelta {
+                    delta: ClaudeDelta::ThinkingDelta { thinking },
+                    ..
+                } => {
+                    current_thinking.push_str(&thinking);
+                    yield StreamChunk::ThinkingDelta(thinking);
+                }
+                ClaudeStreamEvent::ContentBlockDelta {
+                    delta: ClaudeDelta::SignatureDelta { signature },
+                    ..
+                } => {
+                    current_thinking_signature = Some(signature);
+                }
+                ClaudeStreamEvent::ContentBlockStart { content_block, .. } => {
+                    if content_block.block_type == "tool_use" {
+                        if let (Some(id), Some(name)) =
+                            (content_block.id.clone(), content_block.name.clone())
+                        {
+                            current_tool_id = Some(id.clone());
+                            current_tool_name = Some(name.clone());
+                            yield StreamChunk::ToolUseStart { id, name };
+                        }
+                    } else if content_block.block_type == "thinking" {
+                        current_thinking.clear();
+                        current_thinking_signature = None;
+                    }
+                }
+                ClaudeStreamEvent::ContentBlockDelta {
+                    delta: ClaudeDelta::InputJsonDelta { partial_json },
+                    ..
+                } => {
+                    if let Some(ref id) = current_tool_id {
+                        current_tool_input.push_str(&partial_json);
+                        yield StreamChunk::ToolUseInputDelta {
+                            id: id.clone(),
+                            delta: partial_json,
+                        };
+                    }
+                }
+                ClaudeStreamEvent::ContentBlockStop { index } => {
+                    if let (Some(id), Some(name)) =
+                        (current_tool_id.take(), current_tool_name.take())
+                    {
+                        let input: serde_json::Value =
+                            serde_json::from_str(&current_tool_input)
+                                .unwrap_or(serde_json::Value::Object(Default::default()));
+                        accumulated_content.push(AssistantContent::ToolCall {
+                            tool_call: ToolCall {
+                                id,
+                                name,
+                                parameters: input,
+                            },
+                        });
+                        current_tool_input.clear();
+                    }
+                    if !current_thinking.is_empty() {
+                        let thought = if let Some(sig) = current_thinking_signature.take() {
+                            ThoughtContent::Signed {
+                                text: std::mem::take(&mut current_thinking),
+                                signature: sig,
+                            }
+                        } else {
+                            ThoughtContent::Simple {
+                                text: std::mem::take(&mut current_thinking),
+                            }
+                        };
+                        accumulated_content.push(AssistantContent::Thought { thought });
+                    }
+                    yield StreamChunk::ContentBlockStop { index };
+                }
+                ClaudeStreamEvent::MessageStop => {
+                    if !accumulated_text.is_empty() {
+                        accumulated_content.insert(
+                            0,
+                            AssistantContent::Text {
+                                text: std::mem::take(&mut accumulated_text),
+                            },
+                        );
+                    }
+                    yield StreamChunk::MessageComplete(CompletionResponse {
+                        content: accumulated_content.clone(),
+                    });
+                }
+                ClaudeStreamEvent::Error { error } => {
+                    yield StreamChunk::Error(StreamError::Provider {
+                        provider: "anthropic".into(),
+                        error_type: error.error_type,
+                        message: error.message,
+                    });
+                }
+                ClaudeStreamEvent::MessageStart { .. }
+                | ClaudeStreamEvent::MessageDelta { .. }
+                | ClaudeStreamEvent::Ping => {}
+            }
+        }
     }
 }
 

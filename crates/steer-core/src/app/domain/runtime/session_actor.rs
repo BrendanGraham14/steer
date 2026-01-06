@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
 use crate::app::domain::action::{Action, McpServerState};
+use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::reduce::reduce;
@@ -19,6 +20,7 @@ use super::interpreter::EffectInterpreter;
 use super::subscription::{SessionEventEnvelope, SessionEventSubscription, UnsubscribeSignal};
 
 const EVENT_BROADCAST_CAPACITY: usize = 256;
+const DELTA_BROADCAST_CAPACITY: usize = 1024;
 
 pub(crate) enum SessionCmd {
     Dispatch {
@@ -27,6 +29,9 @@ pub(crate) enum SessionCmd {
     },
     Subscribe {
         reply: oneshot::Sender<SessionEventSubscription>,
+    },
+    SubscribeDeltas {
+        reply: oneshot::Sender<broadcast::Receiver<StreamDelta>>,
     },
     GetState {
         reply: oneshot::Sender<AppState>,
@@ -93,6 +98,15 @@ impl SessionActorHandle {
         reply_rx.await.map_err(|_| SessionError::ChannelClosed)
     }
 
+    pub async fn subscribe_deltas(&self) -> Result<broadcast::Receiver<StreamDelta>, SessionError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCmd::SubscribeDeltas { reply: reply_tx })
+            .await
+            .map_err(|_| SessionError::ChannelClosed)?;
+        reply_rx.await.map_err(|_| SessionError::ChannelClosed)
+    }
+
     pub fn shutdown(&self) {
         let _ = self.cmd_tx.try_send(SessionCmd::Shutdown);
     }
@@ -105,6 +119,7 @@ struct SessionActor {
     interpreter: EffectInterpreter,
     active_operations: HashMap<OpId, CancellationToken>,
     event_broadcast: broadcast::Sender<SessionEventEnvelope>,
+    delta_broadcast: broadcast::Sender<StreamDelta>,
     subscriber_count: usize,
     unsubscribe_rx: mpsc::UnboundedReceiver<UnsubscribeSignal>,
     unsubscribe_tx: mpsc::UnboundedSender<UnsubscribeSignal>,
@@ -122,6 +137,7 @@ impl SessionActor {
         tool_executor: Arc<ToolExecutor>,
     ) -> Self {
         let (event_broadcast, _) = broadcast::channel(EVENT_BROADCAST_CAPACITY);
+        let (delta_broadcast, _) = broadcast::channel(DELTA_BROADCAST_CAPACITY);
         let (unsubscribe_tx, unsubscribe_rx) = mpsc::unbounded_channel();
         let (internal_action_tx, internal_action_rx) = mpsc::channel(64);
         let interpreter = EffectInterpreter::new(api_client, tool_executor);
@@ -133,6 +149,7 @@ impl SessionActor {
             interpreter,
             active_operations: HashMap::new(),
             event_broadcast,
+            delta_broadcast,
             subscriber_count: 0,
             unsubscribe_rx,
             unsubscribe_tx,
@@ -156,6 +173,10 @@ impl SessionActor {
                         SessionCmd::Subscribe { reply } => {
                             let subscription = self.create_subscription();
                             let _ = reply.send(subscription);
+                        }
+                        SessionCmd::SubscribeDeltas { reply } => {
+                            let rx = self.delta_broadcast.subscribe();
+                            let _ = reply.send(rx);
                         }
                         SessionCmd::GetState { reply } => {
                             let _ = reply.send(self.state.clone());
@@ -237,17 +258,41 @@ impl SessionActor {
                 let interpreter = self.interpreter.clone();
                 let action_tx = self.internal_action_tx.clone();
                 let session_id = self.session_id;
+                let delta_broadcast = self.delta_broadcast.clone();
+                let message_id = MessageId::new();
 
                 tokio::spawn(async move {
+                    let (delta_tx, mut delta_rx) = mpsc::channel::<StreamDelta>(64);
+                    let delta_context = Some((op_id, message_id.clone()));
+
+                    let delta_forward_task = {
+                        let delta_broadcast = delta_broadcast.clone();
+                        tokio::spawn(async move {
+                            while let Some(delta) = delta_rx.recv().await {
+                                let _ = delta_broadcast.send(delta);
+                            }
+                        })
+                    };
+
                     let result = interpreter
-                        .call_model(model, messages, system_prompt, tools, cancel_token)
+                        .call_model_with_deltas(
+                            model,
+                            messages,
+                            system_prompt,
+                            tools,
+                            cancel_token,
+                            Some(delta_tx),
+                            delta_context,
+                        )
                         .await;
+
+                    delta_forward_task.abort();
 
                     let action = match result {
                         Ok(content) => Action::ModelResponseComplete {
                             session_id,
                             op_id,
-                            message_id: MessageId::new(),
+                            message_id,
                             content,
                             timestamp: current_timestamp(),
                         },

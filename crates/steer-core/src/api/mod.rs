@@ -4,6 +4,7 @@ pub mod factory;
 pub mod gemini;
 pub mod openai;
 pub mod provider;
+pub mod sse;
 pub mod util;
 pub mod xai;
 
@@ -14,9 +15,9 @@ use crate::config::provider::ProviderId;
 use crate::config::{ApiAuth, LlmConfigProvider};
 use crate::error::Result;
 use crate::model_registry::ModelRegistry;
-pub use error::ApiError;
+pub use error::{ApiError, StreamError};
 pub use factory::{create_provider, create_provider_with_storage};
-pub use provider::{CompletionResponse, Provider};
+pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -182,6 +183,56 @@ impl Client {
 
         let result = provider
             .complete(model_id, messages, system, tools, effective_params, token)
+            .await;
+
+        if let Err(ref err) = result {
+            if Self::should_invalidate_provider(err) {
+                self.invalidate_provider(&provider_id);
+            }
+        }
+
+        result
+    }
+
+    pub async fn stream_complete(
+        &self,
+        model_id: &ModelId,
+        messages: Vec<Message>,
+        system: Option<String>,
+        tools: Option<Vec<ToolSchema>>,
+        call_options: Option<crate::config::model::ModelParameters>,
+        token: CancellationToken,
+    ) -> std::result::Result<CompletionStream, ApiError> {
+        let provider_id = model_id.0.clone();
+        let provider = self
+            .get_or_create_provider(provider_id.clone())
+            .await
+            .map_err(ApiError::from)?;
+
+        if token.is_cancelled() {
+            return Err(ApiError::Cancelled {
+                provider: provider.name().to_string(),
+            });
+        }
+
+        let model_config = self.model_registry.get(model_id);
+        let effective_params = match (model_config, &call_options) {
+            (Some(config), Some(opts)) => config.effective_parameters(Some(opts)),
+            (Some(config), None) => config.effective_parameters(None),
+            (None, Some(opts)) => Some(*opts),
+            (None, None) => None,
+        };
+
+        debug!(
+            target: "api::stream_complete",
+            ?model_id,
+            ?call_options,
+            ?effective_params,
+            "Streaming with parameters"
+        );
+
+        let result = provider
+            .stream_complete(model_id, messages, system, tools, effective_params, token)
             .await;
 
         if let Err(ref err) = result {

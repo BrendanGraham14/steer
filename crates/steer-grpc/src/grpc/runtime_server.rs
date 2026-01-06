@@ -1,6 +1,6 @@
 use crate::grpc::conversions::{
     message_to_proto, proto_to_tool_config, proto_to_workspace_config,
-    session_event_to_server_event,
+    session_event_to_server_event, stream_delta_to_proto,
 };
 use std::sync::Arc;
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
@@ -168,6 +168,49 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 debug!("Event forwarding task ended for session: {}", session_id);
             });
 
+            let delta_task = match runtime.subscribe_deltas(session_id).await {
+                Ok(mut delta_rx) => {
+                    let tx_clone = tx.clone();
+                    Some(tokio::spawn(async move {
+                        loop {
+                            match delta_rx.recv().await {
+                                Ok(delta) => {
+                                    let proto_delta = stream_delta_to_proto(delta);
+                                    let response = StreamSessionResponse {
+                                        sequence_num: 0,
+                                        timestamp: Some(prost_types::Timestamp::from(
+                                            std::time::SystemTime::now(),
+                                        )),
+                                        event: Some(
+                                            proto::stream_session_response::Event::StreamDelta(
+                                                proto_delta,
+                                            ),
+                                        ),
+                                    };
+                                    if tx_clone.send(Ok(response)).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                    continue;
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                    break;
+                                }
+                            }
+                        }
+                        debug!("Delta forwarding task ended for session: {}", session_id);
+                    }))
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to subscribe to deltas for session {}: {}",
+                        session_id, e
+                    );
+                    None
+                }
+            };
+
             while let Some(client_message_result) = client_stream.message().await.transpose() {
                 match client_message_result {
                     Ok(client_message) => {
@@ -194,6 +237,9 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             }
 
             event_task.abort();
+            if let Some(delta_task) = delta_task {
+                delta_task.abort();
+            }
             info!("Client stream ended for session: {}", session_id);
         });
 
