@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use crate::api::{ApiError, Client as ApiClient};
 use crate::app::conversation::{Message, MessageData};
 use crate::config::model::ModelId;
@@ -12,12 +14,20 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
+#[deprecated(
+    since = "0.9.0",
+    note = "Use crate::app::domain::action::ApprovalDecision instead. This type will be removed in a future version."
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalDecision {
     Approved,
     Denied,
 }
 
+#[deprecated(
+    since = "0.9.0",
+    note = "Use crate::app::domain::event::SessionEvent instead. This type will be removed in a future version."
+)]
 #[derive(Debug)]
 pub enum AgentEvent {
     MessageFinal(Message),
@@ -28,6 +38,10 @@ pub enum AgentEvent {
     },
 }
 
+#[deprecated(
+    since = "0.9.0",
+    note = "Use crate::app::domain::runtime::RuntimeError or domain-specific errors. This type will be removed in a future version."
+)]
 #[derive(Error, Debug)]
 pub enum AgentExecutorError {
     #[error(transparent)]
@@ -50,11 +64,20 @@ impl<T> From<mpsc::error::SendError<T>> for AgentExecutorError {
     }
 }
 
+#[deprecated(
+    since = "0.9.0",
+    note = "Use crate::app::domain::runtime::{AgentStepper, AgentInterpreter} for the new pure/effect architecture. \
+            The AgentExecutorAdapter wraps this for backward compatibility. This struct will be removed in a future version."
+)]
 #[derive(Clone)]
 pub struct AgentExecutor {
     api_client: Arc<ApiClient>,
 }
 
+#[deprecated(
+    since = "0.9.0",
+    note = "Use crate::app::domain::runtime::stepper::AgentConfig instead. This type will be removed in a future version."
+)]
 pub struct AgentExecutorRunRequest<A, E> {
     pub model: ModelId,
     pub initial_messages: Vec<Message>,

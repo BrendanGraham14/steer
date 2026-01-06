@@ -26,6 +26,7 @@ pub use context::OpContext;
 pub use conversation::{Conversation, Message, MessageData};
 pub use steer_workspace::EnvironmentInfo;
 
+#[allow(deprecated)]
 pub use agent_executor::{
     AgentEvent, AgentExecutor, AgentExecutorError, AgentExecutorRunRequest, ApprovalDecision,
 };

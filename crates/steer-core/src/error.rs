@@ -1,3 +1,5 @@
+#![allow(deprecated)] // Includes legacy AgentExecutorError variant for backward compatibility
+
 use steer_workspace::WorkspaceError;
 use thiserror::Error;
 

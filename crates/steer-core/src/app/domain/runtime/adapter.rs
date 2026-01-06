@@ -1,3 +1,11 @@
+//! Adapter that wraps the legacy AgentExecutor for backward compatibility.
+//!
+//! This module intentionally uses deprecated types to provide a bridge while
+//! the codebase migrates to the new pure/effect architecture. The deprecation
+//! warnings are suppressed here since this is the designated compatibility layer.
+
+#![allow(deprecated)]
+
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 

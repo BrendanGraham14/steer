@@ -4,14 +4,8 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use uuid;
 
-use crate::app::agent_executor::AgentExecutorError;
-use crate::app::conversation::Message;
-
 #[derive(Debug)]
 pub enum TaskOutcome {
-    AgentOperationComplete {
-        result: std::result::Result<Message, AgentExecutorError>,
-    },
     DispatchAgentResult {
         result: std::result::Result<String, steer_tools::ToolError>,
     },

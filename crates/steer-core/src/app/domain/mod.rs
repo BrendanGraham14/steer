@@ -8,6 +8,9 @@ pub mod session;
 pub mod state;
 pub mod types;
 
+#[cfg(test)]
+mod tests;
+
 pub use action::{Action, ApprovalDecision, ApprovalMemory, McpServerState, SchemaSource};
 pub use delta::{StreamDelta, ToolCallDelta};
 pub use effect::{Effect, McpServerConfig};

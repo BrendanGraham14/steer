@@ -1,9 +1,6 @@
 use crate::app::Message;
-use crate::app::agent_executor::ApprovalDecision;
 use crate::app::conversation::AppCommandType;
 use std::collections::HashSet;
-use steer_tools::ToolCall;
-use tokio::sync::oneshot;
 
 /// Tool-specific approval payload for different types of tool approvals
 #[derive(Debug, Clone)]
@@ -40,11 +37,6 @@ pub enum AppCommand {
     CancelProcessing,
     /// Signal for graceful shutdown.
     Shutdown,
-    /// Internal command for tool executor callback to request approval
-    RequestToolApprovalInternal {
-        tool_call: ToolCall,
-        responder: oneshot::Sender<ApprovalDecision>,
-    },
     /// Restore conversation state when resuming a session
     RestoreConversation {
         messages: Vec<Message>,

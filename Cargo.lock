@@ -5374,6 +5374,7 @@ dependencies = [
  "nix",
  "once_cell",
  "open",
+ "proptest",
  "prost",
  "prost-types",
  "rand 0.8.5",
