@@ -3,14 +3,12 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::config::LlmConfigProvider;
     use crate::session::state::{BackendConfig, SessionConfig, ToolFilter};
     use crate::tools::execution_context::ExecutionContext;
     use crate::tools::mcp::test_servers::{TestMcpService, start_http_server, start_sse_server};
     use crate::tools::{McpBackend, McpTransport, ToolBackend};
     use rmcp::service::ServiceExt;
     use std::collections::HashMap;
-    use std::sync::Arc;
     use steer_tools::ToolCall;
     use steer_tools::result::{ExternalResult, ToolResult};
     use tempfile::TempDir;
@@ -19,22 +17,6 @@ mod tests {
     use tokio::net::UnixListener;
     use tokio_util::sync::CancellationToken;
     use tracing::{debug, info};
-
-    fn default_llm_config_provider() -> Arc<LlmConfigProvider> {
-        // For tests, we use the InMemoryAuthStorage from test_utils
-        use crate::test_utils::InMemoryAuthStorage;
-        let auth_storage = InMemoryAuthStorage::new();
-        Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)))
-    }
-
-    async fn test_workspace() -> Arc<dyn crate::workspace::Workspace> {
-        let temp_dir = TempDir::new().unwrap();
-        crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
-            path: temp_dir.path().to_path_buf(),
-        })
-        .await
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn test_mcp_backend_in_session_config() {
@@ -91,10 +73,7 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
-            .await
-            .unwrap();
+        let (registry, _mcp_servers) = config.build_registry().await.unwrap();
 
         // Verify the MCP tools are available
         let tool_schemas = registry.get_tool_schemas().await;
@@ -188,10 +167,7 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
-            .await
-            .unwrap();
+        let (registry, _mcp_servers) = config.build_registry().await.unwrap();
 
         // Verify the MCP tools are available
         let tool_schemas = registry.get_tool_schemas().await;
@@ -274,10 +250,7 @@ mod tests {
         });
 
         // Build the registry - this should succeed
-        let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
-            .await
-            .unwrap();
+        let (registry, _mcp_servers) = config.build_registry().await.unwrap();
 
         // Verify the MCP tools are available
         let tool_schemas = registry.get_tool_schemas().await;
@@ -333,14 +306,9 @@ mod tests {
             tool_filter: ToolFilter::All,
         });
 
-        // Add LocalBackend for test tools
-        config.tool_config.backends.push(BackendConfig::Local {
-            tool_filter: ToolFilter::All,
-        });
-
         // Build the registry
         let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
+            .build_registry()
             .await
             .expect("Failed to build tool registry");
 
@@ -428,14 +396,9 @@ mod tests {
             tool_filter: ToolFilter::All,
         });
 
-        // Add LocalBackend for test tools
-        config.tool_config.backends.push(BackendConfig::Local {
-            tool_filter: ToolFilter::All,
-        });
-
         // Build the registry
         let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
+            .build_registry()
             .await
             .expect("Failed to build tool registry");
 
@@ -493,14 +456,9 @@ mod tests {
             tool_filter: ToolFilter::All,
         });
 
-        // Add LocalBackend for test tools
-        config.tool_config.backends.push(BackendConfig::Local {
-            tool_filter: ToolFilter::All,
-        });
-
         // Build the registry
         let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
+            .build_registry()
             .await
             .expect("Failed to build tool registry");
 
@@ -584,14 +542,9 @@ mod tests {
             tool_filter: ToolFilter::All,
         });
 
-        // Add LocalBackend for test tools
-        config.tool_config.backends.push(BackendConfig::Local {
-            tool_filter: ToolFilter::All,
-        });
-
         // Build the registry
         let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
+            .build_registry()
             .await
             .expect("Failed to build tool registry");
 
@@ -664,74 +617,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_config_resilience_with_failing_backends() {
-        // Test that session config continues to work even when some backends fail
         let mut config = SessionConfig::read_only();
 
-        // Add a LocalBackend so we have some tools available
-        config.tool_config.backends.push(BackendConfig::Local {
-            tool_filter: ToolFilter::All,
-        });
-
-        // Add a backend that will fail to connect
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "will-fail".to_string(),
             transport: McpTransport::Tcp {
                 host: "127.0.0.1".to_string(),
-                port: 55555, // Port with no server
+                port: 55555,
             },
             tool_filter: ToolFilter::All,
         });
 
-        // Registry creation should still succeed
-        let (registry, _mcp_servers) = config
-            .build_registry(default_llm_config_provider(), test_workspace().await)
-            .await
-            .unwrap();
+        let (registry, mcp_servers) = config.build_registry().await.unwrap();
 
-        // Get all tool schemas from the registry
+        assert!(
+            mcp_servers.get("will-fail").is_some(),
+            "Failed backend should be tracked"
+        );
+
         let tool_schemas = registry.get_tool_schemas().await;
-
-        // Print the tool names for debugging
-        eprintln!(
-            "Available tools: {:?}",
-            tool_schemas.iter().map(|t| &t.name).collect::<Vec<_>>()
-        );
-
-        // Verify at least some tools are available from LocalBackend
         assert!(
-            !tool_schemas.is_empty(),
-            "Expected some tools but found none"
-        );
-
-        // Check if we have any tools from LocalBackend
-        let has_local_tools = tool_schemas.iter().any(|t| {
-            [
-                "bash",
-                "grep",
-                "astgrep",
-                "glob",
-                "ls",
-                "view",
-                "edit",
-                "multi_edit",
-                "replace",
-                "todo_read",
-                "todo_write",
-                "fetch",
-                "dispatch_agent",
-            ]
-            .contains(&t.name.as_str())
-        });
-        assert!(
-            has_local_tools,
-            "Expected LocalBackend tools but found none"
-        );
-
-        // Verify failed backend's tools are not present
-        assert!(
-            !tool_schemas
-                .iter()
-                .any(|t| t.name.starts_with("mcp__will-fail__"))
+            tool_schemas.is_empty(),
+            "Failed backend should not contribute tools"
         );
     }
 

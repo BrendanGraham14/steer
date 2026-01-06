@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app::{Message, MessageData};
-use crate::config::LlmConfigProvider;
-use crate::tools::{BackendRegistry, LocalBackend, McpTransport, ToolBackend};
+use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+use crate::tools::{BackendRegistry, McpTransport, ToolBackend};
 use steer_tools::tools::read_only_workspace_tools;
 use steer_tools::{ToolCall, result::ToolResult};
 
@@ -139,97 +139,65 @@ pub struct SessionConfig {
 }
 
 impl SessionConfig {
-    /// Build a BackendRegistry from this configuration for external tools only.
-    /// Workspace tools are now handled directly by the Workspace.
+    /// Build a BackendRegistry from MCP server configurations.
     /// Returns the registry and a map of MCP server connection states.
     pub async fn build_registry(
         &self,
-        llm_config_provider: Arc<LlmConfigProvider>,
-        workspace: Arc<dyn crate::workspace::Workspace>,
     ) -> Result<(BackendRegistry, HashMap<String, McpServerInfo>)> {
         let mut registry = BackendRegistry::new();
         let mut mcp_servers = HashMap::new();
 
-        // 1. Register all USER-DEFINED backends first.
-        // Their tool mappings may be overwritten by the more authoritative backends below.
-        for (idx, backend_config) in self.tool_config.backends.iter().enumerate() {
-            match backend_config {
-                BackendConfig::Local { tool_filter } => {
-                    let backend = match tool_filter {
-                        ToolFilter::All => {
-                            LocalBackend::full(llm_config_provider.clone(), workspace.clone())
-                        }
-                        ToolFilter::Include(tools) => LocalBackend::with_tools(
-                            tools.clone(),
-                            llm_config_provider.clone(),
-                            workspace.clone(),
-                        ),
-                        ToolFilter::Exclude(excluded) => LocalBackend::without_tools(
-                            excluded.clone(),
-                            llm_config_provider.clone(),
-                            workspace.clone(),
-                        ),
-                    };
+        for backend_config in &self.tool_config.backends {
+            let BackendConfig::Mcp {
+                server_name,
+                transport,
+                tool_filter,
+            } = backend_config;
+
+            tracing::info!(
+                "Attempting to initialize MCP backend '{}' with transport: {:?}",
+                server_name,
+                transport
+            );
+
+            let mut server_info = McpServerInfo {
+                server_name: server_name.clone(),
+                transport: transport.clone(),
+                state: McpConnectionState::Connecting,
+                last_updated: Utc::now(),
+            };
+
+            match crate::tools::McpBackend::new(
+                server_name.clone(),
+                transport.clone(),
+                tool_filter.clone(),
+            )
+            .await
+            {
+                Ok(mcp_backend) => {
+                    let tool_names = mcp_backend.supported_tools().await;
+                    let tool_count = tool_names.len();
+                    tracing::info!(
+                        "Successfully initialized MCP backend '{}' with {} tools",
+                        server_name,
+                        tool_count
+                    );
+                    server_info.state = McpConnectionState::Connected { tool_names };
+                    server_info.last_updated = Utc::now();
                     registry
-                        .register(format!("user_local_{idx}"), Arc::new(backend))
+                        .register(format!("mcp_{server_name}"), Arc::new(mcp_backend))
                         .await;
                 }
-                BackendConfig::Mcp {
-                    server_name,
-                    transport,
-                    tool_filter,
-                } => {
-                    tracing::info!(
-                        "Attempting to initialize MCP backend '{}' with transport: {:?}",
-                        server_name,
-                        transport
-                    );
-
-                    // Record that we're attempting to connect
-                    let mut server_info = McpServerInfo {
-                        server_name: server_name.clone(),
-                        transport: transport.clone(),
-                        state: McpConnectionState::Connecting,
-                        last_updated: Utc::now(),
+                Err(e) => {
+                    tracing::error!("Failed to initialize MCP backend '{}': {}", server_name, e);
+                    server_info.state = McpConnectionState::Failed {
+                        error: e.to_string(),
                     };
-
-                    match crate::tools::McpBackend::new(
-                        server_name.clone(),
-                        transport.clone(),
-                        tool_filter.clone(),
-                    )
-                    .await
-                    {
-                        Ok(mcp_backend) => {
-                            let tool_names = mcp_backend.supported_tools().await;
-                            let tool_count = tool_names.len();
-                            tracing::info!(
-                                "Successfully initialized MCP backend '{}' with {} tools",
-                                server_name,
-                                tool_count
-                            );
-                            server_info.state = McpConnectionState::Connected { tool_names };
-                            server_info.last_updated = Utc::now();
-                            registry
-                                .register(format!("mcp_{server_name}"), Arc::new(mcp_backend))
-                                .await;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to initialize MCP backend '{}': {}",
-                                server_name,
-                                e
-                            );
-                            server_info.state = McpConnectionState::Failed {
-                                error: e.to_string(),
-                            };
-                            server_info.last_updated = Utc::now();
-                        }
-                    }
-
-                    mcp_servers.insert(server_name.clone(), server_info);
+                    server_info.last_updated = Utc::now();
                 }
             }
+
+            mcp_servers.insert(server_name.clone(), server_info);
         }
 
         Ok((registry, mcp_servers))
@@ -384,14 +352,10 @@ impl Default for ToolFilter {
     }
 }
 
-/// Backend configuration for different tool execution environments
+/// Configuration for MCP server backends
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendConfig {
-    Local {
-        /// Tool filtering configuration for the local backend
-        tool_filter: ToolFilter,
-    },
     Mcp {
         server_name: String,
         transport: McpTransport,
@@ -872,28 +836,15 @@ mod tests {
 
     #[test]
     fn test_tool_filter_exclude() {
-        // Test that we can exclude specific tools
-        let config = SessionToolConfig {
-            backends: vec![BackendConfig::Local {
-                tool_filter: ToolFilter::Exclude(vec![
-                    BASH_TOOL_NAME.to_string(),
-                    EDIT_TOOL_NAME.to_string(),
-                ]),
-            }],
-            visibility: ToolVisibility::All,
-            approval_policy: ToolApprovalPolicy::AlwaysAsk,
-            metadata: HashMap::new(),
-            tools: HashMap::new(),
-        };
+        let excluded =
+            ToolFilter::Exclude(vec![BASH_TOOL_NAME.to_string(), EDIT_TOOL_NAME.to_string()]);
 
-        assert!(matches!(config.backends[0], BackendConfig::Local { .. }));
-        if let BackendConfig::Local { tool_filter } = &config.backends[0] {
-            assert!(matches!(tool_filter, ToolFilter::Exclude(_)));
-            if let ToolFilter::Exclude(excluded_tools) = tool_filter {
-                assert_eq!(excluded_tools.len(), 2);
-                assert!(excluded_tools.contains(&BASH_TOOL_NAME.to_string()));
-                assert!(excluded_tools.contains(&EDIT_TOOL_NAME.to_string()));
-            }
+        if let ToolFilter::Exclude(tools) = &excluded {
+            assert_eq!(tools.len(), 2);
+            assert!(tools.contains(&BASH_TOOL_NAME.to_string()));
+            assert!(tools.contains(&EDIT_TOOL_NAME.to_string()));
+        } else {
+            panic!("Expected ToolFilter::Exclude");
         }
     }
 
@@ -909,49 +860,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_session_config_build_registry_server_tools() {
+    async fn test_session_config_build_registry_no_default_backends() {
         use crate::auth::DefaultAuthStorage;
         use crate::config::LlmConfigProvider;
 
-        // Test that server tools are properly registered
+        // Test that BackendRegistry only contains user-configured backends.
+        // Static tools (dispatch_agent, web_fetch) are now in ToolRegistry,
+        // not BackendRegistry.
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local {
                 path: PathBuf::from("/test/path"),
             },
-            tool_config: SessionToolConfig::default(),
+            tool_config: SessionToolConfig::default(), // No backends configured
             system_prompt: None,
             metadata: HashMap::new(),
         };
 
-        // For tests, we'll just unwrap since it's a test environment
-        let auth_storage =
-            DefaultAuthStorage::new().expect("Failed to create auth storage for test");
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)));
-
-        // Create a test workspace
-        let workspace = crate::workspace::create_workspace(&config.workspace.to_workspace_config())
-            .await
-            .unwrap();
-
-        let (registry, _mcp_servers) = config
-            .build_registry(llm_config_provider, workspace)
-            .await
-            .unwrap();
+        let (registry, _mcp_servers) = config.build_registry().await.unwrap();
         let schemas = registry.get_tool_schemas().await;
-        let tool_names: Vec<String> = schemas.iter().map(|s| s.name.clone()).collect();
 
-        // Only server tools should be in the registry
-        assert!(tool_names.contains(&"dispatch_agent".to_string()));
-        assert!(tool_names.contains(&"web_fetch".to_string()));
-
-        // Verify workspace tools are NOT in the registry (they're handled by Workspace)
-        let workspace_tool_names = vec!["bash", "grep", "glob", "ls", "read", "write", "edit"];
-        for tool_name in workspace_tool_names {
-            assert!(
-                !tool_names.contains(&tool_name.to_string()),
-                "Workspace tool {tool_name} should not be in registry"
-            );
-        }
+        assert!(
+            schemas.is_empty(),
+            "BackendRegistry should be empty with default config; got: {:?}",
+            schemas.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
     }
 
     // Test removed: workspace tools are no longer in the registry
@@ -1044,17 +976,7 @@ mod tests {
             tool_filter: ToolFilter::All,
         });
 
-        let auth_storage =
-            DefaultAuthStorage::new().expect("Failed to create auth storage for test");
-        let llm_config_provider = Arc::new(LlmConfigProvider::new(Arc::new(auth_storage)));
-        let workspace = crate::workspace::create_workspace(&config.workspace.to_workspace_config())
-            .await
-            .unwrap();
-
-        let (_registry, mcp_servers) = config
-            .build_registry(llm_config_provider, workspace)
-            .await
-            .unwrap();
+        let (_registry, mcp_servers) = config.build_registry().await.unwrap();
 
         // Should have tracked both servers
         assert_eq!(mcp_servers.len(), 2);
@@ -1077,24 +999,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backend_config_variants() {
-        // Test Local variant
-        let local_config = BackendConfig::Local {
-            tool_filter: ToolFilter::Include(vec![
-                VIEW_TOOL_NAME.to_string(),
-                LS_TOOL_NAME.to_string(),
-            ]),
-        };
-
-        assert!(matches!(local_config, BackendConfig::Local { .. }));
-        if let BackendConfig::Local { tool_filter } = local_config {
-            assert!(matches!(tool_filter, ToolFilter::Include(_)));
-            if let ToolFilter::Include(tools) = tool_filter {
-                assert_eq!(tools.len(), 2);
-            }
-        }
-
-        // Test Mcp variant
+    fn test_backend_config_mcp_variant() {
         let mcp_config = BackendConfig::Mcp {
             server_name: "test-mcp".to_string(),
             transport: crate::tools::McpTransport::Stdio {
@@ -1104,22 +1009,18 @@ mod tests {
             tool_filter: ToolFilter::All,
         };
 
-        assert!(matches!(mcp_config, BackendConfig::Mcp { .. }));
-        if let BackendConfig::Mcp {
+        let BackendConfig::Mcp {
             server_name,
             transport,
             ..
-        } = mcp_config
-        {
-            assert_eq!(server_name, "test-mcp");
-            assert!(matches!(
-                transport,
-                crate::tools::McpTransport::Stdio { .. }
-            ));
-            if let crate::tools::McpTransport::Stdio { command, args } = transport {
-                assert_eq!(command, "python");
-                assert_eq!(args.len(), 2);
-            }
+        } = mcp_config;
+
+        assert_eq!(server_name, "test-mcp");
+        if let crate::tools::McpTransport::Stdio { command, args } = transport {
+            assert_eq!(command, "python");
+            assert_eq!(args.len(), 2);
+        } else {
+            panic!("Expected Stdio transport");
         }
     }
 }

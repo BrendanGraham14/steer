@@ -554,30 +554,25 @@ pub(crate) fn tool_visibility_to_proto(visibility: &ToolVisibility) -> proto::To
 pub(crate) fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendConfig {
     use proto::backend_config::Backend;
 
-    let backend_variant = match config {
-        BackendConfig::Local { tool_filter } => Backend::Local(proto::LocalBackendConfig {
-            tool_filter: Some(tool_filter_to_proto(tool_filter)),
-        }),
-        BackendConfig::Mcp {
-            server_name,
-            transport,
-            tool_filter,
-        } => Backend::Mcp(proto::McpBackendConfig {
-            server_name: server_name.clone(),
-            // Serialize the McpTransport enum to JSON string for proto compatibility
-            transport: serde_json::to_string(&transport).unwrap_or_else(|_| "{}".to_string()),
-            // Proto still expects command and args separately, extract from transport
-            command: match transport {
-                steer_core::tools::McpTransport::Stdio { command, .. } => command.clone(),
-                _ => String::new(),
-            },
-            args: match transport {
-                steer_core::tools::McpTransport::Stdio { args, .. } => args.clone(),
-                _ => Vec::new(),
-            },
-            tool_filter: Some(tool_filter_to_proto(tool_filter)),
-        }),
-    };
+    let BackendConfig::Mcp {
+        server_name,
+        transport,
+        tool_filter,
+    } = config;
+
+    let backend_variant = Backend::Mcp(proto::McpBackendConfig {
+        server_name: server_name.clone(),
+        transport: serde_json::to_string(&transport).unwrap_or_else(|_| "{}".to_string()),
+        command: match transport {
+            steer_core::tools::McpTransport::Stdio { command, .. } => command.clone(),
+            _ => String::new(),
+        },
+        args: match transport {
+            steer_core::tools::McpTransport::Stdio { args, .. } => args.clone(),
+            _ => Vec::new(),
+        },
+        tool_filter: Some(tool_filter_to_proto(tool_filter)),
+    });
 
     proto::BackendConfig {
         backend: Some(backend_variant),
@@ -731,39 +726,30 @@ pub(crate) fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> Se
     let backends = proto_config
         .backends
         .into_iter()
-        .map(|proto_backend| {
-            match proto_backend.backend {
-                Some(proto::backend_config::Backend::Local(local)) => BackendConfig::Local {
-                    tool_filter: proto_to_tool_filter(local.tool_filter),
-                },
-                Some(proto::backend_config::Backend::Mcp(mcp)) => {
-                    // Try to deserialize transport from JSON string
-                    let transport = if !mcp.transport.is_empty() && mcp.transport != "{}" {
-                        serde_json::from_str(&mcp.transport).unwrap_or_else(|_| {
-                            // Fallback to stdio transport using command/args from proto
-                            steer_core::tools::McpTransport::Stdio {
-                                command: mcp.command.clone(),
-                                args: mcp.args.clone(),
-                            }
-                        })
-                    } else {
-                        // Fallback for old proto format
+        .filter_map(|proto_backend| match proto_backend.backend {
+            Some(proto::backend_config::Backend::Local(_)) => None,
+            Some(proto::backend_config::Backend::Mcp(mcp)) => {
+                let transport = if !mcp.transport.is_empty() && mcp.transport != "{}" {
+                    serde_json::from_str(&mcp.transport).unwrap_or_else(|_| {
                         steer_core::tools::McpTransport::Stdio {
                             command: mcp.command.clone(),
                             args: mcp.args.clone(),
                         }
-                    };
-
-                    BackendConfig::Mcp {
-                        server_name: mcp.server_name,
-                        transport,
-                        tool_filter: proto_to_tool_filter(mcp.tool_filter),
+                    })
+                } else {
+                    steer_core::tools::McpTransport::Stdio {
+                        command: mcp.command.clone(),
+                        args: mcp.args.clone(),
                     }
-                }
-                None => BackendConfig::Local {
-                    tool_filter: ToolFilter::All,
-                }, // Default fallback
+                };
+
+                Some(BackendConfig::Mcp {
+                    server_name: mcp.server_name,
+                    transport,
+                    tool_filter: proto_to_tool_filter(mcp.tool_filter),
+                })
             }
+            None => None,
         })
         .collect();
 

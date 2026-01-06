@@ -287,57 +287,52 @@ impl SessionConfigLoader {
     }
 
     fn validate_config(&self, config: &SessionConfig) -> Result<(), SessionConfigError> {
-        // Validate MCP backends have required fields
         for backend in &config.tool_config.backends {
-            if let BackendConfig::Mcp {
+            let BackendConfig::Mcp {
                 server_name,
                 transport,
                 ..
-            } = backend
-            {
-                if server_name.is_empty() {
-                    return Err(SessionConfigError::EmptyServerName);
-                }
+            } = backend;
 
-                // Validate transport-specific requirements
-                match transport {
-                    steer_core::tools::McpTransport::Stdio { command, .. } => {
-                        if command.is_empty() {
-                            return Err(SessionConfigError::EmptyStdioCommand);
-                        }
-                        // Check if command exists in PATH
-                        if which::which(command).is_err() {
-                            // Log warning but don't fail - the command might be a full path or available later
-                            tracing::warn!(
-                                "MCP command '{}' for server '{}' not found in PATH",
-                                command,
-                                server_name
-                            );
-                        }
+            if server_name.is_empty() {
+                return Err(SessionConfigError::EmptyServerName);
+            }
+
+            match transport {
+                steer_core::tools::McpTransport::Stdio { command, .. } => {
+                    if command.is_empty() {
+                        return Err(SessionConfigError::EmptyStdioCommand);
                     }
-                    steer_core::tools::McpTransport::Tcp { host, port } => {
-                        if host.is_empty() {
-                            return Err(SessionConfigError::EmptyTcpHost);
-                        }
-                        if *port == 0 {
-                            return Err(SessionConfigError::InvalidTcpPort);
-                        }
+                    if which::which(command).is_err() {
+                        tracing::warn!(
+                            "MCP command '{}' for server '{}' not found in PATH",
+                            command,
+                            server_name
+                        );
                     }
-                    #[cfg(unix)]
-                    steer_core::tools::McpTransport::Unix { path } => {
-                        if path.is_empty() {
-                            return Err(SessionConfigError::EmptyUnixPath);
-                        }
+                }
+                steer_core::tools::McpTransport::Tcp { host, port } => {
+                    if host.is_empty() {
+                        return Err(SessionConfigError::EmptyTcpHost);
                     }
-                    steer_core::tools::McpTransport::Sse { url, .. } => {
-                        if url.is_empty() {
-                            return Err(SessionConfigError::EmptySseUrl);
-                        }
+                    if *port == 0 {
+                        return Err(SessionConfigError::InvalidTcpPort);
                     }
-                    steer_core::tools::McpTransport::Http { url, .. } => {
-                        if url.is_empty() {
-                            return Err(SessionConfigError::EmptyHttpUrl);
-                        }
+                }
+                #[cfg(unix)]
+                steer_core::tools::McpTransport::Unix { path } => {
+                    if path.is_empty() {
+                        return Err(SessionConfigError::EmptyUnixPath);
+                    }
+                }
+                steer_core::tools::McpTransport::Sse { url, .. } => {
+                    if url.is_empty() {
+                        return Err(SessionConfigError::EmptySseUrl);
+                    }
+                }
+                steer_core::tools::McpTransport::Http { url, .. } => {
+                    if url.is_empty() {
+                        return Err(SessionConfigError::EmptyHttpUrl);
                     }
                 }
             }

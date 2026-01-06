@@ -600,13 +600,13 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     c.tool_config
                         .backends
                         .iter()
-                        .filter_map(|b| match b {
-                            steer_core::session::state::BackendConfig::Mcp {
+                        .map(|b| {
+                            let steer_core::session::state::BackendConfig::Mcp {
                                 server_name,
                                 transport,
                                 ..
-                            } => Some((server_name.clone(), transport)),
-                            _ => None,
+                            } = b;
+                            (server_name.clone(), transport)
                         })
                         .collect()
                 })
