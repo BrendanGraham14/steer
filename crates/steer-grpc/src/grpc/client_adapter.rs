@@ -552,6 +552,40 @@ impl AgentClient {
 
         Ok(response.into_inner().models)
     }
+
+    pub async fn list_workspace_files(&self) -> GrpcResult<Vec<String>> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(proto::ListFilesRequest {
+            session_id,
+            query: String::new(),
+            max_results: 0,
+        });
+
+        let mut stream = self
+            .client
+            .lock()
+            .await
+            .list_files(request)
+            .await
+            .map_err(Box::new)?
+            .into_inner();
+
+        let mut all_files = Vec::new();
+        while let Some(response) = stream.message().await.map_err(Box::new)? {
+            all_files.extend(response.paths);
+        }
+
+        Ok(all_files)
+    }
 }
 
 #[cfg(test)]

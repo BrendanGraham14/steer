@@ -6,14 +6,14 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
-use crate::app::domain::action::Action;
-use crate::app::domain::effect::Effect;
+use crate::app::domain::action::{Action, McpServerState};
+use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::reduce::reduce;
 use crate::app::domain::session::{EventStore, EventStoreError};
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, OpId, SessionId};
-use crate::tools::ToolExecutor;
+use crate::tools::{McpBackend, ToolBackend, ToolExecutor};
 
 use super::interpreter::EffectInterpreter;
 use super::subscription::{SessionEventEnvelope, SessionEventSubscription, UnsubscribeSignal};
@@ -110,6 +110,7 @@ struct SessionActor {
     unsubscribe_tx: mpsc::UnboundedSender<UnsubscribeSignal>,
     internal_action_tx: mpsc::Sender<Action>,
     internal_action_rx: mpsc::Receiver<Action>,
+    mcp_backends: HashMap<String, Arc<McpBackend>>,
 }
 
 impl SessionActor {
@@ -137,6 +138,7 @@ impl SessionActor {
             unsubscribe_tx,
             internal_action_tx,
             internal_action_rx,
+            mcp_backends: HashMap::new(),
         }
     }
 
@@ -159,11 +161,13 @@ impl SessionActor {
                             let _ = reply.send(self.state.clone());
                         }
                         SessionCmd::Suspend { reply } => {
+                            self.cleanup_mcp_backends();
                             let _ = reply.send(());
                             break;
                         }
                         SessionCmd::Shutdown => {
                             self.cancel_all_operations();
+                            self.cleanup_mcp_backends();
                             break;
                         }
                     }
@@ -325,7 +329,88 @@ impl SessionActor {
 
             Effect::ListWorkspaceFiles { .. } => Ok(()),
 
-            Effect::ConnectMcpServer { .. } | Effect::DisconnectMcpServer { .. } => Ok(()),
+            Effect::ConnectMcpServer { config, .. } => {
+                self.handle_connect_mcp_server(config).await;
+                Ok(())
+            }
+
+            Effect::DisconnectMcpServer { server_name, .. } => {
+                self.handle_disconnect_mcp_server(server_name).await;
+                Ok(())
+            }
+        }
+    }
+
+    async fn handle_connect_mcp_server(&mut self, config: McpServerConfig) {
+        let server_name = config.server_name.clone();
+        let session_id = self.session_id;
+        let action_tx = self.internal_action_tx.clone();
+
+        action_tx
+            .send(Action::McpServerStateChanged {
+                session_id,
+                server_name: server_name.clone(),
+                state: McpServerState::Connecting,
+            })
+            .await
+            .ok();
+
+        let result = McpBackend::new(
+            config.server_name.clone(),
+            config.transport,
+            crate::session::state::ToolFilter::All,
+        )
+        .await;
+
+        match result {
+            Ok(backend) => {
+                let tools = backend.get_tool_schemas().await;
+                let backend = Arc::new(backend);
+                self.mcp_backends.insert(server_name.clone(), backend);
+
+                action_tx
+                    .send(Action::McpServerStateChanged {
+                        session_id,
+                        server_name,
+                        state: McpServerState::Connected { tools },
+                    })
+                    .await
+                    .ok();
+            }
+            Err(e) => {
+                tracing::error!(
+                    session_id = %session_id,
+                    server_name = %server_name,
+                    error = %e,
+                    "Failed to connect to MCP server"
+                );
+
+                action_tx
+                    .send(Action::McpServerStateChanged {
+                        session_id,
+                        server_name,
+                        state: McpServerState::Failed {
+                            error: e.to_string(),
+                        },
+                    })
+                    .await
+                    .ok();
+            }
+        }
+    }
+
+    async fn handle_disconnect_mcp_server(&mut self, server_name: String) {
+        let session_id = self.session_id;
+
+        if self.mcp_backends.remove(&server_name).is_some() {
+            self.internal_action_tx
+                .send(Action::McpServerStateChanged {
+                    session_id,
+                    server_name,
+                    state: McpServerState::Disconnected { error: None },
+                })
+                .await
+                .ok();
         }
     }
 
@@ -345,6 +430,10 @@ impl SessionActor {
         for (_, token) in self.active_operations.drain() {
             token.cancel();
         }
+    }
+
+    fn cleanup_mcp_backends(&mut self) {
+        self.mcp_backends.clear();
     }
 }
 

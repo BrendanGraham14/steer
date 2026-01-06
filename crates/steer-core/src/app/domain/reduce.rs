@@ -91,6 +91,12 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::Cancel { session_id, op_id } => handle_cancel(state, session_id, op_id),
 
+        Action::DirectBashCommand {
+            session_id,
+            op_id,
+            command,
+        } => handle_direct_bash(state, session_id, op_id, command),
+
         Action::Hydrate {
             session_id,
             events,
@@ -627,6 +633,46 @@ fn handle_model_response_error(
     effects.push(Effect::EmitEvent {
         session_id,
         event: SessionEvent::OperationCompleted { op_id },
+    });
+
+    effects
+}
+
+fn handle_direct_bash(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    op_id: crate::app::domain::types::OpId,
+    command: String,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+
+    state.start_operation(
+        op_id,
+        OperationKind::DirectBash {
+            command: command.clone(),
+        },
+    );
+
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::OperationStarted {
+            op_id,
+            kind: OperationKind::DirectBash {
+                command: command.clone(),
+            },
+        },
+    });
+
+    let tool_call = steer_tools::ToolCall {
+        id: format!("direct_bash_{}", op_id),
+        name: BASH_TOOL_NAME.to_string(),
+        parameters: serde_json::json!({ "command": command }),
+    };
+
+    effects.push(Effect::ExecuteTool {
+        session_id,
+        op_id,
+        tool_call,
     });
 
     effects

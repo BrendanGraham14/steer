@@ -96,6 +96,12 @@ pub enum Action {
         op_id: Option<OpId>,
     },
 
+    DirectBashCommand {
+        session_id: SessionId,
+        op_id: OpId,
+        command: String,
+    },
+
     Shutdown,
 
     Hydrate {
@@ -153,6 +159,7 @@ impl Action {
             | Action::ModelResponseComplete { session_id, .. }
             | Action::ModelResponseError { session_id, .. }
             | Action::Cancel { session_id, .. }
+            | Action::DirectBashCommand { session_id, .. }
             | Action::Hydrate { session_id, .. }
             | Action::WorkspaceFilesListed { session_id, .. } => Some(*session_id),
             Action::Shutdown => None,
@@ -163,6 +170,7 @@ impl Action {
         match self {
             Action::UserInput { op_id, .. }
             | Action::UserEditedMessage { op_id, .. }
+            | Action::DirectBashCommand { op_id, .. }
             | Action::ModelResponseComplete { op_id, .. }
             | Action::ModelResponseError { op_id, .. } => Some(*op_id),
             Action::Cancel { op_id, .. } => *op_id,

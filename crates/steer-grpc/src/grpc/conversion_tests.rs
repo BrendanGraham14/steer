@@ -157,3 +157,114 @@ proptest! {
         prop_assert_eq!(config.metadata, roundtrip.metadata);
     }
 }
+
+#[cfg(test)]
+mod id_preservation_tests {
+    use crate::client_api::{ClientEvent, OpId, RequestId};
+    use crate::grpc::conversions::{proto_to_client_event, session_event_to_server_event};
+    use steer_core::app::domain::event::{CancellationInfo, SessionEvent};
+    use steer_core::app::domain::state::OperationKind;
+    use steer_core::config::provider::ProviderId;
+    use steer_tools::ToolCall;
+    use uuid::Uuid;
+
+    fn test_model() -> (ProviderId, String) {
+        (
+            ProviderId::from("anthropic"),
+            "claude-3-5-sonnet-20241022".to_string(),
+        )
+    }
+
+    #[test]
+    fn test_op_id_preserved_in_operation_started() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let event = SessionEvent::OperationStarted {
+            op_id,
+            kind: OperationKind::AgentLoop,
+        };
+
+        let model = test_model();
+        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::ProcessingStarted { op_id: received } => {
+                assert_eq!(op_id, received);
+            }
+            other => panic!("Expected ProcessingStarted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_op_id_preserved_in_operation_completed() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let event = SessionEvent::OperationCompleted { op_id };
+
+        let model = test_model();
+        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::ProcessingCompleted { op_id: received } => {
+                assert_eq!(op_id, received);
+            }
+            other => panic!("Expected ProcessingCompleted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_op_id_preserved_in_operation_cancelled() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let event = SessionEvent::OperationCancelled {
+            op_id,
+            info: CancellationInfo {
+                pending_tool_calls: 3,
+            },
+        };
+
+        let model = test_model();
+        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::OperationCancelled {
+                op_id: received,
+                pending_tool_calls,
+            } => {
+                assert_eq!(op_id, received);
+                assert_eq!(pending_tool_calls, 0);
+            }
+            other => panic!("Expected OperationCancelled, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_request_id_preserved_in_approval_requested() {
+        let request_id = RequestId::from(Uuid::new_v4());
+        let tool_call = ToolCall {
+            id: "tool_123".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command": "ls"}),
+        };
+        let event = SessionEvent::ApprovalRequested {
+            request_id,
+            tool_call: tool_call.clone(),
+        };
+
+        let model = test_model();
+        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::ApprovalRequested {
+                request_id: received,
+                tool_call: received_tool,
+            } => {
+                assert_eq!(request_id, received);
+                assert_eq!(tool_call.name, received_tool.name);
+                assert_eq!(tool_call.parameters, received_tool.parameters);
+            }
+            other => panic!("Expected ApprovalRequested, got {:?}", other),
+        }
+    }
+}

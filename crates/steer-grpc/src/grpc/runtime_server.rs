@@ -103,8 +103,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                                 }
                             };
 
-                            if let Err(e) =
-                                handle_runtime_message(&runtime, session_id, client_message).await
+                            if let Err(e) = handle_runtime_message(
+                                &runtime,
+                                &catalog,
+                                session_id,
+                                client_message,
+                                &tx,
+                            )
+                            .await
                             {
                                 error!("Error handling first client message: {}", e);
                                 let _ = tx.send(Err(e)).await;
@@ -165,8 +171,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             while let Some(client_message_result) = client_stream.message().await.transpose() {
                 match client_message_result {
                     Ok(client_message) => {
-                        if let Err(e) =
-                            handle_runtime_message(&runtime, session_id, client_message).await
+                        if let Err(e) = handle_runtime_message(
+                            &runtime,
+                            &catalog,
+                            session_id,
+                            client_message,
+                            &tx,
+                        )
+                        .await
                         {
                             error!("Error handling client message: {}", e);
                             let _ = tx.send(Err(e)).await;
@@ -785,8 +797,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
 async fn handle_runtime_message(
     runtime: &RuntimeHandle,
+    catalog: &Arc<dyn SessionCatalog>,
     session_id: SessionId,
     client_message: StreamSessionRequest,
+    event_tx: &mpsc::Sender<Result<proto::StreamSessionResponse, Status>>,
 ) -> Result<(), Status> {
     debug!(
         "Handling client message for session: {}",
@@ -855,16 +869,74 @@ async fn handle_runtime_message(
                 debug!("UpdateConfig received but provider changes are no longer supported");
             }
 
-            stream_session_request::Message::ExecuteCommand(_execute_command) => {
-                debug!("ExecuteCommand not yet implemented in runtime server");
+            stream_session_request::Message::ExecuteCommand(execute_command) => {
+                use steer_core::app::conversation::AppCommandType;
+                match AppCommandType::parse(&execute_command.command) {
+                    Ok(cmd) => {
+                        runtime
+                            .execute_slash_command(session_id, cmd)
+                            .await
+                            .map_err(|e| {
+                                Status::internal(format!("Failed to execute command: {e}"))
+                            })?;
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Failed to parse command '{}': {}",
+                            execute_command.command, e
+                        );
+                    }
+                }
             }
 
-            stream_session_request::Message::ExecuteBashCommand(_execute_bash_command) => {
-                debug!("ExecuteBashCommand not yet implemented in runtime server");
+            stream_session_request::Message::ExecuteBashCommand(execute_bash_command) => {
+                runtime
+                    .execute_bash_command(session_id, execute_bash_command.command)
+                    .await
+                    .map_err(|e| {
+                        Status::internal(format!("Failed to execute bash command: {e}"))
+                    })?;
             }
 
-            stream_session_request::Message::EditMessage(_edit_message) => {
-                debug!("EditMessage not yet implemented in runtime server");
+            stream_session_request::Message::EditMessage(edit_message) => {
+                runtime
+                    .submit_edited_message(
+                        session_id,
+                        edit_message.message_id,
+                        edit_message.new_content,
+                    )
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to edit message: {e}")))?;
+            }
+
+            stream_session_request::Message::RequestWorkspaceFiles(_) => {
+                let config = catalog
+                    .get_session_config(session_id)
+                    .await
+                    .map_err(|e| Status::internal(format!("Failed to get session config: {e}")))?
+                    .ok_or_else(|| {
+                        Status::not_found(format!("Session not found: {}", session_id))
+                    })?;
+
+                let workspace = steer_core::workspace::create_workspace(
+                    &config.workspace.to_workspace_config(),
+                )
+                .await
+                .map_err(|e| Status::internal(format!("Failed to create workspace: {e}")))?;
+
+                let files = workspace.list_files(None, None).await.unwrap_or_default();
+
+                let response = proto::StreamSessionResponse {
+                    sequence_num: 0,
+                    timestamp: None,
+                    event: Some(proto::stream_session_response::Event::WorkspaceFiles(
+                        proto::WorkspaceFilesEvent { files },
+                    )),
+                };
+
+                if let Err(e) = event_tx.send(Ok(response)).await {
+                    warn!("Failed to send workspace files event: {}", e);
+                }
             }
         }
     }

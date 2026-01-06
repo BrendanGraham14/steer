@@ -51,6 +51,7 @@ message StreamSessionRequest {
     ExecuteCommandRequest execute_command = 7;
     ExecuteBashCommandRequest execute_bash_command = 8;
     EditMessageRequest edit_message = 9;
+    RequestWorkspaceFilesMessage request_workspace_files = 10;
   }
 }
 
@@ -220,11 +221,11 @@ message RequestToolApprovalEvent {
 }
 
 message ProcessingStartedEvent {
-  // No fields needed
+  string op_id = 1;  // Operation ID (UUID)
 }
 
 message ProcessingCompletedEvent {
-  // No fields needed
+  string op_id = 1;  // Operation ID (UUID)
 }
 
 message CommandResponseEvent {
@@ -244,6 +245,7 @@ message ErrorEvent {
 
 message OperationCancelledEvent {
   CancellationInfo info = 1;
+  string op_id = 2;
 }
 
 message ActiveMessageIdChangedEvent {
@@ -746,6 +748,10 @@ message EditMessageRequest {
   string session_id = 1;
   string message_id = 2;
   string new_content = 3;
+}
+
+message RequestWorkspaceFilesMessage {
+  string session_id = 1;
 }
 
 // File listing for fuzzy finder

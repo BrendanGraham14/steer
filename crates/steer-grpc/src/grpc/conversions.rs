@@ -1023,19 +1023,24 @@ pub(crate) fn session_event_to_server_event(
             // The client already knows about their own approval decision
             None
         }
-        SessionEvent::OperationStarted { op_id: _, kind: _ } => {
+        SessionEvent::OperationStarted { op_id, kind: _ } => {
             Some(proto::stream_session_response::Event::ProcessingStarted(
-                proto::ProcessingStartedEvent {},
+                proto::ProcessingStartedEvent {
+                    op_id: op_id.to_string(),
+                },
             ))
         }
-        SessionEvent::OperationCompleted { op_id: _ } => {
+        SessionEvent::OperationCompleted { op_id } => {
             Some(proto::stream_session_response::Event::ProcessingCompleted(
-                proto::ProcessingCompletedEvent {},
+                proto::ProcessingCompletedEvent {
+                    op_id: op_id.to_string(),
+                },
             ))
         }
-        SessionEvent::OperationCancelled { op_id: _, info } => {
+        SessionEvent::OperationCancelled { op_id, info } => {
             Some(proto::stream_session_response::Event::OperationCancelled(
                 proto::OperationCancelledEvent {
+                    op_id: op_id.to_string(),
                     info: Some(proto::CancellationInfo {
                         api_call_in_progress: false,
                         active_tools: vec![],
@@ -1256,10 +1261,26 @@ fn proto_to_mcp_transport(
     })
 }
 
+fn parse_op_id(s: &str) -> Result<crate::client_api::OpId, ConversionError> {
+    uuid::Uuid::parse_str(s)
+        .map(crate::client_api::OpId::from)
+        .map_err(|_| ConversionError::InvalidData {
+            message: format!("Invalid op_id: {}", s),
+        })
+}
+
+fn parse_request_id(s: &str) -> Result<crate::client_api::RequestId, ConversionError> {
+    uuid::Uuid::parse_str(s)
+        .map(crate::client_api::RequestId::from)
+        .map_err(|_| ConversionError::InvalidData {
+            message: format!("Invalid request_id: {}", s),
+        })
+}
+
 pub(crate) fn proto_to_client_event(
     server_event: proto::StreamSessionResponse,
 ) -> Result<Option<crate::client_api::ClientEvent>, ConversionError> {
-    use crate::client_api::{ClientEvent, MessageId, OpId, RequestId, ToolCallId};
+    use crate::client_api::{ClientEvent, MessageId, ToolCallId};
     use steer_tools::ToolCall;
 
     let event = match server_event.event {
@@ -1282,11 +1303,11 @@ pub(crate) fn proto_to_client_event(
             ClientEvent::MessageAdded { message, model }
         }
         proto::stream_session_response::Event::MessageUpdated(e) => ClientEvent::MessageUpdated {
-            id: MessageId::new(),
+            id: MessageId::from(e.id),
             content: e.content,
         },
         proto::stream_session_response::Event::MessagePart(e) => ClientEvent::MessageDelta {
-            id: MessageId::new(),
+            id: MessageId::from(e.id),
             delta: e.delta,
         },
         proto::stream_session_response::Event::ToolCallStarted(e) => {
@@ -1297,7 +1318,7 @@ pub(crate) fn proto_to_client_event(
                 }
             })?;
             ClientEvent::ToolStarted {
-                id: ToolCallId::new(),
+                id: ToolCallId::from(e.id),
                 name: e.name,
                 parameters,
             }
@@ -1309,21 +1330,23 @@ pub(crate) fn proto_to_client_event(
                 }
             })?)?;
             ClientEvent::ToolCompleted {
-                id: ToolCallId::new(),
+                id: ToolCallId::from(e.id),
                 name: e.name,
                 result,
             }
         }
         proto::stream_session_response::Event::ToolCallFailed(e) => ClientEvent::ToolFailed {
-            id: ToolCallId::new(),
+            id: ToolCallId::from(e.id),
             name: e.name,
             error: e.error,
         },
-        proto::stream_session_response::Event::ProcessingStarted(_) => {
-            ClientEvent::ProcessingStarted { op_id: OpId::new() }
+        proto::stream_session_response::Event::ProcessingStarted(e) => {
+            let op_id = parse_op_id(&e.op_id)?;
+            ClientEvent::ProcessingStarted { op_id }
         }
-        proto::stream_session_response::Event::ProcessingCompleted(_) => {
-            ClientEvent::ProcessingCompleted { op_id: OpId::new() }
+        proto::stream_session_response::Event::ProcessingCompleted(e) => {
+            let op_id = parse_op_id(&e.op_id)?;
+            ClientEvent::ProcessingCompleted { op_id }
         }
         proto::stream_session_response::Event::RequestToolApproval(e) => {
             let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
@@ -1332,8 +1355,9 @@ pub(crate) fn proto_to_client_event(
                     error: err.to_string(),
                 }
             })?;
+            let request_id = parse_request_id(&e.id)?;
             ClientEvent::ApprovalRequested {
-                request_id: RequestId::new(),
+                request_id,
                 tool_call: ToolCall {
                     id: e.id,
                     name: e.name,
@@ -1345,8 +1369,9 @@ pub(crate) fn proto_to_client_event(
             let info = e.info.ok_or_else(|| ConversionError::MissingField {
                 field: "operation_cancelled.info".to_string(),
             })?;
+            let op_id = parse_op_id(&e.op_id)?;
             ClientEvent::OperationCancelled {
-                op_id: OpId::new(),
+                op_id,
                 pending_tool_calls: info.active_tools.len(),
             }
         }
@@ -1439,7 +1464,12 @@ pub(crate) fn client_command_to_proto(
             session_id: session_id.to_string(),
             operation_id: String::new(),
         })),
-        ClientCommand::RequestWorkspaceFiles | ClientCommand::Shutdown => None,
+        ClientCommand::RequestWorkspaceFiles => Some(Message::RequestWorkspaceFiles(
+            proto::RequestWorkspaceFilesMessage {
+                session_id: session_id.to_string(),
+            },
+        )),
+        ClientCommand::Shutdown => None,
     };
 
     message.map(|msg| proto::StreamSessionRequest {

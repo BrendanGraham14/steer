@@ -5,17 +5,10 @@ use crate::error::Result;
 use crate::model_registry::ModelRegistry;
 use std::sync::Arc;
 
-pub mod cancellation;
-pub mod command;
-pub mod context;
 pub mod conversation;
 pub mod domain;
-
 pub mod validation;
 
-pub use cancellation::CancellationInfo;
-pub use command::AppCommand;
-pub use context::OpContext;
 pub use conversation::{Conversation, Message, MessageData};
 pub use steer_workspace::EnvironmentInfo;
 

@@ -539,6 +539,62 @@ impl RuntimeHandle {
         self.dispatch_action(session_id, action).await
     }
 
+    pub async fn submit_edited_message(
+        &self,
+        session_id: SessionId,
+        original_message_id: String,
+        new_content: String,
+    ) -> Result<OpId, RuntimeError> {
+        let op_id = OpId::new();
+        let new_message_id = MessageId::new();
+        let timestamp = current_timestamp();
+
+        let action = Action::UserEditedMessage {
+            session_id,
+            message_id: MessageId::from_string(original_message_id),
+            new_content,
+            op_id,
+            new_message_id,
+            timestamp,
+        };
+
+        self.dispatch_action(session_id, action).await?;
+        Ok(op_id)
+    }
+
+    pub async fn execute_slash_command(
+        &self,
+        session_id: SessionId,
+        command: crate::app::conversation::AppCommandType,
+    ) -> Result<(), RuntimeError> {
+        let timestamp = current_timestamp();
+
+        let action = Action::SlashCommand {
+            session_id,
+            command,
+            timestamp,
+        };
+
+        self.dispatch_action(session_id, action).await
+    }
+
+    pub async fn execute_bash_command(
+        &self,
+        session_id: SessionId,
+        command: String,
+    ) -> Result<OpId, RuntimeError> {
+        let op_id = OpId::new();
+
+        let action = Action::DirectBashCommand {
+            session_id,
+            op_id,
+            command,
+        };
+
+        self.dispatch_action(session_id, action).await?;
+        Ok(op_id)
+    }
+
     pub async fn list_all_sessions(&self) -> Result<Vec<SessionId>, RuntimeError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
