@@ -52,11 +52,6 @@ pub enum Effect {
         server_name: String,
     },
 
-    ResolveModel {
-        session_id: SessionId,
-        target: String,
-    },
-
     RequestCompaction {
         session_id: SessionId,
         op_id: OpId,
@@ -80,7 +75,6 @@ impl Effect {
             | Effect::CancelOperation { session_id, .. }
             | Effect::ConnectMcpServer { session_id, .. }
             | Effect::DisconnectMcpServer { session_id, .. }
-            | Effect::ResolveModel { session_id, .. }
             | Effect::RequestCompaction { session_id, .. } => *session_id,
         }
     }

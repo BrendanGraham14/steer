@@ -384,19 +384,6 @@ impl SessionActor {
                 Ok(())
             }
 
-            Effect::ResolveModel { session_id, target } => {
-                let event = SessionEvent::SlashCommandResponse {
-                    response: crate::app::conversation::CommandResponse::Text(format!(
-                        "Model resolution not yet implemented: {}",
-                        target
-                    )),
-                };
-                let seq = self.event_store.append(session_id, &event).await?;
-                let envelope = SessionEventEnvelope { seq, event };
-                let _ = self.event_broadcast.send(envelope);
-                Ok(())
-            }
-
             Effect::RequestCompaction { session_id, op_id } => {
                 let cancel_token = self
                     .active_operations

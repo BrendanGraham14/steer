@@ -9,9 +9,6 @@ pub enum ClientCommand {
         message_id: MessageId,
         new_content: String,
     },
-    ExecuteSlashCommand {
-        command: String,
-    },
     ExecuteBashCommand {
         command: String,
     },

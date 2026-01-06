@@ -3,7 +3,6 @@ use crate::tui::Tui;
 use crate::tui::{InputMode, VimOperator};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
-use steer_grpc::client_api::ClientCommand;
 use tui_textarea::{CursorMove, Input};
 
 impl Tui {
@@ -30,7 +29,7 @@ impl Tui {
             match key.code {
                 KeyCode::Char('c') => {
                     if self.is_processing {
-                        self.client.send(ClientCommand::Cancel).await?;
+                        self.client.cancel_operation().await?;
                     } else {
                         self.switch_mode(InputMode::ConfirmExit);
                     }
@@ -177,7 +176,7 @@ impl Tui {
                         .textarea
                         .move_cursor(CursorMove::Back);
                 } else if self.is_processing {
-                    self.client.send(ClientCommand::Cancel).await?;
+                    self.client.cancel_operation().await?;
                 }
                 self.vim_state.pending_operator = None;
                 self.vim_state.pending_g = false;
@@ -430,9 +429,7 @@ impl Tui {
                     if content.starts_with('!') && content.len() > 1 {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();
-                        self.client
-                            .send(ClientCommand::ExecuteBashCommand { command })
-                            .await?;
+                        self.client.execute_bash_command(command).await?;
                         self.input_panel_state.clear();
                         self.set_mode(InputMode::VimNormal);
                     } else if content.starts_with('/') {

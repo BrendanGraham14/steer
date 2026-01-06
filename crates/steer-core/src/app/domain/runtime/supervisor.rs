@@ -606,20 +606,13 @@ impl RuntimeHandle {
         Ok(op_id)
     }
 
-    pub async fn execute_slash_command(
-        &self,
-        session_id: SessionId,
-        command: crate::app::conversation::AppCommandType,
-    ) -> Result<(), RuntimeError> {
-        let timestamp = current_timestamp();
+    pub async fn compact_session(&self, session_id: SessionId) -> Result<OpId, RuntimeError> {
+        let op_id = OpId::new();
 
-        let action = Action::SlashCommand {
-            session_id,
-            command,
-            timestamp,
-        };
+        let action = Action::RequestCompaction { session_id, op_id };
 
-        self.dispatch_action(session_id, action).await
+        self.dispatch_action(session_id, action).await?;
+        Ok(op_id)
     }
 
     pub async fn execute_bash_command(

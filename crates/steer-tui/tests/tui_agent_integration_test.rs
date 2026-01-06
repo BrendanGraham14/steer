@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use steer_grpc::{ServiceHost, ServiceHostConfig};
 use steer_proto::agent::v1::{
-    CreateSessionRequest, ListFilesRequest, SendMessageRequest, SubscribeRequest, WorkspaceConfig,
-    agent_service_client::AgentServiceClient, stream_session_request,
+    CreateSessionRequest, ListFilesRequest, SubscribeSessionEventsRequest, WorkspaceConfig,
+    agent_service_client::AgentServiceClient,
 };
 use steer_tui::error::Result;
 use tempfile::TempDir;
@@ -396,34 +396,25 @@ async fn test_workspace_changed_event_flow() {
         .unwrap()
         .id;
 
-    // Start streaming events
-    let (tx, _rx) = tokio::sync::mpsc::channel(100);
-
-    // Subscribe to events
-    let subscribe_msg = stream_session_request::Message::Subscribe(SubscribeRequest {
-        event_types: vec![], // Empty means all events
-        since_sequence: None,
-    });
-
-    let msg = steer_proto::agent::v1::StreamSessionRequest {
+    let subscribe_req = SubscribeSessionEventsRequest {
         session_id: session_id.clone(),
-        message: Some(subscribe_msg),
+        since_sequence: None,
     };
 
-    // Create a bidirectional stream
-    let outbound = tokio_stream::iter(vec![msg]);
-    let response = grpc_client.stream_session(outbound).await.unwrap();
-    let mut inbound = response.into_inner();
+    let response = grpc_client
+        .subscribe_session_events(subscribe_req)
+        .await
+        .unwrap();
+    let mut event_stream = response.into_inner();
 
-    // Spawn task to collect events
+    let (tx, _rx) = tokio::sync::mpsc::channel(100);
     let event_collector = tokio::spawn(async move {
-        while let Some(event) = inbound.next().await {
+        while let Some(event) = event_stream.next().await {
             match event {
                 Ok(server_event) => {
                     debug!("Received event: {:?}", server_event);
-                    if let Some(
-                        steer_proto::agent::v1::stream_session_response::Event::WorkspaceChanged(_),
-                    ) = server_event.event
+                    if let Some(steer_proto::agent::v1::session_event::Event::WorkspaceChanged(_)) =
+                        server_event.event
                     {
                         let _ = tx.send(()).await;
                         break;
@@ -437,23 +428,7 @@ async fn test_workspace_changed_event_flow() {
         }
     });
 
-    // Execute a tool that modifies files to trigger WorkspaceChanged
-    // Note: In practice, WorkspaceChanged only fires after mutating tools execute
-    // For this test, we'll just verify the event stream works
-
-    // Send a message that would trigger tool execution
-    let _send_msg = stream_session_request::Message::SendMessage(SendMessageRequest {
-        session_id: session_id.clone(),
-        message: "Create a new file called test.txt with 'hello world' in it".to_string(),
-        attachments: vec![],
-    });
-
-    // TODO: implement
-
-    // Give it some time
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    // Cancel the event collector
     event_collector.abort();
 
     service_host.shutdown().await.unwrap();

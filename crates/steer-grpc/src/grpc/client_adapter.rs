@@ -1,13 +1,12 @@
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
-use crate::client_api::{ClientCommand, ClientEvent};
+use crate::client_api::ClientEvent;
 use crate::grpc::conversions::{
-    client_command_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
+    proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
@@ -19,20 +18,17 @@ use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
     GetMcpServersRequest, GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState,
-    StreamSessionRequest, SubscribeRequest, agent_service_client::AgentServiceClient,
-    stream_session_request::Message as StreamSessionRequestType,
+    agent_service_client::AgentServiceClient,
 };
 
 pub struct AgentClient {
     client: Mutex<AgentServiceClient<Channel>>,
     session_id: Mutex<Option<String>>,
-    command_tx: Mutex<Option<mpsc::Sender<StreamSessionRequest>>>,
     client_event_rx: Mutex<Option<mpsc::Receiver<ClientEvent>>>,
     stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AgentClient {
-    /// Connect to a gRPC server
     pub async fn connect(addr: &str) -> GrpcResult<Self> {
         info!("Connecting to gRPC server at {}", addr);
 
@@ -43,9 +39,8 @@ impl AgentClient {
         Ok(Self {
             client: Mutex::new(client),
             session_id: Mutex::new(None),
-            command_tx: Mutex::new(None),
-            stream_handle: Mutex::new(None),
             client_event_rx: Mutex::new(None),
+            stream_handle: Mutex::new(None),
         })
     }
 
@@ -57,20 +52,17 @@ impl AgentClient {
         Ok(Self {
             client: Mutex::new(client),
             session_id: Mutex::new(None),
-            command_tx: Mutex::new(None),
-            stream_handle: Mutex::new(None),
             client_event_rx: Mutex::new(None),
+            stream_handle: Mutex::new(None),
         })
     }
 
-    /// Convenience constructor: spin up a localhost gRPC server and return a ready client.
     pub async fn local(default_model: steer_core::config::model::ModelId) -> GrpcResult<Self> {
         use crate::local_server::setup_local_grpc;
         let (channel, _server_handle) = setup_local_grpc(default_model, None).await?;
         Self::from_channel(channel).await
     }
 
-    /// Create a new session on the server
     pub async fn create_session(&self, config: SessionConfig) -> GrpcResult<String> {
         debug!("Creating new session with gRPC server");
 
@@ -104,52 +96,7 @@ impl AgentClient {
         Ok(session.id)
     }
 
-    /// Activate (load) an existing dormant session and get its state
-    pub async fn activate_session(
-        &self,
-        session_id: String,
-    ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
-        info!("Activating remote session: {}", session_id);
-
-        let mut stream = self
-            .client
-            .lock()
-            .await
-            .activate_session(proto::ActivateSessionRequest {
-                session_id: session_id.clone(),
-            })
-            .await
-            .map_err(Box::new)?
-            .into_inner();
-
-        let mut messages = Vec::new();
-        let mut approved_tools = Vec::new();
-
-        while let Some(response) = stream
-            .message()
-            .await
-            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
-        {
-            match response.chunk {
-                Some(proto::activate_session_response::Chunk::Message(proto_msg)) => {
-                    match proto_to_message(proto_msg) {
-                        Ok(msg) => messages.push(msg),
-                        Err(e) => return Err(GrpcError::ConversionError(e)),
-                    }
-                }
-                Some(proto::activate_session_response::Chunk::Footer(footer)) => {
-                    approved_tools = footer.approved_tools;
-                }
-                None => {}
-            }
-        }
-
-        *self.session_id.lock().await = Some(session_id);
-        Ok((messages, approved_tools))
-    }
-
-    /// Start bidirectional streaming with the server using the new ClientEvent API
-    pub async fn start_client_streaming(&self) -> GrpcResult<()> {
+    pub async fn subscribe_session_events(&self) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
@@ -157,43 +104,31 @@ impl AgentClient {
             .as_ref()
             .cloned()
             .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "No session ID - call create_session or activate_session first".to_string(),
+                reason: "No session ID - call create_session first".to_string(),
             })?;
 
-        debug!("Starting client event stream for session: {}", session_id);
+        debug!("Subscribing to session events for session: {}", session_id);
 
-        let (cmd_tx, cmd_rx) = mpsc::channel::<StreamSessionRequest>(32);
         let (evt_tx, evt_rx) = mpsc::channel::<ClientEvent>(100);
 
-        let outbound_stream = ReceiverStream::new(cmd_rx);
-        let request = Request::new(outbound_stream);
+        let request = Request::new(proto::SubscribeSessionEventsRequest {
+            session_id: session_id.clone(),
+            since_sequence: None,
+        });
 
-        let response = self
+        let mut inbound_stream = self
             .client
             .lock()
             .await
-            .stream_session(request)
+            .subscribe_session_events(request)
             .await
-            .map_err(Box::new)?;
-        let mut inbound_stream = response.into_inner();
-
-        let subscribe_msg = StreamSessionRequest {
-            session_id: session_id.clone(),
-            message: Some(StreamSessionRequestType::Subscribe(SubscribeRequest {
-                event_types: vec![],
-                since_sequence: None,
-            })),
-        };
-
-        cmd_tx
-            .send(subscribe_msg)
-            .await
-            .map_err(|_| GrpcError::StreamError("Failed to send subscribe message".to_string()))?;
+            .map_err(Box::new)?
+            .into_inner();
 
         let session_id_clone = session_id.clone();
         let stream_handle = tokio::spawn(async move {
             info!(
-                "Started client event stream handler for session: {}",
+                "Started event subscription handler for session: {}",
                 session_id_clone
             );
 
@@ -219,20 +154,23 @@ impl AgentClient {
             }
 
             info!(
-                "Client event stream handler ended for session: {}",
+                "Event subscription handler ended for session: {}",
                 session_id_clone
             );
         });
 
-        *self.command_tx.lock().await = Some(cmd_tx);
         *self.stream_handle.lock().await = Some(stream_handle);
         *self.client_event_rx.lock().await = Some(evt_rx);
 
-        info!("Client streaming started for session: {}", session_id);
+        info!("Event subscription started for session: {}", session_id);
         Ok(())
     }
 
-    pub async fn send(&self, command: ClientCommand) -> GrpcResult<()> {
+    pub async fn send_message(
+        &self,
+        message: String,
+        model: steer_core::config::model::ModelId,
+    ) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
@@ -243,21 +181,169 @@ impl AgentClient {
                 reason: "No active session".to_string(),
             })?;
 
-        let command_tx = self
-            .command_tx
+        let request = Request::new(proto::SendMessageRequest {
+            session_id,
+            message,
+            attachments: vec![],
+            model: Some(proto::ModelSpec {
+                provider_id: model.0.storage_key(),
+                model_id: model.1,
+            }),
+        });
+
+        self.client
+            .lock()
+            .await
+            .send_message(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
+    pub async fn edit_message(&self, message_id: String, new_content: String) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
             .lock()
             .await
             .as_ref()
             .cloned()
             .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "Streaming not started".to_string(),
+                reason: "No active session".to_string(),
             })?;
 
-        if let Some(message) = client_command_to_proto(command, &session_id) {
-            command_tx.send(message).await.map_err(|_| {
-                GrpcError::StreamError("Failed to send command - stream may be closed".to_string())
+        let request = Request::new(proto::EditMessageRequest {
+            session_id,
+            message_id,
+            new_content,
+        });
+
+        self.client
+            .lock()
+            .await
+            .edit_message(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
+    pub async fn approve_tool(
+        &self,
+        tool_call_id: String,
+        decision: crate::client_api::ApprovalDecision,
+    ) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
             })?;
-        }
+
+        use crate::client_api::ApprovalDecision;
+        use proto::approval_decision::DecisionType;
+
+        let decision_type = match decision {
+            ApprovalDecision::Deny => DecisionType::Deny(true),
+            ApprovalDecision::Once => DecisionType::Once(true),
+            ApprovalDecision::AlwaysTool => DecisionType::AlwaysTool(true),
+            ApprovalDecision::AlwaysBashPattern(pattern) => {
+                DecisionType::AlwaysBashPattern(pattern)
+            }
+        };
+
+        let request = Request::new(proto::ApproveToolRequest {
+            session_id,
+            tool_call_id,
+            decision: Some(proto::ApprovalDecision {
+                decision_type: Some(decision_type),
+            }),
+        });
+
+        self.client
+            .lock()
+            .await
+            .approve_tool(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
+    pub async fn cancel_operation(&self) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(proto::CancelOperationRequest {
+            session_id,
+            operation_id: String::new(),
+        });
+
+        self.client
+            .lock()
+            .await
+            .cancel_operation(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
+    pub async fn compact_session(&self) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(proto::CompactSessionRequest { session_id });
+
+        self.client
+            .lock()
+            .await
+            .compact_session(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
+    pub async fn execute_bash_command(&self, command: String) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(proto::ExecuteBashCommandRequest {
+            session_id,
+            command,
+        });
+
+        self.client
+            .lock()
+            .await
+            .execute_bash_command(request)
+            .await
+            .map_err(Box::new)?;
 
         Ok(())
     }
@@ -270,12 +356,10 @@ impl AgentClient {
             .expect("Client event receiver already taken - only supports single subscription")
     }
 
-    /// Get the current session ID
     pub async fn session_id(&self) -> Option<String> {
         self.session_id.lock().await.clone()
     }
 
-    /// List sessions on the remote server
     pub async fn list_sessions(&self) -> GrpcResult<Vec<SessionInfo>> {
         debug!("Listing sessions from gRPC server");
 
@@ -297,7 +381,6 @@ impl AgentClient {
         Ok(sessions_response.sessions)
     }
 
-    /// Get session details from the remote server
     pub async fn get_session(&self, session_id: &str) -> GrpcResult<Option<SessionState>> {
         debug!("Getting session {} from gRPC server", session_id);
 
@@ -353,7 +436,6 @@ impl AgentClient {
         }
     }
 
-    /// Delete a session on the remote server
     pub async fn delete_session(&self, session_id: &str) -> GrpcResult<bool> {
         debug!("Deleting session {} from gRPC server", session_id);
 
@@ -371,7 +453,6 @@ impl AgentClient {
         }
     }
 
-    /// Get the current conversation for a session
     pub async fn get_conversation(
         &self,
         session_id: &str,
@@ -425,7 +506,6 @@ impl AgentClient {
         Ok((messages, approved_tools))
     }
 
-    /// Shutdown the adapter and clean up resources
     pub async fn shutdown(self) {
         if let Some(handle) = self.stream_handle.lock().await.take() {
             handle.abort();
@@ -470,7 +550,6 @@ impl AgentClient {
         Ok(servers)
     }
 
-    /// Resolve a model string (alias or provider/model) to a ModelId
     pub async fn resolve_model(
         &self,
         input: &str,
@@ -492,8 +571,6 @@ impl AgentClient {
             reason: format!("Server returned no model for input '{input}'"),
         })?;
 
-        // Convert proto ModelSpec to core ModelId
-        // Try to deserialize the provider string using serde (same as ModelRegistry does)
         let provider_id: steer_core::config::provider::ProviderId =
             serde_json::from_value(serde_json::Value::String(model_spec.provider_id.clone()))
                 .map_err(|_| GrpcError::InvalidSessionState {
@@ -506,7 +583,6 @@ impl AgentClient {
         Ok((provider_id, model_spec.model_id))
     }
 
-    /// List providers from server
     pub async fn list_providers(&self) -> GrpcResult<Vec<proto::ProviderInfo>> {
         let request = Request::new(proto::ListProvidersRequest {});
         let response = self
@@ -519,7 +595,6 @@ impl AgentClient {
         Ok(response.into_inner().providers)
     }
 
-    /// Get provider auth status from server
     pub async fn get_provider_auth_status(
         &self,
         provider_id: Option<String>,
@@ -535,7 +610,6 @@ impl AgentClient {
         Ok(response.into_inner().statuses)
     }
 
-    /// List available models (only recommended ones)
     pub async fn list_models(
         &self,
         provider_id: Option<String>,

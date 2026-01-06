@@ -1,6 +1,5 @@
 use crate::grpc::conversions::{
-    message_to_proto, proto_to_tool_config, proto_to_workspace_config,
-    session_event_to_server_event, stream_delta_to_proto,
+    message_to_proto, proto_to_tool_config, proto_to_workspace_config, session_event_to_proto,
 };
 use std::sync::Arc;
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
@@ -10,16 +9,16 @@ use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 pub struct RuntimeAgentService {
     runtime: RuntimeHandle,
     catalog: Arc<dyn SessionCatalog>,
-    llm_config_provider: steer_core::config::LlmConfigProvider,
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
+    llm_config_provider: steer_core::config::LlmConfigProvider,
 }
 
 impl RuntimeAgentService {
@@ -48,107 +47,51 @@ impl RuntimeAgentService {
 
 #[tonic::async_trait]
 impl agent_service_server::AgentService for RuntimeAgentService {
-    type StreamSessionStream = ReceiverStream<Result<StreamSessionResponse, Status>>;
+    type SubscribeSessionEventsStream = ReceiverStream<Result<SessionEvent, Status>>;
     type ListFilesStream = ReceiverStream<Result<ListFilesResponse, Status>>;
     type GetSessionStream =
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<GetSessionResponse, Status>> + Send>>;
     type GetConversationStream = std::pin::Pin<
         Box<dyn futures::Stream<Item = Result<GetConversationResponse, Status>> + Send>,
     >;
-    type ActivateSessionStream = std::pin::Pin<
-        Box<dyn futures::Stream<Item = Result<ActivateSessionResponse, Status>> + Send>,
-    >;
 
-    async fn stream_session(
+    async fn subscribe_session_events(
         &self,
-        request: Request<Streaming<StreamSessionRequest>>,
-    ) -> Result<Response<Self::StreamSessionStream>, Status> {
-        let mut client_stream = request.into_inner();
+        request: Request<SubscribeSessionEventsRequest>,
+    ) -> Result<Response<Self::SubscribeSessionEventsStream>, Status> {
+        let req = request.into_inner();
+        let session_id = Self::parse_session_id(&req.session_id)?;
+
+        if let Err(e) = self.runtime.resume_session(session_id).await
+            && !matches!(e, RuntimeError::SessionNotFound { .. })
+        {
+            error!("Failed to resume session {}: {}", session_id, e);
+        }
+
+        let subscription = self
+            .runtime
+            .subscribe_events(session_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to subscribe: {e}")))?;
+
+        let current_model = self
+            .catalog
+            .get_session_summary(session_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.last_model)
+            .and_then(|m| self.model_registry.resolve(&m).ok())
+            .unwrap_or_else(|| steer_core::config::model::builtin::claude_sonnet_4_20250514());
+
+
         let (tx, rx) = mpsc::channel(100);
 
-        let runtime = self.runtime.clone();
-        let catalog = self.catalog.clone();
-        let model_registry = self.model_registry.clone();
-
-        let _stream_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-            let (session_id, mut subscription) =
-                if let Some(client_message_result) = client_stream.message().await.transpose() {
-                    match client_message_result {
-                        Ok(client_message) => {
-                            let session_id_str = client_message.session_id.clone();
-                            let session_id = match Self::parse_session_id(&session_id_str) {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    let _ = tx.send(Err(e)).await;
-                                    return;
-                                }
-                            };
-
-                            if let Err(e) = runtime.resume_session(session_id).await {
-                                if !matches!(e, RuntimeError::SessionNotFound { .. }) {
-                                    error!("Failed to resume session {}: {}", session_id, e);
-                                }
-                            }
-
-                            let subscription = match runtime.subscribe_events(session_id).await {
-                                Ok(sub) => sub,
-                                Err(e) => {
-                                    error!("Failed to subscribe to session {}: {}", session_id, e);
-                                    let _ = tx
-                                        .send(Err(Status::internal(format!(
-                                            "Failed to subscribe: {e}"
-                                        ))))
-                                        .await;
-                                    return;
-                                }
-                            };
-
-                            if let Err(e) = handle_runtime_message(
-                                &runtime,
-                                &catalog,
-                                session_id,
-                                client_message,
-                                &tx,
-                            )
-                            .await
-                            {
-                                error!("Error handling first client message: {}", e);
-                                let _ = tx.send(Err(e)).await;
-                                return;
-                            }
-
-                            (session_id, subscription)
-                        }
-                        Err(e) => {
-                            error!("Error receiving first client message: {}", e);
-                            let _ = tx.send(Err(Status::internal("Stream error"))).await;
-                            return;
-                        }
-                    }
-                } else {
-                    error!("No initial client message received");
-                    let _ = tx.send(Err(Status::internal("No initial message"))).await;
-                    return;
-                };
-
-            let current_model = catalog
-                .get_session_summary(session_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|s| s.last_model)
-                .and_then(|m| model_registry.resolve(&m).ok())
-                .unwrap_or_else(|| steer_core::config::model::builtin::claude_sonnet_4_20250514());
-
-            let tx_clone = tx.clone();
-            let current_model_clone = current_model.clone();
-            let event_task = tokio::spawn(async move {
-                while let Some(envelope) = subscription.recv().await {
-                    let server_event = match session_event_to_server_event(
-                        envelope.event,
-                        envelope.seq,
-                        &current_model_clone,
-                    ) {
+        tokio::spawn(async move {
+            let mut subscription = subscription;
+            while let Some(envelope) = subscription.recv().await {
+                let proto_event =
+                    match session_event_to_proto(envelope.event, envelope.seq, &current_model) {
                         Ok(event) => event,
                         Err(e) => {
                             warn!("Failed to convert session event: {}", e);
@@ -156,91 +99,16 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                         }
                     };
 
-                    if server_event.event.is_none() {
-                        continue;
-                    }
-
-                    if let Err(e) = tx_clone.send(Ok(server_event)).await {
-                        warn!("Failed to send event to client: {}", e);
-                        break;
-                    }
+                if proto_event.event.is_none() {
+                    continue;
                 }
-                debug!("Event forwarding task ended for session: {}", session_id);
-            });
 
-            let delta_task = match runtime.subscribe_deltas(session_id).await {
-                Ok(mut delta_rx) => {
-                    let tx_clone = tx.clone();
-                    Some(tokio::spawn(async move {
-                        loop {
-                            match delta_rx.recv().await {
-                                Ok(delta) => {
-                                    let proto_delta = stream_delta_to_proto(delta);
-                                    let response = StreamSessionResponse {
-                                        sequence_num: 0,
-                                        timestamp: Some(prost_types::Timestamp::from(
-                                            std::time::SystemTime::now(),
-                                        )),
-                                        event: Some(
-                                            proto::stream_session_response::Event::StreamDelta(
-                                                proto_delta,
-                                            ),
-                                        ),
-                                    };
-                                    if tx_clone.send(Ok(response)).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                    continue;
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                    break;
-                                }
-                            }
-                        }
-                        debug!("Delta forwarding task ended for session: {}", session_id);
-                    }))
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to subscribe to deltas for session {}: {}",
-                        session_id, e
-                    );
-                    None
-                }
-            };
-
-            while let Some(client_message_result) = client_stream.message().await.transpose() {
-                match client_message_result {
-                    Ok(client_message) => {
-                        if let Err(e) = handle_runtime_message(
-                            &runtime,
-                            &catalog,
-                            session_id,
-                            client_message,
-                            &tx,
-                        )
-                        .await
-                        {
-                            error!("Error handling client message: {}", e);
-                            let _ = tx.send(Err(e)).await;
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Error receiving client message: {}", e);
-                        let _ = tx.send(Err(Status::internal("Stream error"))).await;
-                        break;
-                    }
+                if let Err(e) = tx.send(Ok(proto_event)).await {
+                    warn!("Failed to send event to client: {}", e);
+                    break;
                 }
             }
-
-            event_task.abort();
-            if let Some(delta_task) = delta_task {
-                delta_task.abort();
-            }
-            info!("Client stream ended for session: {}", session_id);
+            debug!("Event forwarding task ended for session: {}", session_id);
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
@@ -446,6 +314,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
 
+        // TODO: Handle optional model override from req.model
         match self
             .runtime
             .submit_user_input(session_id, req.message)
@@ -467,6 +336,21 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 Err(Status::internal(format!("Failed to send message: {e}")))
             }
         }
+    }
+
+    async fn edit_message(
+        &self,
+        request: Request<EditMessageRequest>,
+    ) -> Result<Response<EditMessageResponse>, Status> {
+        let req = request.into_inner();
+        let session_id = Self::parse_session_id(&req.session_id)?;
+
+        self.runtime
+            .submit_edited_message(session_id, req.message_id, req.new_content)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to edit message: {e}")))?;
+
+        Ok(Response::new(EditMessageResponse {}))
     }
 
     async fn approve_tool(
@@ -518,41 +402,6 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         }
     }
 
-    async fn activate_session(
-        &self,
-        request: Request<ActivateSessionRequest>,
-    ) -> Result<Response<Self::ActivateSessionStream>, Status> {
-        let req = request.into_inner();
-        let session_id = Self::parse_session_id(&req.session_id)?;
-        let runtime = self.runtime.clone();
-
-        info!("ActivateSession called for {}", session_id);
-
-        let stream = async_stream::try_stream! {
-            runtime.resume_session(session_id).await
-                .map_err(|e| Status::internal(format!("Failed to activate session: {e}")))?;
-
-            let state = runtime.get_session_state(session_id).await
-                .map_err(|e| Status::internal(format!("Failed to get session state: {e}")))?;
-
-            for msg in state.conversation.messages {
-                let proto_msg = message_to_proto(msg)
-                    .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
-                yield ActivateSessionResponse {
-                    chunk: Some(activate_session_response::Chunk::Message(proto_msg)),
-                };
-            }
-
-            yield ActivateSessionResponse {
-                chunk: Some(activate_session_response::Chunk::Footer(ActivateSessionFooter {
-                    approved_tools: state.approved_tools.into_iter().collect(),
-                })),
-            };
-        };
-
-        Ok(Response::new(Box::pin(stream)))
-    }
-
     async fn cancel_operation(
         &self,
         request: Request<CancelOperationRequest>,
@@ -567,6 +416,36 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 Err(Status::internal(format!("Failed to cancel operation: {e}")))
             }
         }
+    }
+
+    async fn compact_session(
+        &self,
+        request: Request<CompactSessionRequest>,
+    ) -> Result<Response<CompactSessionResponse>, Status> {
+        let req = request.into_inner();
+        let session_id = Self::parse_session_id(&req.session_id)?;
+
+        self.runtime
+            .compact_session(session_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to compact session: {e}")))?;
+
+        Ok(Response::new(CompactSessionResponse {}))
+    }
+
+    async fn execute_bash_command(
+        &self,
+        request: Request<ExecuteBashCommandRequest>,
+    ) -> Result<Response<ExecuteBashCommandResponse>, Status> {
+        let req = request.into_inner();
+        let session_id = Self::parse_session_id(&req.session_id)?;
+
+        self.runtime
+            .execute_bash_command(session_id, req.command)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to execute bash command: {e}")))?;
+
+        Ok(Response::new(ExecuteBashCommandResponse {}))
     }
 
     async fn list_files(
@@ -839,153 +718,4 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             ))),
         }
     }
-}
-
-async fn handle_runtime_message(
-    runtime: &RuntimeHandle,
-    catalog: &Arc<dyn SessionCatalog>,
-    session_id: SessionId,
-    client_message: StreamSessionRequest,
-    event_tx: &mpsc::Sender<Result<proto::StreamSessionResponse, Status>>,
-) -> Result<(), Status> {
-    debug!(
-        "Handling client message for session: {}",
-        client_message.session_id
-    );
-
-    if let Some(message) = client_message.message {
-        match message {
-            stream_session_request::Message::SendMessage(send_msg) => {
-                runtime
-                    .submit_user_input(session_id, send_msg.message)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to send message: {e}")))?;
-            }
-
-            stream_session_request::Message::ToolApproval(approval) => {
-                let request_id = Uuid::parse_str(&approval.tool_call_id)
-                    .map(steer_core::app::domain::types::RequestId::from)
-                    .map_err(|_| Status::invalid_argument("Invalid tool call ID"))?;
-
-                let (approved, remember_tool, remember_pattern) = match approval.decision {
-                    Some(decision) => match decision.decision_type {
-                        Some(proto::approval_decision::DecisionType::Deny(_)) => {
-                            (false, None, None)
-                        }
-                        Some(proto::approval_decision::DecisionType::Once(_)) => (true, None, None),
-                        Some(proto::approval_decision::DecisionType::AlwaysTool(_)) => {
-                            (true, Some(String::new()), None)
-                        }
-                        Some(proto::approval_decision::DecisionType::AlwaysBashPattern(
-                            pattern,
-                        )) => (true, None, Some(pattern)),
-                        None => {
-                            return Err(Status::invalid_argument("Invalid approval decision"));
-                        }
-                    },
-                    None => {
-                        return Err(Status::invalid_argument("Missing approval decision"));
-                    }
-                };
-
-                runtime
-                    .submit_tool_approval(
-                        session_id,
-                        request_id,
-                        approved,
-                        remember_tool,
-                        remember_pattern,
-                    )
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to approve tool: {e}")))?;
-            }
-
-            stream_session_request::Message::Cancel(_cancel) => {
-                runtime
-                    .cancel_operation(session_id, None)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to cancel operation: {e}")))?;
-            }
-
-            stream_session_request::Message::Subscribe(_subscribe_request) => {
-                debug!("Subscribe message received - stream already established");
-            }
-
-            stream_session_request::Message::UpdateConfig(_update_config) => {
-                debug!("UpdateConfig received but provider changes are no longer supported");
-            }
-
-            stream_session_request::Message::ExecuteCommand(execute_command) => {
-                use steer_core::app::conversation::AppCommandType;
-                match AppCommandType::parse(&execute_command.command) {
-                    Ok(cmd) => {
-                        runtime
-                            .execute_slash_command(session_id, cmd)
-                            .await
-                            .map_err(|e| {
-                                Status::internal(format!("Failed to execute command: {e}"))
-                            })?;
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Failed to parse command '{}': {}",
-                            execute_command.command, e
-                        );
-                    }
-                }
-            }
-
-            stream_session_request::Message::ExecuteBashCommand(execute_bash_command) => {
-                runtime
-                    .execute_bash_command(session_id, execute_bash_command.command)
-                    .await
-                    .map_err(|e| {
-                        Status::internal(format!("Failed to execute bash command: {e}"))
-                    })?;
-            }
-
-            stream_session_request::Message::EditMessage(edit_message) => {
-                runtime
-                    .submit_edited_message(
-                        session_id,
-                        edit_message.message_id,
-                        edit_message.new_content,
-                    )
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to edit message: {e}")))?;
-            }
-
-            stream_session_request::Message::RequestWorkspaceFiles(_) => {
-                let config = catalog
-                    .get_session_config(session_id)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to get session config: {e}")))?
-                    .ok_or_else(|| {
-                        Status::not_found(format!("Session not found: {}", session_id))
-                    })?;
-
-                let workspace = steer_core::workspace::create_workspace(
-                    &config.workspace.to_workspace_config(),
-                )
-                .await
-                .map_err(|e| Status::internal(format!("Failed to create workspace: {e}")))?;
-
-                let files = workspace.list_files(None, None).await.unwrap_or_default();
-
-                let response = proto::StreamSessionResponse {
-                    sequence_num: 0,
-                    timestamp: None,
-                    event: Some(proto::stream_session_response::Event::WorkspaceFiles(
-                        proto::WorkspaceFilesEvent { files },
-                    )),
-                };
-
-                if let Err(e) = event_tx.send(Ok(response)).await {
-                    warn!("Failed to send workspace files event: {}", e);
-                }
-            }
-        }
-    }
-
-    Ok(())
 }

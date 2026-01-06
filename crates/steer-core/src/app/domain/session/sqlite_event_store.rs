@@ -182,7 +182,6 @@ impl SqliteEventStore {
             SessionEvent::OperationCompleted { .. } => "operation_completed",
             SessionEvent::OperationCancelled { .. } => "operation_cancelled",
             SessionEvent::ModelChanged { .. } => "model_changed",
-            SessionEvent::SlashCommandResponse { .. } => "slash_command_response",
             SessionEvent::ConversationCompacted { .. } => "conversation_compacted",
             SessionEvent::WorkspaceChanged => "workspace_changed",
             SessionEvent::Error { .. } => "error",

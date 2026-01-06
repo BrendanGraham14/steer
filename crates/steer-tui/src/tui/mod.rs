@@ -20,7 +20,7 @@ use ratatui::{Frame, Terminal};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData};
 
 use steer_grpc::AgentClient;
-use steer_grpc::client_api::{ClientCommand, ClientEvent, ModelId, OpId};
+use steer_grpc::client_api::{ClientEvent, ModelId, OpId};
 
 use crate::tui::events::processor::PendingToolApproval;
 use tokio::sync::mpsc;
@@ -420,8 +420,13 @@ impl Tui {
 
     async fn load_file_cache(&mut self) {
         info!(target: "tui.file_cache", "Requesting workspace files for session {}", self.session_id);
-        if let Err(e) = self.client.send(ClientCommand::RequestWorkspaceFiles).await {
-            warn!(target: "tui.file_cache", "Failed to request workspace files: {}", e);
+        match self.client.list_workspace_files().await {
+            Ok(files) => {
+                self.input_panel_state.file_cache.update(files).await;
+            }
+            Err(e) => {
+                warn!(target: "tui.file_cache", "Failed to request workspace files: {}", e);
+            }
         }
     }
 
@@ -961,29 +966,18 @@ impl Tui {
     }
 
     async fn send_message(&mut self, content: String) -> Result<()> {
-        // Handle slash commands
         if content.starts_with('/') {
             return self.handle_slash_command(content).await;
         }
 
-        // Check if we're editing a message
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
-            // Send edit command which creates a new branch
-            if let Err(e) = self
-                .client
-                .send(ClientCommand::EditMessage {
-                    message_id: message_id_to_edit.into(),
-                    new_content: content,
-                })
-                .await
-            {
+            if let Err(e) = self.client.edit_message(message_id_to_edit, content).await {
                 self.push_notice(NoticeLevel::Error, format!("Cannot edit message: {e}"));
             }
         } else {
-            // Send regular message
             if let Err(e) = self
                 .client
-                .send(ClientCommand::SendMessage { content })
+                .send_message(content, self.current_model.clone())
                 .await
             {
                 self.push_notice(NoticeLevel::Error, format!("Cannot send message: {e}"));
@@ -1016,11 +1010,10 @@ impl Tui {
                             crate::tui::custom_commands::CustomCommand::Prompt {
                                 prompt, ..
                             } => {
-                                // Forward prompt directly as user input to avoid recursive slash handling
                                 self.client
-                                    .send(ClientCommand::SendMessage { content: prompt })
+                                    .send_message(prompt, self.current_model.clone())
                                     .await?
-                            } // Future custom command types can be handled here
+                            }
                         }
                     }
                     _ => unreachable!(),
@@ -1045,25 +1038,16 @@ impl Tui {
                 // Handle TUI-specific commands
                 match tui_cmd {
                     TuiCommand::ReloadFiles => {
-                        // Clear the file cache to force a refresh
                         self.input_panel_state.file_cache.clear().await;
                         info!(target: "tui.slash_command", "Cleared file cache, will reload on next access");
-                        // Request workspace files again
-                        if let Err(e) = self.client.send(ClientCommand::RequestWorkspaceFiles).await
-                        {
-                            self.push_notice(
-                                NoticeLevel::Error,
-                                format!("Cannot reload files: {e}"),
-                            );
-                        } else {
-                            self.push_tui_response(
-                                TuiCommandType::ReloadFiles.command_name(),
-                                TuiCommandResponse::Text(
-                                    "File cache cleared. Files will be reloaded on next access."
-                                        .to_string(),
-                                ),
-                            );
-                        }
+                        self.load_file_cache().await;
+                        self.push_tui_response(
+                            TuiCommandType::ReloadFiles.command_name(),
+                            TuiCommandResponse::Text(
+                                "File cache cleared. Files will be reloaded on next access."
+                                    .to_string(),
+                            ),
+                        );
                     }
                     TuiCommand::Theme(theme_name) => {
                         if let Some(name) = theme_name {
@@ -1231,7 +1215,7 @@ impl Tui {
                     TuiCommand::Custom(custom_cmd) => match custom_cmd {
                         crate::tui::custom_commands::CustomCommand::Prompt { prompt, .. } => {
                             self.client
-                                .send(ClientCommand::SendMessage { content: prompt })
+                                .send_message(prompt, self.current_model.clone())
                                 .await?;
                         }
                     },
@@ -1241,14 +1225,45 @@ impl Tui {
                 }
             }
             TuiAppCommand::Core(core_cmd) => {
-                // Pass core commands through to the backend
-                let command = core_cmd.to_string();
-                if let Err(e) = self
-                    .client
-                    .send(ClientCommand::ExecuteSlashCommand { command })
-                    .await
-                {
-                    self.push_notice(NoticeLevel::Error, e.to_string());
+                use steer_core::app::conversation::AppCommandType as CoreCommand;
+                match core_cmd {
+                    CoreCommand::Compact => {
+                        if let Err(e) = self.client.compact_session().await {
+                            self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
+                        }
+                    }
+                    CoreCommand::Model { target } => {
+                        if let Some(model_name) = target {
+                            match self.client.resolve_model(&model_name).await {
+                                Ok(model_id) => {
+                                    self.current_model = model_id;
+                                    self.push_notice(
+                                        NoticeLevel::Info,
+                                        format!(
+                                            "Model set to: {}/{}",
+                                            self.current_model.0.storage_key(),
+                                            self.current_model.1
+                                        ),
+                                    );
+                                }
+                                Err(e) => {
+                                    self.push_notice(
+                                        NoticeLevel::Error,
+                                        format!("Failed to resolve model: {e}"),
+                                    );
+                                }
+                            }
+                        } else {
+                            self.push_notice(
+                                NoticeLevel::Info,
+                                format!(
+                                    "Current model: {}/{}",
+                                    self.current_model.0.storage_key(),
+                                    self.current_model.1
+                                ),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1405,15 +1420,13 @@ pub async fn run_tui(
         }
     };
 
-    // If session_id is provided, resume that session
     let (session_id, messages) = if let Some(session_id) = session_id {
-        // Activate the existing session
         let (messages, _approved_tools) = client
-            .activate_session(session_id.clone())
+            .get_conversation(&session_id)
             .await
             .map_err(Box::new)?;
         info!(
-            "Activated session: {} with {} messages",
+            "Loaded session: {} with {} messages",
             session_id,
             messages.len()
         );
@@ -1445,7 +1458,7 @@ pub async fn run_tui(
         (session_id, vec![])
     };
 
-    client.start_client_streaming().await.map_err(Box::new)?;
+    client.subscribe_session_events().await.map_err(Box::new)?;
     let event_rx = client.subscribe_client_events().await;
     let mut tui = Tui::new(client, model.clone(), session_id.clone(), theme.clone()).await?;
 

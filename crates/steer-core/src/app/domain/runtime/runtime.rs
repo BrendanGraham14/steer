@@ -328,20 +328,6 @@ impl AppRuntime {
 
             Effect::ConnectMcpServer { .. } | Effect::DisconnectMcpServer { .. } => Ok(vec![]),
 
-            Effect::ResolveModel { session_id, target } => {
-                let event = SessionEvent::SlashCommandResponse {
-                    response: crate::app::conversation::CommandResponse::Text(format!(
-                        "Model resolution not yet implemented: {}",
-                        target
-                    )),
-                };
-                self.event_tx
-                    .send((session_id, event))
-                    .await
-                    .map_err(|_| RuntimeError::ChannelClosed)?;
-                Ok(vec![])
-            }
-
             Effect::RequestCompaction { session_id, op_id } => {
                 let session = self.session_manager.get_session(session_id).await?;
                 let cancel_token = self

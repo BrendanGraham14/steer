@@ -34,12 +34,6 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             timestamp,
         ),
 
-        Action::SlashCommand {
-            session_id,
-            command,
-            timestamp,
-        } => handle_slash_command(state, session_id, command, timestamp),
-
         Action::ToolApprovalRequested {
             session_id,
             request_id,
@@ -96,6 +90,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             op_id,
             command,
         } => handle_direct_bash(state, session_id, op_id, command),
+
+        Action::RequestCompaction { session_id, op_id } => {
+            handle_request_compaction(state, session_id, op_id)
+        }
 
         Action::Hydrate {
             session_id,
@@ -288,67 +286,6 @@ fn handle_user_edited_message(
     });
 
     effects
-}
-
-fn handle_slash_command(
-    state: &mut AppState,
-    session_id: crate::app::domain::types::SessionId,
-    command: crate::app::conversation::AppCommandType,
-    _timestamp: u64,
-) -> Vec<Effect> {
-    use crate::app::conversation::{AppCommandType, CommandResponse};
-    use crate::app::domain::event::SessionEvent;
-
-    match command {
-        AppCommandType::Model { target: None } => {
-            let (provider, model_id) = &state.current_model;
-            let response = CommandResponse::Text(format!(
-                "Current model: {} ({})",
-                model_id,
-                provider.storage_key()
-            ));
-            vec![Effect::EmitEvent {
-                session_id,
-                event: SessionEvent::SlashCommandResponse { response },
-            }]
-        }
-        AppCommandType::Model {
-            target: Some(target),
-        } => {
-            vec![Effect::ResolveModel { session_id, target }]
-        }
-        AppCommandType::Compact => {
-            const MIN_MESSAGES_FOR_COMPACT: usize = 3;
-            let message_count = state.conversation.get_thread_messages().len();
-
-            if message_count < MIN_MESSAGES_FOR_COMPACT {
-                let response = CommandResponse::Compact(
-                    crate::app::conversation::CompactResult::InsufficientMessages,
-                );
-                return vec![Effect::EmitEvent {
-                    session_id,
-                    event: SessionEvent::SlashCommandResponse { response },
-                }];
-            }
-
-            let op_id = crate::app::domain::types::OpId::new();
-            state.current_operation = Some(crate::app::domain::state::OperationState {
-                op_id,
-                kind: crate::app::domain::state::OperationKind::Compact,
-                pending_tool_calls: std::collections::HashSet::new(),
-            });
-            vec![
-                Effect::EmitEvent {
-                    session_id,
-                    event: SessionEvent::OperationStarted {
-                        op_id,
-                        kind: crate::app::domain::state::OperationKind::Compact,
-                    },
-                },
-                Effect::RequestCompaction { session_id, op_id },
-            ]
-        }
-    }
 }
 
 fn handle_tool_approval_requested(
@@ -763,6 +700,41 @@ fn handle_direct_bash(
     effects
 }
 
+fn handle_request_compaction(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    op_id: crate::app::domain::types::OpId,
+) -> Vec<Effect> {
+    const MIN_MESSAGES_FOR_COMPACT: usize = 3;
+    let message_count = state.conversation.get_thread_messages().len();
+
+    if message_count < MIN_MESSAGES_FOR_COMPACT {
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "Not enough messages to compact. Need at least 3 messages.".to_string(),
+            },
+        }];
+    }
+
+    state.current_operation = Some(crate::app::domain::state::OperationState {
+        op_id,
+        kind: OperationKind::Compact,
+        pending_tool_calls: std::collections::HashSet::new(),
+    });
+
+    vec![
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationStarted {
+                op_id,
+                kind: OperationKind::Compact,
+            },
+        },
+        Effect::RequestCompaction { session_id, op_id },
+    ]
+}
+
 fn handle_cancel(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
@@ -948,17 +920,9 @@ fn handle_compaction_failed(
     op_id: crate::app::domain::types::OpId,
     error: String,
 ) -> Vec<Effect> {
-    use crate::app::conversation::{CommandResponse, CompactResult};
-
     state.current_operation = None;
 
     vec![
-        Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::SlashCommandResponse {
-                response: CommandResponse::Compact(CompactResult::Cancelled),
-            },
-        },
         Effect::EmitEvent {
             session_id,
             event: SessionEvent::Error { message: error },

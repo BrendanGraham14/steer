@@ -1,4 +1,3 @@
-use crate::app::conversation::AppCommandType;
 use crate::app::domain::types::{
     CompactionId, MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
 };
@@ -24,12 +23,6 @@ pub enum Action {
         new_content: String,
         op_id: OpId,
         new_message_id: MessageId,
-        timestamp: u64,
-    },
-
-    SlashCommand {
-        session_id: SessionId,
-        command: AppCommandType,
         timestamp: u64,
     },
 
@@ -102,6 +95,11 @@ pub enum Action {
         command: String,
     },
 
+    RequestCompaction {
+        session_id: SessionId,
+        op_id: OpId,
+    },
+
     Shutdown,
 
     Hydrate {
@@ -171,7 +169,6 @@ impl Action {
         match self {
             Action::UserInput { session_id, .. }
             | Action::UserEditedMessage { session_id, .. }
-            | Action::SlashCommand { session_id, .. }
             | Action::ToolApprovalRequested { session_id, .. }
             | Action::ToolApprovalDecided { session_id, .. }
             | Action::ToolExecutionStarted { session_id, .. }
@@ -183,6 +180,7 @@ impl Action {
             | Action::ModelResponseError { session_id, .. }
             | Action::Cancel { session_id, .. }
             | Action::DirectBashCommand { session_id, .. }
+            | Action::RequestCompaction { session_id, .. }
             | Action::Hydrate { session_id, .. }
             | Action::WorkspaceFilesListed { session_id, .. }
             | Action::ModelResolved { session_id, .. }
@@ -197,6 +195,7 @@ impl Action {
             Action::UserInput { op_id, .. }
             | Action::UserEditedMessage { op_id, .. }
             | Action::DirectBashCommand { op_id, .. }
+            | Action::RequestCompaction { op_id, .. }
             | Action::ModelResponseComplete { op_id, .. }
             | Action::ModelResponseError { op_id, .. }
             | Action::CompactionComplete { op_id, .. }

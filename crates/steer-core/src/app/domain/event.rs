@@ -1,4 +1,4 @@
-use crate::app::conversation::{CommandResponse, Message};
+use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
 use crate::app::domain::types::{
     CompactionRecord, MessageId, OpId, RequestId, SessionId, ToolCallId,
@@ -79,10 +79,6 @@ pub enum SessionEvent {
 
     ModelChanged {
         model: ModelId,
-    },
-
-    SlashCommandResponse {
-        response: CommandResponse,
     },
 
     ConversationCompacted {

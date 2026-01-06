@@ -161,7 +161,7 @@ proptest! {
 #[cfg(test)]
 mod id_preservation_tests {
     use crate::client_api::{ClientEvent, OpId, RequestId};
-    use crate::grpc::conversions::{proto_to_client_event, session_event_to_server_event};
+    use crate::grpc::conversions::{proto_to_client_event, session_event_to_proto};
     use steer_core::app::domain::event::{CancellationInfo, SessionEvent};
     use steer_core::app::domain::state::OperationKind;
     use steer_core::config::provider::ProviderId;
@@ -184,7 +184,7 @@ mod id_preservation_tests {
         };
 
         let model = test_model();
-        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
@@ -201,7 +201,7 @@ mod id_preservation_tests {
         let event = SessionEvent::OperationCompleted { op_id };
 
         let model = test_model();
-        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
@@ -223,7 +223,7 @@ mod id_preservation_tests {
         };
 
         let model = test_model();
-        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
@@ -252,7 +252,7 @@ mod id_preservation_tests {
         };
 
         let model = test_model();
-        let proto_response = session_event_to_server_event(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
