@@ -518,6 +518,7 @@ impl RuntimeHandle {
         &self,
         session_id: SessionId,
         text: String,
+        model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let text = NonEmptyString::new(text).ok_or_else(|| RuntimeError::InvalidInput {
             message: "Input text cannot be empty".to_string(),
@@ -532,6 +533,7 @@ impl RuntimeHandle {
             text,
             op_id,
             message_id,
+            model,
             timestamp,
         };
 
@@ -588,6 +590,7 @@ impl RuntimeHandle {
         session_id: SessionId,
         original_message_id: String,
         new_content: String,
+        model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let op_id = OpId::new();
         let new_message_id = MessageId::new();
@@ -599,6 +602,7 @@ impl RuntimeHandle {
             new_content,
             op_id,
             new_message_id,
+            model,
             timestamp,
         };
 

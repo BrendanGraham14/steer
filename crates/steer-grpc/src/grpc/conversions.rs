@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use steer_core::app::conversation::{
     AssistantContent, Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
+use steer_core::app::domain::delta::{StreamDelta, ToolCallDelta as CoreToolCallDelta};
 use steer_core::app::domain::SessionEvent;
 
 use steer_core::session::state::{
@@ -15,7 +16,7 @@ use steer_tools::ToolCall;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 
 /// Convert a core ModelId to proto ModelSpec
-fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec {
+pub fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec {
     proto::ModelSpec {
         provider_id: model.0.storage_key(),
         model_id: model.1.clone(),
@@ -23,7 +24,7 @@ fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec
 }
 
 /// Convert proto ModelSpec to core ModelId
-fn proto_to_model(
+pub fn proto_to_model(
     spec: &proto::ModelSpec,
 ) -> Result<steer_core::config::model::ModelId, ConversionError> {
     use steer_core::config::provider::ProviderId;
@@ -892,7 +893,6 @@ fn compaction_record_to_proto(
 pub(crate) fn session_event_to_proto(
     session_event: SessionEvent,
     sequence_num: u64,
-    current_model: &steer_core::config::model::ModelId,
 ) -> Result<proto::SessionEvent, ConversionError> {
     let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
 
@@ -917,15 +917,21 @@ pub(crate) fn session_event_to_proto(
             id,
             name,
             parameters,
+            model,
         } => Some(proto::session_event::Event::ToolCallStarted(
             proto::ToolCallStartedEvent {
                 name,
                 id: id.to_string(),
-                model: Some(model_to_proto(current_model.clone())),
+                model: Some(model_to_proto(model)),
                 parameters_json: serde_json::to_string(&parameters).unwrap_or_default(),
             },
         )),
-        SessionEvent::ToolCallCompleted { id, name, result } => {
+        SessionEvent::ToolCallCompleted {
+            id,
+            name,
+            result,
+            model,
+        } => {
             let proto_result = steer_tools_result_to_proto(&result)
                 .map_err(|e| ConversionError::ToolResultConversion(e.to_string()))?;
             Some(proto::session_event::Event::ToolCallCompleted(
@@ -933,18 +939,23 @@ pub(crate) fn session_event_to_proto(
                     name,
                     result: Some(proto_result),
                     id: id.to_string(),
-                    model: Some(model_to_proto(current_model.clone())),
+                    model: Some(model_to_proto(model)),
                 },
             ))
         }
-        SessionEvent::ToolCallFailed { id, name, error } => Some(
-            proto::session_event::Event::ToolCallFailed(proto::ToolCallFailedEvent {
+        SessionEvent::ToolCallFailed {
+            id,
+            name,
+            error,
+            model,
+        } => Some(proto::session_event::Event::ToolCallFailed(
+            proto::ToolCallFailedEvent {
                 name,
                 error,
                 id: id.to_string(),
-                model: Some(model_to_proto(current_model.clone())),
-            }),
-        ),
+                model: Some(model_to_proto(model)),
+            },
+        )),
         SessionEvent::ApprovalRequested {
             request_id,
             tool_call,
@@ -1004,6 +1015,71 @@ pub(crate) fn session_event_to_proto(
         sequence_num,
         timestamp,
         event,
+    })
+}
+
+pub(crate) fn stream_delta_to_proto(
+    delta: StreamDelta,
+) -> Result<proto::SessionEvent, ConversionError> {
+    let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
+
+    let (op_id, message_id, delta_type) = match delta {
+        StreamDelta::TextChunk {
+            op_id,
+            message_id,
+            delta,
+        } => (
+            op_id,
+            message_id,
+            proto::stream_delta_event::DeltaType::Text(proto::TextDelta { content: delta }),
+        ),
+        StreamDelta::ThinkingChunk {
+            op_id,
+            message_id,
+            delta,
+        } => (
+            op_id,
+            message_id,
+            proto::stream_delta_event::DeltaType::Thinking(proto::ThinkingDelta { content: delta }),
+        ),
+        StreamDelta::ToolCallChunk {
+            op_id,
+            message_id,
+            tool_call_id,
+            delta,
+        } => {
+            let delta = match delta {
+                CoreToolCallDelta::Name(name) => {
+                    proto::tool_call_delta::Delta::Name(name)
+                }
+                CoreToolCallDelta::ArgumentChunk(chunk) => {
+                    proto::tool_call_delta::Delta::ArgumentChunk(chunk)
+                }
+            };
+
+            let tool_call = proto::ToolCallDelta {
+                tool_call_id: tool_call_id.to_string(),
+                delta: Some(delta),
+            };
+
+            (
+                op_id,
+                message_id,
+                proto::stream_delta_event::DeltaType::ToolCall(tool_call),
+            )
+        }
+    };
+
+    Ok(proto::SessionEvent {
+        sequence_num: 0,
+        timestamp,
+        event: Some(proto::session_event::Event::StreamDelta(
+            proto::StreamDeltaEvent {
+                op_id: op_id.to_string(),
+                message_id: message_id.to_string(),
+                delta_type: Some(delta_type),
+            },
+        )),
     })
 }
 
@@ -1216,7 +1292,7 @@ fn parse_request_id(s: &str) -> Result<crate::client_api::RequestId, ConversionE
 pub(crate) fn proto_to_client_event(
     server_event: proto::SessionEvent,
 ) -> Result<Option<crate::client_api::ClientEvent>, ConversionError> {
-    use crate::client_api::{ClientEvent, MessageId, ToolCallId};
+    use crate::client_api::{ClientEvent, MessageId, ToolCallDelta, ToolCallId};
     use steer_tools::ToolCall;
 
     let event = match server_event.event {
@@ -1311,6 +1387,48 @@ pub(crate) fn proto_to_client_event(
                 pending_tool_calls: info.active_tools.len(),
             }
         }
+        proto::session_event::Event::StreamDelta(e) => {
+            let op_id = parse_op_id(&e.op_id)?;
+            let message_id = MessageId::from_string(e.message_id);
+            let delta = e.delta_type.ok_or_else(|| ConversionError::MissingField {
+                field: "stream_delta.delta_type".to_string(),
+            })?;
+
+            match delta {
+                proto::stream_delta_event::DeltaType::Text(text) => {
+                    ClientEvent::MessageDelta {
+                        id: message_id.clone(),
+                        delta: text.content,
+                    }
+                }
+                proto::stream_delta_event::DeltaType::Thinking(thinking) => {
+                    ClientEvent::ThinkingDelta {
+                        op_id,
+                        message_id: message_id.clone(),
+                        delta: thinking.content,
+                    }
+                }
+                proto::stream_delta_event::DeltaType::ToolCall(tool_call) => {
+                    let tool_call_id = ToolCallId::from_string(tool_call.tool_call_id);
+                    let delta = tool_call.delta.ok_or_else(|| ConversionError::MissingField {
+                        field: "stream_delta.tool_call.delta".to_string(),
+                    })?;
+                    let delta = match delta {
+                        proto::tool_call_delta::Delta::Name(name) => ToolCallDelta::Name(name),
+                        proto::tool_call_delta::Delta::ArgumentChunk(chunk) => {
+                            ToolCallDelta::ArgumentChunk(chunk)
+                        }
+                    };
+
+                    ClientEvent::ToolCallDelta {
+                        op_id,
+                        message_id: message_id.clone(),
+                        tool_call_id,
+                        delta,
+                    }
+                }
+            }
+        }
         proto::session_event::Event::ModelChanged(e) => {
             let model = e
                 .model
@@ -1325,8 +1443,7 @@ pub(crate) fn proto_to_client_event(
         proto::session_event::Event::Started(_)
         | proto::session_event::Event::Finished(_)
         | proto::session_event::Event::ActiveMessageIdChanged(_)
-        | proto::session_event::Event::ConversationCompacted(_)
-        | proto::session_event::Event::StreamDelta(_) => {
+        | proto::session_event::Event::ConversationCompacted(_) => {
             return Ok(None);
         }
     };

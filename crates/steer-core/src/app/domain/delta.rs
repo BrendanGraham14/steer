@@ -7,16 +7,17 @@ pub enum StreamDelta {
         op_id: OpId,
         message_id: MessageId,
         delta: String,
-        is_first: bool,
     },
 
     ThinkingChunk {
         op_id: OpId,
+        message_id: MessageId,
         delta: String,
     },
 
     ToolCallChunk {
         op_id: OpId,
+        message_id: MessageId,
         tool_call_id: ToolCallId,
         delta: ToolCallDelta,
     },
@@ -39,8 +40,9 @@ impl StreamDelta {
 
     pub fn message_id(&self) -> Option<&MessageId> {
         match self {
-            StreamDelta::TextChunk { message_id, .. } => Some(message_id),
-            _ => None,
+            StreamDelta::TextChunk { message_id, .. }
+            | StreamDelta::ThinkingChunk { message_id, .. }
+            | StreamDelta::ToolCallChunk { message_id, .. } => Some(message_id),
         }
     }
 

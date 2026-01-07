@@ -1,4 +1,4 @@
-use steer_core::app::conversation::{AppCommandType, CommandResponse, CompactResult};
+use crate::tui::core_commands::{CommandResponse, CompactResult, CoreCommandType};
 
 pub mod chat_widget;
 pub mod command_response;
@@ -26,21 +26,19 @@ pub fn get_spinner_char(state: usize) -> char {
     SPINNER_FRAMES[state % SPINNER_FRAMES.len()]
 }
 
-/// Helper function to format AppCommandType
-pub fn format_app_command(cmd: &AppCommandType) -> String {
+pub fn format_app_command(cmd: &CoreCommandType) -> String {
     match cmd {
-        AppCommandType::Model { target } => {
+        CoreCommandType::Model { target } => {
             if let Some(model) = target {
                 format!("/model {model}")
             } else {
                 "/model".to_string()
             }
         }
-        AppCommandType::Compact => "/compact".to_string(),
+        CoreCommandType::Compact => "/compact".to_string(),
     }
 }
 
-/// Helper function to format CommandResponse
 pub fn format_command_response(resp: &CommandResponse) -> String {
     match resp {
         CommandResponse::Text(text) => text.clone(),
@@ -65,15 +63,15 @@ mod tests {
 
     #[test]
     fn test_format_helpers() {
-        assert_eq!(format_app_command(&AppCommandType::Compact), "/compact");
+        assert_eq!(format_app_command(&CoreCommandType::Compact), "/compact");
         assert_eq!(
-            format_app_command(&AppCommandType::Model {
+            format_app_command(&CoreCommandType::Model {
                 target: Some("gpt-4".to_string())
             }),
             "/model gpt-4"
         );
         assert_eq!(
-            format_app_command(&AppCommandType::Model { target: None }),
+            format_app_command(&CoreCommandType::Model { target: None }),
             "/model"
         );
 

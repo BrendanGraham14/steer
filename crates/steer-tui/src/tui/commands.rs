@@ -1,9 +1,9 @@
 pub mod registry;
 
+use crate::tui::core_commands::{CoreCommandType as CoreCommand, SlashCommandError};
 use crate::tui::custom_commands::CustomCommand;
 use std::fmt;
 use std::str::FromStr;
-use steer_core::app::conversation::{AppCommandType as CoreCommand, SlashCommandError};
 use strum::{Display, EnumIter, IntoEnumIterator};
 use thiserror::Error;
 

@@ -1,6 +1,5 @@
 use ratatui::text::{Line, Span};
-use steer_core::app::conversation::{AppCommandType, AssistantContent, MessageData};
-use steer_core::app::conversation::{Message, UserContent};
+use steer_core::app::conversation::{AppCommandType, AssistantContent, Message, MessageData, UserContent};
 
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;

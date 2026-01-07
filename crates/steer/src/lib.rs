@@ -11,6 +11,7 @@ use steer_core::api::Client as ApiClient;
 use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeHandle, RuntimeService};
 use steer_core::app::domain::session::SqliteEventStore;
 use steer_core::app::domain::types::SessionId;
+use steer_core::config::model::ModelId;
 use steer_core::runners::{OneShotRunner, RunOnceResult};
 use steer_core::session::state::SessionConfig;
 use steer_core::tools::ToolSystemBuilder;
@@ -19,8 +20,9 @@ pub async fn run_once_in_session(
     runtime: &RuntimeHandle,
     session_id: SessionId,
     message: String,
+    model: ModelId,
 ) -> Result<RunOnceResult> {
-    OneShotRunner::run_in_session(runtime, session_id, message)
+    OneShotRunner::run_in_session(runtime, session_id, message, model)
         .await
         .map_err(|e| eyre::eyre!("Failed to run in session: {}", e))
 }
@@ -29,8 +31,9 @@ pub async fn run_once_new_session(
     runtime: &RuntimeHandle,
     config: SessionConfig,
     message: String,
+    model: ModelId,
 ) -> Result<RunOnceResult> {
-    OneShotRunner::run_new_session(runtime, config, message)
+    OneShotRunner::run_new_session(runtime, config, message, model)
         .await
         .map_err(|e| eyre::eyre!("Failed to run new session: {}", e))
 }
@@ -53,7 +56,7 @@ impl RuntimeBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<RuntimeService> {
+    pub async fn build(self) -> Result<(RuntimeService, ModelId)> {
         let event_store = create_event_store().await?;
 
         let auth_storage = Arc::new(
@@ -96,14 +99,11 @@ impl RuntimeBuilder {
         )
         .build();
 
-        let runtime_config = RuntimeConfig::new(model_id);
+        let runtime_config = RuntimeConfig::new(model_id.clone());
 
-        Ok(RuntimeService::spawn(
-            event_store,
-            api_client,
-            tool_executor,
-            runtime_config,
-        ))
+        let service = RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+
+        Ok((service, model_id))
     }
 }
 
@@ -123,14 +123,14 @@ async fn create_event_store() -> Result<Arc<SqliteEventStore>> {
     Ok(Arc::new(store))
 }
 
-pub async fn create_runtime(default_model: String) -> Result<RuntimeService> {
+pub async fn create_runtime(default_model: String) -> Result<(RuntimeService, ModelId)> {
     RuntimeBuilder::new(default_model).build().await
 }
 
 pub async fn create_runtime_with_catalogs(
     default_model: String,
     catalog_paths: Vec<String>,
-) -> Result<RuntimeService> {
+) -> Result<(RuntimeService, ModelId)> {
     RuntimeBuilder::new(default_model)
         .with_catalogs(catalog_paths)
         .build()

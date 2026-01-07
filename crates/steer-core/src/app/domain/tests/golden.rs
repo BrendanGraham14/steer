@@ -179,6 +179,7 @@ mod tests {
                 op_id: deterministic_op_id(*op_id),
                 message_id: deterministic_message_id(message_id),
                 timestamp: *timestamp,
+                model: builtin::claude_sonnet_4_20250514(),
             },
             ActionSnapshot::ModelResponseComplete {
                 op_id,
@@ -432,6 +433,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: builtin::claude_sonnet_4_20250514(),
             },
         );
 
@@ -535,6 +537,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: builtin::claude_sonnet_4_20250514(),
             },
         );
 

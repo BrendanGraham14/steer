@@ -164,16 +164,8 @@ mod id_preservation_tests {
     use crate::grpc::conversions::{proto_to_client_event, session_event_to_proto};
     use steer_core::app::domain::event::{CancellationInfo, SessionEvent};
     use steer_core::app::domain::state::OperationKind;
-    use steer_core::config::provider::ProviderId;
     use steer_tools::ToolCall;
     use uuid::Uuid;
-
-    fn test_model() -> (ProviderId, String) {
-        (
-            ProviderId::from("anthropic"),
-            "claude-3-5-sonnet-20241022".to_string(),
-        )
-    }
 
     #[test]
     fn test_op_id_preserved_in_operation_started() {
@@ -183,8 +175,7 @@ mod id_preservation_tests {
             kind: OperationKind::AgentLoop,
         };
 
-        let model = test_model();
-        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
@@ -200,8 +191,7 @@ mod id_preservation_tests {
         let op_id = OpId::from(Uuid::new_v4());
         let event = SessionEvent::OperationCompleted { op_id };
 
-        let model = test_model();
-        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
@@ -222,8 +212,7 @@ mod id_preservation_tests {
             },
         };
 
-        let model = test_model();
-        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
@@ -251,8 +240,7 @@ mod id_preservation_tests {
             tool_call: tool_call.clone(),
         };
 
-        let model = test_model();
-        let proto_response = session_event_to_proto(event, 1, &model).unwrap();
+        let proto_response = session_event_to_proto(event, 1).unwrap();
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {

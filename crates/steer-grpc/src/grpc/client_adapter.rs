@@ -201,7 +201,12 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn edit_message(&self, message_id: String, new_content: String) -> GrpcResult<()> {
+    pub async fn edit_message(
+        &self,
+        message_id: String,
+        new_content: String,
+        model: steer_core::config::model::ModelId,
+    ) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
@@ -216,6 +221,10 @@ impl AgentClient {
             session_id,
             message_id,
             new_content,
+            model: Some(proto::ModelSpec {
+                provider_id: model.0.storage_key(),
+                model_id: model.1,
+            }),
         });
 
         self.client

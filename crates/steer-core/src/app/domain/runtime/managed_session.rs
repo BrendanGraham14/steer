@@ -79,7 +79,11 @@ impl RuntimeManagedSession {
         self.session_id
     }
 
-    pub async fn submit_user_input(&self, text: String) -> Result<OpId, RuntimeError> {
+    pub async fn submit_user_input(
+        &self,
+        text: String,
+        model: ModelId,
+    ) -> Result<OpId, RuntimeError> {
         let text = NonEmptyString::new(text).ok_or_else(|| RuntimeError::InvalidInput {
             message: "Input text cannot be empty".to_string(),
         })?;
@@ -93,6 +97,7 @@ impl RuntimeManagedSession {
             text,
             op_id,
             message_id,
+            model,
             timestamp,
         };
 

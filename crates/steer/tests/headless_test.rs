@@ -10,14 +10,14 @@ async fn test_headless_mode_integration() {
 
     let message = "What is 2+2?".to_string();
 
-    let runtime = RuntimeBuilder::new("claude-3-5-sonnet-latest".to_string())
+    let (runtime, model) = RuntimeBuilder::new("claude-3-5-sonnet-latest".to_string())
         .build()
         .await
         .expect("Failed to create runtime");
 
     let config = SessionConfig::read_only();
 
-    let result = steer::run_once_new_session(&runtime.handle(), config, message)
+    let result = steer::run_once_new_session(&runtime.handle(), config, message, model)
         .await
         .expect("run_once should succeed");
 

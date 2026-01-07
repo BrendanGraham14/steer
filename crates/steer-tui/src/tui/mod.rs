@@ -51,6 +51,7 @@ pub mod widgets;
 
 mod auth_controller;
 mod chat_viewport;
+pub mod core_commands;
 mod events;
 mod handlers;
 mod ui_layout;
@@ -971,7 +972,11 @@ impl Tui {
         }
 
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
-            if let Err(e) = self.client.edit_message(message_id_to_edit, content).await {
+            if let Err(e) = self
+                .client
+                .edit_message(message_id_to_edit, content, self.current_model.clone())
+                .await
+            {
                 self.push_notice(NoticeLevel::Error, format!("Cannot edit message: {e}"));
             }
         } else {
@@ -1225,14 +1230,13 @@ impl Tui {
                 }
             }
             TuiAppCommand::Core(core_cmd) => {
-                use steer_core::app::conversation::AppCommandType as CoreCommand;
                 match core_cmd {
-                    CoreCommand::Compact => {
+                    crate::tui::core_commands::CoreCommandType::Compact => {
                         if let Err(e) = self.client.compact_session().await {
                             self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
                         }
                     }
-                    CoreCommand::Model { target } => {
+                    crate::tui::core_commands::CoreCommandType::Model { target } => {
                         if let Some(model_name) = target {
                             match self.client.resolve_model(&model_name).await {
                                 Ok(model_id) => {

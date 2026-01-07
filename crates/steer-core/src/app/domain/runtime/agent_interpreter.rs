@@ -259,6 +259,7 @@ impl AgentInterpreter {
                         id: tool_call_id.clone(),
                         name: tool_call.name.clone(),
                         parameters: tool_call.parameters.clone(),
+                        model: agent_config.model.clone(),
                     })
                     .await?;
 
@@ -276,6 +277,7 @@ impl AgentInterpreter {
                                 id: tool_call_id.clone(),
                                 name: tool_call.name.clone(),
                                 result: tool_result.clone(),
+                                model: agent_config.model.clone(),
                             })
                             .await?;
 
@@ -291,6 +293,7 @@ impl AgentInterpreter {
                                 id: tool_call_id.clone(),
                                 name: tool_call.name.clone(),
                                 error: error.to_string(),
+                                model: agent_config.model.clone(),
                             })
                             .await?;
 

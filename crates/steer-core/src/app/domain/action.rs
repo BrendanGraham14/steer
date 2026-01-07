@@ -1,6 +1,7 @@
 use crate::app::domain::types::{
     CompactionId, MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
 };
+use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
 use steer_tools::result::ToolResult;
 use steer_tools::{ToolCall, ToolError, ToolSchema};
@@ -14,6 +15,7 @@ pub enum Action {
         text: NonEmptyString,
         op_id: OpId,
         message_id: MessageId,
+        model: ModelId,
         timestamp: u64,
     },
 
@@ -23,6 +25,7 @@ pub enum Action {
         new_content: String,
         op_id: OpId,
         new_message_id: MessageId,
+        model: ModelId,
         timestamp: u64,
     },
 

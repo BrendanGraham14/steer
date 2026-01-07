@@ -36,7 +36,7 @@ impl Command for HeadlessCommand {
         let model_to_use = self.model.as_ref().unwrap_or(&self.global_model);
         let normalized_catalogs = self.normalize_catalog_paths();
 
-        let runtime =
+        let (runtime, model) =
             crate::create_runtime_with_catalogs(model_to_use.clone(), normalized_catalogs.clone())
                 .await?;
 
@@ -45,11 +45,11 @@ impl Command for HeadlessCommand {
                 let session_id = SessionId::parse(session_id_str)
                     .ok_or_else(|| eyre!("Invalid session ID: {}", session_id_str))?;
 
-                crate::run_once_in_session(&runtime.handle, session_id, message).await?
+                crate::run_once_in_session(&runtime.handle, session_id, message, model).await?
             }
             None => {
                 let session_config = self.build_session_config().await?;
-                crate::run_once_new_session(&runtime.handle, session_config, message).await?
+                crate::run_once_new_session(&runtime.handle, session_config, message, model).await?
             }
         };
 

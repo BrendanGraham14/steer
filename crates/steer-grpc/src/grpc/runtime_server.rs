@@ -1,5 +1,6 @@
 use crate::grpc::conversions::{
-    message_to_proto, proto_to_tool_config, proto_to_workspace_config, session_event_to_proto,
+    message_to_proto, proto_to_model, proto_to_tool_config, proto_to_workspace_config,
+    session_event_to_proto, stream_delta_to_proto,
 };
 use std::sync::Arc;
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
@@ -7,7 +8,7 @@ use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
@@ -74,41 +75,64 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .await
             .map_err(|e| Status::internal(format!("Failed to subscribe: {e}")))?;
 
-        let current_model = self
-            .catalog
-            .get_session_summary(session_id)
+        let delta_subscription = self
+            .runtime
+            .subscribe_deltas(session_id)
             .await
-            .ok()
-            .flatten()
-            .and_then(|s| s.last_model)
-            .and_then(|m| self.model_registry.resolve(&m).ok())
-            .unwrap_or_else(|| steer_core::config::model::builtin::claude_sonnet_4_20250514());
-
+            .map_err(|e| Status::internal(format!("Failed to subscribe to deltas: {e}")))?;
 
         let (tx, rx) = mpsc::channel(100);
 
+        let event_tx = tx.clone();
         tokio::spawn(async move {
             let mut subscription = subscription;
             while let Some(envelope) = subscription.recv().await {
-                let proto_event =
-                    match session_event_to_proto(envelope.event, envelope.seq, &current_model) {
-                        Ok(event) => event,
-                        Err(e) => {
-                            warn!("Failed to convert session event: {}", e);
-                            continue;
-                        }
-                    };
+                let proto_event = match session_event_to_proto(envelope.event, envelope.seq) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        warn!("Failed to convert session event: {}", e);
+                        continue;
+                    }
+                };
 
                 if proto_event.event.is_none() {
                     continue;
                 }
 
-                if let Err(e) = tx.send(Ok(proto_event)).await {
+                if let Err(e) = event_tx.send(Ok(proto_event)).await {
                     warn!("Failed to send event to client: {}", e);
                     break;
                 }
             }
             debug!("Event forwarding task ended for session: {}", session_id);
+        });
+
+        let delta_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut delta_rx = delta_subscription;
+            loop {
+                match delta_rx.recv().await {
+                    Ok(delta) => {
+                        let proto_event = match stream_delta_to_proto(delta) {
+                            Ok(event) => event,
+                            Err(e) => {
+                                warn!("Failed to convert stream delta: {}", e);
+                                continue;
+                            }
+                        };
+
+                        if let Err(e) = delta_tx.send(Ok(proto_event)).await {
+                            warn!("Failed to send delta to client: {}", e);
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!("Delta subscription lagged by {} messages", skipped);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            debug!("Delta forwarding task ended for session: {}", session_id);
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
@@ -137,8 +161,19 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             metadata: req.metadata,
         };
 
-        match self.runtime.create_session(session_config).await {
+        match self.runtime.create_session(session_config.clone()).await {
             Ok(session_id) => {
+                if let Err(e) = self
+                    .catalog
+                    .update_session_catalog(session_id, Some(&session_config), false, None)
+                    .await
+                {
+                    error!("Failed to update session catalog: {}", e);
+                    return Err(Status::internal(format!(
+                        "Failed to update session catalog: {e}"
+                    )));
+                }
+
                 let session_info = SessionInfo {
                     id: session_id.to_string(),
                     created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
@@ -314,10 +349,15 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
 
-        // TODO: Handle optional model override from req.model
+        let model_spec = req
+            .model
+            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
+        let model = proto_to_model(&model_spec)
+            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
+
         match self
             .runtime
-            .submit_user_input(session_id, req.message)
+            .submit_user_input(session_id, req.message, model)
             .await
         {
             Ok(op_id) => Ok(Response::new(SendMessageResponse {
@@ -345,8 +385,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
 
+        let model_spec = req
+            .model
+            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
+        let model = proto_to_model(&model_spec)
+            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
+
         self.runtime
-            .submit_edited_message(session_id, req.message_id, req.new_content)
+            .submit_edited_message(session_id, req.message_id, req.new_content, model)
             .await
             .map_err(|e| Status::internal(format!("Failed to edit message: {e}")))?;
 

@@ -6,6 +6,8 @@ pub use steer_core::app::conversation::{
 
 pub use steer_core::config::model::ModelId;
 
+pub use steer_core::app::domain::delta::ToolCallDelta;
+
 pub use steer_tools::result::{
     BashResult, EditResult, ExternalResult, FileContentResult, FileListResult, GlobResult,
     GrepResult, ReplaceResult, SearchMatch, SearchResult, TodoListResult, ToolResult,

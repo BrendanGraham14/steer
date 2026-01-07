@@ -136,7 +136,8 @@ message ActiveMessageIdChangedEvent {
 message StreamDeltaEvent {
   string op_id = 1;
   string message_id = 2;
-  bool is_first = 3;
+  reserved 3;
+  reserved "is_first";
 
   oneof delta_type {
     TextDelta text = 4;
@@ -257,6 +258,7 @@ message EditMessageRequest {
   string session_id = 1;
   string message_id = 2;
   string new_content = 3;
+  ModelSpec model = 4;  // Required; client chooses from ListModels
 }
 
 message EditMessageResponse {

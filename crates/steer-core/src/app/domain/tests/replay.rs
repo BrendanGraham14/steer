@@ -67,6 +67,7 @@ mod tests {
                 op_id,
                 message_id,
                 timestamp: 1000,
+                model: test_model(),
             },
         );
 
@@ -105,6 +106,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: test_model(),
             },
         );
         all_events.extend(collect_events(&effects));
@@ -182,6 +184,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: test_model(),
             },
         );
         all_events.extend(collect_events(&effects));
@@ -308,6 +311,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: test_model(),
             },
         );
         all_events.extend(collect_events(&effects));
@@ -370,6 +374,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: test_model(),
             },
         );
         all_events.extend(collect_events(&effects));
@@ -397,6 +402,7 @@ mod tests {
                 op_id: op_id_2,
                 message_id: deterministic_message_id("msg_3"),
                 timestamp: 2000,
+                model: test_model(),
             },
         );
         all_events.extend(collect_events(&effects));
@@ -522,6 +528,7 @@ mod tests {
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
+                model: test_model(),
             },
         );
         let first_batch = collect_events(&effects);

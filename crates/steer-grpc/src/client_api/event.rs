@@ -14,6 +14,17 @@ pub enum ClientEvent {
         id: MessageId,
         delta: String,
     },
+    ThinkingDelta {
+        op_id: OpId,
+        message_id: MessageId,
+        delta: String,
+    },
+    ToolCallDelta {
+        op_id: OpId,
+        message_id: MessageId,
+        tool_call_id: ToolCallId,
+        delta: ToolCallDelta,
+    },
 
     ToolStarted {
         id: ToolCallId,

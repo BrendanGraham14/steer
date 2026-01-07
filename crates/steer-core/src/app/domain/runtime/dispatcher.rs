@@ -125,7 +125,6 @@ impl DeltaCoalescer {
                     op_id,
                     message_id,
                     delta: text,
-                    is_first: false,
                 });
             }
         }
@@ -263,14 +262,12 @@ mod tests {
             op_id,
             message_id: message_id.clone(),
             delta: "Hello ".to_string(),
-            is_first: true,
         });
 
         coalescer.push(StreamDelta::TextChunk {
             op_id,
             message_id: message_id.clone(),
             delta: "World".to_string(),
-            is_first: false,
         });
 
         let result = coalescer.drain();
@@ -294,7 +291,6 @@ mod tests {
                 op_id,
                 message_id,
                 delta: format!("chunk {}", i),
-                is_first: i == 0,
             });
         }
 

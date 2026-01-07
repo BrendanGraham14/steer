@@ -14,8 +14,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             text,
             op_id,
             message_id,
+            model,
             timestamp,
-        } => handle_user_input(state, session_id, text, op_id, message_id, timestamp),
+        } => handle_user_input(state, session_id, text, op_id, message_id, model, timestamp),
 
         Action::UserEditedMessage {
             session_id,
@@ -23,6 +24,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             new_content,
             op_id,
             new_message_id,
+            model,
             timestamp,
         } => handle_user_edited_message(
             state,
@@ -31,6 +33,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             new_content,
             op_id,
             new_message_id,
+            model,
             timestamp,
         ),
 
@@ -168,6 +171,7 @@ fn handle_user_input(
     text: crate::app::domain::types::NonEmptyString,
     op_id: crate::app::domain::types::OpId,
     message_id: crate::app::domain::types::MessageId,
+    model: crate::config::model::ModelId,
     timestamp: u64,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
@@ -189,12 +193,13 @@ fn handle_user_input(
     state.conversation.active_message_id = Some(message_id.0.clone());
 
     state.start_operation(op_id, OperationKind::AgentLoop);
+    state.operation_models.insert(op_id, model.clone());
 
     effects.push(Effect::EmitEvent {
         session_id,
         event: SessionEvent::MessageAdded {
             message: message.clone(),
-            model: state.current_model.clone(),
+            model: model.clone(),
         },
     });
 
@@ -209,7 +214,7 @@ fn handle_user_input(
     effects.push(Effect::CallModel {
         session_id,
         op_id,
-        model: state.current_model.clone(),
+        model,
         messages: state
             .conversation
             .get_thread_messages()
@@ -230,6 +235,7 @@ fn handle_user_edited_message(
     new_content: String,
     op_id: crate::app::domain::types::OpId,
     new_message_id: crate::app::domain::types::MessageId,
+    model: crate::config::model::ModelId,
     timestamp: u64,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
@@ -254,12 +260,13 @@ fn handle_user_edited_message(
     state.conversation.active_message_id = Some(new_message_id.0.clone());
 
     state.start_operation(op_id, OperationKind::AgentLoop);
+    state.operation_models.insert(op_id, model.clone());
 
     effects.push(Effect::EmitEvent {
         session_id,
         event: SessionEvent::MessageAdded {
             message: message.clone(),
-            model: state.current_model.clone(),
+            model: model.clone(),
         },
     });
 
@@ -274,7 +281,7 @@ fn handle_user_edited_message(
     effects.push(Effect::CallModel {
         session_id,
         op_id,
-        model: state.current_model.clone(),
+        model,
         messages: state
             .conversation
             .get_thread_messages()
@@ -467,12 +474,20 @@ fn handle_tool_execution_started(
 ) -> Vec<Effect> {
     state.add_pending_tool_call(tool_call_id.clone());
 
+    let model = state
+        .current_operation
+        .as_ref()
+        .and_then(|op| state.operation_models.get(&op.op_id))
+        .cloned()
+        .unwrap_or_else(|| state.current_model.clone());
+
     vec![Effect::EmitEvent {
         session_id,
         event: SessionEvent::ToolCallStarted {
             id: tool_call_id,
             name: tool_name,
             parameters: tool_parameters,
+            model,
         },
     }]
 }
@@ -504,16 +519,24 @@ fn handle_tool_result(
         Err(e) => ToolResult::Error(e),
     };
 
+    let model = state
+        .operation_models
+        .get(&op_id)
+        .cloned()
+        .unwrap_or_else(|| state.current_model.clone());
+
     let event = match &tool_result {
         ToolResult::Error(e) => SessionEvent::ToolCallFailed {
             id: tool_call_id.clone(),
             name: tool_name.clone(),
             error: e.to_string(),
+            model: model.clone(),
         },
         _ => SessionEvent::ToolCallCompleted {
             id: tool_call_id.clone(),
             name: tool_name,
             result: tool_result.clone(),
+            model: model.clone(),
         },
     };
 
@@ -535,7 +558,7 @@ fn handle_tool_result(
         session_id,
         event: SessionEvent::MessageAdded {
             message: tool_message,
-            model: state.current_model.clone(),
+            model: model.clone(),
         },
     });
 
@@ -550,7 +573,7 @@ fn handle_tool_result(
         effects.push(Effect::CallModel {
             session_id,
             op_id,
-            model: state.current_model.clone(),
+            model,
             messages: state
                 .conversation
                 .get_thread_messages()
@@ -605,12 +628,15 @@ fn handle_model_response_complete(
     state.conversation.add_message(message.clone());
     state.conversation.active_message_id = Some(message_id.0.clone());
 
+    let model = state
+        .operation_models
+        .get(&op_id)
+        .cloned()
+        .unwrap_or_else(|| state.current_model.clone());
+
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::MessageAdded {
-            message,
-            model: state.current_model.clone(),
-        },
+        event: SessionEvent::MessageAdded { message, model },
     });
 
     if tool_calls.is_empty() {
@@ -893,14 +919,20 @@ fn handle_compaction_complete(
         timestamp,
     );
 
-    state.current_operation = None;
+    let model = state
+        .operation_models
+        .get(&op_id)
+        .cloned()
+        .unwrap_or_else(|| state.current_model.clone());
+
+    state.complete_operation();
 
     vec![
         Effect::EmitEvent {
             session_id,
             event: SessionEvent::MessageAdded {
                 message: summary_message,
-                model: state.current_model.clone(),
+                model,
             },
         },
         Effect::EmitEvent {
@@ -954,6 +986,7 @@ mod tests {
         let session_id = state.session_id;
         let op_id = OpId::new();
         let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_20250514();
 
         let effects = reduce(
             &mut state,
@@ -962,6 +995,7 @@ mod tests {
                 text: NonEmptyString::new("Hello").unwrap(),
                 op_id,
                 message_id,
+                model,
                 timestamp: 1234567890,
             },
         );

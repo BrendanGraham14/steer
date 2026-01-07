@@ -38,18 +38,21 @@ pub enum SessionEvent {
         id: ToolCallId,
         name: String,
         parameters: serde_json::Value,
+        model: ModelId,
     },
 
     ToolCallCompleted {
         id: ToolCallId,
         name: String,
         result: ToolResult,
+        model: ModelId,
     },
 
     ToolCallFailed {
         id: ToolCallId,
         name: String,
         error: String,
+        model: ModelId,
     },
 
     ApprovalRequested {

@@ -74,6 +74,7 @@ mod tests {
                     op_id,
                     message_id,
                     timestamp,
+                    model: test_model(),
                 },
             )
     }
@@ -157,6 +158,7 @@ mod tests {
                 op_id,
                 message_id: message_id.clone(),
                 timestamp,
+                model: test_model(),
             };
 
             let mut state1 = AppState::new(session_id, test_model());
@@ -193,6 +195,7 @@ mod tests {
                         op_id,
                         message_id,
                         timestamp,
+                        model: test_model(),
                     }
                 } else {
                     unreachable!()

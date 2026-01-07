@@ -5,6 +5,7 @@ use crate::app::conversation::Message;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use crate::app::domain::types::SessionId;
+use crate::config::model::ModelId;
 use crate::error::{Error, Result};
 use crate::session::state::SessionConfig;
 
@@ -31,6 +32,7 @@ impl OneShotRunner {
         runtime: &RuntimeHandle,
         session_id: SessionId,
         message: String,
+        model: ModelId,
     ) -> Result<RunOnceResult> {
         runtime.resume_session(session_id).await.map_err(|e| {
             Error::InvalidOperation(format!("Failed to resume session {session_id}: {e}"))
@@ -45,7 +47,7 @@ impl OneShotRunner {
         info!(session_id = %session_id, message = %message, "Sending message to session");
 
         let _op_id = runtime
-            .submit_user_input(session_id, message)
+            .submit_user_input(session_id, message, model)
             .await
             .map_err(|e| {
                 Error::InvalidOperation(format!(
@@ -68,6 +70,7 @@ impl OneShotRunner {
         runtime: &RuntimeHandle,
         config: SessionConfig,
         message: String,
+        model: ModelId,
     ) -> Result<RunOnceResult> {
         let session_id = runtime
             .create_session(config)
@@ -76,7 +79,7 @@ impl OneShotRunner {
 
         info!(session_id = %session_id, "Created new session for one-shot run");
 
-        Self::run_in_session(runtime, session_id, message).await
+        Self::run_in_session(runtime, session_id, message, model).await
     }
 
     async fn process_events(
@@ -252,9 +255,14 @@ mod tests {
             .metadata
             .insert("mode".to_string(), "headless".to_string());
 
-        let result =
-            OneShotRunner::run_new_session(&runtime.handle, config, "What is 2 + 2?".to_string())
-                .await;
+        let model = builtin::claude_sonnet_4_20250514();
+        let result = OneShotRunner::run_new_session(
+            &runtime.handle,
+            config,
+            "What is 2 + 2?".to_string(),
+            model,
+        )
+        .await;
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(30), async { result })
             .await
@@ -310,10 +318,12 @@ mod tests {
         let runtime = create_test_runtime().await;
 
         let fake_session_id = SessionId::new();
+        let model = builtin::claude_sonnet_4_20250514();
         let result = OneShotRunner::run_in_session(
             &runtime.handle,
             fake_session_id,
             "Test message".to_string(),
+            model,
         )
         .await;
 
@@ -341,11 +351,13 @@ mod tests {
             .insert("test".to_string(), "api_test".to_string());
 
         let session_id = runtime.handle.create_session(config).await.unwrap();
+        let model = builtin::claude_sonnet_4_20250514();
 
         let result = OneShotRunner::run_in_session(
             &runtime.handle,
             session_id,
             "What is the capital of France?".to_string(),
+            model,
         )
         .await;
 
@@ -399,11 +411,13 @@ mod tests {
             .insert("test".to_string(), "context_test".to_string());
 
         let session_id = runtime.handle.create_session(config).await.unwrap();
+        let model = builtin::claude_sonnet_4_20250514();
 
         let result1 = OneShotRunner::run_in_session(
             &runtime.handle,
             session_id,
             "My name is Alice and I like pizza.".to_string(),
+            model.clone(),
         )
         .await
         .expect("First session run should succeed");
@@ -416,6 +430,7 @@ mod tests {
             &runtime.handle,
             session_id,
             "What is my name and what do I like?".to_string(),
+            model,
         )
         .await
         .expect("Second session run should succeed");
@@ -464,11 +479,13 @@ mod tests {
         let mut config = create_test_session_config();
         config.tool_config = SessionToolConfig::read_only();
         config.tool_config.approval_policy = create_test_tool_approval_policy();
+        let model = builtin::claude_sonnet_4_20250514();
 
         let result = OneShotRunner::run_new_session(
             &runtime.handle,
             config,
             "List the files in the current directory".to_string(),
+            model,
         )
         .await
         .expect("New session run with tools should succeed with valid API key");

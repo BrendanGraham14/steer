@@ -1,13 +1,5 @@
-//! Core data model for TUI chat items
-//!
-//! This module defines the ChatItem enum which represents all possible rows
-//! that can appear in the chat panel, including both conversation messages
-//! and meta rows like slash commands and system notices.
-
-use steer_core::{
-    app::conversation::{AppCommandType, CommandResponse as CoreCommandResponse, Message},
-    session::McpServerInfo,
-};
+use crate::tui::core_commands::{CommandResponse as CoreCommandResponse, CoreCommandType};
+use steer_core::{app::conversation::Message, session::McpServerInfo};
 use steer_tools::ToolCall;
 use time::OffsetDateTime;
 
@@ -49,10 +41,9 @@ pub enum ChatItemData {
         ts: OffsetDateTime,
     },
 
-    /// Core replied to a command
     CoreCmdResponse {
         id: RowId,
-        command: AppCommandType,
+        command: CoreCommandType,
         response: CoreCommandResponse,
         ts: OffsetDateTime,
     },

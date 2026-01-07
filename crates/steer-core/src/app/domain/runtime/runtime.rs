@@ -100,6 +100,7 @@ impl AppRuntime {
         &mut self,
         session_id: SessionId,
         text: String,
+        model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let text = NonEmptyString::new(text).ok_or_else(|| RuntimeError::InvalidInput {
             message: "Input text cannot be empty".to_string(),
@@ -114,6 +115,7 @@ impl AppRuntime {
             text,
             op_id,
             message_id,
+            model,
             timestamp,
         };
 

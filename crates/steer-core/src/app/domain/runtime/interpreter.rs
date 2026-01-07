@@ -80,8 +80,6 @@ impl EffectInterpreter {
             .map_err(|e| e.to_string())?;
 
         let mut final_content: Option<Vec<AssistantContent>> = None;
-        let mut is_first = true;
-
         while let Some(chunk) = stream.next().await {
             match chunk {
                 StreamChunk::TextDelta(text) => {
@@ -90,25 +88,25 @@ impl EffectInterpreter {
                             op_id: *op_id,
                             message_id: message_id.clone(),
                             delta: text,
-                            is_first,
                         };
                         let _ = tx.send(delta).await;
-                        is_first = false;
                     }
                 }
                 StreamChunk::ThinkingDelta(thinking) => {
-                    if let (Some(tx), Some((op_id, _))) = (&delta_tx, &delta_context) {
+                    if let (Some(tx), Some((op_id, message_id))) = (&delta_tx, &delta_context) {
                         let delta = StreamDelta::ThinkingChunk {
                             op_id: *op_id,
+                            message_id: message_id.clone(),
                             delta: thinking,
                         };
                         let _ = tx.send(delta).await;
                     }
                 }
                 StreamChunk::ToolUseInputDelta { id, delta } => {
-                    if let (Some(tx), Some((op_id, _))) = (&delta_tx, &delta_context) {
+                    if let (Some(tx), Some((op_id, message_id))) = (&delta_tx, &delta_context) {
                         let delta = StreamDelta::ToolCallChunk {
                             op_id: *op_id,
+                            message_id: message_id.clone(),
                             tool_call_id: ToolCallId::from_string(&id),
                             delta: ToolCallDelta::ArgumentChunk(delta),
                         };

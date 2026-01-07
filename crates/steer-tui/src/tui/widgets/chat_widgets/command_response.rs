@@ -1,12 +1,10 @@
+use crate::tui::core_commands::{CommandResponse as CoreCommandResponse, CompactResult};
 use crate::tui::model::{CommandResponse, TuiCommandResponse};
 use crate::tui::theme::{Component, Theme};
-
 use crate::tui::widgets::chat_list_state::ViewMode;
 use crate::tui::widgets::chat_widgets::chat_widget::{ChatRenderable, HeightCache};
 use ratatui::text::{Line, Span};
-use steer_core::app::conversation::{CommandResponse as CoreCommandResponse, CompactResult};
 
-/// Widget for command responses (both app commands and tui commands)
 pub struct CommandResponseWidget {
     command: String,
     response: CommandResponse,
