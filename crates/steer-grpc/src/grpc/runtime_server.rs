@@ -449,16 +449,20 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map(steer_core::app::domain::types::RequestId::from)
             .map_err(|_| Status::invalid_argument("Invalid tool call ID"))?;
 
-        let (approved, remember_tool, remember_pattern) = match req.decision {
+        let (approved, remember) = match req.decision {
             Some(decision) => match decision.decision_type {
-                Some(proto::approval_decision::DecisionType::Deny(_)) => (false, None, None),
-                Some(proto::approval_decision::DecisionType::Once(_)) => (true, None, None),
-                Some(proto::approval_decision::DecisionType::AlwaysTool(_)) => {
-                    (true, Some(String::new()), None)
-                }
-                Some(proto::approval_decision::DecisionType::AlwaysBashPattern(pattern)) => {
-                    (true, None, Some(pattern))
-                }
+                Some(proto::approval_decision::DecisionType::Deny(_)) => (false, None),
+                Some(proto::approval_decision::DecisionType::Once(_)) => (true, None),
+                Some(proto::approval_decision::DecisionType::AlwaysTool(_)) => (
+                    true,
+                    Some(steer_core::app::domain::action::ApprovalMemory::PendingTool),
+                ),
+                Some(proto::approval_decision::DecisionType::AlwaysBashPattern(pattern)) => (
+                    true,
+                    Some(steer_core::app::domain::action::ApprovalMemory::BashPattern(
+                        pattern,
+                    )),
+                ),
                 None => {
                     return Err(Status::invalid_argument("Invalid approval decision"));
                 }
@@ -470,13 +474,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         match self
             .runtime
-            .submit_tool_approval(
-                session_id,
-                request_id,
-                approved,
-                remember_tool,
-                remember_pattern,
-            )
+            .submit_tool_approval(session_id, request_id, approved, remember)
             .await
         {
             Ok(()) => Ok(Response::new(ApproveToolResponse {})),

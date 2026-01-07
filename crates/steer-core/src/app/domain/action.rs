@@ -147,6 +147,7 @@ pub enum ApprovalDecision {
 pub enum ApprovalMemory {
     Tool(String),
     BashPattern(String),
+    PendingTool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

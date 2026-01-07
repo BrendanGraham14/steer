@@ -113,23 +113,14 @@ impl RuntimeManagedSession {
         &self,
         request_id: RequestId,
         approved: bool,
-        remember_tool: Option<String>,
-        remember_pattern: Option<String>,
+        remember: Option<crate::app::domain::action::ApprovalMemory>,
     ) -> Result<(), RuntimeError> {
-        use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
+        use crate::app::domain::action::ApprovalDecision;
 
         let decision = if approved {
             ApprovalDecision::Approved
         } else {
             ApprovalDecision::Denied
-        };
-
-        let remember = if let Some(tool) = remember_tool {
-            Some(ApprovalMemory::Tool(tool))
-        } else if let Some(pattern) = remember_pattern {
-            Some(ApprovalMemory::BashPattern(pattern))
-        } else {
-            None
         };
 
         let action = Action::ToolApprovalDecided {

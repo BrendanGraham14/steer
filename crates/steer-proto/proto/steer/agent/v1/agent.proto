@@ -298,7 +298,8 @@ message ApproveToolResponse {
 
 message CancelOperationRequest {
   string session_id = 1;
-  string operation_id = 2;
+  reserved 2;
+  reserved "operation_id";
 }
 
 message CancelOperationResponse {

@@ -361,17 +361,30 @@ fn handle_tool_approval_decided(
         }
     };
 
+    let resolved_memory = if decision == ApprovalDecision::Approved {
+        match remember {
+            Some(ApprovalMemory::PendingTool) => {
+                Some(ApprovalMemory::Tool(pending.tool_call.name.clone()))
+            }
+            Some(ApprovalMemory::Tool(name)) => Some(ApprovalMemory::Tool(name)),
+            Some(ApprovalMemory::BashPattern(pattern)) => Some(ApprovalMemory::BashPattern(pattern)),
+            None => None,
+        }
+    } else {
+        None
+    };
+
     effects.push(Effect::EmitEvent {
         session_id,
         event: SessionEvent::ApprovalDecided {
             request_id,
             decision,
-            remember: remember.clone(),
+            remember: resolved_memory.clone(),
         },
     });
 
     if decision == ApprovalDecision::Approved {
-        if let Some(ref memory) = remember {
+        if let Some(ref memory) = resolved_memory {
             match memory {
                 ApprovalMemory::Tool(name) => {
                     state.approved_tools.insert(name.clone());
@@ -379,6 +392,7 @@ fn handle_tool_approval_decided(
                 ApprovalMemory::BashPattern(pattern) => {
                     state.approved_bash_patterns.insert(pattern.clone());
                 }
+                ApprovalMemory::PendingTool => {}
             }
         }
 
@@ -891,6 +905,7 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                         ApprovalMemory::BashPattern(pattern) => {
                             state.approved_bash_patterns.insert(pattern.clone());
                         }
+                        ApprovalMemory::PendingTool => {}
                     }
                 }
             }

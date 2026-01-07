@@ -295,7 +295,6 @@ impl AgentClient {
 
         let request = Request::new(proto::CancelOperationRequest {
             session_id,
-            operation_id: String::new(),
         });
 
         self.client
