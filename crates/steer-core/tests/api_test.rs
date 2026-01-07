@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
 use futures::StreamExt;
-use steer_core::api::{ApiError, Client, StreamChunk};
+use steer_core::api::{ApiError, Client, Provider, StreamChunk};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 
 use steer_core::test_utils;
@@ -278,6 +278,107 @@ async fn test_api_with_tools() {
         "One or more API with tools test tasks failed:\n{}",
         failures.join("\n")
     );
+}
+
+#[tokio::test]
+#[ignore = "Requires OPENAI_API_KEY environment variable"]
+async fn test_openai_responses_stream_tool_call_ids_non_empty() {
+    dotenv().ok();
+    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
+    let client = steer_core::api::openai::OpenAIClient::with_mode(
+        api_key,
+        steer_core::api::openai::OpenAIMode::Responses,
+    );
+
+    let temp_dir = TempDir::new().unwrap();
+    let workspace = Arc::new(
+        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap(),
+    );
+    let tools = workspace.available_tools().await;
+
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "You must call the ls tool with path '.' exactly once. Do not answer without calling the tool."
+                    .to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    let model_id = (
+        steer_core::config::provider::openai(),
+        "gpt-4.1-mini-2025-04-14".to_string(),
+    );
+
+    let mut stream = client
+        .stream_complete(
+            &model_id,
+            messages,
+            None,
+            Some(tools),
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("stream_complete should succeed");
+
+    let mut saw_tool_start = false;
+    let mut saw_tool_delta = false;
+    let mut saw_tool_call = false;
+    let mut saw_empty_id = false;
+    let mut saw_empty_name = false;
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            StreamChunk::ToolUseStart { id, name } => {
+                saw_tool_start = true;
+                if id.is_empty() {
+                    saw_empty_id = true;
+                }
+                if name.is_empty() {
+                    saw_empty_name = true;
+                }
+            }
+            StreamChunk::ToolUseInputDelta { id, .. } => {
+                saw_tool_delta = true;
+                if id.is_empty() {
+                    saw_empty_id = true;
+                }
+            }
+            StreamChunk::MessageComplete(response) => {
+                for item in response.content {
+                    if let AssistantContent::ToolCall { tool_call } = item {
+                        saw_tool_call = true;
+                        if tool_call.id.is_empty() {
+                            saw_empty_id = true;
+                        }
+                        if tool_call.name.is_empty() {
+                            saw_empty_name = true;
+                        }
+                    }
+                }
+                break;
+            }
+            StreamChunk::Error(err) => {
+                panic!("stream error: {err:?}");
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_tool_start || saw_tool_call,
+        "Expected at least one tool call in stream"
+    );
+    assert!(saw_tool_delta || saw_tool_call, "Expected tool args in stream");
+    assert!(!saw_empty_id, "Tool call id should never be empty");
+    assert!(!saw_empty_name, "Tool call name should never be empty");
 }
 
 #[tokio::test]

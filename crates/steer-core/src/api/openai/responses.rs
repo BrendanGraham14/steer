@@ -104,6 +104,9 @@ impl Client {
                     crate::config::toml_types::ThinkingEffort::High => {
                         Some(crate::api::openai::responses_types::ReasoningEffort::High)
                     }
+                    crate::config::toml_types::ThinkingEffort::XHigh => {
+                        Some(crate::api::openai::responses_types::ReasoningEffort::XHigh)
+                    }
                 };
                 Some(ReasoningConfig {
                     effort,
@@ -529,6 +532,8 @@ impl Client {
                 std::collections::HashMap::new();
             let mut tool_calls_started: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            let mut item_to_call_id: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
 
             loop {
                 if token.is_cancelled() {
@@ -576,8 +581,7 @@ impl Client {
                     }
                     Some("response.function_call_arguments.delta") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let call_id = extract_non_empty_str(&data, "call_id")
-                                .or_else(|| extract_non_empty_str(&data, "id"));
+                            let call_id = resolve_call_id(&data, &item_to_call_id);
                             let Some(call_id) = call_id else {
                                 debug!(
                                     target: "openai::responses::stream",
@@ -599,8 +603,7 @@ impl Client {
                     }
                     Some("response.function_call.created") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let call_id = extract_non_empty_str(&data, "call_id")
-                                .or_else(|| extract_non_empty_str(&data, "id"));
+                            let call_id = resolve_call_id(&data, &item_to_call_id);
                             let Some(call_id) = call_id else {
                                 debug!(
                                     target: "openai::responses::stream",
@@ -629,9 +632,9 @@ impl Client {
                             if let Some(item) = data.get("item") {
                                 let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
                                 if item_type == "function_call" {
-                                    let call_id = extract_non_empty_str(item, "call_id")
-                                        .or_else(|| extract_non_empty_str(item, "id"))
+                                    let item_id = extract_non_empty_str(item, "id")
                                         .or_else(|| extract_non_empty_str(item, "item_id"));
+                                    let call_id = resolve_call_id(item, &item_to_call_id);
                                     let Some(call_id) = call_id else {
                                         debug!(
                                             target: "openai::responses::stream",
@@ -640,6 +643,11 @@ impl Client {
                                         );
                                         continue;
                                     };
+                                    if let Some(item_id) = item_id {
+                                        if !item_id.is_empty() {
+                                            item_to_call_id.insert(item_id, call_id.clone());
+                                        }
+                                    }
                                     let name = extract_non_empty_str(item, "name").unwrap_or_default();
                                     let entry = tool_calls
                                         .entry(call_id.clone())
@@ -729,6 +737,26 @@ fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String>
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn resolve_call_id(
+    value: &serde_json::Value,
+    item_to_call_id: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    if let Some(call_id) = extract_non_empty_str(value, "call_id") {
+        return Some(call_id);
+    }
+
+    let candidate = extract_non_empty_str(value, "item_id").or_else(|| extract_non_empty_str(value, "id"));
+    let Some(candidate) = candidate else {
+        return None;
+    };
+
+    if let Some(mapped) = item_to_call_id.get(&candidate) {
+        return Some(mapped.clone());
+    }
+
+    Some(candidate)
 }
 
 #[cfg(test)]
@@ -1198,12 +1226,12 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.function_call_arguments.delta".to_string()),
-                data: r#"{"call_id":"call_123","delta":"{\"city\":"}"#.to_string(),
+                data: r#"{"item_id":"item_1","delta":"{\"city\":"}"#.to_string(),
                 id: None,
             }),
             Ok(SseEvent {
                 event_type: Some("response.function_call_arguments.delta".to_string()),
-                data: r#"{"call_id":"call_123","delta":"\"NYC\"}"}"#.to_string(),
+                data: r#"{"item_id":"item_1","delta":"\"NYC\"}"}"#.to_string(),
                 id: None,
             }),
             Ok(SseEvent {
