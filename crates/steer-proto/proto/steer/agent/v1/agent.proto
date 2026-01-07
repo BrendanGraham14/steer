@@ -46,7 +46,6 @@ message SessionEvent {
   oneof event {
     MessageAddedEvent message_added = 3;
     MessageUpdatedEvent message_updated = 4;
-    MessagePartEvent message_part = 5;
     ToolCallStartedEvent tool_call_started = 6;
     ToolCallCompletedEvent tool_call_completed = 7;
     ToolCallFailedEvent tool_call_failed = 8;
@@ -56,9 +55,6 @@ message SessionEvent {
     OperationCancelledEvent operation_cancelled = 12;
     ErrorEvent error = 14;
     WorkspaceChangedEvent workspace_changed = 15;
-    StartedEvent started = 16;
-    FinishedEvent finished = 17;
-    ActiveMessageIdChangedEvent active_message_id_changed = 18;
     ConversationCompactedEvent conversation_compacted = 19;
     StreamDeltaEvent stream_delta = 20;
     CompactResultEvent compact_result = 21;
@@ -77,11 +73,6 @@ message MessageAddedEvent {
 message MessageUpdatedEvent {
   string id = 1;
   string content = 2;
-}
-
-message MessagePartEvent {
-  string id = 1;
-  string delta = 2;
 }
 
 message ToolCallStartedEvent {
@@ -126,10 +117,6 @@ message ErrorEvent {
 message OperationCancelledEvent {
   CancellationInfo info = 1;
   string op_id = 2;
-}
-
-message ActiveMessageIdChangedEvent {
-  optional string message_id = 1;
 }
 
 message StreamDeltaEvent {
@@ -194,57 +181,6 @@ message CompactionRecord {
   optional string previous_active_message_id = 4;
   string model = 5;
   google.protobuf.Timestamp created_at = 6;
-}
-
-message StartedEvent {
-  bytes id = 1;  // UUID stored as bytes
-  StartedOperation op = 2;
-}
-
-message FinishedEvent {
-  bytes id = 1;  // UUID stored as bytes
-  OperationOutcome outcome = 2;
-}
-
-message StartedOperation {
-  oneof operation {
-    BashOperation bash = 1;
-    CompactOperation compact = 2;
-  }
-}
-
-message BashOperation {
-  string cmd = 1;
-}
-
-message CompactOperation {
-  // No fields needed
-}
-
-message OperationOutcome {
-  oneof outcome {
-    BashOutcome bash = 1;
-    CompactOutcome compact = 2;
-  }
-}
-
-message BashOutcome {
-  uint64 elapsed_ms = 1;
-  optional BashError error = 2;
-}
-
-message CompactOutcome {
-  uint64 elapsed_ms = 1;
-  optional CompactError error = 2;
-}
-
-message BashError {
-  int32 exit_code = 1;
-  string stderr = 2;
-}
-
-message CompactError {
-  string message = 1;
 }
 
 message WorkspaceChangedEvent {
@@ -511,15 +447,7 @@ message UserMessage {
 message UserContent {
   oneof content {
     string text = 1;
-    CommandExecution command_execution = 2;
   }
-}
-
-message CommandExecution {
-  string command = 1;
-  string stdout = 2;
-  string stderr = 3;
-  int32 exit_code = 4;
 }
 
 message AssistantMessage {

@@ -588,17 +588,6 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
             for c in content {
                 match c {
                     UserContent::Text { text } => text.hash(hasher),
-                    UserContent::CommandExecution {
-                        command,
-                        stdout,
-                        stderr,
-                        exit_code,
-                    } => {
-                        command.hash(hasher);
-                        stdout.hash(hasher);
-                        stderr.hash(hasher);
-                        exit_code.hash(hasher);
-                    }
                 }
             }
         }

@@ -37,17 +37,6 @@ impl MessageWidget {
                 for c in content {
                     match c {
                         UserContent::Text { text } => text.hash(&mut hasher),
-                        UserContent::CommandExecution {
-                            command,
-                            stdout,
-                            stderr,
-                            exit_code,
-                        } => {
-                            command.hash(&mut hasher);
-                            stdout.hash(&mut hasher);
-                            stderr.hash(&mut hasher);
-                            exit_code.hash(&mut hasher);
-                        }
                     }
                 }
             }
@@ -128,49 +117,6 @@ impl ChatRenderable for MessageWidget {
                                         lines.push(line);
                                     }
                                 }
-                            }
-                        }
-                        UserContent::CommandExecution {
-                            command,
-                            stdout,
-                            stderr,
-                            exit_code,
-                        } => {
-                            // Format command execution
-                            let cmd_style = theme.style(Component::CommandPrompt);
-                            lines.push(Line::from(Span::styled(format!("$ {command}"), cmd_style)));
-
-                            if !stdout.is_empty() {
-                                let output_style = theme.style(Component::UserMessage);
-                                for line in stdout.lines() {
-                                    let wrapped = textwrap::wrap(line, max_width);
-                                    for wrapped_line in wrapped {
-                                        lines.push(Line::from(Span::styled(
-                                            wrapped_line.to_string(),
-                                            output_style,
-                                        )));
-                                    }
-                                }
-                            }
-
-                            if !stderr.is_empty() {
-                                let error_style = theme.style(Component::ErrorText);
-                                for line in stderr.lines() {
-                                    let wrapped = textwrap::wrap(line, max_width);
-                                    for wrapped_line in wrapped {
-                                        lines.push(Line::from(Span::styled(
-                                            wrapped_line.to_string(),
-                                            error_style,
-                                        )));
-                                    }
-                                }
-                            }
-
-                            if *exit_code != 0 {
-                                lines.push(Line::from(Span::styled(
-                                    format!("Exit code: {exit_code}"),
-                                    theme.style(Component::DimText),
-                                )));
                             }
                         }
                     }
@@ -317,30 +263,6 @@ mod tests {
         // Test height calculation
         let height = widget.lines(30, ViewMode::Compact, &theme).len();
         assert_eq!(height, 1); // Single line message
-    }
-
-    #[test]
-    fn test_message_widget_command_execution() {
-        let theme = Theme::default();
-        let cmd_msg = Message {
-            data: MessageData::User {
-                content: vec![UserContent::CommandExecution {
-                    command: "ls -la".to_string(),
-                    stdout: "file1.txt\nfile2.txt".to_string(),
-                    stderr: "".to_string(),
-                    exit_code: 0,
-                }],
-            },
-            timestamp: 0,
-            id: "test-id".to_string(),
-            parent_message_id: None,
-        };
-
-        let mut widget = MessageWidget::new(cmd_msg);
-
-        // Test height calculation - should have command line + 2 output lines
-        let height = widget.lines(30, ViewMode::Compact, &theme).len();
-        assert_eq!(height, 3); // $ ls -la + file1.txt + file2.txt
     }
 
     #[test]

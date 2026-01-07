@@ -298,21 +298,6 @@ pub(crate) fn message_to_proto(
                         UserContent::Text { text } => Some(proto::UserContent {
                             content: Some(proto::user_content::Content::Text(text.clone())),
                         }),
-                        UserContent::CommandExecution {
-                            command,
-                            stdout,
-                            stderr,
-                            exit_code,
-                        } => Some(proto::UserContent {
-                            content: Some(proto::user_content::Content::CommandExecution(
-                                proto::CommandExecution {
-                                    command: command.clone(),
-                                    stdout: stdout.clone(),
-                                    stderr: stderr.clone(),
-                                    exit_code: *exit_code,
-                                },
-                            )),
-                        }),
                     })
                     .collect(),
                 timestamp: message.timestamp,
@@ -776,14 +761,6 @@ pub(crate) fn proto_to_message(
                 .filter_map(|user_content| {
                     user_content.content.and_then(|content| match content {
                         user_content::Content::Text(text) => Some(UserContent::Text { text }),
-                        user_content::Content::CommandExecution(cmd) => {
-                            Some(UserContent::CommandExecution {
-                                command: cmd.command,
-                                stdout: cmd.stdout,
-                                stderr: cmd.stderr,
-                                exit_code: cmd.exit_code,
-                            })
-                        }
                     })
                 })
                 .collect();
@@ -1092,6 +1069,7 @@ pub(crate) fn session_event_to_proto(
 
 pub(crate) fn stream_delta_to_proto(
     delta: StreamDelta,
+    sequence_num: u64,
 ) -> Result<proto::SessionEvent, ConversionError> {
     let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
 
@@ -1143,7 +1121,7 @@ pub(crate) fn stream_delta_to_proto(
     };
 
     Ok(proto::SessionEvent {
-        sequence_num: 0,
+        sequence_num,
         timestamp,
         event: Some(proto::session_event::Event::StreamDelta(
             proto::StreamDeltaEvent {
@@ -1390,10 +1368,6 @@ pub(crate) fn proto_to_client_event(
             id: MessageId::from(e.id),
             content: e.content,
         },
-        proto::session_event::Event::MessagePart(e) => ClientEvent::MessageDelta {
-            id: MessageId::from(e.id),
-            delta: e.delta,
-        },
         proto::session_event::Event::ToolCallStarted(e) => {
             let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
                 ConversionError::InvalidJson {
@@ -1517,11 +1491,6 @@ pub(crate) fn proto_to_client_event(
         }
         proto::session_event::Event::Error(e) => ClientEvent::Error { message: e.message },
         proto::session_event::Event::WorkspaceChanged(_) => ClientEvent::WorkspaceChanged,
-        proto::session_event::Event::Started(_)
-        | proto::session_event::Event::Finished(_)
-        | proto::session_event::Event::ActiveMessageIdChanged(_) => {
-            return Ok(None);
-        }
     };
 
     Ok(Some(client_event))

@@ -364,14 +364,6 @@ impl XAIClient {
                         .iter()
                         .filter_map(|user_content| match user_content {
                             UserContent::Text { text } => Some(text.clone()),
-                            UserContent::CommandExecution {
-                                command,
-                                stdout,
-                                stderr,
-                                exit_code,
-                            } => Some(UserContent::format_command_execution_as_xml(
-                                command, stdout, stderr, *exit_code,
-                            )),
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -781,10 +773,18 @@ impl XAIClient {
         + 'static,
         token: CancellationToken,
     ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
+        struct ToolCallAccumulator {
+            id: String,
+            name: String,
+            args: String,
+        }
+
         async_stream::stream! {
             let mut text_buffer = String::new();
             let mut thinking_buffer = String::new();
-            let mut tool_calls: HashMap<usize, (String, String, String)> = HashMap::new();
+            let mut tool_calls: HashMap<usize, ToolCallAccumulator> = HashMap::new();
+            let mut tool_calls_started: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
             loop {
                 if token.is_cancelled() {
                     yield StreamChunk::Error(StreamError::Cancelled);
@@ -829,13 +829,22 @@ impl XAIClient {
                         });
                     }
 
-                    for (_idx, (id, name, args)) in std::mem::take(&mut tool_calls) {
-                        let parameters = serde_json::from_str(&args)
+                    for (_idx, tool_call) in std::mem::take(&mut tool_calls) {
+                        if tool_call.id.is_empty() || tool_call.name.is_empty() {
+                            debug!(
+                                target: "xai::stream",
+                                "Skipping tool call with missing id/name: id='{}' name='{}'",
+                                tool_call.id,
+                                tool_call.name
+                            );
+                            continue;
+                        }
+                        let parameters = serde_json::from_str(&tool_call.args)
                             .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                         content.push(AssistantContent::ToolCall {
                             tool_call: steer_tools::ToolCall {
-                                id,
-                                name,
+                                id: tool_call.id,
+                                name: tool_call.name,
                                 parameters,
                             },
                         });
@@ -867,29 +876,66 @@ impl XAIClient {
                     if let Some(tcs) = &choice.delta.tool_calls {
                         for tc in tcs {
                             let entry = tool_calls.entry(tc.index).or_insert_with(|| {
-                                (String::new(), String::new(), String::new())
+                                ToolCallAccumulator {
+                                    id: String::new(),
+                                    name: String::new(),
+                                    args: String::new(),
+                                }
                             });
+                            let mut started_now = false;
+                            let mut flushed_now = false;
 
                             if let Some(id) = &tc.id {
-                                entry.0 = id.clone();
+                                if !id.is_empty() {
+                                    entry.id = id.clone();
+                                }
                             }
                             if let Some(func) = &tc.function {
                                 if let Some(name) = &func.name {
-                                    if entry.1.is_empty() {
-                                        entry.1 = name.clone();
-                                        yield StreamChunk::ToolUseStart {
-                                            id: entry.0.clone(),
-                                            name: name.clone(),
-                                        };
+                                    if !name.is_empty() {
+                                        entry.name = name.clone();
                                     }
                                 }
+
+                            if !entry.id.is_empty()
+                                && !entry.name.is_empty()
+                                && !tool_calls_started.contains(&tc.index)
+                            {
+                                tool_calls_started.insert(tc.index);
+                                started_now = true;
+                                yield StreamChunk::ToolUseStart {
+                                    id: entry.id.clone(),
+                                    name: entry.name.clone(),
+                                };
+                            }
+
+                            if let Some(func) = &tc.function {
                                 if let Some(args) = &func.arguments {
-                                    entry.2.push_str(args);
-                                    yield StreamChunk::ToolUseInputDelta {
-                                        id: entry.0.clone(),
-                                        delta: args.clone(),
-                                    };
+                                    entry.args.push_str(args);
+                                    if tool_calls_started.contains(&tc.index) {
+                                        if started_now {
+                                            if !entry.args.is_empty() {
+                                                yield StreamChunk::ToolUseInputDelta {
+                                                    id: entry.id.clone(),
+                                                    delta: entry.args.clone(),
+                                                };
+                                                flushed_now = true;
+                                            }
+                                        } else if !args.is_empty() {
+                                            yield StreamChunk::ToolUseInputDelta {
+                                                id: entry.id.clone(),
+                                                delta: args.clone(),
+                                            };
+                                        }
+                                    }
                                 }
+                            }
+
+                            if started_now && !flushed_now && !entry.args.is_empty() {
+                                yield StreamChunk::ToolUseInputDelta {
+                                    id: entry.id.clone(),
+                                    delta: entry.args.clone(),
+                                };
                             }
                         }
                     }

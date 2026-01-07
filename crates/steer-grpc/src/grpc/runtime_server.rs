@@ -3,6 +3,7 @@ use crate::grpc::conversions::{
     session_event_to_proto, stream_delta_to_proto,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
@@ -82,6 +83,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map_err(|e| Status::internal(format!("Failed to subscribe to deltas: {e}")))?;
 
         let (tx, rx) = mpsc::channel(100);
+        let last_sequence = Arc::new(AtomicU64::new(req.since_sequence.unwrap_or(0)));
 
         let mut min_live_seq = req.since_sequence.map(|seq| seq.saturating_add(1));
 
@@ -109,6 +111,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                         }
                     }
                     min_live_seq = Some(last_seq.saturating_add(1));
+                    last_sequence.store(last_seq, Ordering::Relaxed);
                 }
                 Err(e) => {
                     warn!("Failed to load replay events: {}", e);
@@ -117,6 +120,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         }
 
         let event_tx = tx.clone();
+        let last_sequence_events = last_sequence.clone();
         tokio::spawn(async move {
             let mut subscription = subscription;
             while let Some(envelope) = subscription.recv().await {
@@ -142,17 +146,20 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     warn!("Failed to send event to client: {}", e);
                     break;
                 }
+                last_sequence_events.store(envelope.seq, Ordering::Relaxed);
             }
             debug!("Event forwarding task ended for session: {}", session_id);
         });
 
         let delta_tx = tx.clone();
+        let last_sequence_deltas = last_sequence.clone();
         tokio::spawn(async move {
             let mut delta_rx = delta_subscription;
             loop {
                 match delta_rx.recv().await {
                     Ok(delta) => {
-                        let proto_event = match stream_delta_to_proto(delta) {
+                        let sequence_num = last_sequence_deltas.load(Ordering::Relaxed);
+                        let proto_event = match stream_delta_to_proto(delta, sequence_num) {
                             Ok(event) => event,
                             Err(e) => {
                                 warn!("Failed to convert stream delta: {}", e);

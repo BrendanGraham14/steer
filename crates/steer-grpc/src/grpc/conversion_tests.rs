@@ -293,7 +293,7 @@ mod event_conversion_tests {
             delta: "thinking...".to_string(),
         };
 
-        let proto = stream_delta_to_proto(thinking_delta).unwrap();
+        let proto = stream_delta_to_proto(thinking_delta, 0).unwrap();
         let client_event = proto_to_client_event(proto).unwrap().unwrap();
         match client_event {
             ClientEvent::ThinkingDelta { op_id: received, message_id: msg, delta } => {
@@ -312,7 +312,7 @@ mod event_conversion_tests {
             delta: steer_core::app::domain::delta::ToolCallDelta::ArgumentChunk("{\"x\":".to_string()),
         };
 
-        let proto = stream_delta_to_proto(tool_delta).unwrap();
+        let proto = stream_delta_to_proto(tool_delta, 0).unwrap();
         let client_event = proto_to_client_event(proto).unwrap().unwrap();
         match client_event {
             ClientEvent::ToolCallDelta {

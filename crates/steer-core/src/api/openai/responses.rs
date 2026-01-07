@@ -235,18 +235,6 @@ impl Client {
                                 content_parts
                                     .push(InputContentPart::InputText { text: text.clone() });
                             }
-                            UserContent::CommandExecution {
-                                command,
-                                stdout,
-                                stderr,
-                                exit_code,
-                            } => {
-                                // Format command execution as XML-formatted text
-                                let formatted = UserContent::format_command_execution_as_xml(
-                                    command, stdout, stderr, *exit_code,
-                                );
-                                content_parts.push(InputContentPart::InputText { text: formatted });
-                            }
                         }
                     }
 
@@ -539,6 +527,8 @@ impl Client {
             let mut thinking_buffer = String::new();
             let mut tool_calls: std::collections::HashMap<String, (String, String)> =
                 std::collections::HashMap::new();
+            let mut tool_calls_started: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             loop {
                 if token.is_cancelled() {
@@ -586,13 +576,22 @@ impl Client {
                     }
                     Some("response.function_call_arguments.delta") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let call_id = data.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
+                            let call_id = extract_non_empty_str(&data, "call_id")
+                                .or_else(|| extract_non_empty_str(&data, "id"));
+                            let Some(call_id) = call_id else {
+                                debug!(
+                                    target: "openai::responses::stream",
+                                    "Ignoring function_call_arguments.delta without call_id: {}",
+                                    event.data
+                                );
+                                continue;
+                            };
                             if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                let entry = tool_calls.entry(call_id.to_string())
+                                let entry = tool_calls.entry(call_id.clone())
                                     .or_insert_with(|| (String::new(), String::new()));
                                 entry.1.push_str(delta);
                                 yield StreamChunk::ToolUseInputDelta {
-                                    id: call_id.to_string(),
+                                    id: call_id,
                                     delta: delta.to_string(),
                                 };
                             }
@@ -600,13 +599,29 @@ impl Client {
                     }
                     Some("response.function_call.created") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let call_id = data.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
-                            let name = data.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            tool_calls.insert(call_id.to_string(), (name.to_string(), String::new()));
-                            yield StreamChunk::ToolUseStart {
-                                id: call_id.to_string(),
-                                name: name.to_string(),
+                            let call_id = extract_non_empty_str(&data, "call_id")
+                                .or_else(|| extract_non_empty_str(&data, "id"));
+                            let Some(call_id) = call_id else {
+                                debug!(
+                                    target: "openai::responses::stream",
+                                    "Ignoring function_call.created without call_id: {}",
+                                    event.data
+                                );
+                                continue;
                             };
+                            let name = extract_non_empty_str(&data, "name").unwrap_or_default();
+                            let entry = tool_calls
+                                .entry(call_id.clone())
+                                .or_insert_with(|| (String::new(), String::new()));
+                            if entry.0.is_empty() && !name.is_empty() {
+                                entry.0 = name.clone();
+                            }
+                            if !name.is_empty() && tool_calls_started.insert(call_id.clone()) {
+                                yield StreamChunk::ToolUseStart {
+                                    id: call_id,
+                                    name,
+                                };
+                            }
                         }
                     }
                     Some("response.output_item.added") => {
@@ -614,13 +629,30 @@ impl Client {
                             if let Some(item) = data.get("item") {
                                 let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
                                 if item_type == "function_call" {
-                                    let call_id = item.get("id").and_then(|c| c.as_str()).unwrap_or("");
-                                    let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    tool_calls.insert(call_id.to_string(), (name.to_string(), String::new()));
-                                    yield StreamChunk::ToolUseStart {
-                                        id: call_id.to_string(),
-                                        name: name.to_string(),
+                                    let call_id = extract_non_empty_str(item, "call_id")
+                                        .or_else(|| extract_non_empty_str(item, "id"))
+                                        .or_else(|| extract_non_empty_str(item, "item_id"));
+                                    let Some(call_id) = call_id else {
+                                        debug!(
+                                            target: "openai::responses::stream",
+                                            "Ignoring output_item.added without call_id: {}",
+                                            event.data
+                                        );
+                                        continue;
                                     };
+                                    let name = extract_non_empty_str(item, "name").unwrap_or_default();
+                                    let entry = tool_calls
+                                        .entry(call_id.clone())
+                                        .or_insert_with(|| (String::new(), String::new()));
+                                    if entry.0.is_empty() && !name.is_empty() {
+                                        entry.0 = name.clone();
+                                    }
+                                    if !name.is_empty() && tool_calls_started.insert(call_id.clone()) {
+                                        yield StreamChunk::ToolUseStart {
+                                            id: call_id,
+                                            name,
+                                        };
+                                    }
                                 }
                             }
                         }
@@ -643,6 +675,15 @@ impl Client {
                         }
 
                         for (id, (name, args)) in std::mem::take(&mut tool_calls) {
+                            if id.is_empty() || name.is_empty() {
+                                debug!(
+                                    target: "openai::responses::stream",
+                                    "Skipping tool call with missing id/name: id='{}' name='{}'",
+                                    id,
+                                    name
+                                );
+                                continue;
+                            }
                             let parameters = serde_json::from_str(&args)
                                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                             content.push(AssistantContent::ToolCall {
@@ -680,6 +721,14 @@ impl Client {
             }
         }
     }
+}
+
+fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -1083,6 +1132,68 @@ mod tests {
             Ok(SseEvent {
                 event_type: Some("response.function_call.created".to_string()),
                 data: r#"{"call_id":"call_123","name":"get_weather"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"{\"city\":"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"\"NYC\"}"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref id, ref name } if id == "call_123" && name == "get_weather")
+        );
+
+        let arg_delta_1 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_1, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "{\"city\":")
+        );
+
+        let arg_delta_2 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_2, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "\"NYC\"}")
+        );
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+                assert_eq!(tool_call.id, "call_123");
+                assert_eq!(tool_call.name, "get_weather");
+            } else {
+                panic!("Expected ToolCall");
+            }
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_with_output_item_call_id() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.output_item.added".to_string()),
+                data: r#"{"item":{"type":"function_call","id":"item_1","call_id":"call_123","name":"get_weather"}}"#.to_string(),
                 id: None,
             }),
             Ok(SseEvent {
