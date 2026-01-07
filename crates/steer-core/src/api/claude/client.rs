@@ -1015,18 +1015,63 @@ impl Provider for AnthropicClient {
     }
 }
 
+#[derive(Debug)]
+enum BlockState {
+    Text { text: String },
+    Thinking { text: String, signature: Option<String> },
+    ToolUse { id: String, name: String, input: String },
+    Unknown,
+}
+
+fn block_state_to_content(state: BlockState) -> Option<AssistantContent> {
+    match state {
+        BlockState::Text { text } => {
+            if text.is_empty() {
+                None
+            } else {
+                Some(AssistantContent::Text { text })
+            }
+        }
+        BlockState::Thinking { text, signature } => {
+            if text.is_empty() {
+                None
+            } else {
+                let thought = if let Some(sig) = signature {
+                    ThoughtContent::Signed { text, signature: sig }
+                } else {
+                    ThoughtContent::Simple { text }
+                };
+                Some(AssistantContent::Thought { thought })
+            }
+        }
+        BlockState::ToolUse { id, name, input } => {
+            if id.is_empty() || name.is_empty() {
+                None
+            } else {
+                let parameters: serde_json::Value =
+                    serde_json::from_str(&input)
+                        .unwrap_or(serde_json::Value::Object(Default::default()));
+                Some(AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id,
+                        name,
+                        parameters,
+                    },
+                })
+            }
+        }
+        BlockState::Unknown => None,
+    }
+}
+
 fn convert_claude_stream(
     sse_stream: crate::api::sse::SseStream,
     token: CancellationToken,
 ) -> impl futures_core::Stream<Item = StreamChunk> + Send {
     async_stream::stream! {
-        let mut accumulated_content: Vec<AssistantContent> = vec![];
-        let mut current_tool_id: Option<String> = None;
-        let mut current_tool_name: Option<String> = None;
-        let mut current_tool_input = String::new();
-        let mut accumulated_text = String::new();
-        let mut current_thinking = String::new();
-        let mut current_thinking_signature: Option<String> = None;
+        let mut block_states: std::collections::HashMap<usize, BlockState> =
+            std::collections::HashMap::new();
+        let mut completed_content: Vec<AssistantContent> = Vec::new();
 
         tokio::pin!(sse_stream);
 
@@ -1051,95 +1096,112 @@ fn convert_claude_stream(
             };
 
             match stream_event {
-                ClaudeStreamEvent::ContentBlockDelta {
-                    delta: ClaudeDelta::TextDelta { text },
-                    ..
-                } => {
-                    accumulated_text.push_str(&text);
-                    yield StreamChunk::TextDelta(text);
-                }
-                ClaudeStreamEvent::ContentBlockDelta {
-                    delta: ClaudeDelta::ThinkingDelta { thinking },
-                    ..
-                } => {
-                    current_thinking.push_str(&thinking);
-                    yield StreamChunk::ThinkingDelta(thinking);
-                }
-                ClaudeStreamEvent::ContentBlockDelta {
-                    delta: ClaudeDelta::SignatureDelta { signature },
-                    ..
-                } => {
-                    current_thinking_signature = Some(signature);
-                }
-                ClaudeStreamEvent::ContentBlockStart { content_block, .. } => {
-                    if content_block.block_type == "tool_use" {
-                        if let (Some(id), Some(name)) =
-                            (content_block.id.clone(), content_block.name.clone())
-                        {
-                            current_tool_id = Some(id.clone());
-                            current_tool_name = Some(name.clone());
-                            yield StreamChunk::ToolUseStart { id, name };
+                ClaudeStreamEvent::ContentBlockStart { index, content_block } => {
+                    match content_block.block_type.as_str() {
+                        "text" => {
+                            let text = content_block.text.unwrap_or_default();
+                            if !text.is_empty() {
+                                yield StreamChunk::TextDelta(text.clone());
+                            }
+                            block_states.insert(index, BlockState::Text { text });
                         }
-                    } else if content_block.block_type == "thinking" {
-                        current_thinking.clear();
-                        current_thinking_signature = None;
+                        "thinking" => {
+                            block_states.insert(
+                                index,
+                                BlockState::Thinking {
+                                    text: String::new(),
+                                    signature: None,
+                                },
+                            );
+                        }
+                        "tool_use" => {
+                            let id = content_block.id.unwrap_or_default();
+                            let name = content_block.name.unwrap_or_default();
+                            if !id.is_empty() && !name.is_empty() {
+                                yield StreamChunk::ToolUseStart {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                };
+                            }
+                            block_states.insert(
+                                index,
+                                BlockState::ToolUse {
+                                    id,
+                                    name,
+                                    input: String::new(),
+                                },
+                            );
+                        }
+                        _ => {
+                            block_states.insert(index, BlockState::Unknown);
+                        }
                     }
                 }
-                ClaudeStreamEvent::ContentBlockDelta {
-                    delta: ClaudeDelta::InputJsonDelta { partial_json },
-                    ..
-                } => {
-                    if let Some(ref id) = current_tool_id {
-                        current_tool_input.push_str(&partial_json);
-                        yield StreamChunk::ToolUseInputDelta {
-                            id: id.clone(),
-                            delta: partial_json,
-                        };
+                ClaudeStreamEvent::ContentBlockDelta { index, delta } => match delta {
+                    ClaudeDelta::TextDelta { text } => {
+                        match block_states.get_mut(&index) {
+                            Some(BlockState::Text { text: buf }) => buf.push_str(&text),
+                            _ => {
+                                block_states.insert(index, BlockState::Text { text: text.clone() });
+                            }
+                        }
+                        yield StreamChunk::TextDelta(text);
                     }
-                }
+                    ClaudeDelta::ThinkingDelta { thinking } => {
+                        match block_states.get_mut(&index) {
+                            Some(BlockState::Thinking { text, .. }) => text.push_str(&thinking),
+                            _ => {
+                                block_states.insert(
+                                    index,
+                                    BlockState::Thinking {
+                                        text: thinking.clone(),
+                                        signature: None,
+                                    },
+                                );
+                            }
+                        }
+                        yield StreamChunk::ThinkingDelta(thinking);
+                    }
+                    ClaudeDelta::SignatureDelta { signature } => {
+                        if let Some(BlockState::Thinking { signature: sig, .. }) =
+                            block_states.get_mut(&index)
+                        {
+                            *sig = Some(signature);
+                        }
+                    }
+                    ClaudeDelta::InputJsonDelta { partial_json } => {
+                        if let Some(BlockState::ToolUse { id, input, .. }) =
+                            block_states.get_mut(&index)
+                        {
+                            input.push_str(&partial_json);
+                            if !id.is_empty() {
+                                yield StreamChunk::ToolUseInputDelta {
+                                    id: id.clone(),
+                                    delta: partial_json,
+                                };
+                            }
+                        }
+                    }
+                },
                 ClaudeStreamEvent::ContentBlockStop { index } => {
-                    if let (Some(id), Some(name)) =
-                        (current_tool_id.take(), current_tool_name.take())
+                    if let Some(state) = block_states.remove(&index)
+                        && let Some(content) = block_state_to_content(state)
                     {
-                        let input: serde_json::Value =
-                            serde_json::from_str(&current_tool_input)
-                                .unwrap_or(serde_json::Value::Object(Default::default()));
-                        accumulated_content.push(AssistantContent::ToolCall {
-                            tool_call: ToolCall {
-                                id,
-                                name,
-                                parameters: input,
-                            },
-                        });
-                        current_tool_input.clear();
-                    }
-                    if !current_thinking.is_empty() {
-                        let thought = if let Some(sig) = current_thinking_signature.take() {
-                            ThoughtContent::Signed {
-                                text: std::mem::take(&mut current_thinking),
-                                signature: sig,
-                            }
-                        } else {
-                            ThoughtContent::Simple {
-                                text: std::mem::take(&mut current_thinking),
-                            }
-                        };
-                        accumulated_content.push(AssistantContent::Thought { thought });
+                        completed_content.push(content);
                     }
                     yield StreamChunk::ContentBlockStop { index };
                 }
                 ClaudeStreamEvent::MessageStop => {
-                    if !accumulated_text.is_empty() {
-                        accumulated_content.insert(
-                            0,
-                            AssistantContent::Text {
-                                text: std::mem::take(&mut accumulated_text),
-                            },
+                    if !block_states.is_empty() {
+                        tracing::warn!(
+                            target: "anthropic::stream",
+                            "MessageStop received with {} unfinished content blocks",
+                            block_states.len()
                         );
                     }
-                    yield StreamChunk::MessageComplete(CompletionResponse {
-                        content: accumulated_content.clone(),
-                    });
+                    let content = std::mem::take(&mut completed_content);
+                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    break;
                 }
                 ClaudeStreamEvent::Error { error } => {
                     yield StreamChunk::Error(StreamError::Provider {

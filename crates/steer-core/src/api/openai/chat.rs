@@ -466,11 +466,12 @@ impl Client {
         }
 
         async_stream::stream! {
-            let mut text_buffer = String::new();
-            let mut thinking_buffer = String::new();
+            let mut content: Vec<AssistantContent> = Vec::new();
+            let mut tool_call_indices: Vec<Option<usize>> = Vec::new();
             let mut tool_calls: HashMap<usize, ToolCallAccumulator> = HashMap::new();
             let mut tool_calls_started: std::collections::HashSet<usize> =
                 std::collections::HashSet::new();
+            let mut tool_call_positions: HashMap<usize, usize> = HashMap::new();
             loop {
                 if token.is_cancelled() {
                     yield StreamChunk::Error(StreamError::Cancelled);
@@ -499,44 +500,39 @@ impl Client {
                 };
 
                 if event.data == "[DONE]" {
-                    let mut content = Vec::new();
+                    let tool_calls = std::mem::take(&mut tool_calls);
+                    let mut final_content = Vec::new();
 
-                    if !thinking_buffer.is_empty() {
-                        content.push(AssistantContent::Thought {
-                            thought: ThoughtContent::Simple {
-                                text: std::mem::take(&mut thinking_buffer),
-                            },
-                        });
-                    }
-
-                    if !text_buffer.is_empty() {
-                        content.push(AssistantContent::Text {
-                            text: std::mem::take(&mut text_buffer),
-                        });
-                    }
-
-                    for (_idx, tool_call) in std::mem::take(&mut tool_calls) {
-                        if tool_call.id.is_empty() || tool_call.name.is_empty() {
-                            debug!(
-                                target: "openai::chat::stream",
-                                "Skipping tool call with missing id/name: id='{}' name='{}'",
-                                tool_call.id,
-                                tool_call.name
-                            );
-                            continue;
+                    for (block, tool_index) in content.into_iter().zip(tool_call_indices.into_iter())
+                    {
+                        if let Some(index) = tool_index {
+                            let Some(tool_call) = tool_calls.get(&index) else {
+                                continue;
+                            };
+                            if tool_call.id.is_empty() || tool_call.name.is_empty() {
+                                debug!(
+                                    target: "openai::chat::stream",
+                                    "Skipping tool call with missing id/name: id='{}' name='{}'",
+                                    tool_call.id,
+                                    tool_call.name
+                                );
+                                continue;
+                            }
+                            let parameters = serde_json::from_str(&tool_call.args)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                            final_content.push(AssistantContent::ToolCall {
+                                tool_call: steer_tools::ToolCall {
+                                    id: tool_call.id.clone(),
+                                    name: tool_call.name.clone(),
+                                    parameters,
+                                },
+                            });
+                        } else {
+                            final_content.push(block);
                         }
-                        let parameters = serde_json::from_str(&tool_call.args)
-                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                        content.push(AssistantContent::ToolCall {
-                            tool_call: steer_tools::ToolCall {
-                                id: tool_call.id,
-                                name: tool_call.name,
-                                parameters,
-                            },
-                        });
                     }
 
-                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
                     break;
                 }
 
@@ -549,14 +545,34 @@ impl Client {
                 };
 
                 if let Some(choice) = chunk.choices.first() {
-                    if let Some(content) = &choice.delta.content {
-                        text_buffer.push_str(content);
-                        yield StreamChunk::TextDelta(content.clone());
+                    if let Some(text_delta) = &choice.delta.content {
+                        match content.last_mut() {
+                            Some(AssistantContent::Text { text }) => text.push_str(text_delta),
+                            _ => {
+                                content.push(AssistantContent::Text {
+                                    text: text_delta.clone(),
+                                });
+                                tool_call_indices.push(None);
+                            }
+                        }
+                        yield StreamChunk::TextDelta(text_delta.clone());
                     }
 
-                    if let Some(reasoning) = &choice.delta.reasoning_content {
-                        thinking_buffer.push_str(reasoning);
-                        yield StreamChunk::ThinkingDelta(reasoning.clone());
+                    if let Some(thinking_delta) = &choice.delta.reasoning_content {
+                        match content.last_mut() {
+                            Some(AssistantContent::Thought {
+                                thought: ThoughtContent::Simple { text },
+                            }) => text.push_str(thinking_delta),
+                            _ => {
+                                content.push(AssistantContent::Thought {
+                                    thought: ThoughtContent::Simple {
+                                        text: thinking_delta.clone(),
+                                    },
+                                });
+                                tool_call_indices.push(None);
+                            }
+                        }
+                        yield StreamChunk::ThinkingDelta(thinking_delta.clone());
                     }
 
                     if let Some(tcs) = &choice.delta.tool_calls {
@@ -582,6 +598,19 @@ impl Client {
                                         entry.name = name.clone();
                                     }
                                 }
+
+                            if !tool_call_positions.contains_key(&tc.index) {
+                                let pos = content.len();
+                                content.push(AssistantContent::ToolCall {
+                                    tool_call: steer_tools::ToolCall {
+                                        id: entry.id.clone(),
+                                        name: entry.name.clone(),
+                                        parameters: serde_json::Value::String(entry.args.clone()),
+                                    },
+                                });
+                                tool_call_indices.push(Some(tc.index));
+                                tool_call_positions.insert(tc.index, pos);
+                            }
 
                             if !entry.id.is_empty()
                                 && !entry.name.is_empty()

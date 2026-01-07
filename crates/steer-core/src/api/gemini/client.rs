@@ -983,9 +983,7 @@ impl GeminiClient {
         token: CancellationToken,
     ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
         async_stream::stream! {
-            let mut text_buffer = String::new();
-            let mut thinking_buffer = String::new();
-            let mut tool_calls: Vec<(String, String, Value)> = Vec::new();
+            let mut content: Vec<AssistantContent> = Vec::new();
             loop {
                 if token.is_cancelled() {
                     yield StreamChunk::Error(StreamError::Cancelled);
@@ -1002,32 +1000,7 @@ impl GeminiClient {
                 };
 
                 let Some(event_result) = event_result else {
-                    let mut content = Vec::new();
-
-                    if !thinking_buffer.is_empty() {
-                        content.push(AssistantContent::Thought {
-                            thought: ThoughtContent::Simple {
-                                text: std::mem::take(&mut thinking_buffer),
-                            },
-                        });
-                    }
-
-                    if !text_buffer.is_empty() {
-                        content.push(AssistantContent::Text {
-                            text: std::mem::take(&mut text_buffer),
-                        });
-                    }
-
-                    for (id, name, args) in std::mem::take(&mut tool_calls) {
-                        content.push(AssistantContent::ToolCall {
-                            tool_call: steer_tools::ToolCall {
-                                id,
-                                name,
-                                parameters: args,
-                            },
-                        });
-                    }
-
+                    let content = std::mem::take(&mut content);
                     yield StreamChunk::MessageComplete(CompletionResponse { content });
                     break;
                 };
@@ -1053,22 +1026,38 @@ impl GeminiClient {
                         for part in candidate.content.parts {
                             if part.thought {
                                 if let GeminiResponsePartData::Text { text } = part.data {
-                                    thinking_buffer.push_str(&text);
+                                    match content.last_mut() {
+                                        Some(AssistantContent::Thought {
+                                            thought: ThoughtContent::Simple { text: buf },
+                                        }) => buf.push_str(&text),
+                                        _ => {
+                                            content.push(AssistantContent::Thought {
+                                                thought: ThoughtContent::Simple { text: text.clone() },
+                                            });
+                                        }
+                                    }
                                     yield StreamChunk::ThinkingDelta(text);
                                 }
                             } else {
                                 match part.data {
                                     GeminiResponsePartData::Text { text } => {
-                                        text_buffer.push_str(&text);
+                                        match content.last_mut() {
+                                            Some(AssistantContent::Text { text: buf }) => buf.push_str(&text),
+                                            _ => {
+                                                content.push(AssistantContent::Text { text: text.clone() });
+                                            }
+                                        }
                                         yield StreamChunk::TextDelta(text);
                                     }
                                     GeminiResponsePartData::FunctionCall { function_call } => {
                                         let id = uuid::Uuid::new_v4().to_string();
-                                        tool_calls.push((
-                                            id.clone(),
-                                            function_call.name.clone(),
-                                            function_call.args.clone(),
-                                        ));
+                                        content.push(AssistantContent::ToolCall {
+                                            tool_call: steer_tools::ToolCall {
+                                                id: id.clone(),
+                                                name: function_call.name.clone(),
+                                                parameters: function_call.args.clone(),
+                                            },
+                                        });
                                         yield StreamChunk::ToolUseStart {
                                             id: id.clone(),
                                             name: function_call.name,

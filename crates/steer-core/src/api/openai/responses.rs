@@ -538,13 +538,15 @@ impl Client {
         token: CancellationToken,
     ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
         async_stream::stream! {
-            let mut text_buffer = String::new();
-            let mut thinking_buffer = String::new();
+            let mut content: Vec<AssistantContent> = Vec::new();
+            let mut tool_call_keys: Vec<Option<String>> = Vec::new();
             let mut tool_calls: std::collections::HashMap<String, (String, String)> =
                 std::collections::HashMap::new();
             let mut tool_calls_started: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut item_to_call_id: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            let mut tool_call_positions: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
 
             loop {
@@ -578,7 +580,15 @@ impl Client {
                     Some("response.output_text.delta") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
                             if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                text_buffer.push_str(delta);
+                                match content.last_mut() {
+                                    Some(AssistantContent::Text { text }) => text.push_str(delta),
+                                    _ => {
+                                        content.push(AssistantContent::Text {
+                                            text: delta.to_string(),
+                                        });
+                                        tool_call_keys.push(None);
+                                    }
+                                }
                                 yield StreamChunk::TextDelta(delta.to_string());
                             }
                         }
@@ -586,7 +596,19 @@ impl Client {
                     Some("response.reasoning.delta") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
                             if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                thinking_buffer.push_str(delta);
+                                match content.last_mut() {
+                                    Some(AssistantContent::Thought {
+                                        thought: ThoughtContent::Simple { text },
+                                    }) => text.push_str(delta),
+                                    _ => {
+                                        content.push(AssistantContent::Thought {
+                                            thought: ThoughtContent::Simple {
+                                                text: delta.to_string(),
+                                            },
+                                        });
+                                        tool_call_keys.push(None);
+                                    }
+                                }
                                 yield StreamChunk::ThinkingDelta(delta.to_string());
                             }
                         }
@@ -606,6 +628,18 @@ impl Client {
                                 let entry = tool_calls.entry(call_id.clone())
                                     .or_insert_with(|| (String::new(), String::new()));
                                 entry.1.push_str(delta);
+                                if !tool_call_positions.contains_key(&call_id) {
+                                    let pos = content.len();
+                                    content.push(AssistantContent::ToolCall {
+                                        tool_call: steer_tools::ToolCall {
+                                            id: call_id.clone(),
+                                            name: entry.0.clone(),
+                                            parameters: serde_json::Value::String(entry.1.clone()),
+                                        },
+                                    });
+                                    tool_call_keys.push(Some(call_id.clone()));
+                                    tool_call_positions.insert(call_id.clone(), pos);
+                                }
                                 yield StreamChunk::ToolUseInputDelta {
                                     id: call_id,
                                     delta: delta.to_string(),
@@ -630,6 +664,18 @@ impl Client {
                                 .or_insert_with(|| (String::new(), String::new()));
                             if entry.0.is_empty() && !name.is_empty() {
                                 entry.0 = name.clone();
+                            }
+                            if !tool_call_positions.contains_key(&call_id) {
+                                let pos = content.len();
+                                content.push(AssistantContent::ToolCall {
+                                    tool_call: steer_tools::ToolCall {
+                                        id: call_id.clone(),
+                                        name: entry.0.clone(),
+                                        parameters: serde_json::Value::String(entry.1.clone()),
+                                    },
+                                });
+                                tool_call_keys.push(Some(call_id.clone()));
+                                tool_call_positions.insert(call_id.clone(), pos);
                             }
                             if !name.is_empty() && tool_calls_started.insert(call_id.clone()) {
                                 yield StreamChunk::ToolUseStart {
@@ -667,6 +713,18 @@ impl Client {
                                     if entry.0.is_empty() && !name.is_empty() {
                                         entry.0 = name.clone();
                                     }
+                                    if !tool_call_positions.contains_key(&call_id) {
+                                        let pos = content.len();
+                                        content.push(AssistantContent::ToolCall {
+                                            tool_call: steer_tools::ToolCall {
+                                                id: call_id.clone(),
+                                                name: entry.0.clone(),
+                                                parameters: serde_json::Value::String(entry.1.clone()),
+                                            },
+                                        });
+                                        tool_call_keys.push(Some(call_id.clone()));
+                                        tool_call_positions.insert(call_id.clone(), pos);
+                                    }
                                     if !name.is_empty() && tool_calls_started.insert(call_id.clone()) {
                                         yield StreamChunk::ToolUseStart {
                                             id: call_id,
@@ -678,44 +736,39 @@ impl Client {
                         }
                     }
                     Some("response.completed") => {
-                        let mut content = Vec::new();
+                        let tool_calls = std::mem::take(&mut tool_calls);
+                        let mut final_content = Vec::new();
 
-                        if !thinking_buffer.is_empty() {
-                            content.push(AssistantContent::Thought {
-                                thought: ThoughtContent::Simple {
-                                    text: std::mem::take(&mut thinking_buffer),
-                                },
-                            });
-                        }
-
-                        if !text_buffer.is_empty() {
-                            content.push(AssistantContent::Text {
-                                text: std::mem::take(&mut text_buffer),
-                            });
-                        }
-
-                        for (id, (name, args)) in std::mem::take(&mut tool_calls) {
-                            if id.is_empty() || name.is_empty() {
-                                debug!(
-                                    target: "openai::responses::stream",
-                                    "Skipping tool call with missing id/name: id='{}' name='{}'",
-                                    id,
-                                    name
-                                );
-                                continue;
+                        for (block, tool_key) in content.into_iter().zip(tool_call_keys.into_iter())
+                        {
+                            if let Some(call_id) = tool_key {
+                                let Some((name, args)) = tool_calls.get(&call_id) else {
+                                    continue;
+                                };
+                                if call_id.is_empty() || name.is_empty() {
+                                    debug!(
+                                        target: "openai::responses::stream",
+                                        "Skipping tool call with missing id/name: id='{}' name='{}'",
+                                        call_id,
+                                        name
+                                    );
+                                    continue;
+                                }
+                                let parameters = serde_json::from_str(args)
+                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                final_content.push(AssistantContent::ToolCall {
+                                    tool_call: steer_tools::ToolCall {
+                                        id: call_id.clone(),
+                                        name: name.clone(),
+                                        parameters,
+                                    },
+                                });
+                            } else {
+                                final_content.push(block);
                             }
-                            let parameters = serde_json::from_str(&args)
-                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                            content.push(AssistantContent::ToolCall {
-                                tool_call: steer_tools::ToolCall {
-                                    id,
-                                    name,
-                                    parameters,
-                                },
-                            });
                         }
 
-                        yield StreamChunk::MessageComplete(CompletionResponse { content });
+                        yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
                         break;
                     }
                     Some("error") => {
