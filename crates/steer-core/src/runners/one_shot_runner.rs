@@ -101,8 +101,12 @@ impl OneShotRunner {
                     messages.push(message);
                 }
 
-                SessionEvent::MessageUpdated { id, .. } => {
-                    info!(session_id = %session_id, id = %id, "MessageUpdated event");
+                SessionEvent::MessageUpdated { message } => {
+                    info!(
+                        session_id = %session_id,
+                        id = %message.id(),
+                        "MessageUpdated event"
+                    );
                 }
 
                 SessionEvent::OperationCompleted { op_id } => {

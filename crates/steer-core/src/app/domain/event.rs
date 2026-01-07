@@ -1,7 +1,7 @@
 use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
 use crate::app::domain::types::{
-    CompactionRecord, MessageId, OpId, RequestId, SessionId, ToolCallId,
+    CompactionRecord, OpId, RequestId, SessionId, ToolCallId,
 };
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
@@ -30,8 +30,7 @@ pub enum SessionEvent {
     },
 
     MessageUpdated {
-        id: MessageId,
-        content: String,
+        message: Message,
     },
 
     ToolCallStarted {

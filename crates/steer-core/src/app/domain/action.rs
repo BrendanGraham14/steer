@@ -95,8 +95,10 @@ pub enum Action {
     DirectBashCommand {
         session_id: SessionId,
         op_id: OpId,
+        message_id: MessageId,
         command: String,
         model: ModelId,
+        timestamp: u64,
     },
 
     RequestCompaction {

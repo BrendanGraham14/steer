@@ -7,8 +7,7 @@ pub enum ClientEvent {
         model: ModelId,
     },
     MessageUpdated {
-        id: MessageId,
-        content: String,
+        message: Message,
     },
     MessageDelta {
         id: MessageId,

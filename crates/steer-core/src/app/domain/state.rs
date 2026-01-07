@@ -35,6 +35,7 @@ pub struct AppState {
     pub cancelled_ops: HashSet<OpId>,
 
     pub operation_models: HashMap<OpId, ModelId>,
+    pub operation_messages: HashMap<OpId, MessageId>,
 
     pub event_sequence: u64,
 }
@@ -108,6 +109,7 @@ impl AppState {
             mcp_servers: HashMap::new(),
             cancelled_ops: HashSet::new(),
             operation_models: HashMap::new(),
+            operation_messages: HashMap::new(),
             event_sequence: 0,
         }
     }
@@ -180,6 +182,7 @@ impl AppState {
     pub fn complete_operation(&mut self) {
         if let Some(ref op) = self.current_operation {
             self.operation_models.remove(&op.op_id);
+            self.operation_messages.remove(&op.op_id);
         }
         self.current_operation = None;
     }

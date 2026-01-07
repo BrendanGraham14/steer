@@ -204,6 +204,17 @@ impl Client {
                         UserContent::Text { text } => {
                             text_parts.push(OpenAIContentPart::Text { text });
                         }
+                        UserContent::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } => {
+                            let formatted = UserContent::format_command_execution_as_xml(
+                                &command, &stdout, &stderr, exit_code,
+                            );
+                            text_parts.push(OpenAIContentPart::Text { text: formatted });
+                        }
                     }
                 }
                 Ok(vec![OpenAIMessage::User {
@@ -1006,6 +1017,60 @@ mod tests {
             cancelled,
             StreamChunk::Error(StreamError::Cancelled)
         ));
+    }
+
+    #[test]
+    fn test_convert_message_with_command_execution() {
+        let client = Client::new("test_key".to_string());
+
+        let message = Message {
+            data: MessageData::User {
+                content: vec![
+                    UserContent::Text {
+                        text: "Here's the result:".to_string(),
+                    },
+                    UserContent::CommandExecution {
+                        command: "ls -la".to_string(),
+                        stdout: "total 24\ndrwxr-xr-x  3 user  staff   96 Jan  1 12:00 ."
+                            .to_string(),
+                        stderr: "".to_string(),
+                        exit_code: 0,
+                    },
+                ],
+            },
+            timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            id: "test-id".to_string(),
+            parent_message_id: None,
+        };
+
+        let result = client.convert_message(message).unwrap();
+        assert_eq!(result.len(), 1);
+
+        match &result[0] {
+            OpenAIMessage::User { content, .. } => match content {
+                OpenAIContent::Array(parts) => {
+                    assert_eq!(parts.len(), 2);
+
+                    // Check first part is plain text
+                    match &parts[0] {
+                        OpenAIContentPart::Text { text } => {
+                            assert_eq!(text, "Here's the result:");
+                        }
+                    }
+
+                    // Check second part contains command execution
+                    match &parts[1] {
+                        OpenAIContentPart::Text { text } => {
+                            assert!(text.contains("<executed_command>"));
+                            assert!(text.contains("ls -la"));
+                            assert!(text.contains("total 24"));
+                        }
+                    }
+                }
+                _ => unreachable!("Expected array content"),
+            },
+            _ => unreachable!("Expected user message"),
+        }
     }
 
     #[tokio::test]

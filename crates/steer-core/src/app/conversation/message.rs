@@ -24,7 +24,31 @@ pub enum Role {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UserContent {
     Text { text: String },
+    CommandExecution {
+        command: String,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    },
     // TODO: support attachments
+}
+
+impl UserContent {
+    pub fn format_command_execution_as_xml(
+        command: &str,
+        stdout: &str,
+        stderr: &str,
+        exit_code: i32,
+    ) -> String {
+        format!(
+            r#"<executed_command>
+    <command>{command}</command>
+    <stdout>{stdout}</stdout>
+    <stderr>{stderr}</stderr>
+    <exit_code>{exit_code}</exit_code>
+</executed_command>"#
+        )
+    }
 }
 
 /// Different types of thought content from AI models
@@ -128,6 +152,7 @@ impl Message {
                 .iter()
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.clone()),
+                    UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -150,6 +175,21 @@ impl Message {
                 .iter()
                 .map(|c| match c {
                     UserContent::Text { text } => text.clone(),
+                    UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => {
+                        let mut output = format!("$ {command}\n{stdout}");
+                        if *exit_code != 0 {
+                            output.push_str(&format!("\nExit code: {exit_code}"));
+                        }
+                        if !stderr.is_empty() {
+                            output.push_str(&format!("\nError: {stderr}"));
+                        }
+                        output
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),

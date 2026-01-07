@@ -47,8 +47,8 @@ impl EventProcessor for MessageEventProcessor {
                 self.handle_message_added(message, ctx);
                 ProcessingResult::Handled
             }
-            ClientEvent::MessageUpdated { id, content } => {
-                self.handle_message_updated(&id, content, ctx);
+            ClientEvent::MessageUpdated { message } => {
+                self.handle_message_updated(message, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::MessageDelta { id, delta } => {
@@ -109,31 +109,8 @@ impl MessageEventProcessor {
         *ctx.messages_updated = true;
     }
 
-    fn handle_message_updated(&self, id: &MessageId, content: String, ctx: &mut ProcessingContext) {
-        // Find the message in the chat store
-        let mut found = false;
-        for item in ctx.chat_store.iter_mut() {
-            if let ChatItemData::Message(message) = &mut item.data {
-                if message.id() == id.as_str() {
-                    if let MessageData::Assistant {
-                        content: blocks, ..
-                    } = &mut message.data
-                    {
-                        blocks.clear();
-                        blocks.push(AssistantContent::Text { text: content });
-                        *ctx.messages_updated = true;
-                        found = true;
-                        break;
-                    } else {
-                        tracing::warn!(target: "tui.message", "MessageUpdated for non-assistant message: {}", id);
-                        break;
-                    }
-                }
-            }
-        }
-        if !found {
-            tracing::warn!(target: "tui.message", "MessageUpdated for unknown ID: {}", id);
-        }
+    fn handle_message_updated(&self, message: Message, ctx: &mut ProcessingContext) {
+        self.handle_message_added(message, ctx);
     }
 
     fn handle_message_delta(&self, id: &MessageId, delta: String, ctx: &mut ProcessingContext) {

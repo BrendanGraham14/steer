@@ -71,8 +71,7 @@ message MessageAddedEvent {
 }
 
 message MessageUpdatedEvent {
-  string id = 1;
-  string content = 2;
+  Message message = 1;
 }
 
 message ToolCallStartedEvent {
@@ -124,6 +123,7 @@ message StreamDeltaEvent {
   string message_id = 2;
   reserved 3;
   reserved "is_first";
+  uint64 delta_sequence = 7;
 
   oneof delta_type {
     TextDelta text = 4;
@@ -447,7 +447,15 @@ message UserMessage {
 message UserContent {
   oneof content {
     string text = 1;
+    CommandExecution command_execution = 2;
   }
+}
+
+message CommandExecution {
+  string command = 1;
+  string stdout = 2;
+  string stderr = 3;
+  int32 exit_code = 4;
 }
 
 message AssistantMessage {

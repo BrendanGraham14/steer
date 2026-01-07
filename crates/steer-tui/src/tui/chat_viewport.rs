@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use steer_core::app::MessageData;
 use steer_core::app::conversation::{AssistantContent, Message, UserContent};
-use steer_tools::{ToolResult, schema::ToolCall, tools::BASH_TOOL_NAME};
+use steer_tools::{ToolResult, schema::ToolCall};
 
 /// Flattened item types for 1:1 widget mapping
 #[derive(Debug, Clone)]
@@ -259,27 +259,17 @@ impl ChatViewport {
 
     /// Flatten raw ChatItems into 1:1 widget items
     fn flatten_items(&self, raw: &[&ChatItem]) -> Vec<FlattenedItem> {
-        // First pass: collect tool results + tool call IDs for coupling
+        // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
-        let mut tool_calls: HashSet<String> = HashSet::new();
         raw.iter().for_each(|item| {
             if let ChatItemData::Message(message) = &item.data {
-                match &message.data {
-                    MessageData::Tool {
-                        tool_use_id,
-                        result,
-                        ..
-                    } => {
-                        tool_results.insert(tool_use_id.clone(), result.clone());
-                    }
-                    MessageData::Assistant { content, .. } => {
-                        for block in content {
-                            if let AssistantContent::ToolCall { tool_call } = block {
-                                tool_calls.insert(tool_call.id.clone());
-                            }
-                        }
-                    }
-                    _ => {}
+                if let MessageData::Tool {
+                    tool_use_id,
+                    result,
+                    ..
+                } = &message.data
+                {
+                    tool_results.insert(tool_use_id.clone(), result.clone());
                 }
             }
         });
@@ -324,34 +314,7 @@ impl ChatViewport {
                             }
                         }
                         MessageData::Tool { .. } => {
-                            if let MessageData::Tool {
-                                tool_use_id,
-                                result,
-                                ..
-                            } = &row.data
-                            {
-                                if tool_calls.contains(tool_use_id) {
-                                    // Skip - tool result will be coupled with a tool call
-                                    continue;
-                                }
-
-                                // Standalone tool result (e.g., direct bash command)
-                                let tool_name = if tool_use_id.starts_with("direct_bash_") {
-                                    BASH_TOOL_NAME.to_string()
-                                } else {
-                                    "Unknown".to_string()
-                                };
-
-                                flattened.push(FlattenedItem::ToolInteraction {
-                                    call: ToolCall {
-                                        id: tool_use_id.clone(),
-                                        name: tool_name,
-                                        parameters: serde_json::Value::Null,
-                                    },
-                                    result: Some(result.clone()),
-                                    id: row.id().to_string(),
-                                });
-                            }
+                            // Skip - they should always be coupled with a tool call
                         }
                         MessageData::User { .. } => {
                             // User messages and others
@@ -625,6 +588,17 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
             for c in content {
                 match c {
                     UserContent::Text { text } => text.hash(hasher),
+                    UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => {
+                        command.hash(hasher);
+                        stdout.hash(hasher);
+                        stderr.hash(hasher);
+                        exit_code.hash(hasher);
+                    }
                 }
             }
         }

@@ -659,12 +659,16 @@ impl RuntimeHandle {
         model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let timestamp = current_timestamp();
 
         let action = Action::DirectBashCommand {
             session_id,
             op_id,
+            message_id,
             command,
             model,
+            timestamp,
         };
 
         self.dispatch_action(session_id, action).await?;

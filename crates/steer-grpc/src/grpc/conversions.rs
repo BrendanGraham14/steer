@@ -297,6 +297,21 @@ pub(crate) fn message_to_proto(
                         UserContent::Text { text } => Some(proto::UserContent {
                             content: Some(proto::user_content::Content::Text(text.clone())),
                         }),
+                        UserContent::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } => Some(proto::UserContent {
+                            content: Some(proto::user_content::Content::CommandExecution(
+                                proto::CommandExecution {
+                                    command: command.clone(),
+                                    stdout: stdout.clone(),
+                                    stderr: stderr.clone(),
+                                    exit_code: *exit_code,
+                                },
+                            )),
+                        }),
                     })
                     .collect(),
                 timestamp: message.timestamp,
@@ -760,6 +775,14 @@ pub(crate) fn proto_to_message(
                 .filter_map(|user_content| {
                     user_content.content.and_then(|content| match content {
                         user_content::Content::Text(text) => Some(UserContent::Text { text }),
+                        user_content::Content::CommandExecution(cmd) => {
+                            Some(UserContent::CommandExecution {
+                                command: cmd.command,
+                                stdout: cmd.stdout,
+                                stderr: cmd.stderr,
+                                exit_code: cmd.exit_code,
+                            })
+                        }
                     })
                 })
                 .collect();
@@ -955,12 +978,14 @@ pub(crate) fn session_event_to_proto(
                 },
             ))
         }
-        SessionEvent::MessageUpdated { id, content } => Some(
-            proto::session_event::Event::MessageUpdated(proto::MessageUpdatedEvent {
-                id: id.to_string(),
-                content,
-            }),
-        ),
+        SessionEvent::MessageUpdated { message } => {
+            let proto_message = message_to_proto(message)?;
+            Some(proto::session_event::Event::MessageUpdated(
+                proto::MessageUpdatedEvent {
+                    message: Some(proto_message),
+                },
+            ))
+        }
         SessionEvent::ToolCallStarted {
             id,
             name,
@@ -1069,6 +1094,7 @@ pub(crate) fn session_event_to_proto(
 pub(crate) fn stream_delta_to_proto(
     delta: StreamDelta,
     sequence_num: u64,
+    delta_sequence: u64,
 ) -> Result<proto::SessionEvent, ConversionError> {
     let timestamp = Some(prost_types::Timestamp::from(std::time::SystemTime::now()));
 
@@ -1124,6 +1150,7 @@ pub(crate) fn stream_delta_to_proto(
             proto::StreamDeltaEvent {
                 op_id: op_id.to_string(),
                 message_id: message_id.to_string(),
+                delta_sequence,
                 delta_type: Some(delta_type),
             },
         )),
@@ -1361,10 +1388,13 @@ pub(crate) fn proto_to_client_event(
                 .and_then(|spec| proto_to_model(&spec))?;
             ClientEvent::MessageAdded { message, model }
         }
-        proto::session_event::Event::MessageUpdated(e) => ClientEvent::MessageUpdated {
-            id: MessageId::from(e.id),
-            content: e.content,
-        },
+        proto::session_event::Event::MessageUpdated(e) => {
+            let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {
+                field: "message_updated_event.message".to_string(),
+            })?;
+            let message = proto_to_message(proto_message)?;
+            ClientEvent::MessageUpdated { message }
+        }
         proto::session_event::Event::ToolCallStarted(e) => {
             let parameters = serde_json::from_str(&e.parameters_json).map_err(|err| {
                 ConversionError::InvalidJson {

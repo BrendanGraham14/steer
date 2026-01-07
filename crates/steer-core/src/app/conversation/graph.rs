@@ -91,6 +91,47 @@ impl MessageGraph {
         Some(new_message_id)
     }
 
+    pub fn update_command_execution(
+        &mut self,
+        message_id: &str,
+        command: String,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    ) -> Option<Message> {
+        for message in &mut self.messages {
+            if message.id() != message_id {
+                continue;
+            }
+
+            if let MessageData::User { content } = &mut message.data {
+                *content = vec![UserContent::CommandExecution {
+                    command,
+                    stdout,
+                    stderr,
+                    exit_code,
+                }];
+                return Some(message.clone());
+            }
+
+            return None;
+        }
+
+        None
+    }
+
+    pub fn replace_message(&mut self, updated: Message) -> bool {
+        for message in &mut self.messages {
+            if message.id() == updated.id() {
+                *message = updated;
+                return true;
+            }
+        }
+
+        self.messages.push(updated);
+        false
+    }
+
     pub fn checkout(&mut self, message_id: &str) -> bool {
         if self.messages.iter().any(|m| m.id() == message_id) {
             self.active_message_id = Some(message_id.to_string());

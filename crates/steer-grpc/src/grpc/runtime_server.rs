@@ -84,6 +84,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let (tx, rx) = mpsc::channel(100);
         let last_sequence = Arc::new(AtomicU64::new(req.since_sequence.unwrap_or(0)));
+        let delta_sequence = Arc::new(AtomicU64::new(0));
 
         let mut min_live_seq = req.since_sequence.map(|seq| seq.saturating_add(1));
 
@@ -153,13 +154,19 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let delta_tx = tx.clone();
         let last_sequence_deltas = last_sequence.clone();
+        let delta_sequence_counter = delta_sequence.clone();
         tokio::spawn(async move {
             let mut delta_rx = delta_subscription;
             loop {
                 match delta_rx.recv().await {
                     Ok(delta) => {
                         let sequence_num = last_sequence_deltas.load(Ordering::Relaxed);
-                        let proto_event = match stream_delta_to_proto(delta, sequence_num) {
+                        let delta_sequence = delta_sequence_counter.fetch_add(1, Ordering::Relaxed);
+                        let proto_event = match stream_delta_to_proto(
+                            delta,
+                            sequence_num,
+                            delta_sequence,
+                        ) {
                             Ok(event) => event,
                             Err(e) => {
                                 warn!("Failed to convert stream delta: {}", e);

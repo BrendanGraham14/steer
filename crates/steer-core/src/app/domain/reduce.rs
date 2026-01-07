@@ -91,9 +91,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::DirectBashCommand {
             session_id,
             op_id,
+            message_id,
             command,
             model,
-        } => handle_direct_bash(state, session_id, op_id, command, model),
+            timestamp,
+        } => handle_direct_bash(
+            state,
+            session_id,
+            op_id,
+            message_id,
+            command,
+            model,
+            timestamp,
+        ),
 
         Action::RequestCompaction {
             session_id,
@@ -581,46 +591,57 @@ fn handle_tool_result(
             _ => tool_name,
         };
 
-        let rendered = match &tool_result {
-            ToolResult::Bash(result) => {
-                let mut output = format!("$ {}", result.command);
-                if !result.stdout.is_empty() {
-                    output.push_str(&format!("\n{}", result.stdout));
-                }
-                if !result.stderr.is_empty() {
-                    output.push_str(&format!("\n{}", result.stderr));
-                }
-                if result.exit_code != 0 {
-                    output.push_str(&format!("\nExit code: {}", result.exit_code));
-                }
-                output
-            }
-            ToolResult::Error(err) => format!("$ {command}\nError: {err}"),
-            other => format!("$ {command}\n{other:?}"),
+        let (stdout, stderr, exit_code) = match &tool_result {
+            ToolResult::Bash(result) => (
+                result.stdout.clone(),
+                result.stderr.clone(),
+                result.exit_code,
+            ),
+            ToolResult::Error(err) => (String::new(), err.to_string(), 1),
+            other => (format!("{other:?}"), String::new(), 0),
         };
 
-        let parent_id = state.conversation.active_message_id.clone();
-        let timestamp = Message::current_timestamp();
-        let message = Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text { text: rendered }],
-            },
-            timestamp,
-            id: Message::generate_id("user", timestamp),
-            parent_message_id: parent_id,
-        };
+        let updated = state
+            .operation_messages
+            .remove(&op_id)
+            .and_then(|id| {
+                state
+                    .conversation
+                    .update_command_execution(
+                        id.as_str(),
+                        command.clone(),
+                        stdout.clone(),
+                        stderr.clone(),
+                        exit_code,
+                    )
+                    .or_else(|| {
+                        let parent_id = state.conversation.active_message_id.clone();
+                        let timestamp = Message::current_timestamp();
+                        Some(Message {
+                            data: MessageData::User {
+                                content: vec![UserContent::CommandExecution {
+                                    command: command.clone(),
+                                    stdout: stdout.clone(),
+                                    stderr: stderr.clone(),
+                                    exit_code,
+                                }],
+                            },
+                            timestamp,
+                            id: id.to_string(),
+                            parent_message_id: parent_id,
+                        })
+                    })
+            });
 
-        state.conversation.add_message(message.clone());
-        state.conversation.active_message_id = Some(message.id.clone());
         state.complete_operation();
 
-        effects.push(Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::MessageAdded {
-                message,
-                model: model.clone(),
-            },
-        });
+        if let Some(message) = updated {
+            effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::MessageUpdated { message },
+            });
+        }
+
         effects.push(Effect::EmitEvent {
             session_id,
             event: SessionEvent::OperationCompleted { op_id },
@@ -800,10 +821,30 @@ fn handle_direct_bash(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
     op_id: crate::app::domain::types::OpId,
+    message_id: crate::app::domain::types::MessageId,
     command: String,
     model: crate::config::model::ModelId,
+    timestamp: u64,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
+
+    let parent_id = state.conversation.active_message_id.clone();
+    let message = Message {
+        data: MessageData::User {
+            content: vec![UserContent::CommandExecution {
+                command: command.clone(),
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            }],
+        },
+        timestamp,
+        id: message_id.0.clone(),
+        parent_message_id: parent_id,
+    };
+
+    state.conversation.add_message(message.clone());
+    state.conversation.active_message_id = Some(message_id.0.clone());
 
     state.start_operation(
         op_id,
@@ -811,7 +852,16 @@ fn handle_direct_bash(
             command: command.clone(),
         },
     );
-    state.operation_models.insert(op_id, model);
+    state.operation_models.insert(op_id, model.clone());
+    state.operation_messages.insert(op_id, message_id);
+
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::MessageAdded {
+            message,
+            model: model.clone(),
+        },
+    });
 
     effects.push(Effect::EmitEvent {
         session_id,
@@ -960,6 +1010,9 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
         SessionEvent::MessageAdded { message, .. } => {
             state.conversation.add_message(message.clone());
             state.conversation.active_message_id = Some(message.id().to_string());
+        }
+        SessionEvent::MessageUpdated { message } => {
+            state.conversation.replace_message(message.clone());
         }
         SessionEvent::ApprovalDecided {
             decision, remember, ..

@@ -238,6 +238,18 @@ impl Client {
                                 content_parts
                                     .push(InputContentPart::InputText { text: text.clone() });
                             }
+                            UserContent::CommandExecution {
+                                command,
+                                stdout,
+                                stderr,
+                                exit_code,
+                            } => {
+                                // Format command execution as XML-formatted text
+                                let formatted = UserContent::format_command_execution_as_xml(
+                                    command, stdout, stderr, *exit_code,
+                                );
+                                content_parts.push(InputContentPart::InputText { text: formatted });
+                            }
                         }
                     }
 

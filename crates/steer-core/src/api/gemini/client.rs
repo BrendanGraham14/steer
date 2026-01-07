@@ -377,6 +377,16 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                         UserContent::Text { text } => {
                             Some(GeminiRequestPart::Text { text: text.clone() })
                         }
+                        UserContent::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        } => Some(GeminiRequestPart::Text {
+                            text: UserContent::format_command_execution_as_xml(
+                                command, stdout, stderr, *exit_code,
+                            ),
+                        }),
                     })
                     .collect();
 

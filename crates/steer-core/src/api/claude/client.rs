@@ -388,6 +388,14 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 .iter()
                 .filter_map(|user_content| match user_content {
                     UserContent::Text { text } => Some(text.clone()),
+                    UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => Some(UserContent::format_command_execution_as_xml(
+                        command, stdout, stderr, *exit_code,
+                    )),
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
