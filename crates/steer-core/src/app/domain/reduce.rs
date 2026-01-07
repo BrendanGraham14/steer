@@ -606,19 +606,32 @@ fn handle_tool_result(
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
     if all_tools_complete && no_pending_approvals {
-        effects.push(Effect::CallModel {
-            session_id,
-            op_id,
-            model,
-            messages: state
-                .conversation
-                .get_thread_messages()
-                .into_iter()
-                .cloned()
-                .collect(),
-            system_prompt: state.cached_system_prompt.clone(),
-            tools: state.tools.clone(),
-        });
+        let is_direct_bash = matches!(
+            state.current_operation.as_ref().map(|op| &op.kind),
+            Some(OperationKind::DirectBash { .. })
+        );
+
+        if is_direct_bash {
+            state.complete_operation();
+            effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::OperationCompleted { op_id },
+            });
+        } else {
+            effects.push(Effect::CallModel {
+                session_id,
+                op_id,
+                model,
+                messages: state
+                    .conversation
+                    .get_thread_messages()
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+                system_prompt: state.cached_system_prompt.clone(),
+                tools: state.tools.clone(),
+            });
+        }
     }
 
     effects
