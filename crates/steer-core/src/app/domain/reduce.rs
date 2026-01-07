@@ -501,6 +501,15 @@ fn handle_tool_execution_started(
         }
     };
 
+    let is_direct_bash = matches!(
+        state.current_operation.as_ref().map(|op| &op.kind),
+        Some(OperationKind::DirectBash { .. })
+    );
+
+    if is_direct_bash {
+        return vec![];
+    }
+
     let model = match state.operation_models.get(&op_id).cloned() {
         Some(model) => model,
         None => {
@@ -533,16 +542,17 @@ fn handle_tool_result(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
-    let op_id = match &state.current_operation {
+    let op = match &state.current_operation {
         Some(op) => {
             if state.cancelled_ops.contains(&op.op_id) {
                 tracing::debug!("Ignoring late tool result for cancelled op {:?}", op.op_id);
                 return effects;
             }
-            op.op_id
+            op.clone()
         }
         None => return effects,
     };
+    let op_id = op.op_id;
 
     state.remove_pending_tool_call(&tool_call_id);
 
@@ -550,6 +560,8 @@ fn handle_tool_result(
         Ok(r) => r,
         Err(e) => ToolResult::Error(e),
     };
+
+    let is_direct_bash = matches!(op.kind, OperationKind::DirectBash { .. });
 
     let model = match state.operation_models.get(&op_id).cloned() {
         Some(model) => model,
@@ -562,6 +574,60 @@ fn handle_tool_result(
             }];
         }
     };
+
+    if is_direct_bash {
+        let command = match &op.kind {
+            OperationKind::DirectBash { command } => command.clone(),
+            _ => tool_name,
+        };
+
+        let rendered = match &tool_result {
+            ToolResult::Bash(result) => {
+                let mut output = format!("$ {}", result.command);
+                if !result.stdout.is_empty() {
+                    output.push_str(&format!("\n{}", result.stdout));
+                }
+                if !result.stderr.is_empty() {
+                    output.push_str(&format!("\n{}", result.stderr));
+                }
+                if result.exit_code != 0 {
+                    output.push_str(&format!("\nExit code: {}", result.exit_code));
+                }
+                output
+            }
+            ToolResult::Error(err) => format!("$ {command}\nError: {err}"),
+            other => format!("$ {command}\n{other:?}"),
+        };
+
+        let parent_id = state.conversation.active_message_id.clone();
+        let timestamp = Message::current_timestamp();
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text { text: rendered }],
+            },
+            timestamp,
+            id: Message::generate_id("user", timestamp),
+            parent_message_id: parent_id,
+        };
+
+        state.conversation.add_message(message.clone());
+        state.conversation.active_message_id = Some(message.id.clone());
+        state.complete_operation();
+
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::MessageAdded {
+                message,
+                model: model.clone(),
+            },
+        });
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationCompleted { op_id },
+        });
+
+        return effects;
+    }
 
     let event = match &tool_result {
         ToolResult::Error(e) => SessionEvent::ToolCallFailed {
@@ -608,32 +674,19 @@ fn handle_tool_result(
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
     if all_tools_complete && no_pending_approvals {
-        let is_direct_bash = matches!(
-            state.current_operation.as_ref().map(|op| &op.kind),
-            Some(OperationKind::DirectBash { .. })
-        );
-
-        if is_direct_bash {
-            state.complete_operation();
-            effects.push(Effect::EmitEvent {
-                session_id,
-                event: SessionEvent::OperationCompleted { op_id },
-            });
-        } else {
-            effects.push(Effect::CallModel {
-                session_id,
-                op_id,
-                model,
-                messages: state
-                    .conversation
-                    .get_thread_messages()
-                    .into_iter()
-                    .cloned()
-                    .collect(),
-                system_prompt: state.cached_system_prompt.clone(),
-                tools: state.tools.clone(),
-            });
-        }
+        effects.push(Effect::CallModel {
+            session_id,
+            op_id,
+            model,
+            messages: state
+                .conversation
+                .get_thread_messages()
+                .into_iter()
+                .cloned()
+                .collect(),
+            system_prompt: state.cached_system_prompt.clone(),
+            tools: state.tools.clone(),
+        });
     }
 
     effects
