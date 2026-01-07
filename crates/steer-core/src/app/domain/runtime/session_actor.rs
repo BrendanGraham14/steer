@@ -117,6 +117,7 @@ struct SessionActor {
     state: AppState,
     event_store: Arc<dyn EventStore>,
     interpreter: EffectInterpreter,
+    tool_executor: Arc<ToolExecutor>,
     active_operations: HashMap<OpId, CancellationToken>,
     event_broadcast: broadcast::Sender<SessionEventEnvelope>,
     delta_broadcast: broadcast::Sender<StreamDelta>,
@@ -140,13 +141,14 @@ impl SessionActor {
         let (delta_broadcast, _) = broadcast::channel(DELTA_BROADCAST_CAPACITY);
         let (unsubscribe_tx, unsubscribe_rx) = mpsc::unbounded_channel();
         let (internal_action_tx, internal_action_rx) = mpsc::channel(64);
-        let interpreter = EffectInterpreter::new(api_client, tool_executor);
+        let interpreter = EffectInterpreter::new(api_client, tool_executor.clone());
 
         Self {
             session_id,
             state,
             event_store,
             interpreter,
+            tool_executor,
             active_operations: HashMap::new(),
             event_broadcast,
             delta_broadcast,
@@ -160,6 +162,8 @@ impl SessionActor {
     }
 
     async fn run(mut self, mut cmd_rx: mpsc::Receiver<SessionCmd>) {
+        self.load_initial_tool_schemas().await;
+
         loop {
             tokio::select! {
                 biased;
@@ -218,6 +222,28 @@ impl SessionActor {
         }
 
         tracing::debug!(session_id = %self.session_id, "Session actor stopped");
+    }
+
+    async fn load_initial_tool_schemas(&mut self) {
+        let schemas = self.tool_executor.get_tool_schemas().await;
+        let schemas = match &self.state.session_config {
+            Some(config) => config.filter_tools_by_visibility(schemas),
+            None => schemas,
+        };
+
+        if let Err(e) = self
+            .handle_action(Action::ToolSchemasAvailable {
+                session_id: self.session_id,
+                tools: schemas,
+            })
+            .await
+        {
+            tracing::error!(
+                session_id = %self.session_id,
+                error = %e,
+                "Failed to load initial tool schemas"
+            );
+        }
     }
 
     async fn handle_action(&mut self, action: Action) -> Result<(), SessionError> {
