@@ -372,10 +372,6 @@ impl XAIClient {
                             } => Some(UserContent::format_command_execution_as_xml(
                                 command, stdout, stderr, *exit_code,
                             )),
-                            UserContent::AppCommand { .. } => {
-                                // Don't send app commands to the model - they're for local execution only
-                                None
-                            }
                         })
                         .collect::<Vec<_>>()
                         .join("\n");

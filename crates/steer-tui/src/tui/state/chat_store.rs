@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Stable key for accessing chat items
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ChatItemKey(u64);
 
 /// Storage for chat items (messages and meta rows)
@@ -28,6 +28,8 @@ pub struct ChatStore {
     revision: u64,
     /// Currently active message ID (for branch filtering)
     active_message_id: Option<String>,
+    /// Message key before which items are hidden due to compaction
+    compaction_head_key: Option<ChatItemKey>,
 }
 
 impl Default for ChatStore {
@@ -40,6 +42,7 @@ impl Default for ChatStore {
             in_flight_op_keys: HashMap::new(),
             revision: 0,
             active_message_id: None,
+            compaction_head_key: None,
         }
     }
 }
@@ -97,9 +100,19 @@ impl ChatStore {
         self.revision += 1;
     }
 
+    /// Set the compaction head message ID; messages at or before this key are hidden.
+    pub fn set_compaction_head(&mut self, id: Option<String>) {
+        self.compaction_head_key = id.as_ref().and_then(|id| self.lookup(id));
+        self.revision += 1;
+    }
+
     /// Get the active message ID
     pub fn active_message_id(&self) -> Option<&String> {
         self.active_message_id.as_ref()
+    }
+
+    pub fn compaction_head_key(&self) -> Option<ChatItemKey> {
+        self.compaction_head_key
     }
 
     /// Push a new item and return its key
@@ -187,6 +200,7 @@ impl ChatStore {
         self.id_to_key.clear();
         self.pending_tool_keys.clear();
         self.in_flight_op_keys.clear();
+        self.compaction_head_key = None;
         self.revision += 1; // Increment revision on mutation
     }
 
@@ -278,6 +292,16 @@ impl ChatStore {
 
     fn lookup(&self, id: &RowId) -> Option<ChatItemKey> {
         self.id_to_key.get(id).copied()
+    }
+
+    pub fn is_before_compaction(&self, id: &str) -> bool {
+        let Some(head_key) = self.compaction_head_key else {
+            return false;
+        };
+        let Some(key) = self.lookup(&id.to_string()) else {
+            return false;
+        };
+        key <= head_key
     }
 
     /// Iterator for items that can be used without allocating

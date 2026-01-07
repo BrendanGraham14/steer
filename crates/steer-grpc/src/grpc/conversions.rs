@@ -313,10 +313,6 @@ pub(crate) fn message_to_proto(
                                 },
                             )),
                         }),
-                        UserContent::AppCommand { .. } => {
-                            // AppCommand is no longer serialized over the wire
-                            None
-                        }
                     })
                     .collect(),
                 timestamp: message.timestamp,
@@ -886,6 +882,82 @@ fn compaction_record_to_proto(
     }
 }
 
+fn compaction_record_from_proto(
+    record: proto::CompactionRecord,
+) -> Result<steer_core::app::domain::types::CompactionRecord, ConversionError> {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    use steer_core::app::domain::types::{CompactionId, MessageId};
+
+    let id = uuid::Uuid::parse_str(&record.id).map_err(|_| ConversionError::InvalidData {
+        message: format!("Invalid compaction record id: {}", record.id),
+    })?;
+
+    let created_at = record
+        .created_at
+        .and_then(|ts| {
+            NaiveDateTime::from_timestamp_opt(ts.seconds, ts.nanos as u32)
+                .map(|dt| DateTime::<Utc>::from_utc(dt, Utc))
+        })
+        .unwrap_or_else(Utc::now);
+
+    Ok(steer_core::app::domain::types::CompactionRecord {
+        id: CompactionId::from(id),
+        summary_message_id: MessageId::from_string(record.summary_message_id),
+        compacted_head_message_id: MessageId::from_string(record.compacted_head_message_id),
+        previous_active_message_id: record
+            .previous_active_message_id
+            .map(MessageId::from_string),
+        model: record.model,
+        created_at,
+    })
+}
+
+fn compact_result_to_proto(
+    result: &steer_core::app::domain::event::CompactResult,
+) -> proto::CompactResult {
+    let result = match result {
+        steer_core::app::domain::event::CompactResult::Success(summary) => {
+            proto::compact_result::Result::Success(proto::CompactSuccess {
+                summary: summary.clone(),
+            })
+        }
+        steer_core::app::domain::event::CompactResult::Cancelled => {
+            proto::compact_result::Result::Cancelled(proto::CompactCancelled {})
+        }
+        steer_core::app::domain::event::CompactResult::InsufficientMessages => {
+            proto::compact_result::Result::InsufficientMessages(
+                proto::CompactInsufficientMessages {},
+            )
+        }
+    };
+
+    proto::CompactResult {
+        result: Some(result),
+    }
+}
+
+fn compact_result_from_proto(
+    result: proto::CompactResult,
+) -> Result<steer_core::app::domain::event::CompactResult, ConversionError> {
+    let Some(result) = result.result else {
+        return Err(ConversionError::MissingField {
+            field: "compact_result.result".to_string(),
+        });
+    };
+
+    Ok(match result {
+        proto::compact_result::Result::Success(success) => {
+            steer_core::app::domain::event::CompactResult::Success(success.summary)
+        }
+        proto::compact_result::Result::Cancelled(_) => {
+            steer_core::app::domain::event::CompactResult::Cancelled
+        }
+        proto::compact_result::Result::InsufficientMessages(_) => {
+            steer_core::app::domain::event::CompactResult::InsufficientMessages
+        }
+    })
+}
+
 /// Convert domain SessionEvent to protobuf SessionEvent
 ///
 /// This is used by the new RuntimeService architecture to convert events
@@ -991,11 +1063,11 @@ pub(crate) fn session_event_to_proto(
                 }),
             }),
         ),
-        SessionEvent::ModelChanged { model } => Some(proto::session_event::Event::ModelChanged(
-            proto::ModelChangedEvent {
-                model: Some(model_to_proto(model)),
-            },
-        )),
+        SessionEvent::CompactResult { result } => Some(
+            proto::session_event::Event::CompactResult(proto::CompactResultEvent {
+                result: Some(compact_result_to_proto(&result)),
+            }),
+        ),
         SessionEvent::ConversationCompacted { record } => Some(
             proto::session_event::Event::ConversationCompacted(proto::ConversationCompactedEvent {
                 record: Some(compaction_record_to_proto(&record)),
@@ -1429,21 +1501,25 @@ pub(crate) fn proto_to_client_event(
                 }
             }
         }
-        proto::session_event::Event::ModelChanged(e) => {
-            let model = e
-                .model
-                .ok_or_else(|| ConversionError::MissingField {
-                    field: "model".to_string(),
-                })
-                .and_then(|spec| proto_to_model(&spec))?;
-            ClientEvent::ModelChanged { model }
+        proto::session_event::Event::CompactResult(e) => {
+            let result = e.result.ok_or_else(|| ConversionError::MissingField {
+                field: "compact_result.result".to_string(),
+            })?;
+            let result = compact_result_from_proto(result)?;
+            ClientEvent::CompactResult { result }
+        }
+        proto::session_event::Event::ConversationCompacted(e) => {
+            let record = e.record.ok_or_else(|| ConversionError::MissingField {
+                field: "conversation_compacted.record".to_string(),
+            })?;
+            let record = compaction_record_from_proto(record)?;
+            ClientEvent::ConversationCompacted { record }
         }
         proto::session_event::Event::Error(e) => ClientEvent::Error { message: e.message },
         proto::session_event::Event::WorkspaceChanged(_) => ClientEvent::WorkspaceChanged,
         proto::session_event::Event::Started(_)
         | proto::session_event::Event::Finished(_)
-        | proto::session_event::Event::ActiveMessageIdChanged(_)
-        | proto::session_event::Event::ConversationCompacted(_) => {
+        | proto::session_event::Event::ActiveMessageIdChanged(_) => {
             return Ok(None);
         }
     };

@@ -387,10 +387,6 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                                 command, stdout, stderr, *exit_code,
                             ),
                         }),
-                        UserContent::AppCommand { .. } => {
-                            // Don't send app commands to the model - they're for local execution only
-                            None
-                        }
                     })
                     .collect();
 

@@ -55,6 +55,7 @@ pub enum Effect {
     RequestCompaction {
         session_id: SessionId,
         op_id: OpId,
+        model: ModelId,
     },
 }
 

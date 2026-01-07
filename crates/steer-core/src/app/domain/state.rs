@@ -14,7 +14,6 @@ pub struct AppState {
 
     pub conversation: MessageGraph,
 
-    pub current_model: ModelId,
     pub cached_system_prompt: Option<String>,
 
     pub tools: Vec<ToolSchema>,
@@ -91,12 +90,11 @@ impl Default for StreamingConfig {
 const MAX_CANCELLED_OPS: usize = 100;
 
 impl AppState {
-    pub fn new(session_id: SessionId, initial_model: ModelId) -> Self {
+    pub fn new(session_id: SessionId) -> Self {
         Self {
             session_id,
             session_config: None,
             conversation: MessageGraph::new(),
-            current_model: initial_model,
             cached_system_prompt: None,
             tools: Vec::new(),
             approved_tools: HashSet::new(),

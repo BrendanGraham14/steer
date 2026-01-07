@@ -11,8 +11,6 @@ use steer_tools::ToolCall;
 pub use steer_tools::result::ToolResult;
 use strum_macros::Display;
 
-use super::commands::{AppCommandType, CommandResponse, CompactResult};
-
 /// Role in the conversation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy, Display)]
 pub enum Role {
@@ -33,10 +31,6 @@ pub enum UserContent {
         stdout: String,
         stderr: String,
         exit_code: i32,
-    },
-    AppCommand {
-        command: AppCommandType,
-        response: Option<CommandResponse>,
     },
     // TODO: support attachments
 }
@@ -161,13 +155,6 @@ impl Message {
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.clone()),
                     UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
-                    UserContent::AppCommand { response, .. } => {
-                        response.as_ref().map(|r| match r {
-                            CommandResponse::Text(t) => t.clone(),
-                            CommandResponse::Compact(CompactResult::Success(s)) => s.clone(),
-                            _ => String::new(),
-                        })
-                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -199,32 +186,12 @@ impl Message {
                         let mut output = format!("$ {command}\n{stdout}");
                         if *exit_code != 0 {
                             output.push_str(&format!("\nExit code: {exit_code}"));
-                            if !stderr.is_empty() {
-                                output.push_str(&format!("\nError: {stderr}"));
-                            }
-                        }
-                        output
+                    if !stderr.is_empty() {
+                        output.push_str(&format!("\nError: {stderr}"));
                     }
-                    UserContent::AppCommand { command, response } => {
-                        if let Some(resp) = response {
-                            let text = match resp {
-                                CommandResponse::Text(msg) => msg.clone(),
-                                CommandResponse::Compact(result) => match result {
-                                    CompactResult::Success(summary) => summary.clone(),
-                                    CompactResult::Cancelled => {
-                                        "Compact command cancelled.".to_string()
-                                    }
-                                    CompactResult::InsufficientMessages => {
-                                        "Not enough messages to compact (minimum 10 required)."
-                                            .to_string()
-                                    }
-                                },
-                            };
-                            format!("/{}\n{}", command.as_command_str(), text)
-                        } else {
-                            format!("/{}", command.as_command_str())
-                        }
-                    }
+                }
+                output
+            }
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),

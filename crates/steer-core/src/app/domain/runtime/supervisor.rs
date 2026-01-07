@@ -92,6 +92,11 @@ pub(crate) enum SupervisorCmd {
         session_id: SessionId,
         reply: oneshot::Sender<Result<broadcast::Receiver<StreamDelta>, RuntimeError>>,
     },
+    LoadEventsAfter {
+        session_id: SessionId,
+        after_seq: u64,
+        reply: oneshot::Sender<Result<Vec<(u64, SessionEvent)>, RuntimeError>>,
+    },
     GetSessionState {
         session_id: SessionId,
         reply: oneshot::Sender<Result<AppState, RuntimeError>>,
@@ -170,6 +175,18 @@ impl RuntimeSupervisor {
                             let result = self.subscribe_deltas(session_id).await;
                             let _ = reply.send(result);
                         }
+                        SupervisorCmd::LoadEventsAfter {
+                            session_id,
+                            after_seq,
+                            reply,
+                        } => {
+                            let result = self
+                                .event_store
+                                .load_events_after(session_id, after_seq)
+                                .await
+                                .map_err(RuntimeError::from);
+                            let _ = reply.send(result);
+                        }
                         SupervisorCmd::GetSessionState { session_id, reply } => {
                             let result = self.get_session_state(session_id).await;
                             let _ = reply.send(result);
@@ -219,7 +236,7 @@ impl RuntimeSupervisor {
             .append(session_id, &session_created_event)
             .await?;
 
-        let mut state = AppState::new(session_id, self.config.default_model.clone());
+        let mut state = AppState::new(session_id);
         state.session_config = Some(config);
 
         let handle = spawn_session_actor(
@@ -250,7 +267,7 @@ impl RuntimeSupervisor {
 
         let events = self.event_store.load_events(session_id).await?;
 
-        let mut state = AppState::new(session_id, self.config.default_model.clone());
+        let mut state = AppState::new(session_id);
         for (_, event) in &events {
             apply_event_to_state(&mut state, event);
         }
@@ -481,6 +498,23 @@ impl RuntimeHandle {
         reply_rx.await.map_err(|_| RuntimeError::ChannelClosed)?
     }
 
+    pub async fn load_events_after(
+        &self,
+        session_id: SessionId,
+        after_seq: u64,
+    ) -> Result<Vec<(u64, SessionEvent)>, RuntimeError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(SupervisorCmd::LoadEventsAfter {
+                session_id,
+                after_seq,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| RuntimeError::ChannelClosed)?;
+        reply_rx.await.map_err(|_| RuntimeError::ChannelClosed)?
+    }
+
     pub async fn get_session_state(&self, session_id: SessionId) -> Result<AppState, RuntimeError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
@@ -610,10 +644,18 @@ impl RuntimeHandle {
         Ok(op_id)
     }
 
-    pub async fn compact_session(&self, session_id: SessionId) -> Result<OpId, RuntimeError> {
+    pub async fn compact_session(
+        &self,
+        session_id: SessionId,
+        model: ModelId,
+    ) -> Result<OpId, RuntimeError> {
         let op_id = OpId::new();
 
-        let action = Action::RequestCompaction { session_id, op_id };
+        let action = Action::RequestCompaction {
+            session_id,
+            op_id,
+            model,
+        };
 
         self.dispatch_action(session_id, action).await?;
         Ok(op_id)
@@ -623,6 +665,7 @@ impl RuntimeHandle {
         &self,
         session_id: SessionId,
         command: String,
+        model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let op_id = OpId::new();
 
@@ -630,6 +673,7 @@ impl RuntimeHandle {
             session_id,
             op_id,
             command,
+            model,
         };
 
         self.dispatch_action(session_id, action).await?;

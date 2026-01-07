@@ -212,14 +212,6 @@ impl Client {
                             );
                             text_parts.push(OpenAIContentPart::Text { text: formatted });
                         }
-                        UserContent::AppCommand { command, response } => {
-                            // Format app command and response for the model
-                            let mut text = format!("App command: {command:?}");
-                            if let Some(resp) = response {
-                                text.push_str(&format!("\nResponse: {resp:?}"));
-                            }
-                            text_parts.push(OpenAIContentPart::Text { text });
-                        }
                     }
                 }
                 Ok(vec![OpenAIMessage::User {
@@ -804,9 +796,7 @@ struct OpenAIStreamFunction {
 mod tests {
     use super::*;
     use crate::api::sse::SseEvent;
-    use crate::app::conversation::{
-        AppCommandType, CommandResponse, Message, MessageData, UserContent,
-    };
+    use crate::app::conversation::{Message, MessageData, UserContent};
     use futures::stream;
     use std::pin::pin;
 
@@ -1022,39 +1012,6 @@ mod tests {
                     _ => unreachable!("Expected array content"),
                 }
             }
-            _ => unreachable!("Expected user message"),
-        }
-    }
-
-    #[test]
-    fn test_convert_message_with_app_command() {
-        let client = Client::new("test_key".to_string());
-
-        let message = Message {
-            data: MessageData::User {
-                content: vec![UserContent::AppCommand {
-                    command: AppCommandType::Model { target: None },
-                    response: Some(CommandResponse::Text(
-                        "Current model: claude-sonnet".to_string(),
-                    )),
-                }],
-            },
-            timestamp: chrono::Utc::now().timestamp_millis() as u64,
-            id: "test-id".to_string(),
-            parent_message_id: None,
-        };
-
-        let result = client.convert_message(message).unwrap();
-        assert_eq!(result.len(), 1);
-
-        match &result[0] {
-            OpenAIMessage::User { content, .. } => match content {
-                OpenAIContent::String(text) => {
-                    assert!(text.contains("App command: Model"));
-                    assert!(text.contains("Response: Text"));
-                }
-                _ => unreachable!("Expected string content"),
-            },
             _ => unreachable!("Expected user message"),
         }
     }

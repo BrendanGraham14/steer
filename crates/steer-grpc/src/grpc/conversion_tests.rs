@@ -256,3 +256,77 @@ mod id_preservation_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod event_conversion_tests {
+    use crate::client_api::{ClientEvent, MessageId, OpId, ToolCallDelta, ToolCallId};
+    use crate::grpc::conversions::{proto_to_client_event, session_event_to_proto, stream_delta_to_proto};
+    use steer_core::app::domain::delta::StreamDelta;
+    use steer_core::app::domain::event::{CompactResult, SessionEvent};
+    use uuid::Uuid;
+
+    #[test]
+    fn test_compact_result_event_roundtrip() {
+        let event = SessionEvent::CompactResult {
+            result: CompactResult::Success("summary".to_string()),
+        };
+
+        let proto = session_event_to_proto(event, 42).unwrap();
+        let client_event = proto_to_client_event(proto).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::CompactResult { result } => {
+                assert!(matches!(result, CompactResult::Success(ref s) if s == "summary"));
+            }
+            other => panic!("Expected CompactResult, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_stream_delta_thinking_and_tool_call_roundtrip() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let message_id = MessageId::from_string("msg_1");
+
+        let thinking_delta = StreamDelta::ThinkingChunk {
+            op_id,
+            message_id: message_id.clone(),
+            delta: "thinking...".to_string(),
+        };
+
+        let proto = stream_delta_to_proto(thinking_delta).unwrap();
+        let client_event = proto_to_client_event(proto).unwrap().unwrap();
+        match client_event {
+            ClientEvent::ThinkingDelta { op_id: received, message_id: msg, delta } => {
+                assert_eq!(received, op_id);
+                assert_eq!(msg, message_id);
+                assert_eq!(delta, "thinking...");
+            }
+            other => panic!("Expected ThinkingDelta, got {:?}", other),
+        }
+
+        let tool_call_id = ToolCallId::from_string("tool_1");
+        let tool_delta = StreamDelta::ToolCallChunk {
+            op_id,
+            message_id: message_id.clone(),
+            tool_call_id: tool_call_id.clone(),
+            delta: steer_core::app::domain::delta::ToolCallDelta::ArgumentChunk("{\"x\":".to_string()),
+        };
+
+        let proto = stream_delta_to_proto(tool_delta).unwrap();
+        let client_event = proto_to_client_event(proto).unwrap().unwrap();
+        match client_event {
+            ClientEvent::ToolCallDelta {
+                op_id: received,
+                message_id: msg,
+                tool_call_id: received_tool,
+                delta: ToolCallDelta::ArgumentChunk(chunk),
+            } => {
+                assert_eq!(received, op_id);
+                assert_eq!(msg, message_id);
+                assert_eq!(received_tool, tool_call_id);
+                assert_eq!(chunk, "{\"x\":");
+            }
+            other => panic!("Expected ToolCallDelta, got {:?}", other),
+        }
+    }
+}

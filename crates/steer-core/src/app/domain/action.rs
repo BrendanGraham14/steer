@@ -96,11 +96,13 @@ pub enum Action {
         session_id: SessionId,
         op_id: OpId,
         command: String,
+        model: ModelId,
     },
 
     RequestCompaction {
         session_id: SessionId,
         op_id: OpId,
+        model: ModelId,
     },
 
     Shutdown,
@@ -114,11 +116,6 @@ pub enum Action {
     WorkspaceFilesListed {
         session_id: SessionId,
         files: Vec<String>,
-    },
-
-    ModelResolved {
-        session_id: SessionId,
-        model: crate::config::model::ModelId,
     },
 
     CompactionComplete {
@@ -186,7 +183,6 @@ impl Action {
             | Action::RequestCompaction { session_id, .. }
             | Action::Hydrate { session_id, .. }
             | Action::WorkspaceFilesListed { session_id, .. }
-            | Action::ModelResolved { session_id, .. }
             | Action::CompactionComplete { session_id, .. }
             | Action::CompactionFailed { session_id, .. } => Some(*session_id),
             Action::Shutdown => None,

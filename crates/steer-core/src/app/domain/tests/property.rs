@@ -161,10 +161,10 @@ mod tests {
                 model: test_model(),
             };
 
-            let mut state1 = AppState::new(session_id, test_model());
+            let mut state1 = AppState::new(session_id);
             let effects1 = reduce(&mut state1, action.clone());
 
-            let mut state2 = AppState::new(session_id, test_model());
+            let mut state2 = AppState::new(session_id);
             let effects2 = reduce(&mut state2, action);
 
             prop_assert_eq!(
@@ -203,7 +203,7 @@ mod tests {
             }),
         ) {
             let session_id = SessionId::from(uuid::Uuid::from_u128(12345));
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
 
             let effects = reduce(&mut state, action);
 
@@ -220,12 +220,14 @@ mod tests {
             session_id in arb_session_id(),
             op_id in arb_op_id(),
         ) {
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
             state.current_operation = Some(OperationState {
                 op_id,
                 kind: OperationKind::AgentLoop,
                 pending_tool_calls: HashSet::new(),
             });
+            state.operation_models.insert(op_id, test_model());
+            state.operation_models.insert(op_id, test_model());
 
             let _ = reduce(&mut state, Action::Cancel {
                 session_id,
@@ -241,7 +243,7 @@ mod tests {
             session_id in arb_session_id(),
             op_ids in prop::collection::vec(arb_op_id(), 110..120),
         ) {
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
 
             for op_id in op_ids {
                 state.current_operation = Some(OperationState {
@@ -268,7 +270,7 @@ mod tests {
             op_id in arb_op_id(),
             tool_call_id in arb_tool_call_id(),
         ) {
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
             state.current_operation = Some(OperationState {
                 op_id,
                 kind: OperationKind::AgentLoop,
@@ -305,7 +307,7 @@ mod tests {
             op_id in arb_op_id(),
             tool_name in arb_tool_name(),
         ) {
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
             state.approved_tools.insert(tool_name.clone());
             state.current_operation = Some(OperationState {
                 op_id,
@@ -340,12 +342,13 @@ mod tests {
             text in "[a-zA-Z ]{1,100}",
             timestamp in 0u64..1000000u64,
         ) {
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
             state.current_operation = Some(OperationState {
                 op_id,
                 kind: OperationKind::AgentLoop,
                 pending_tool_calls: HashSet::new(),
             });
+            state.operation_models.insert(op_id, test_model());
 
             let content = vec![AssistantContent::Text { text }];
             let effects = reduce(&mut state, Action::ModelResponseComplete {
@@ -372,7 +375,7 @@ mod tests {
             op_id in arb_op_id(),
             tool_calls in prop::collection::vec(arb_tool_call(), 2..5),
         ) {
-            let mut state = AppState::new(session_id, test_model());
+            let mut state = AppState::new(session_id);
             state.current_operation = Some(OperationState {
                 op_id,
                 kind: OperationKind::AgentLoop,

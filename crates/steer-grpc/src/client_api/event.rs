@@ -26,6 +26,14 @@ pub enum ClientEvent {
         delta: ToolCallDelta,
     },
 
+    CompactResult {
+        result: CompactResult,
+    },
+
+    ConversationCompacted {
+        record: CompactionRecord,
+    },
+
     ToolStarted {
         id: ToolCallId,
         name: String,
@@ -56,10 +64,6 @@ pub enum ClientEvent {
     OperationCancelled {
         op_id: OpId,
         pending_tool_calls: usize,
-    },
-
-    ModelChanged {
-        model: ModelId,
     },
     WorkspaceChanged,
     WorkspaceFiles {

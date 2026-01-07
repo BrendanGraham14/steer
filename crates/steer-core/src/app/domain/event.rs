@@ -80,8 +80,8 @@ pub enum SessionEvent {
         info: CancellationInfo,
     },
 
-    ModelChanged {
-        model: ModelId,
+    CompactResult {
+        result: CompactResult,
     },
 
     ConversationCompacted {
@@ -93,6 +93,14 @@ pub enum SessionEvent {
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "result_type", rename_all = "snake_case")]
+pub enum CompactResult {
+    Success(String),
+    Cancelled,
+    InsufficientMessages,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

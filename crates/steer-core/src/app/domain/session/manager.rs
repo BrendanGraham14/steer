@@ -211,7 +211,7 @@ impl SessionManager {
 
         self.store.create_session(session_id).await?;
 
-        let state = AppState::new(session_id, self.config.default_model.clone());
+        let state = AppState::new(session_id);
         let session = ActiveSession::new(session_id, state);
 
         if self.active.len() >= self.config.max_active_sessions {
@@ -289,7 +289,7 @@ impl SessionManager {
     ) -> Result<ActiveSession, SessionManagerError> {
         let events = self.store.load_events(session_id).await?;
 
-        let mut state = AppState::new(session_id, self.config.default_model.clone());
+        let mut state = AppState::new(session_id);
 
         for (_, event) in &events {
             apply_event_to_state(&mut state, event);

@@ -330,7 +330,11 @@ impl AppRuntime {
 
             Effect::ConnectMcpServer { .. } | Effect::DisconnectMcpServer { .. } => Ok(vec![]),
 
-            Effect::RequestCompaction { session_id, op_id } => {
+            Effect::RequestCompaction {
+                session_id,
+                op_id,
+                model,
+            } => {
                 let session = self.session_manager.get_session(session_id).await?;
                 let cancel_token = self
                     .active_operations
@@ -358,19 +362,11 @@ impl AppRuntime {
                     .active_message_id
                     .clone()
                     .map(crate::app::domain::types::MessageId::from);
-                let model = session.state.current_model.clone();
-
                 let summary_prompt = build_compaction_prompt(&messages);
 
                 let result = self
                     .interpreter
-                    .call_model(
-                        model.clone(),
-                        vec![summary_prompt],
-                        None,
-                        vec![],
-                        cancel_token,
-                    )
+                    .call_model(model.clone(), vec![summary_prompt], None, vec![], cancel_token)
                     .await;
 
                 let action = match result {

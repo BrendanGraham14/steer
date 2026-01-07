@@ -83,10 +83,49 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let (tx, rx) = mpsc::channel(100);
 
+        let mut min_live_seq = req.since_sequence.map(|seq| seq.saturating_add(1));
+
+        if let Some(after_seq) = req.since_sequence {
+            match self.runtime.load_events_after(session_id, after_seq).await {
+                Ok(events) => {
+                    let mut last_seq = after_seq;
+                    for (seq, event) in events {
+                        last_seq = last_seq.max(seq);
+                        let proto_event = match session_event_to_proto(event, seq) {
+                            Ok(event) => event,
+                            Err(e) => {
+                                warn!("Failed to convert session replay event: {}", e);
+                                continue;
+                            }
+                        };
+
+                        if proto_event.event.is_none() {
+                            continue;
+                        }
+
+                        if let Err(e) = tx.send(Ok(proto_event)).await {
+                            warn!("Failed to send replay event to client: {}", e);
+                            break;
+                        }
+                    }
+                    min_live_seq = Some(last_seq.saturating_add(1));
+                }
+                Err(e) => {
+                    warn!("Failed to load replay events: {}", e);
+                }
+            }
+        }
+
         let event_tx = tx.clone();
         tokio::spawn(async move {
             let mut subscription = subscription;
             while let Some(envelope) = subscription.recv().await {
+                if let Some(min_seq) = min_live_seq {
+                    if envelope.seq < min_seq {
+                        continue;
+                    }
+                }
+
                 let proto_event = match session_event_to_proto(envelope.event, envelope.seq) {
                     Ok(event) => event,
                     Err(e) => {
@@ -470,9 +509,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<CompactSessionResponse>, Status> {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
+        let model_spec = req
+            .model
+            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
+        let model = proto_to_model(&model_spec)
+            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
 
         self.runtime
-            .compact_session(session_id)
+            .compact_session(session_id, model)
             .await
             .map_err(|e| Status::internal(format!("Failed to compact session: {e}")))?;
 
@@ -485,9 +529,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<ExecuteBashCommandResponse>, Status> {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
+        let model_spec = req
+            .model
+            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
+        let model = proto_to_model(&model_spec)
+            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
 
         self.runtime
-            .execute_bash_command(session_id, req.command)
+            .execute_bash_command(session_id, req.command, model)
             .await
             .map_err(|e| Status::internal(format!("Failed to execute bash command: {e}")))?;
 

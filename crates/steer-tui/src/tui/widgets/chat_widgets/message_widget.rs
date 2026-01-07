@@ -1,5 +1,5 @@
 use ratatui::text::{Line, Span};
-use steer_core::app::conversation::{AppCommandType, AssistantContent, Message, MessageData, UserContent};
+use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
@@ -47,21 +47,6 @@ impl MessageWidget {
                             stdout.hash(&mut hasher);
                             stderr.hash(&mut hasher);
                             exit_code.hash(&mut hasher);
-                        }
-                        UserContent::AppCommand { command, response } => {
-                            // App command type and response text
-                            std::mem::discriminant(command).hash(&mut hasher);
-                            if let Some(resp) = response {
-                                match resp {
-                                    steer_core::app::conversation::CommandResponse::Text(t) => {
-                                        t.hash(&mut hasher)
-                                    }
-                                    steer_core::app::conversation::CommandResponse::Compact(r) => {
-                                        std::mem::discriminant(r).hash(&mut hasher);
-                                        if let steer_core::app::conversation::CompactResult::Success(s) = r { s.hash(&mut hasher); }
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -186,45 +171,6 @@ impl ChatRenderable for MessageWidget {
                                     format!("Exit code: {exit_code}"),
                                     theme.style(Component::DimText),
                                 )));
-                            }
-                        }
-                        UserContent::AppCommand { command, response } => {
-                            // Format app command
-                            let cmd_style = theme.style(Component::CommandPrompt);
-                            let cmd_text = match command {
-                                AppCommandType::Model { target } => {
-                                    if let Some(model) = target {
-                                        format!("/model {model}")
-                                    } else {
-                                        "/model".to_string()
-                                    }
-                                }
-                                AppCommandType::Compact => "/compact".to_string(),
-                            };
-                            lines.push(Line::from(Span::styled(cmd_text, cmd_style)));
-
-                            if let Some(resp) = response {
-                                let resp_text = match resp {
-                                    steer_core::app::conversation::CommandResponse::Text(text) => text.clone(),
-                                    steer_core::app::conversation::CommandResponse::Compact(result) => {
-                                        match result {
-                                            steer_core::app::conversation::CompactResult::Success(summary) => summary.clone(),
-                                            steer_core::app::conversation::CompactResult::Cancelled => "Compact cancelled.".to_string(),
-                                            steer_core::app::conversation::CompactResult::InsufficientMessages => "Not enough messages to compact.".to_string(),
-                                        }
-                                    }
-                                };
-
-                                let resp_style = theme.style(Component::CommandText);
-                                for line in resp_text.lines() {
-                                    let wrapped = textwrap::wrap(line, max_width);
-                                    for wrapped_line in wrapped {
-                                        lines.push(Line::from(Span::styled(
-                                            wrapped_line.to_string(),
-                                            resp_style,
-                                        )));
-                                    }
-                                }
                             }
                         }
                     }

@@ -384,7 +384,11 @@ impl SessionActor {
                 Ok(())
             }
 
-            Effect::RequestCompaction { session_id, op_id } => {
+            Effect::RequestCompaction {
+                session_id,
+                op_id,
+                model,
+            } => {
                 let cancel_token = self
                     .active_operations
                     .entry(op_id)
@@ -414,19 +418,11 @@ impl SessionActor {
                     .active_message_id
                     .clone()
                     .map(MessageId::from);
-                let model = self.state.current_model.clone();
-
                 tokio::spawn(async move {
                     let summary_prompt = build_compaction_prompt(&messages);
 
                     let result = interpreter
-                        .call_model(
-                            model.clone(),
-                            vec![summary_prompt],
-                            None,
-                            vec![],
-                            cancel_token,
-                        )
+                        .call_model(model.clone(), vec![summary_prompt], None, vec![], cancel_token)
                         .await;
 
                     let action = match result {

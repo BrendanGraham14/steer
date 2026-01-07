@@ -58,7 +58,7 @@ mod tests {
         let op_id = deterministic_op_id(1);
         let message_id = deterministic_message_id("msg_1");
 
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let effects = reduce(
             &mut live_state,
             Action::UserInput {
@@ -73,7 +73,7 @@ mod tests {
 
         let events = collect_events(&effects);
 
-        let mut replayed_state = AppState::new(session_id, test_model());
+        let mut replayed_state = AppState::new(session_id);
         for event in &events {
             apply_event_to_state(&mut replayed_state, event);
         }
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn replay_full_conversation_produces_same_state() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
@@ -147,7 +147,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let mut replayed_state = AppState::new(session_id, test_model());
+        let mut replayed_state = AppState::new(session_id);
         for event in &all_events {
             apply_event_to_state(&mut replayed_state, event);
         }
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn replay_cancellation_produces_same_state() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
@@ -198,7 +198,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let mut replayed_state = AppState::new(session_id, test_model());
+        let mut replayed_state = AppState::new(session_id);
         for event in &all_events {
             apply_event_to_state(&mut replayed_state, event);
         }
@@ -215,30 +215,9 @@ mod tests {
     }
 
     #[test]
-    fn replay_model_change_produces_same_state() {
-        let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
-
-        let new_model = builtin::claude_opus_4_20250514();
-        live_state.current_model = new_model.clone();
-
-        let event = SessionEvent::ModelChanged {
-            model: new_model.clone(),
-        };
-
-        let mut replayed_state = AppState::new(session_id, test_model());
-        apply_event_to_state(&mut replayed_state, &event);
-
-        assert_eq!(
-            replayed_state.current_model.1, new_model.1,
-            "Model should be updated after replay"
-        );
-    }
-
-    #[test]
     fn replay_multiple_approvals_produces_same_state() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
@@ -279,7 +258,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let mut replayed_state = AppState::new(session_id, test_model());
+        let mut replayed_state = AppState::new(session_id);
         replayed_state.current_operation = Some(OperationState {
             op_id,
             kind: OperationKind::AgentLoop,
@@ -299,7 +278,7 @@ mod tests {
     #[test]
     fn hydrate_action_produces_same_state_as_replay() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
@@ -330,7 +309,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let mut hydrated_state = AppState::new(session_id, test_model());
+        let mut hydrated_state = AppState::new(session_id);
         let _ = reduce(
             &mut hydrated_state,
             Action::Hydrate {
@@ -340,7 +319,7 @@ mod tests {
             },
         );
 
-        let mut manually_replayed = AppState::new(session_id, test_model());
+        let mut manually_replayed = AppState::new(session_id);
         for event in &all_events {
             apply_event_to_state(&mut manually_replayed, event);
         }
@@ -361,7 +340,7 @@ mod tests {
     #[test]
     fn replay_preserves_message_order() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
@@ -407,7 +386,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let mut replayed_state = AppState::new(session_id, test_model());
+        let mut replayed_state = AppState::new(session_id);
         for event in &all_events {
             apply_event_to_state(&mut replayed_state, event);
         }
@@ -437,7 +416,7 @@ mod tests {
     #[test]
     fn replay_bash_pattern_approval() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
 
         live_state.current_operation = Some(OperationState {
@@ -474,7 +453,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let mut replayed_state = AppState::new(session_id, test_model());
+        let mut replayed_state = AppState::new(session_id);
         for event in &all_events {
             apply_event_to_state(&mut replayed_state, event);
         }
@@ -488,7 +467,7 @@ mod tests {
     #[test]
     fn replay_empty_events_is_noop() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, test_model());
+        let mut state = AppState::new(session_id);
 
         let initial_message_count = state.conversation.messages.len();
         let initial_event_seq = state.event_sequence;
@@ -516,7 +495,7 @@ mod tests {
     #[test]
     fn replay_incremental_events_works() {
         let session_id = deterministic_session_id();
-        let mut live_state = AppState::new(session_id, test_model());
+        let mut live_state = AppState::new(session_id);
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
@@ -534,7 +513,7 @@ mod tests {
         let first_batch = collect_events(&effects);
         all_events.extend(first_batch.clone());
 
-        let mut partial_state = AppState::new(session_id, test_model());
+        let mut partial_state = AppState::new(session_id);
         for event in &first_batch {
             apply_event_to_state(&mut partial_state, event);
         }

@@ -92,11 +92,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             session_id,
             op_id,
             command,
-        } => handle_direct_bash(state, session_id, op_id, command),
+            model,
+        } => handle_direct_bash(state, session_id, op_id, command, model),
 
-        Action::RequestCompaction { session_id, op_id } => {
-            handle_request_compaction(state, session_id, op_id)
-        }
+        Action::RequestCompaction {
+            session_id,
+            op_id,
+            model,
+        } => handle_request_compaction(state, session_id, op_id, model),
 
         Action::Hydrate {
             session_id,
@@ -126,10 +129,6 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         } => {
             state.mcp_servers.insert(server_name, new_state);
             vec![]
-        }
-
-        Action::ModelResolved { session_id, model } => {
-            handle_model_resolved(state, session_id, model)
         }
 
         Action::CompactionComplete {
@@ -474,12 +473,29 @@ fn handle_tool_execution_started(
 ) -> Vec<Effect> {
     state.add_pending_tool_call(tool_call_id.clone());
 
-    let model = state
-        .current_operation
-        .as_ref()
-        .and_then(|op| state.operation_models.get(&op.op_id))
-        .cloned()
-        .unwrap_or_else(|| state.current_model.clone());
+    let op_id = match state.current_operation.as_ref() {
+        Some(op) => op.op_id,
+        None => {
+            return vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: "Tool call started without active operation".to_string(),
+                },
+            }];
+        }
+    };
+
+    let model = match state.operation_models.get(&op_id).cloned() {
+        Some(model) => model,
+        None => {
+            return vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: format!("Missing model for tool call on operation {op_id}"),
+                },
+            }];
+        }
+    };
 
     vec![Effect::EmitEvent {
         session_id,
@@ -519,11 +535,17 @@ fn handle_tool_result(
         Err(e) => ToolResult::Error(e),
     };
 
-    let model = state
-        .operation_models
-        .get(&op_id)
-        .cloned()
-        .unwrap_or_else(|| state.current_model.clone());
+    let model = match state.operation_models.get(&op_id).cloned() {
+        Some(model) => model,
+        None => {
+            return vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: format!("Missing model for tool result on operation {op_id}"),
+                },
+            }];
+        }
+    };
 
     let event = match &tool_result {
         ToolResult::Error(e) => SessionEvent::ToolCallFailed {
@@ -628,11 +650,17 @@ fn handle_model_response_complete(
     state.conversation.add_message(message.clone());
     state.conversation.active_message_id = Some(message_id.0.clone());
 
-    let model = state
-        .operation_models
-        .get(&op_id)
-        .cloned()
-        .unwrap_or_else(|| state.current_model.clone());
+    let model = match state.operation_models.get(&op_id).cloned() {
+        Some(model) => model,
+        None => {
+            return vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: format!("Missing model for operation {op_id}"),
+                },
+            }];
+        }
+    };
 
     effects.push(Effect::EmitEvent {
         session_id,
@@ -691,6 +719,7 @@ fn handle_direct_bash(
     session_id: crate::app::domain::types::SessionId,
     op_id: crate::app::domain::types::OpId,
     command: String,
+    model: crate::config::model::ModelId,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
@@ -700,6 +729,7 @@ fn handle_direct_bash(
             command: command.clone(),
         },
     );
+    state.operation_models.insert(op_id, model);
 
     effects.push(Effect::EmitEvent {
         session_id,
@@ -730,6 +760,7 @@ fn handle_request_compaction(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
     op_id: crate::app::domain::types::OpId,
+    model: crate::config::model::ModelId,
 ) -> Vec<Effect> {
     const MIN_MESSAGES_FOR_COMPACT: usize = 3;
     let message_count = state.conversation.get_thread_messages().len();
@@ -737,17 +768,14 @@ fn handle_request_compaction(
     if message_count < MIN_MESSAGES_FOR_COMPACT {
         return vec![Effect::EmitEvent {
             session_id,
-            event: SessionEvent::Error {
-                message: "Not enough messages to compact. Need at least 3 messages.".to_string(),
+            event: SessionEvent::CompactResult {
+                result: crate::app::domain::event::CompactResult::InsufficientMessages,
             },
         }];
     }
 
-    state.current_operation = Some(crate::app::domain::state::OperationState {
-        op_id,
-        kind: OperationKind::Compact,
-        pending_tool_calls: std::collections::HashSet::new(),
-    });
+    state.start_operation(op_id, OperationKind::Compact);
+    state.operation_models.insert(op_id, model.clone());
 
     vec![
         Effect::EmitEvent {
@@ -757,7 +785,11 @@ fn handle_request_compaction(
                 kind: OperationKind::Compact,
             },
         },
-        Effect::RequestCompaction { session_id, op_id },
+        Effect::RequestCompaction {
+            session_id,
+            op_id,
+            model,
+        },
     ]
 }
 
@@ -774,6 +806,15 @@ fn handle_cancel(
     };
 
     state.record_cancelled_op(op.op_id);
+
+    if matches!(op.kind, OperationKind::Compact) {
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::CompactResult {
+                result: crate::app::domain::event::CompactResult::Cancelled,
+            },
+        });
+    }
 
     if let Some(pending) = state.pending_approval.take() {
         let tool_result = ToolResult::Error(ToolError::Cancelled(pending.tool_call.name.clone()));
@@ -809,7 +850,7 @@ fn handle_cancel(
         op_id: op.op_id,
     });
 
-    state.current_operation = None;
+    state.complete_operation();
 
     effects
 }
@@ -834,9 +875,8 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
         SessionEvent::SessionCreated { config, .. } => {
             state.session_config = Some(config.clone());
         }
-        SessionEvent::MessageAdded { message, model } => {
+        SessionEvent::MessageAdded { message, .. } => {
             state.conversation.add_message(message.clone());
-            state.current_model = model.clone();
             state.conversation.active_message_id = Some(message.id().to_string());
         }
         SessionEvent::ApprovalDecided {
@@ -856,32 +896,17 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
             }
             state.pending_approval = None;
         }
-        SessionEvent::ModelChanged { model } => {
-            state.current_model = model.clone();
-        }
         SessionEvent::OperationCompleted { .. } => {
-            state.current_operation = None;
+            state.complete_operation();
         }
         SessionEvent::OperationCancelled { op_id, .. } => {
             state.record_cancelled_op(*op_id);
-            state.current_operation = None;
+            state.complete_operation();
         }
         _ => {}
     }
 
     state.event_sequence += 1;
-}
-
-fn handle_model_resolved(
-    state: &mut AppState,
-    session_id: crate::app::domain::types::SessionId,
-    model: crate::config::model::ModelId,
-) -> Vec<Effect> {
-    state.current_model = model.clone();
-    vec![Effect::EmitEvent {
-        session_id,
-        event: SessionEvent::ModelChanged { model },
-    }]
 }
 
 fn handle_compaction_complete(
@@ -901,7 +926,9 @@ fn handle_compaction_complete(
 
     let summary_message = Message {
         data: MessageData::Assistant {
-            content: vec![AssistantContent::Text { text: summary }],
+            content: vec![AssistantContent::Text {
+                text: summary.clone(),
+            }],
         },
         id: summary_message_id.to_string(),
         parent_message_id: None,
@@ -919,11 +946,18 @@ fn handle_compaction_complete(
         timestamp,
     );
 
-    let model = state
-        .operation_models
-        .get(&op_id)
-        .cloned()
-        .unwrap_or_else(|| state.current_model.clone());
+    let model = match state.operation_models.get(&op_id).cloned() {
+        Some(model) => model,
+        None => {
+            state.complete_operation();
+            return vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: format!("Missing model for compaction operation {op_id}"),
+                },
+            }];
+        }
+    };
 
     state.complete_operation();
 
@@ -933,6 +967,12 @@ fn handle_compaction_complete(
             event: SessionEvent::MessageAdded {
                 message: summary_message,
                 model,
+            },
+        },
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::CompactResult {
+                result: crate::app::domain::event::CompactResult::Success(summary),
             },
         },
         Effect::EmitEvent {
@@ -952,7 +992,7 @@ fn handle_compaction_failed(
     op_id: crate::app::domain::types::OpId,
     error: String,
 ) -> Vec<Effect> {
-    state.current_operation = None;
+    state.complete_operation();
 
     vec![
         Effect::EmitEvent {
@@ -977,7 +1017,7 @@ mod tests {
     use std::collections::HashSet;
 
     fn test_state() -> AppState {
-        AppState::new(SessionId::new(), builtin::claude_sonnet_4_20250514())
+        AppState::new(SessionId::new())
     }
 
     #[test]
@@ -1035,6 +1075,15 @@ mod tests {
             kind: OperationKind::AgentLoop,
             pending_tool_calls: HashSet::new(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
 
         let effects = reduce(
             &mut state,
@@ -1064,6 +1113,15 @@ mod tests {
             kind: OperationKind::AgentLoop,
             pending_tool_calls: HashSet::new(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
 
         let tool_call = steer_tools::ToolCall {
             id: "tc_1".to_string(),
@@ -1146,6 +1204,9 @@ mod tests {
             kind: OperationKind::AgentLoop,
             pending_tool_calls: HashSet::new(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
 
         let tool_call = steer_tools::ToolCall {
             id: "tc_1".to_string(),
@@ -1194,6 +1255,9 @@ mod tests {
             kind: OperationKind::AgentLoop,
             pending_tool_calls: HashSet::new(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
 
         let content = vec![AssistantContent::Text {
             text: "Hello! How can I help?".to_string(),
@@ -1232,6 +1296,9 @@ mod tests {
             kind: OperationKind::AgentLoop,
             pending_tool_calls: [tool_call_id.clone()].into_iter().collect(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
 
         let effects = reduce(
             &mut state,
@@ -1268,6 +1335,9 @@ mod tests {
                 .into_iter()
                 .collect(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_20250514());
 
         let effects = reduce(
             &mut state,

@@ -6,7 +6,10 @@
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
-use steer_grpc::client_api::{AssistantContent, ClientEvent, Message, MessageData, MessageId};
+use steer_grpc::client_api::{
+    AssistantContent, ClientEvent, Message, MessageData, MessageId, ThoughtContent, ToolCall,
+    ToolCallDelta,
+};
 
 /// Processor for message-related events
 pub struct MessageEventProcessor;
@@ -29,6 +32,8 @@ impl EventProcessor for MessageEventProcessor {
             ClientEvent::MessageAdded { .. }
                 | ClientEvent::MessageUpdated { .. }
                 | ClientEvent::MessageDelta { .. }
+                | ClientEvent::ThinkingDelta { .. }
+                | ClientEvent::ToolCallDelta { .. }
         )
     }
 
@@ -48,6 +53,19 @@ impl EventProcessor for MessageEventProcessor {
             }
             ClientEvent::MessageDelta { id, delta } => {
                 self.handle_message_delta(&id, delta, ctx);
+                ProcessingResult::Handled
+            }
+            ClientEvent::ThinkingDelta { message_id, delta, .. } => {
+                self.handle_thinking_delta(&message_id, delta, ctx);
+                ProcessingResult::Handled
+            }
+            ClientEvent::ToolCallDelta {
+                message_id,
+                tool_call_id,
+                delta,
+                ..
+            } => {
+                self.handle_tool_call_delta(&message_id, tool_call_id.as_str(), delta, ctx);
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,
@@ -81,7 +99,11 @@ impl MessageEventProcessor {
             }
         }
 
-        ctx.chat_store.add_message(message);
+        if let Some(item) = ctx.chat_store.get_mut_by_id(&message.id.clone()) {
+            item.data = ChatItemData::Message(message);
+        } else {
+            ctx.chat_store.add_message(message);
+        }
         *ctx.messages_updated = true;
     }
 
@@ -113,8 +135,60 @@ impl MessageEventProcessor {
     }
 
     fn handle_message_delta(&self, id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
-        // For streaming messages, append to existing text blocks
-        let mut found = false;
+        if !self.append_text_delta(id, &delta, ctx) {
+            self.insert_placeholder_message(id, ctx);
+            if !self.append_text_delta(id, &delta, ctx) {
+                tracing::warn!(target: "tui.message", "MessageDelta received for unknown ID: {}", id);
+            }
+        }
+    }
+
+    fn handle_thinking_delta(
+        &self,
+        id: &MessageId,
+        delta: String,
+        ctx: &mut ProcessingContext,
+    ) {
+        if !self.append_thinking_delta(id, &delta, ctx) {
+            self.insert_placeholder_message(id, ctx);
+            if !self.append_thinking_delta(id, &delta, ctx) {
+                tracing::warn!(target: "tui.message", "ThinkingDelta received for unknown ID: {}", id);
+            }
+        }
+    }
+
+    fn handle_tool_call_delta(
+        &self,
+        id: &MessageId,
+        tool_call_id: &str,
+        delta: ToolCallDelta,
+        ctx: &mut ProcessingContext,
+    ) {
+        if !self.apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
+            self.insert_placeholder_message(id, ctx);
+            if !self.apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
+                tracing::warn!(target: "tui.message", "ToolCallDelta received for unknown ID: {}", id);
+            }
+        }
+    }
+
+    fn insert_placeholder_message(&self, id: &MessageId, ctx: &mut ProcessingContext) {
+        let message = Message {
+            data: MessageData::Assistant { content: Vec::new() },
+            timestamp: time::OffsetDateTime::now_utc().unix_timestamp() as u64,
+            id: id.as_str().to_string(),
+            parent_message_id: ctx.chat_store.active_message_id().cloned(),
+        };
+        ctx.chat_store.add_message(message);
+        *ctx.messages_updated = true;
+    }
+
+    fn append_text_delta(
+        &self,
+        id: &MessageId,
+        delta: &str,
+        ctx: &mut ProcessingContext,
+    ) -> bool {
         for item in ctx.chat_store.iter_mut() {
             if let ChatItemData::Message(message) = &mut item.data
                 && message.id() == id.as_str()
@@ -158,24 +232,138 @@ impl MessageEventProcessor {
                     }) = blocks.last_mut()
                     {
                         if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
-                            text.push_str(&delta);
-                            *ctx.messages_updated = true;
+                            text.push_str(delta);
                         } else {
-                            blocks.push(AssistantContent::Text { text: delta });
-                            *ctx.messages_updated = true;
+                            blocks.push(AssistantContent::Text {
+                                text: delta.to_string(),
+                            });
                         }
-                        found = true;
-                        break;
-                    } else {
-                        tracing::warn!(target: "tui.message", "MessageDelta for non-assistant message: {}", id);
-                        break;
+                        *ctx.messages_updated = true;
+                        return true;
                     }
+                    tracing::warn!(
+                        target: "tui.message",
+                        "MessageDelta for non-assistant message: {}",
+                        id
+                    );
+                    return true;
                 }
             }
         }
-        if !found {
-            tracing::warn!(target: "tui.message", "MessageDelta received for unknown ID: {}", id);
+        false
+    }
+
+    fn append_thinking_delta(
+        &self,
+        id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
+        for item in ctx.chat_store.iter_mut() {
+            if let ChatItemData::Message(message) = &mut item.data {
+                if message.id() == id.as_str() {
+                    if let MessageData::Assistant {
+                        content: blocks, ..
+                    } = &mut message.data
+                    {
+                        match blocks.last_mut() {
+                            Some(AssistantContent::Thought {
+                                thought: ThoughtContent::Simple { text },
+                            }) => {
+                                text.push_str(delta);
+                            }
+                            _ => {
+                                blocks.push(AssistantContent::Thought {
+                                    thought: ThoughtContent::Simple {
+                                        text: delta.to_string(),
+                                    },
+                                });
+                            }
+                        }
+                        *ctx.messages_updated = true;
+                        return true;
+                    }
+                    tracing::warn!(
+                        target: "tui.message",
+                        "ThinkingDelta for non-assistant message: {}",
+                        id
+                    );
+                    return true;
+                }
+            }
         }
+        false
+    }
+
+    fn apply_tool_call_delta(
+        &self,
+        id: &MessageId,
+        tool_call_id: &str,
+        delta: &ToolCallDelta,
+        ctx: &mut ProcessingContext,
+    ) -> bool {
+        for item in ctx.chat_store.iter_mut() {
+            if let ChatItemData::Message(message) = &mut item.data {
+                if message.id() == id.as_str() {
+                    if let MessageData::Assistant {
+                        content: blocks, ..
+                    } = &mut message.data
+                    {
+                        let tool_call = match blocks.iter_mut().find_map(|block| {
+                            if let AssistantContent::ToolCall { tool_call } = block {
+                                if tool_call.id == tool_call_id {
+                                    return Some(tool_call);
+                                }
+                            }
+                            None
+                        }) {
+                            Some(existing) => existing,
+                            None => {
+                                blocks.push(AssistantContent::ToolCall {
+                                    tool_call: ToolCall {
+                                        id: tool_call_id.to_string(),
+                                        name: "unknown".to_string(),
+                                        parameters: serde_json::Value::String(String::new()),
+                                    },
+                                });
+                                match blocks.last_mut() {
+                                    Some(AssistantContent::ToolCall { tool_call }) => tool_call,
+                                    _ => return false,
+                                }
+                            }
+                        };
+
+                        match delta {
+                            ToolCallDelta::Name(name) => {
+                                tool_call.name = name.clone();
+                            }
+                            ToolCallDelta::ArgumentChunk(chunk) => {
+                                match tool_call.parameters.as_str() {
+                                    Some(existing) => {
+                                        let mut updated = existing.to_string();
+                                        updated.push_str(chunk);
+                                        tool_call.parameters =
+                                            serde_json::Value::String(updated);
+                                    }
+                                    None => {
+                                        tool_call.parameters =
+                                            serde_json::Value::String(chunk.clone());
+                                    }
+                                }
+                            }
+                        }
+                        *ctx.messages_updated = true;
+                        return true;
+                    }
+                    *ctx.messages_updated = true;
+                    return true;
+                }
+                tracing::warn!(
+                    target: "tui.message",
+                    "ToolCallDelta for non-assistant message: {}",
+                    id
+                );
+                return true;
+            }
+        }
+        false
     }
 }
 

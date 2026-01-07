@@ -1,10 +1,11 @@
 //! SystemEventProcessor - handles system and configuration events.
 //!
-//! Processes events related to model changes, command responses, and other
+//! Processes events related to command responses, compaction, and other
 //! system-level state changes.
 
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
+use crate::tui::core_commands::{CommandResponse, CoreCommandType};
 use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
 use steer_grpc::client_api::ClientEvent;
@@ -31,7 +32,9 @@ impl EventProcessor for SystemEventProcessor {
     fn can_handle(&self, event: &ClientEvent) -> bool {
         matches!(
             event,
-            ClientEvent::ModelChanged { .. } | ClientEvent::Error { .. }
+            ClientEvent::Error { .. }
+                | ClientEvent::CompactResult { .. }
+                | ClientEvent::ConversationCompacted { .. }
         )
     }
 
@@ -41,10 +44,6 @@ impl EventProcessor for SystemEventProcessor {
         ctx: &mut ProcessingContext,
     ) -> ProcessingResult {
         match event {
-            ClientEvent::ModelChanged { model } => {
-                *ctx.current_model = model;
-                ProcessingResult::Handled
-            }
             ClientEvent::Error { message } => {
                 let chat_item = crate::tui::model::ChatItem {
                     parent_chat_item_id: None,
@@ -65,6 +64,26 @@ impl EventProcessor for SystemEventProcessor {
                 )
                 .await;
 
+                ProcessingResult::Handled
+            }
+            ClientEvent::CompactResult { result } => {
+                let chat_item = crate::tui::model::ChatItem {
+                    parent_chat_item_id: None,
+                    data: ChatItemData::CoreCmdResponse {
+                        id: generate_row_id(),
+                        command: CoreCommandType::Compact,
+                        response: CommandResponse::Compact(result),
+                        ts: time::OffsetDateTime::now_utc(),
+                    },
+                };
+                ctx.chat_store.push(chat_item);
+                *ctx.messages_updated = true;
+                ProcessingResult::Handled
+            }
+            ClientEvent::ConversationCompacted { record } => {
+                ctx.chat_store
+                    .set_compaction_head(Some(record.compacted_head_message_id.to_string()));
+                *ctx.messages_updated = true;
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,

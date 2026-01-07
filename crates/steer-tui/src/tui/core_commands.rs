@@ -2,13 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "result_type", rename_all = "snake_case")]
-pub enum CompactResult {
-    Success(String),
-    Cancelled,
-    InsufficientMessages,
-}
+pub use steer_grpc::client_api::CompactResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "response_type", rename_all = "snake_case")]

@@ -65,7 +65,9 @@ impl Tui {
                     if content.starts_with('!') && content.len() > 1 {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();
-                        self.client.execute_bash_command(command).await?;
+                        self.client
+                            .execute_bash_command(command, self.current_model.clone())
+                            .await?;
                     } else if content.starts_with('/') {
                         // Handle as slash command
                         self.handle_slash_command(content).await?;

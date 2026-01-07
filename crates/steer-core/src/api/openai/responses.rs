@@ -247,14 +247,6 @@ impl Client {
                                 );
                                 content_parts.push(InputContentPart::InputText { text: formatted });
                             }
-                            UserContent::AppCommand { command, response } => {
-                                // Format app command for the model
-                                let mut text = format!("App command: {command:?}");
-                                if let Some(resp) = response {
-                                    text.push_str(&format!("\nResponse: {resp:?}"));
-                                }
-                                content_parts.push(InputContentPart::InputText { text });
-                            }
                         }
                     }
 

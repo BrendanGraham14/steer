@@ -14,7 +14,8 @@ use ratatui::{
 };
 use std::collections::{HashMap, HashSet};
 use steer_core::app::MessageData;
-use steer_core::app::conversation::{AssistantContent, CommandResponse, CompactResult, Message};
+use steer_core::app::conversation::{AssistantContent, Message};
+use crate::tui::core_commands::{CommandResponse, CompactResult};
 use steer_tools::{ToolResult, schema::ToolCall};
 
 /// Flattened item types for 1:1 widget mapping
@@ -682,7 +683,12 @@ fn build_lineage_set(active_message_id: &str, chat_store: &ChatStore) -> HashSet
 fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore) -> bool {
     match &item.data {
         // Messages are visible if they're in the lineage
-        ChatItemData::Message(msg) => lineage.contains(msg.id()),
+        ChatItemData::Message(msg) => {
+            if chat_store.is_before_compaction(msg.id()) {
+                return false;
+            }
+            lineage.contains(msg.id())
+        }
         // Non-message items are visible if they or any of their ancestors attach to the lineage
         _ => {
             // Root-level meta/tool rows (no parent) are always visible
@@ -699,6 +705,9 @@ fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore
                 // Check if this parent is a message - if so, we've already checked lineage
                 if let Some(parent_item) = chat_store.get_by_id(&parent_id.to_string()) {
                     if matches!(parent_item.data, ChatItemData::Message(_)) {
+                        if chat_store.is_before_compaction(parent_id) {
+                            return false;
+                        }
                         // If we reached a message and it's not in lineage, stop here
                         return false;
                     }

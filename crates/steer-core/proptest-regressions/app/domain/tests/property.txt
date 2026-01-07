@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc da4b1eddb672fade584d82ad54a376cb3ba9c866457dca45b309165ad6b071ff # shrinks to session_id = SessionId(00000000-0000-0000-0000-000000000000), op_id = OpId(00000000-0000-0000-0000-000000000000), message_id = MessageId("msg_a"), text = "a", timestamp = 0

@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::client_api::ClientEvent;
 use crate::grpc::conversions::{
-    proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
+    model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
@@ -308,7 +308,10 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn compact_session(&self) -> GrpcResult<()> {
+    pub async fn compact_session(
+        &self,
+        model: steer_core::config::model::ModelId,
+    ) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
@@ -319,7 +322,10 @@ impl AgentClient {
                 reason: "No active session".to_string(),
             })?;
 
-        let request = Request::new(proto::CompactSessionRequest { session_id });
+        let request = Request::new(proto::CompactSessionRequest {
+            session_id,
+            model: Some(model_to_proto(model)),
+        });
 
         self.client
             .lock()
@@ -331,7 +337,11 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn execute_bash_command(&self, command: String) -> GrpcResult<()> {
+    pub async fn execute_bash_command(
+        &self,
+        command: String,
+        model: steer_core::config::model::ModelId,
+    ) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()
@@ -345,6 +355,7 @@ impl AgentClient {
         let request = Request::new(proto::ExecuteBashCommandRequest {
             session_id,
             command,
+            model: Some(model_to_proto(model)),
         });
 
         self.client

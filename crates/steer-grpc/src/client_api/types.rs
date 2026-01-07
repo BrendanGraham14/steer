@@ -7,6 +7,7 @@ pub use steer_core::app::conversation::{
 pub use steer_core::config::model::ModelId;
 
 pub use steer_core::app::domain::delta::ToolCallDelta;
+pub use steer_core::app::domain::event::CompactResult;
 
 pub use steer_tools::result::{
     BashResult, EditResult, ExternalResult, FileContentResult, FileListResult, GlobResult,
@@ -14,7 +15,9 @@ pub use steer_tools::result::{
 };
 pub use steer_tools::{ToolCall, ToolError};
 
-pub use steer_core::app::domain::types::{MessageId, OpId, RequestId, ToolCallId};
+pub use steer_core::app::domain::types::{
+    CompactionRecord, MessageId, OpId, RequestId, ToolCallId,
+};
 
 pub use steer_core::session::state::{SessionConfig, SessionToolConfig};
 

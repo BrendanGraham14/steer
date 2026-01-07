@@ -1232,7 +1232,11 @@ impl Tui {
             TuiAppCommand::Core(core_cmd) => {
                 match core_cmd {
                     crate::tui::core_commands::CoreCommandType::Compact => {
-                        if let Err(e) = self.client.compact_session().await {
+                        if let Err(e) = self
+                            .client
+                            .compact_session(self.current_model.clone())
+                            .await
+                        {
                             self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
                         }
                     }

@@ -54,7 +54,6 @@ message SessionEvent {
     ProcessingCompletedEvent processing_completed = 10;
     RequestToolApprovalEvent request_tool_approval = 11;
     OperationCancelledEvent operation_cancelled = 12;
-    ModelChangedEvent model_changed = 13;
     ErrorEvent error = 14;
     WorkspaceChangedEvent workspace_changed = 15;
     StartedEvent started = 16;
@@ -62,7 +61,11 @@ message SessionEvent {
     ActiveMessageIdChangedEvent active_message_id_changed = 18;
     ConversationCompactedEvent conversation_compacted = 19;
     StreamDeltaEvent stream_delta = 20;
+    CompactResultEvent compact_result = 21;
   }
+
+  reserved 13;
+  reserved "model_changed";
 }
 
 // Event message definitions
@@ -116,10 +119,6 @@ message ProcessingCompletedEvent {
   string op_id = 1;  // Operation ID (UUID)
 }
 
-message ModelChangedEvent {
-  ModelSpec model = 1;
-}
-
 message ErrorEvent {
   string message = 1;
 }
@@ -164,6 +163,28 @@ message ToolCallDelta {
 
 message ConversationCompactedEvent {
   CompactionRecord record = 1;
+}
+
+message CompactResultEvent {
+  CompactResult result = 1;
+}
+
+message CompactResult {
+  oneof result {
+    CompactSuccess success = 1;
+    CompactCancelled cancelled = 2;
+    CompactInsufficientMessages insufficient_messages = 3;
+  }
+}
+
+message CompactSuccess {
+  string summary = 1;
+}
+
+message CompactCancelled {
+}
+
+message CompactInsufficientMessages {
 }
 
 message CompactionRecord {
@@ -286,6 +307,7 @@ message CancelOperationResponse {
 
 message CompactSessionRequest {
   string session_id = 1;
+  ModelSpec model = 2;
 }
 
 message CompactSessionResponse {
@@ -295,6 +317,7 @@ message CompactSessionResponse {
 message ExecuteBashCommandRequest {
   string session_id = 1;
   string command = 2;
+  ModelSpec model = 3;
 }
 
 message ExecuteBashCommandResponse {

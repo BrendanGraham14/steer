@@ -16,7 +16,7 @@ mod tests {
     use steer_tools::{ToolCall, ToolError};
 
     fn test_state() -> AppState {
-        AppState::new(SessionId::new(), builtin::claude_sonnet_4_20250514())
+        AppState::new(SessionId::new())
     }
 
     fn deterministic_session_id() -> SessionId {
@@ -127,11 +127,11 @@ mod tests {
                     SessionEvent::Error { .. } => "Error".to_string(),
                     SessionEvent::SessionCreated { .. } => "SessionCreated".to_string(),
                     SessionEvent::MessageUpdated { .. } => "MessageUpdated".to_string(),
-                    SessionEvent::ModelChanged { .. } => "ModelChanged".to_string(),
                     SessionEvent::WorkspaceChanged => "WorkspaceChanged".to_string(),
                     SessionEvent::ConversationCompacted { .. } => {
                         "ConversationCompacted".to_string()
                     }
+                    SessionEvent::CompactResult { .. } => "CompactResult".to_string(),
                 },
             },
             Effect::CallModel { .. } => EffectSnapshot::CallModel,
@@ -263,7 +263,7 @@ mod tests {
 
     fn run_golden_test(test_case: &GoldenTestCase) {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
 
         let mut all_effects = Vec::new();
         for action_snapshot in &test_case.actions {
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn golden_tool_approval_flow() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
 
         state.current_operation = Some(OperationState {
@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn golden_full_conversation_flow() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
 
         let op_id = deterministic_op_id(1);
         let _ = reduce(
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn golden_cancellation_clears_state() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
 
         let _ = reduce(
@@ -563,7 +563,7 @@ mod tests {
     #[test]
     fn golden_late_result_ignored_after_cancel() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
         let tool_call_id = deterministic_tool_call_id("tc_1");
 
@@ -608,7 +608,7 @@ mod tests {
     #[test]
     fn golden_pre_approved_tool_executes_immediately() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
 
         state.approved_tools.insert("bash".to_string());
@@ -649,7 +649,7 @@ mod tests {
     #[test]
     fn golden_approval_queuing() {
         let session_id = deterministic_session_id();
-        let mut state = AppState::new(session_id, builtin::claude_sonnet_4_20250514());
+        let mut state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
 
         state.current_operation = Some(OperationState {
