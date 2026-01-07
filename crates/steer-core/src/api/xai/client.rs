@@ -498,6 +498,7 @@ impl Provider for XAIClient {
                     crate::config::toml_types::ThinkingEffort::Low => ReasoningEffort::Low,
                     crate::config::toml_types::ThinkingEffort::Medium => ReasoningEffort::High, // xAI has Low/High only
                     crate::config::toml_types::ThinkingEffort::High => ReasoningEffort::High,
+                    crate::config::toml_types::ThinkingEffort::XHigh => ReasoningEffort::High, // xAI has Low/High only
                 });
                 (tc.enabled, effort)
             })
@@ -676,6 +677,7 @@ impl Provider for XAIClient {
                     crate::config::toml_types::ThinkingEffort::Low => ReasoningEffort::Low,
                     crate::config::toml_types::ThinkingEffort::Medium => ReasoningEffort::High,
                     crate::config::toml_types::ThinkingEffort::High => ReasoningEffort::High,
+                    crate::config::toml_types::ThinkingEffort::XHigh => ReasoningEffort::High, // xAI has Low/High only
                 });
                 (tc.enabled, effort)
             })

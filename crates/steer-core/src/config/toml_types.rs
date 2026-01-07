@@ -47,6 +47,7 @@ pub enum ThinkingEffort {
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy, Default)]

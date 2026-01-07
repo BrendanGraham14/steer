@@ -55,7 +55,9 @@ impl EventProcessor for MessageEventProcessor {
                 self.handle_message_delta(&id, delta, ctx);
                 ProcessingResult::Handled
             }
-            ClientEvent::ThinkingDelta { message_id, delta, .. } => {
+            ClientEvent::ThinkingDelta {
+                message_id, delta, ..
+            } => {
                 self.handle_thinking_delta(&message_id, delta, ctx);
                 ProcessingResult::Handled
             }
@@ -143,12 +145,7 @@ impl MessageEventProcessor {
         }
     }
 
-    fn handle_thinking_delta(
-        &self,
-        id: &MessageId,
-        delta: String,
-        ctx: &mut ProcessingContext,
-    ) {
+    fn handle_thinking_delta(&self, id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
         if !self.append_thinking_delta(id, &delta, ctx) {
             self.insert_placeholder_message(id, ctx);
             if !self.append_thinking_delta(id, &delta, ctx) {
@@ -174,7 +171,9 @@ impl MessageEventProcessor {
 
     fn insert_placeholder_message(&self, id: &MessageId, ctx: &mut ProcessingContext) {
         let message = Message {
-            data: MessageData::Assistant { content: Vec::new() },
+            data: MessageData::Assistant {
+                content: Vec::new(),
+            },
             timestamp: time::OffsetDateTime::now_utc().unix_timestamp() as u64,
             id: id.as_str().to_string(),
             parent_message_id: ctx.chat_store.active_message_id().cloned(),
@@ -183,12 +182,7 @@ impl MessageEventProcessor {
         *ctx.messages_updated = true;
     }
 
-    fn append_text_delta(
-        &self,
-        id: &MessageId,
-        delta: &str,
-        ctx: &mut ProcessingContext,
-    ) -> bool {
+    fn append_text_delta(&self, id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
         for item in ctx.chat_store.iter_mut() {
             if let ChatItemData::Message(message) = &mut item.data
                 && message.id() == id.as_str()
@@ -339,8 +333,7 @@ impl MessageEventProcessor {
                                     Some(existing) => {
                                         let mut updated = existing.to_string();
                                         updated.push_str(chunk);
-                                        tool_call.parameters =
-                                            serde_json::Value::String(updated);
+                                        tool_call.parameters = serde_json::Value::String(updated);
                                     }
                                     None => {
                                         tool_call.parameters =

@@ -343,6 +343,7 @@ pub enum ReasoningEffort {
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 /// Reasoning summary verbosity

@@ -260,7 +260,9 @@ mod id_preservation_tests {
 #[cfg(test)]
 mod event_conversion_tests {
     use crate::client_api::{ClientEvent, MessageId, OpId, ToolCallDelta, ToolCallId};
-    use crate::grpc::conversions::{proto_to_client_event, session_event_to_proto, stream_delta_to_proto};
+    use crate::grpc::conversions::{
+        proto_to_client_event, session_event_to_proto, stream_delta_to_proto,
+    };
     use steer_core::app::domain::delta::StreamDelta;
     use steer_core::app::domain::event::{CompactResult, SessionEvent};
     use uuid::Uuid;
@@ -296,7 +298,11 @@ mod event_conversion_tests {
         let proto = stream_delta_to_proto(thinking_delta, 0).unwrap();
         let client_event = proto_to_client_event(proto).unwrap().unwrap();
         match client_event {
-            ClientEvent::ThinkingDelta { op_id: received, message_id: msg, delta } => {
+            ClientEvent::ThinkingDelta {
+                op_id: received,
+                message_id: msg,
+                delta,
+            } => {
                 assert_eq!(received, op_id);
                 assert_eq!(msg, message_id);
                 assert_eq!(delta, "thinking...");
@@ -309,7 +315,9 @@ mod event_conversion_tests {
             op_id,
             message_id: message_id.clone(),
             tool_call_id: tool_call_id.clone(),
-            delta: steer_core::app::domain::delta::ToolCallDelta::ArgumentChunk("{\"x\":".to_string()),
+            delta: steer_core::app::domain::delta::ToolCallDelta::ArgumentChunk(
+                "{\"x\":".to_string(),
+            ),
         };
 
         let proto = stream_delta_to_proto(tool_delta, 0).unwrap();

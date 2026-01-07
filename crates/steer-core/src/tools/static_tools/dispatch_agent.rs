@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::config::model::builtin::claude_3_7_sonnet_20250219 as default_model;
+use crate::config::model::builtin::claude_sonnet_4_5 as default_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::SubAgentConfig;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};

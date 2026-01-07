@@ -747,7 +747,8 @@ fn resolve_call_id(
         return Some(call_id);
     }
 
-    let candidate = extract_non_empty_str(value, "item_id").or_else(|| extract_non_empty_str(value, "id"));
+    let candidate =
+        extract_non_empty_str(value, "item_id").or_else(|| extract_non_empty_str(value, "id"));
     let Some(candidate) = candidate else {
         return None;
     };

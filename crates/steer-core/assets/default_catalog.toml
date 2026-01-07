@@ -26,122 +26,68 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "anthropic"
-id = "claude-3-5-sonnet-20240620"
-aliases = []
-recommended = true
-[models.parameters]
-thinking_config.enabled = false
-
-[[models]]
-provider = "anthropic"
-id = "claude-3-5-sonnet-20241022"
-aliases = []
-recommended = true
-[models.parameters]
-thinking_config.enabled = false
-
-[[models]]
-provider = "anthropic"
-id = "claude-3-7-sonnet-20250219"
-aliases = []
-recommended = true
+id = "claude-haiku-4-5"
+aliases = ["haiku"]
+recommended = false
 [models.parameters]
 thinking_config.enabled = true
-thinking_config.budget_tokens = 4000
+thinking_config.budget_tokens = 16_000
 
 [[models]]
 provider = "anthropic"
-id = "claude-3-5-haiku-20241022"
-aliases = []
-recommended = false
-
-[[models]]
-provider = "anthropic"
-id = "claude-sonnet-4-20250514"
+id = "claude-sonnet-4-5"
 aliases = ["sonnet"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
-thinking_config.budget_tokens = 4000
+thinking_config.budget_tokens = 16_000
 
 [[models]]
 provider = "anthropic"
-id = "claude-opus-4-20250514"
-aliases = []
-recommended = true
-[models.parameters]
-thinking_config.enabled = true
-thinking_config.budget_tokens = 4000
-
-[[models]]
-provider = "anthropic"
-id = "claude-opus-4-1-20250805"
+id = "claude-opus-4-5"
 aliases = ["opus"]
 recommended = true
 [models.parameters]
 thinking_config.enabled = true
-thinking_config.budget_tokens = 4000
+thinking_config.budget_tokens = 16_000
+
 
 [[models]]
 provider = "openai"
-id = "gpt-4.1-2025-04-14"
-aliases = ["gpt-4.1"]
-recommended = true
-[models.parameters]
-thinking_config.enabled = false
-
-[[models]]
-provider = "openai"
-id = "gpt-4.1-mini-2025-04-14"
-aliases = ["gpt-4.1-mini"]
+id = "gpt-5-nano-2025-08-07"
+aliases = ["gpt-5-nano", "gpt5-nano"]
 recommended = false
-[models.parameters]
-thinking_config.enabled = false
-
-[[models]]
-provider = "openai"
-id = "codex-mini-latest"
-aliases = ["codex-mini"]
-recommended = true
 [models.parameters]
 thinking_config.enabled = true
 thinking_config.effort = "medium"
 
 [[models]]
 provider = "openai"
-id = "gpt-5-2025-08-07"
-aliases = ["gpt-5", "gpt5", "gpt"]
-recommended = true
-[models.parameters]
-thinking_config.enabled = true
-thinking_config.effort = "high"
-
-[[models]]
-provider = "openai"
-id = "o3-2025-04-16"
-aliases = ["o3"]
-recommended = true
-[models.parameters]
-thinking_config.enabled = true
-thinking_config.effort = "high"
-
-[[models]]
-provider = "openai"
-id = "o3-pro-2025-06-10"
-aliases = ["o3-pro"]
+id = "gpt-5-mini-2025-08-07"
+aliases = ["gpt-5-mini", "gpt5-mini"]
 recommended = false
 [models.parameters]
 thinking_config.enabled = true
-thinking_config.effort = "high"
+thinking_config.effort = "medium"
+
 
 [[models]]
 provider = "openai"
-id = "o4-mini-2025-04-16"
-aliases = ["o4-mini"]
-recommended = true
+id = "gpt-5.2-2025-12-11"
+aliases = ["gpt-5.2", "gpt5.2", "gpt52", "gpt-5.2-xhigh"]
+recommended = false
 [models.parameters]
 thinking_config.enabled = true
-thinking_config.effort = "medium"
+thinking_config.effort = "x-high"
+
+[[models]]
+provider = "openai"
+id = "gpt-5.1-codex-max"
+aliases = ["gpt5.1-codex-max", "gpt51-codex-max"]
+recommended = false
+[models.parameters]
+thinking_config.enabled = true
+thinking_config.effort = "x-high"
 
 [[models]]
 provider = "google"
@@ -161,20 +107,6 @@ thinking_config.budget_tokens = 8192
 
 [[models]]
 provider = "xai"
-id = "grok-3"
-aliases = []
-recommended = false
-
-[[models]]
-provider = "xai"
-id = "grok-3-mini"
-aliases = ["grok-mini"]
-recommended = false
-
-[[models]]
-provider = "xai"
-id = "grok-4-0709"
-aliases = ["grok-4", "grok"]
+id = "grok-4-1-fast-reasoning"
+aliases = ["grok-4-1-fast", "grok-4-1", "grok-4", "grok"]
 recommended = true
-[models.parameters]
-thinking_config.enabled = true

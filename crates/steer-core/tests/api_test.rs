@@ -2,10 +2,12 @@ use dotenvy::dotenv;
 use futures::StreamExt;
 use steer_core::api::{ApiError, Client, Provider, StreamChunk};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+use steer_core::config::model::{ModelId, builtin};
 
 use steer_core::test_utils;
 use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
+use steer_tools::tools::LS_TOOL_NAME;
 use steer_workspace::Workspace;
 use steer_workspace::local::LocalWorkspace;
 
@@ -13,6 +15,22 @@ use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+fn fresh_tool_use_id() -> String {
+    format!("tool_use_{}", Uuid::new_v4())
+}
+
+/// Standard set of models to test across multiple providers.
+/// Includes one model from each major provider for cross-provider testing.
+fn models_to_test() -> Vec<ModelId> {
+    vec![
+        builtin::claude_haiku_4_5(),
+        builtin::gpt_5_nano_2025_08_07(),
+        builtin::gemini_3_flash_preview(),
+        builtin::grok_4_1_fast_reasoning(),
+    ]
+}
 
 #[tokio::test]
 #[ignore]
@@ -23,14 +41,6 @@ async fn test_api_basic() {
         app_config.provider_registry,
         app_config.model_registry,
     );
-
-    let models_to_test = vec![
-        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
-        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_3_flash_preview(),
-        steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
-        steer_core::config::model::builtin::grok_3_mini(),
-    ];
 
     let mut tasks = Vec::new();
 
@@ -47,7 +57,7 @@ async fn test_api_basic() {
         parent_message_id: None,
     }];
 
-    for model in models_to_test {
+    for model in models_to_test() {
         let client = client.clone(); // Clone Arc
         let messages = messages.clone(); // Clone messages
         let task = tokio::spawn(async move {
@@ -135,13 +145,6 @@ async fn test_api_with_tools() {
         app_config.model_registry,
     ); // Arc<Client>
 
-    let models_to_test = vec![
-        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
-        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_3_flash_preview(),
-        steer_core::config::model::builtin::grok_3_mini(),
-    ];
-
     let mut tasks = Vec::new();
 
     // Get tools operation_cancelled
@@ -155,7 +158,7 @@ async fn test_api_with_tools() {
     let tools = workspace.available_tools().await; // Get the Vec<Tool>
     let pwd = temp_dir.path().to_path_buf(); // Use temp directory path
 
-    for model in models_to_test {
+    for model in models_to_test() {
         let client = client.clone(); // Clone Arc
         let tools = tools.clone(); // Clone tools definition
         let pwd_display = pwd.display().to_string(); // Clone path string
@@ -302,7 +305,9 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
     let messages = vec![Message {
         data: MessageData::User {
             content: vec![UserContent::Text {
-                text: "You must call the ls tool with path '.' exactly once. Do not answer without calling the tool."
+                text: format!(
+                    "You must call the {LS_TOOL_NAME} tool with path '.' exactly once. Do not call any other tools. Do not answer with text before the tool call."
+                ),
                     .to_string(),
             }],
         },
@@ -376,7 +381,10 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
         saw_tool_start || saw_tool_call,
         "Expected at least one tool call in stream"
     );
-    assert!(saw_tool_delta || saw_tool_call, "Expected tool args in stream");
+    assert!(
+        saw_tool_delta || saw_tool_call,
+        "Expected tool args in stream"
+    );
     assert!(!saw_empty_id, "Tool call id should never be empty");
     assert!(!saw_empty_name, "Tool call name should never be empty");
 }
@@ -392,21 +400,15 @@ async fn test_api_with_tool_response() {
         app_config.model_registry,
     );
 
-    let models_to_test = vec![
-        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
-        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_3_flash_preview(),
-        steer_core::config::model::builtin::grok_3_mini(),
-    ];
     let mut tasks = Vec::new();
 
-    for model in models_to_test {
+    for model in models_to_test() {
         let client = client.clone(); // Clone Arc for concurrent use
         let task = tokio::spawn(async move {
             println!("Testing API with tool response for model: {model:?}");
 
             // Construct messages specific to this model's task
-            let tool_use_id = format!("tool-use-id-{model:?}"); // Unique ID per model test
+            let tool_use_id = fresh_tool_use_id(); // Unique ID per model test
             let ts1 = Message::current_timestamp();
             let ts2 = ts1 + 1;
             let ts3 = ts2 + 1;
@@ -975,21 +977,15 @@ async fn test_api_with_cancelled_tool_execution() {
         app_config.model_registry,
     );
 
-    let models_to_test = vec![
-        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
-        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_3_flash_preview(),
-        steer_core::config::model::builtin::grok_3_mini(),
-    ];
     let mut tasks = Vec::new();
 
-    for model in models_to_test {
+    for model in models_to_test() {
         let client = client.clone();
         let task = tokio::spawn(async move {
             println!("Testing cancelled tool execution for model: {model:?}");
 
             // Create a unique tool call ID for this test
-            let tool_call_id = format!("cancelled_tool_{model:?}");
+            let tool_call_id = fresh_tool_use_id();
 
             // Simulate a conversation where a tool was called but then cancelled
             let ts1 = Message::current_timestamp();
@@ -1127,13 +1123,6 @@ async fn test_api_streaming_basic() {
         app_config.model_registry,
     );
 
-    let models_to_test = vec![
-        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
-        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_3_flash_preview(),
-        steer_core::config::model::builtin::grok_3_mini(),
-    ];
-
     let mut tasks = Vec::new();
 
     // Create the simple message once
@@ -1149,7 +1138,7 @@ async fn test_api_streaming_basic() {
         parent_message_id: None,
     }];
 
-    for model in models_to_test {
+    for model in models_to_test() {
         let client = client.clone();
         let messages = messages.clone();
         let task = tokio::spawn(async move {
@@ -1269,13 +1258,6 @@ async fn test_api_streaming_with_tools() {
         app_config.model_registry,
     );
 
-    let models_to_test = vec![
-        steer_core::config::model::builtin::claude_3_5_haiku_20241022(),
-        steer_core::config::model::builtin::gpt_4_1_mini_2025_04_14(),
-        steer_core::config::model::builtin::gemini_3_flash_preview(),
-        steer_core::config::model::builtin::grok_3_mini(),
-    ];
-
     let mut tasks = Vec::new();
 
     // Get tools from workspace
@@ -1289,7 +1271,7 @@ async fn test_api_streaming_with_tools() {
     let tools = workspace.available_tools().await;
     let pwd = temp_dir.path().to_path_buf();
 
-    for model in models_to_test {
+    for model in models_to_test() {
         let client = client.clone();
         let tools = tools.clone();
         let pwd_display = pwd.display().to_string();
@@ -1302,7 +1284,9 @@ async fn test_api_streaming_with_tools() {
             let messages = vec![Message {
                 data: MessageData::User {
                     content: vec![UserContent::Text {
-                        text: format!("Please list the files in {pwd_display} using the LS tool"),
+                        text: format!(
+                            "You must call the {LS_TOOL_NAME} tool with path \"{pwd_display}\" exactly once. Do not call any other tools. Do not answer with text before the tool call."
+                        ),
                     }],
                 },
                 timestamp,
@@ -1434,8 +1418,7 @@ async fn test_api_streaming_with_reasoning() {
 
     // Test reasoning models that support extended thinking
     let models_to_test = vec![
-        steer_core::config::model::builtin::o3_2025_04_16(),
-        steer_core::config::model::builtin::o4_mini_2025_04_16(),
+        steer_core::config::model::builtin::gpt_5_nano_2025_08_07(),
         steer_core::config::model::builtin::gemini_3_flash_preview(),
     ];
 
@@ -1572,7 +1555,7 @@ async fn test_api_streaming_cancellation() {
     );
 
     // Test cancellation with a model that generates longer responses
-    let model = steer_core::config::model::builtin::claude_3_5_haiku_20241022();
+    let model = builtin::claude_haiku_4_5();
 
     let timestamp = Message::current_timestamp();
     let messages = vec![Message {

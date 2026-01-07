@@ -367,7 +367,9 @@ fn handle_tool_approval_decided(
                 Some(ApprovalMemory::Tool(pending.tool_call.name.clone()))
             }
             Some(ApprovalMemory::Tool(name)) => Some(ApprovalMemory::Tool(name)),
-            Some(ApprovalMemory::BashPattern(pattern)) => Some(ApprovalMemory::BashPattern(pattern)),
+            Some(ApprovalMemory::BashPattern(pattern)) => {
+                Some(ApprovalMemory::BashPattern(pattern))
+            }
             None => None,
         }
     } else {

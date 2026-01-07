@@ -293,9 +293,7 @@ impl AgentClient {
                 reason: "No active session".to_string(),
             })?;
 
-        let request = Request::new(proto::CancelOperationRequest {
-            session_id,
-        });
+        let request = Request::new(proto::CancelOperationRequest { session_id });
 
         self.client
             .lock()

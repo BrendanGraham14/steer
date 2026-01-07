@@ -448,7 +448,13 @@ impl SessionActor {
                     let summary_prompt = build_compaction_prompt(&messages);
 
                     let result = interpreter
-                        .call_model(model.clone(), vec![summary_prompt], None, vec![], cancel_token)
+                        .call_model(
+                            model.clone(),
+                            vec![summary_prompt],
+                            None,
+                            vec![],
+                            cancel_token,
+                        )
                         .await;
 
                     let action = match result {

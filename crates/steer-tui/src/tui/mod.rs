@@ -1230,51 +1230,49 @@ impl Tui {
                     }
                 }
             }
-            TuiAppCommand::Core(core_cmd) => {
-                match core_cmd {
-                    crate::tui::core_commands::CoreCommandType::Compact => {
-                        if let Err(e) = self
-                            .client
-                            .compact_session(self.current_model.clone())
-                            .await
-                        {
-                            self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
-                        }
-                    }
-                    crate::tui::core_commands::CoreCommandType::Model { target } => {
-                        if let Some(model_name) = target {
-                            match self.client.resolve_model(&model_name).await {
-                                Ok(model_id) => {
-                                    self.current_model = model_id;
-                                    self.push_notice(
-                                        NoticeLevel::Info,
-                                        format!(
-                                            "Model set to: {}/{}",
-                                            self.current_model.0.storage_key(),
-                                            self.current_model.1
-                                        ),
-                                    );
-                                }
-                                Err(e) => {
-                                    self.push_notice(
-                                        NoticeLevel::Error,
-                                        format!("Failed to resolve model: {e}"),
-                                    );
-                                }
-                            }
-                        } else {
-                            self.push_notice(
-                                NoticeLevel::Info,
-                                format!(
-                                    "Current model: {}/{}",
-                                    self.current_model.0.storage_key(),
-                                    self.current_model.1
-                                ),
-                            );
-                        }
+            TuiAppCommand::Core(core_cmd) => match core_cmd {
+                crate::tui::core_commands::CoreCommandType::Compact => {
+                    if let Err(e) = self
+                        .client
+                        .compact_session(self.current_model.clone())
+                        .await
+                    {
+                        self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
                     }
                 }
-            }
+                crate::tui::core_commands::CoreCommandType::Model { target } => {
+                    if let Some(model_name) = target {
+                        match self.client.resolve_model(&model_name).await {
+                            Ok(model_id) => {
+                                self.current_model = model_id;
+                                self.push_notice(
+                                    NoticeLevel::Info,
+                                    format!(
+                                        "Model set to: {}/{}",
+                                        self.current_model.0.storage_key(),
+                                        self.current_model.1
+                                    ),
+                                );
+                            }
+                            Err(e) => {
+                                self.push_notice(
+                                    NoticeLevel::Error,
+                                    format!("Failed to resolve model: {e}"),
+                                );
+                            }
+                        }
+                    } else {
+                        self.push_notice(
+                            NoticeLevel::Info,
+                            format!(
+                                "Current model: {}/{}",
+                                self.current_model.0.storage_key(),
+                                self.current_model.1
+                            ),
+                        );
+                    }
+                }
+            },
         }
 
         Ok(())
@@ -1561,7 +1559,7 @@ pub async fn run_tui_auth_setup(
     run_tui(
         client,
         session_id,
-        model.unwrap_or(steer_core::config::model::builtin::claude_3_7_sonnet_20250219()),
+        model.unwrap_or(steer_core::config::model::builtin::claude_sonnet_4_5()),
         session_db,
         None, // system_prompt
         theme_name,

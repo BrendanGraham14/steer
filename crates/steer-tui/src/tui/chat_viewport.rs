@@ -1,5 +1,6 @@
 //! ChatViewport - persistent chat list state with O(N) rebuild optimization
 
+use crate::tui::core_commands::{CommandResponse, CompactResult};
 use crate::tui::{
     model::{ChatItem, ChatItemData},
     state::chat_store::ChatStore,
@@ -16,7 +17,6 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use steer_core::app::MessageData;
 use steer_core::app::conversation::{AssistantContent, Message, UserContent};
-use crate::tui::core_commands::{CommandResponse, CompactResult};
 use steer_tools::{ToolResult, schema::ToolCall};
 
 /// Flattened item types for 1:1 widget mapping
@@ -606,7 +606,10 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
                 }
             }
         }
-        MessageData::Tool { tool_use_id, result } => {
+        MessageData::Tool {
+            tool_use_id,
+            result,
+        } => {
             tool_use_id.hash(hasher);
             use std::fmt::Write as _;
             let mut s = String::new();

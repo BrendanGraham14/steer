@@ -357,7 +357,13 @@ impl AppRuntime {
 
                 let result = self
                     .interpreter
-                    .call_model(model.clone(), vec![summary_prompt], None, vec![], cancel_token)
+                    .call_model(
+                        model.clone(),
+                        vec![summary_prompt],
+                        None,
+                        vec![],
+                        cancel_token,
+                    )
                     .await;
 
                 let action = match result {

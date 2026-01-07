@@ -3,7 +3,6 @@ use chrono::{DateTime, Utc};
 use steer_core::app::conversation::{
     AssistantContent, Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
-use steer_core::app::domain::delta::{StreamDelta, ToolCallDelta as CoreToolCallDelta};
 use steer_core::app::domain::SessionEvent;
 
 use steer_core::session::state::{
@@ -1040,11 +1039,11 @@ pub(crate) fn session_event_to_proto(
                 }),
             }),
         ),
-        SessionEvent::CompactResult { result } => Some(
-            proto::session_event::Event::CompactResult(proto::CompactResultEvent {
+        SessionEvent::CompactResult { result } => Some(proto::session_event::Event::CompactResult(
+            proto::CompactResultEvent {
                 result: Some(compact_result_to_proto(&result)),
-            }),
-        ),
+            },
+        )),
         SessionEvent::ConversationCompacted { record } => Some(
             proto::session_event::Event::ConversationCompacted(proto::ConversationCompactedEvent {
                 record: Some(compaction_record_to_proto(&record)),
@@ -1099,9 +1098,7 @@ pub(crate) fn stream_delta_to_proto(
             delta,
         } => {
             let delta = match delta {
-                CoreToolCallDelta::Name(name) => {
-                    proto::tool_call_delta::Delta::Name(name)
-                }
+                CoreToolCallDelta::Name(name) => proto::tool_call_delta::Delta::Name(name),
                 CoreToolCallDelta::ArgumentChunk(chunk) => {
                     proto::tool_call_delta::Delta::ArgumentChunk(chunk)
                 }
@@ -1441,12 +1438,10 @@ pub(crate) fn proto_to_client_event(
             })?;
 
             match delta {
-                proto::stream_delta_event::DeltaType::Text(text) => {
-                    ClientEvent::MessageDelta {
-                        id: message_id.clone(),
-                        delta: text.content,
-                    }
-                }
+                proto::stream_delta_event::DeltaType::Text(text) => ClientEvent::MessageDelta {
+                    id: message_id.clone(),
+                    delta: text.content,
+                },
                 proto::stream_delta_event::DeltaType::Thinking(thinking) => {
                     ClientEvent::ThinkingDelta {
                         op_id,
@@ -1456,9 +1451,11 @@ pub(crate) fn proto_to_client_event(
                 }
                 proto::stream_delta_event::DeltaType::ToolCall(tool_call) => {
                     let tool_call_id = ToolCallId::from_string(tool_call.tool_call_id);
-                    let delta = tool_call.delta.ok_or_else(|| ConversionError::MissingField {
-                        field: "stream_delta.tool_call.delta".to_string(),
-                    })?;
+                    let delta = tool_call
+                        .delta
+                        .ok_or_else(|| ConversionError::MissingField {
+                            field: "stream_delta.tool_call.delta".to_string(),
+                        })?;
                     let delta = match delta {
                         proto::tool_call_delta::Delta::Name(name) => ToolCallDelta::Name(name),
                         proto::tool_call_delta::Delta::ArgumentChunk(chunk) => {

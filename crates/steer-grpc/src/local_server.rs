@@ -294,14 +294,15 @@ mod tests {
         ));
         api_client.insert_test_provider(default_model.0.clone(), Arc::new(StubProvider));
 
-        let workspace =
-            steer_core::workspace::create_workspace(&steer_core::workspace::WorkspaceConfig::Local {
+        let workspace = steer_core::workspace::create_workspace(
+            &steer_core::workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            })
-            .await
-            .map_err(|e| GrpcError::InvalidSessionState {
-                reason: format!("Failed to create workspace: {e}"),
-            })?;
+            },
+        )
+        .await
+        .map_err(|e| GrpcError::InvalidSessionState {
+            reason: format!("Failed to create workspace: {e}"),
+        })?;
 
         let tool_executor = ToolSystemBuilder::new(
             workspace,
@@ -461,10 +462,7 @@ mod tests {
             }))
             .await
             .expect("send_message");
-        let first_op = first_response
-            .into_inner()
-            .operation
-            .expect("operation");
+        let first_op = first_response.into_inner().operation.expect("operation");
         wait_for_processing_completed(&mut stream, &first_op.id).await;
 
         let second_response = action_client
@@ -476,10 +474,7 @@ mod tests {
             }))
             .await
             .expect("send_message");
-        let second_op = second_response
-            .into_inner()
-            .operation
-            .expect("operation");
+        let second_op = second_response.into_inner().operation.expect("operation");
         wait_for_processing_completed(&mut stream, &second_op.id).await;
 
         action_client
@@ -499,9 +494,7 @@ mod tests {
                 Some(steer_proto::agent::v1::session_event::Event::CompactResult(e)) => {
                     let result = e.result.expect("compact result");
                     match result.result {
-                        Some(steer_proto::agent::v1::compact_result::Result::Success(
-                            success,
-                        )) => {
+                        Some(steer_proto::agent::v1::compact_result::Result::Success(success)) => {
                             compact_summary = Some(success.summary);
                         }
                         other => panic!("unexpected compact result: {:?}", other),

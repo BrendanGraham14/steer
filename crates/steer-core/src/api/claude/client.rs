@@ -454,6 +454,7 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 .collect();
 
             if !claude_blocks.is_empty() {
+                let claude_blocks = ensure_thinking_first(claude_blocks);
                 let claude_content = if claude_blocks.len() == 1 {
                     if let Some(ClaudeContentBlock::Text { text, .. }) = claude_blocks.first() {
                         ClaudeMessageContent::Text {
@@ -530,6 +531,26 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
     }
 }
 // Conversion functions end
+
+fn ensure_thinking_first(blocks: Vec<ClaudeContentBlock>) -> Vec<ClaudeContentBlock> {
+    let mut thinking_blocks = Vec::new();
+    let mut other_blocks = Vec::new();
+
+    for block in blocks {
+        match block {
+            ClaudeContentBlock::Thinking { .. }
+            | ClaudeContentBlock::RedactedThinking { .. } => thinking_blocks.push(block),
+            _ => other_blocks.push(block),
+        }
+    }
+
+    if thinking_blocks.is_empty() {
+        other_blocks
+    } else {
+        thinking_blocks.extend(other_blocks);
+        thinking_blocks
+    }
+}
 
 // Convert Claude's content blocks to our provider-agnostic format
 fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<AssistantContent> {

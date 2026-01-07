@@ -111,6 +111,9 @@ impl Client {
                         Some(ReasoningEffort::Medium)
                     }
                     crate::config::toml_types::ThinkingEffort::High => Some(ReasoningEffort::High),
+                    crate::config::toml_types::ThinkingEffort::XHigh => {
+                        Some(ReasoningEffort::XHigh)
+                    }
                 }
             });
 
@@ -378,6 +381,9 @@ impl Client {
                         Some(ReasoningEffort::Medium)
                     }
                     crate::config::toml_types::ThinkingEffort::High => Some(ReasoningEffort::High),
+                    crate::config::toml_types::ThinkingEffort::XHigh => {
+                        Some(ReasoningEffort::XHigh)
+                    }
                 }
             });
 

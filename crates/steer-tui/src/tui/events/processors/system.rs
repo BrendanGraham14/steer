@@ -4,8 +4,8 @@
 //! system-level state changes.
 
 use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
-use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::core_commands::{CommandResponse, CoreCommandType};
+use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
 use steer_grpc::client_api::ClientEvent;

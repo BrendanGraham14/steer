@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::app::conversation::{Message, MessageData, UserContent};
-use crate::config::model::builtin::claude_3_5_haiku_20241022 as summarization_model;
+use crate::config::model::builtin::claude_haiku_4_5 as summarization_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};

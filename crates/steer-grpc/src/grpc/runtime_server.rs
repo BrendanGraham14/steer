@@ -466,9 +466,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 ),
                 Some(proto::approval_decision::DecisionType::AlwaysBashPattern(pattern)) => (
                     true,
-                    Some(steer_core::app::domain::action::ApprovalMemory::BashPattern(
-                        pattern,
-                    )),
+                    Some(steer_core::app::domain::action::ApprovalMemory::BashPattern(pattern)),
                 ),
                 None => {
                     return Err(Status::invalid_argument("Invalid approval decision"));
