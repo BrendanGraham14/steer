@@ -69,6 +69,12 @@ impl Client {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insert_test_provider(&self, provider_id: ProviderId, provider: Arc<dyn Provider>) {
+        let mut map = self.provider_map.write().unwrap();
+        map.insert(provider_id, provider);
+    }
+
     async fn get_or_create_provider(&self, provider_id: ProviderId) -> Result<Arc<dyn Provider>> {
         // First check without holding the lock across await
         {

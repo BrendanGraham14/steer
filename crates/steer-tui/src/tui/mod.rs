@@ -960,6 +960,7 @@ impl Tui {
         }
 
         if messages_updated {
+            self.chat_viewport.mark_dirty();
             if self.chat_viewport.state_mut().is_at_bottom() {
                 self.chat_viewport.state_mut().scroll_to_bottom();
             }

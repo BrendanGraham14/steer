@@ -40,3 +40,5 @@ async-stream = "0.3.6"
 [dev-dependencies]
 proptest = "1.7.0"
 tempfile = "3.20.0"
+steer-core = { workspace = true, features = ["test-utils"] }
+tokio-util = "0.7.18"

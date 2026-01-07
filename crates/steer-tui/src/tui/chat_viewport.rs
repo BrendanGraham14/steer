@@ -13,8 +13,9 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
 };
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use steer_core::app::MessageData;
-use steer_core::app::conversation::{AssistantContent, Message};
+use steer_core::app::conversation::{AssistantContent, Message, UserContent};
 use crate::tui::core_commands::{CommandResponse, CompactResult};
 use steer_tools::{ToolResult, schema::ToolCall};
 
@@ -50,6 +51,34 @@ impl FlattenedItem {
             FlattenedItem::MessageText { .. } | FlattenedItem::ToolInteraction { .. }
         )
     }
+
+    fn content_hash(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        match self {
+            FlattenedItem::MessageText { message, .. } => {
+                hash_message_content(message, &mut hasher);
+            }
+            FlattenedItem::ToolInteraction { call, result, .. } => {
+                call.id.hash(&mut hasher);
+                call.name.hash(&mut hasher);
+                call.parameters.to_string().hash(&mut hasher);
+                if let Some(result) = result {
+                    use std::fmt::Write as _;
+                    let mut s = String::new();
+                    let _ = write!(&mut s, "{result:?}");
+                    s.hash(&mut hasher);
+                }
+            }
+            FlattenedItem::Meta { item, .. } => {
+                item.id().hash(&mut hasher);
+                use std::fmt::Write as _;
+                let mut s = String::new();
+                let _ = write!(&mut s, "{:?}", item.data);
+                s.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
 }
 
 /// Metrics for a single row to be rendered
@@ -66,6 +95,7 @@ struct WidgetItem {
     item: FlattenedItem,                           // The flattened item
     widget: Box<dyn ChatRenderable + Send + Sync>, // Cached widget
     cached_heights: HeightCache,
+    content_hash: u64,
 }
 
 /// Height cache for different view modes and widths
@@ -194,16 +224,20 @@ impl ChatViewport {
         let mut new_items = Vec::new();
         for flattened_item in flattened {
             let item_id = flattened_item.id().to_string();
+            let content_hash = flattened_item.content_hash();
 
             if let Some(mut existing) = existing_widgets.remove(&item_id) {
-                // Invalidate cache if width or mode changed
-                if width_changed || mode_changed {
+                if existing.content_hash != content_hash {
+                    existing.widget =
+                        create_widget_for_flattened_item(&flattened_item, theme, false, 0);
+                    existing.cached_heights.invalidate(true, true);
+                } else if width_changed || mode_changed {
                     existing
                         .cached_heights
                         .invalidate(width_changed, mode_changed);
                 }
-                // Update the item to match the new flattened structure
                 existing.item = flattened_item;
+                existing.content_hash = content_hash;
                 new_items.push(existing);
             } else {
                 // Create new widget
@@ -213,6 +247,7 @@ impl ChatViewport {
                     item: flattened_item,
                     widget,
                     cached_heights: HeightCache::new(),
+                    content_hash,
                 };
                 new_items.push(widget_item);
             }
@@ -543,6 +578,51 @@ impl ChatViewport {
                     rect_iter.next();
                 }
             }
+        }
+    }
+}
+
+fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
+    match &message.data {
+        MessageData::User { content } => {
+            for c in content {
+                match c {
+                    UserContent::Text { text } => text.hash(hasher),
+                    UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => {
+                        command.hash(hasher);
+                        stdout.hash(hasher);
+                        stderr.hash(hasher);
+                        exit_code.hash(hasher);
+                    }
+                }
+            }
+        }
+        MessageData::Assistant { content } => {
+            for b in content {
+                match b {
+                    AssistantContent::Text { text } => text.hash(hasher),
+                    AssistantContent::ToolCall { tool_call } => {
+                        tool_call.id.hash(hasher);
+                        tool_call.name.hash(hasher);
+                        tool_call.parameters.to_string().hash(hasher);
+                    }
+                    AssistantContent::Thought { thought } => {
+                        thought.display_text().hash(hasher);
+                    }
+                }
+            }
+        }
+        MessageData::Tool { tool_use_id, result } => {
+            tool_use_id.hash(hasher);
+            use std::fmt::Write as _;
+            let mut s = String::new();
+            let _ = write!(&mut s, "{result:?}");
+            s.hash(hasher);
         }
     }
 }

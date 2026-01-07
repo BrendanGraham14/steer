@@ -227,14 +227,136 @@ impl SessionCatalog for InMemoryCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use steer_core::api::error::ApiError;
+    use steer_core::api::provider::{CompletionResponse, Provider};
+    use steer_core::app::conversation::AssistantContent;
     use steer_core::app::domain::action::Action;
     use steer_core::app::domain::types::OpId;
+    use steer_core::config::model::ModelId;
+    use steer_core::session::state::SessionConfig;
     use steer_proto::agent::v1::{
         CompactSessionRequest, EditMessageRequest, ExecuteBashCommandRequest, SendMessageRequest,
         SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,
     };
     use tokio::time::{Duration, timeout};
+    use tokio_util::sync::CancellationToken;
     use tonic::Code;
+
+    const STUB_RESPONSE: &str = "stub response";
+
+    #[derive(Clone)]
+    struct StubProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for StubProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<steer_core::app::conversation::Message>,
+            _system: Option<String>,
+            _tools: Option<Vec<steer_tools::ToolSchema>>,
+            _call_options: Option<steer_core::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionResponse, ApiError> {
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: STUB_RESPONSE.to_string(),
+                }],
+            })
+        }
+    }
+
+    async fn setup_local_grpc_with_stub_provider(default_model: ModelId) -> Result<LocalGrpcSetup> {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let catalog = Arc::new(InMemoryCatalog::new());
+        let catalog_config = CatalogConfig::default();
+
+        let model_registry = Arc::new(
+            steer_core::model_registry::ModelRegistry::load(&catalog_config.catalog_paths)
+                .map_err(GrpcError::CoreError)?,
+        );
+        let provider_registry = Arc::new(
+            steer_core::auth::ProviderRegistry::load(&catalog_config.catalog_paths)
+                .map_err(GrpcError::CoreError)?,
+        );
+
+        let auth_storage = Arc::new(steer_core::test_utils::InMemoryAuthStorage::new());
+        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
+
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            llm_config_provider.clone(),
+            provider_registry.clone(),
+            model_registry.clone(),
+        ));
+        api_client.insert_test_provider(default_model.0.clone(), Arc::new(StubProvider));
+
+        let workspace =
+            steer_core::workspace::create_workspace(&steer_core::workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            })
+            .await
+            .map_err(|e| GrpcError::InvalidSessionState {
+                reason: format!("Failed to create workspace: {e}"),
+            })?;
+
+        let tool_executor = ToolSystemBuilder::new(
+            workspace,
+            event_store.clone(),
+            api_client.clone(),
+            model_registry.clone(),
+        )
+        .build();
+
+        let runtime_config = RuntimeConfig::new(default_model);
+        let runtime_service =
+            RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+
+        let (channel, server_handle) = create_local_channel(
+            &runtime_service,
+            catalog,
+            model_registry,
+            provider_registry,
+            llm_config_provider,
+        )
+        .await?;
+
+        Ok(LocalGrpcSetup {
+            channel,
+            server_handle,
+            runtime_service,
+        })
+    }
+
+    async fn next_event(
+        stream: &mut tonic::Streaming<steer_proto::agent::v1::SessionEvent>,
+    ) -> steer_proto::agent::v1::SessionEvent {
+        timeout(Duration::from_secs(5), stream.message())
+            .await
+            .expect("timeout")
+            .expect("stream ok")
+            .expect("event")
+    }
+
+    async fn wait_for_processing_completed(
+        stream: &mut tonic::Streaming<steer_proto::agent::v1::SessionEvent>,
+        op_id: &str,
+    ) {
+        loop {
+            let event = next_event(stream).await;
+            if matches!(
+                event.event,
+                Some(steer_proto::agent::v1::session_event::Event::ProcessingCompleted(
+                    ref e
+                )) if e.op_id == op_id
+            ) {
+                break;
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_since_sequence_replay_returns_persisted_events() {
@@ -298,6 +420,104 @@ mod tests {
             evt.event,
             Some(steer_proto::agent::v1::session_event::Event::ProcessingCompleted(_))
         )));
+    }
+
+    #[tokio::test]
+    async fn test_compaction_flow_end_to_end() {
+        let model = steer_core::config::model::builtin::claude_sonnet_4_20250514();
+        let setup = setup_local_grpc_with_stub_provider(model.clone())
+            .await
+            .expect("local grpc setup");
+
+        let session_id = setup
+            .runtime_service
+            .handle()
+            .create_session(SessionConfig::read_only())
+            .await
+            .expect("create session");
+
+        let mut event_client = AgentServiceClient::new(setup.channel.clone());
+        let mut action_client = AgentServiceClient::new(setup.channel.clone());
+
+        let request = tonic::Request::new(SubscribeSessionEventsRequest {
+            session_id: session_id.to_string(),
+            since_sequence: None,
+        });
+
+        let mut stream = event_client
+            .subscribe_session_events(request)
+            .await
+            .expect("subscribe")
+            .into_inner();
+
+        let model_spec = crate::grpc::conversions::model_to_proto(model.clone());
+
+        let first_response = action_client
+            .send_message(tonic::Request::new(SendMessageRequest {
+                session_id: session_id.to_string(),
+                message: "first".to_string(),
+                attachments: vec![],
+                model: Some(model_spec.clone()),
+            }))
+            .await
+            .expect("send_message");
+        let first_op = first_response
+            .into_inner()
+            .operation
+            .expect("operation");
+        wait_for_processing_completed(&mut stream, &first_op.id).await;
+
+        let second_response = action_client
+            .send_message(tonic::Request::new(SendMessageRequest {
+                session_id: session_id.to_string(),
+                message: "second".to_string(),
+                attachments: vec![],
+                model: Some(model_spec.clone()),
+            }))
+            .await
+            .expect("send_message");
+        let second_op = second_response
+            .into_inner()
+            .operation
+            .expect("operation");
+        wait_for_processing_completed(&mut stream, &second_op.id).await;
+
+        action_client
+            .compact_session(tonic::Request::new(CompactSessionRequest {
+                session_id: session_id.to_string(),
+                model: Some(model_spec),
+            }))
+            .await
+            .expect("compact_session");
+
+        let mut compact_summary = None;
+        let mut compaction_record = None;
+
+        while compact_summary.is_none() || compaction_record.is_none() {
+            let event = next_event(&mut stream).await;
+            match event.event {
+                Some(steer_proto::agent::v1::session_event::Event::CompactResult(e)) => {
+                    let result = e.result.expect("compact result");
+                    match result.result {
+                        Some(steer_proto::agent::v1::compact_result::Result::Success(
+                            success,
+                        )) => {
+                            compact_summary = Some(success.summary);
+                        }
+                        other => panic!("unexpected compact result: {:?}", other),
+                    }
+                }
+                Some(steer_proto::agent::v1::session_event::Event::ConversationCompacted(e)) => {
+                    compaction_record = Some(e.record.expect("compaction record"));
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(compact_summary.expect("summary"), STUB_RESPONSE);
+        let record = compaction_record.expect("record");
+        assert!(!record.id.is_empty());
+        assert_eq!(record.model, model.1);
     }
 
     #[tokio::test]
