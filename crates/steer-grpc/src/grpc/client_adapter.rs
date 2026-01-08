@@ -409,7 +409,6 @@ impl AgentClient {
 
         let mut header = None;
         let mut messages = Vec::new();
-        let mut tool_calls = std::collections::HashMap::new();
         let mut footer = None;
 
         while let Some(response) = stream
@@ -420,11 +419,6 @@ impl AgentClient {
             match response.chunk {
                 Some(proto::get_session_response::Chunk::Header(h)) => header = Some(h),
                 Some(proto::get_session_response::Chunk::Message(m)) => messages.push(m),
-                Some(proto::get_session_response::Chunk::ToolCall(tc)) => {
-                    if let Some(value) = tc.value {
-                        tool_calls.insert(tc.key, value);
-                    }
-                }
                 Some(proto::get_session_response::Chunk::Footer(f)) => footer = Some(f),
                 None => {}
             }
@@ -437,9 +431,8 @@ impl AgentClient {
                 updated_at: h.updated_at,
                 config: h.config,
                 messages,
-                tool_calls,
                 approved_tools: f.approved_tools,
-                last_event_sequence: f.last_event_sequence,
+                last_event_sequence: h.last_event_sequence,
                 metadata: f.metadata,
             })),
             _ => Ok(None),

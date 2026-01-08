@@ -374,6 +374,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     created_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
                     updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
                     config: config.map(|c| crate::grpc::conversions::session_config_to_proto(&c)),
+                    last_event_sequence: state.event_sequence,
                 })),
             };
 
@@ -388,7 +389,6 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             yield GetSessionResponse {
                 chunk: Some(get_session_response::Chunk::Footer(SessionStateFooter {
                     approved_tools: state.approved_tools.into_iter().collect(),
-                    last_event_sequence: state.event_sequence,
                     metadata: std::collections::HashMap::new(),
                 })),
             };
