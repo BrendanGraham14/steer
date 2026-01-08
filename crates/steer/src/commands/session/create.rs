@@ -16,7 +16,6 @@ pub struct CreateSessionCommand {
     pub remote: Option<String>,
     pub system_prompt: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
-    pub model: Option<String>,
 }
 
 #[async_trait]
@@ -89,14 +88,6 @@ impl Command for CreateSessionCommand {
             model_registry.clone(),
         )
         .build();
-
-        let _default_model = if let Some(ref model_str) = self.model {
-            model_registry
-                .resolve(model_str)
-                .map_err(|e| eyre!("Invalid model: {}", e))?
-        } else {
-            steer_core::config::model::builtin::opus()
-        };
 
         let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
