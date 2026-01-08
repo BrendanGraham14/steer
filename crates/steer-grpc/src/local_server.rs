@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_bash_command_requires_model_spec() {
+    async fn test_execute_bash_command_does_not_require_model_spec() {
         let setup = setup_local_grpc_with_catalog(
             steer_core::config::model::builtin::claude_sonnet_4_20250514(),
             None,
@@ -628,13 +628,11 @@ mod tests {
         let request = tonic::Request::new(ExecuteBashCommandRequest {
             session_id: session_id.to_string(),
             command: "echo hi".to_string(),
-            model: None,
         });
 
-        let err = client
+        client
             .execute_bash_command(request)
             .await
-            .expect_err("execute_bash_command should fail without model");
-        assert_eq!(err.code(), Code::InvalidArgument);
+            .expect("execute_bash_command should succeed without model");
     }
 }

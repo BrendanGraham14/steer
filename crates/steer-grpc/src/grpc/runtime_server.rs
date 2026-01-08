@@ -539,14 +539,9 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<ExecuteBashCommandResponse>, Status> {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
-        let model_spec = req
-            .model
-            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
-        let model = proto_to_model(&model_spec)
-            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
 
         self.runtime
-            .execute_bash_command(session_id, req.command, model)
+            .execute_bash_command(session_id, req.command)
             .await
             .map_err(|e| Status::internal(format!("Failed to execute bash command: {e}")))?;
 

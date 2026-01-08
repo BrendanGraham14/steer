@@ -863,6 +863,114 @@ pub(crate) fn proto_to_message(
     }
 }
 
+fn proto_user_message_to_core(
+    id: String,
+    user_msg: proto::UserMessage,
+) -> Result<ConversationMessage, ConversionError> {
+    use steer_core::app::conversation::UserContent;
+    use steer_proto::agent::v1::user_content;
+
+    let content = user_msg
+        .content
+        .into_iter()
+        .filter_map(|user_content| {
+            user_content.content.and_then(|content| match content {
+                user_content::Content::Text(text) => Some(UserContent::Text { text }),
+                user_content::Content::CommandExecution(cmd) => {
+                    Some(UserContent::CommandExecution {
+                        command: cmd.command,
+                        stdout: cmd.stdout,
+                        stderr: cmd.stderr,
+                        exit_code: cmd.exit_code,
+                    })
+                }
+            })
+        })
+        .collect();
+
+    Ok(ConversationMessage {
+        data: MessageData::User { content },
+        timestamp: user_msg.timestamp,
+        id,
+        parent_message_id: user_msg.parent_message_id,
+    })
+}
+
+fn proto_assistant_message_to_core(
+    id: String,
+    assistant_msg: proto::AssistantMessage,
+) -> Result<ConversationMessage, ConversionError> {
+    use steer_core::app::conversation::{AssistantContent, ThoughtContent};
+    use steer_proto::agent::v1::{assistant_content, thought_content};
+
+    let content = assistant_msg
+        .content
+        .into_iter()
+        .filter_map(|assistant_content| {
+            assistant_content.content.and_then(|content| match content {
+                assistant_content::Content::Text(text) => Some(AssistantContent::Text { text }),
+                assistant_content::Content::ToolCall(tool_call) => {
+                    match proto_tool_call_to_core(&tool_call) {
+                        Ok(core_tool_call) => Some(AssistantContent::ToolCall {
+                            tool_call: core_tool_call,
+                        }),
+                        Err(_) => None, // Skip invalid tool calls
+                    }
+                }
+                assistant_content::Content::Thought(thought) => {
+                    let thought_content = thought.thought_type.as_ref().map(|t| match t {
+                        thought_content::ThoughtType::Simple(simple) => {
+                            ThoughtContent::Simple {
+                                text: simple.text.clone(),
+                            }
+                        }
+                        thought_content::ThoughtType::Signed(signed) => ThoughtContent::Signed {
+                            text: signed.text.clone(),
+                            signature: signed.signature.clone(),
+                        },
+                        thought_content::ThoughtType::Redacted(redacted) => {
+                            ThoughtContent::Redacted {
+                                data: redacted.data.clone(),
+                            }
+                        }
+                    });
+
+                    thought_content.map(|thought| AssistantContent::Thought { thought })
+                }
+            })
+        })
+        .collect();
+
+    Ok(ConversationMessage {
+        data: MessageData::Assistant { content },
+        timestamp: assistant_msg.timestamp,
+        id,
+        parent_message_id: assistant_msg.parent_message_id,
+    })
+}
+
+fn proto_tool_message_to_core(
+    id: String,
+    tool_msg: proto::ToolMessage,
+) -> Result<ConversationMessage, ConversionError> {
+    if let Some(proto_result) = tool_msg.result {
+        let tool_result = proto_to_steer_tools_result(proto_result)?;
+        Ok(ConversationMessage {
+            data: MessageData::Tool {
+                tool_use_id: tool_msg.tool_use_id,
+                result: tool_result,
+            },
+            timestamp: tool_msg.timestamp,
+            id,
+            parent_message_id: tool_msg.parent_message_id,
+        })
+    } else {
+        Err(ConversionError::MissingField {
+            field: "tool_msg.result".to_string(),
+        })
+    }
+}
+
 fn compaction_record_to_proto(
     record: &steer_core::app::domain::types::CompactionRecord,
 ) -> proto::CompactionRecord {
@@ -969,12 +1077,102 @@ pub(crate) fn session_event_to_proto(
 
     let event = match session_event {
         SessionEvent::SessionCreated { .. } => None,
-        SessionEvent::MessageAdded { message, model } => {
+        SessionEvent::AssistantMessageAdded { message, model } => {
             let proto_message = message_to_proto(message)?;
-            Some(proto::session_event::Event::MessageAdded(
-                proto::MessageAddedEvent {
-                    message: Some(proto_message),
+            let id = proto_message.id;
+            let message_variant = proto_message.message;
+            let assistant_message = match message_variant {
+                Some(proto::message::Message::Assistant(assistant_message)) => {
+                    assistant_message
+                }
+                Some(proto::message::Message::User(_)) => {
+                    return Err(ConversionError::InvalidVariant {
+                        expected: "assistant".to_string(),
+                        actual: "user".to_string(),
+                    })
+                }
+                Some(proto::message::Message::Tool(_)) => {
+                    return Err(ConversionError::InvalidVariant {
+                        expected: "assistant".to_string(),
+                        actual: "tool".to_string(),
+                    })
+                }
+                None => {
+                    return Err(ConversionError::MissingField {
+                        field: "message".to_string(),
+                    })
+                }
+            };
+
+            Some(proto::session_event::Event::AssistantMessageAdded(
+                proto::AssistantMessageAddedEvent {
+                    id,
+                    message: Some(assistant_message),
                     model: Some(model_to_proto(model)),
+                },
+            ))
+        }
+        SessionEvent::UserMessageAdded { message } => {
+            let proto_message = message_to_proto(message)?;
+            let id = proto_message.id;
+            let message_variant = proto_message.message;
+            let user_message = match message_variant {
+                Some(proto::message::Message::User(user_message)) => user_message,
+                Some(proto::message::Message::Assistant(_)) => {
+                    return Err(ConversionError::InvalidVariant {
+                        expected: "user".to_string(),
+                        actual: "assistant".to_string(),
+                    })
+                }
+                Some(proto::message::Message::Tool(_)) => {
+                    return Err(ConversionError::InvalidVariant {
+                        expected: "user".to_string(),
+                        actual: "tool".to_string(),
+                    })
+                }
+                None => {
+                    return Err(ConversionError::MissingField {
+                        field: "message".to_string(),
+                    })
+                }
+            };
+
+            Some(proto::session_event::Event::UserMessageAdded(
+                proto::UserMessageAddedEvent {
+                    id,
+                    message: Some(user_message),
+                },
+            ))
+        }
+        SessionEvent::ToolMessageAdded { message } => {
+            let proto_message = message_to_proto(message)?;
+            let id = proto_message.id;
+            let message_variant = proto_message.message;
+            let tool_message = match message_variant {
+                Some(proto::message::Message::Tool(tool_message)) => tool_message,
+                Some(proto::message::Message::Assistant(_)) => {
+                    return Err(ConversionError::InvalidVariant {
+                        expected: "tool".to_string(),
+                        actual: "assistant".to_string(),
+                    })
+                }
+                Some(proto::message::Message::User(_)) => {
+                    return Err(ConversionError::InvalidVariant {
+                        expected: "tool".to_string(),
+                        actual: "user".to_string(),
+                    })
+                }
+                None => {
+                    return Err(ConversionError::MissingField {
+                        field: "message".to_string(),
+                    })
+                }
+            };
+
+            Some(proto::session_event::Event::ToolMessageAdded(
+                proto::ToolMessageAddedEvent {
+                    id,
+                    message: Some(tool_message),
                 },
             ))
         }
@@ -1375,18 +1573,32 @@ pub(crate) fn proto_to_client_event(
     };
 
     let client_event = match event {
-        proto::session_event::Event::MessageAdded(e) => {
-            let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {
-                field: "message_added_event.message".to_string(),
+        proto::session_event::Event::AssistantMessageAdded(e) => {
+            let assistant_message = e.message.ok_or_else(|| ConversionError::MissingField {
+                field: "assistant_message_added_event.message".to_string(),
             })?;
-            let message = proto_to_message(proto_message)?;
+            let message = proto_assistant_message_to_core(e.id, assistant_message)?;
             let model = e
                 .model
                 .ok_or_else(|| ConversionError::MissingField {
                     field: "model".to_string(),
                 })
                 .and_then(|spec| proto_to_model(&spec))?;
-            ClientEvent::MessageAdded { message, model }
+            ClientEvent::AssistantMessageAdded { message, model }
+        }
+        proto::session_event::Event::UserMessageAdded(e) => {
+            let user_message = e.message.ok_or_else(|| ConversionError::MissingField {
+                field: "user_message_added_event.message".to_string(),
+            })?;
+            let message = proto_user_message_to_core(e.id, user_message)?;
+            ClientEvent::UserMessageAdded { message }
+        }
+        proto::session_event::Event::ToolMessageAdded(e) => {
+            let tool_message = e.message.ok_or_else(|| ConversionError::MissingField {
+                field: "tool_message_added_event.message".to_string(),
+            })?;
+            let message = proto_tool_message_to_core(e.id, tool_message)?;
+            ClientEvent::ToolMessageAdded { message }
         }
         proto::session_event::Event::MessageUpdated(e) => {
             let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {

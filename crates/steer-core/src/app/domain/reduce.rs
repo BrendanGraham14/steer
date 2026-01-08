@@ -93,7 +93,6 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             op_id,
             message_id,
             command,
-            model,
             timestamp,
         } => handle_direct_bash(
             state,
@@ -101,7 +100,6 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             op_id,
             message_id,
             command,
-            model,
             timestamp,
         ),
 
@@ -206,9 +204,8 @@ fn handle_user_input(
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::MessageAdded {
+        event: SessionEvent::UserMessageAdded {
             message: message.clone(),
-            model: model.clone(),
         },
     });
 
@@ -273,9 +270,8 @@ fn handle_user_edited_message(
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::MessageAdded {
+        event: SessionEvent::UserMessageAdded {
             message: message.clone(),
-            model: model.clone(),
         },
     });
 
@@ -573,18 +569,6 @@ fn handle_tool_result(
 
     let is_direct_bash = matches!(op.kind, OperationKind::DirectBash { .. });
 
-    let model = match state.operation_models.get(&op_id).cloned() {
-        Some(model) => model,
-        None => {
-            return vec![Effect::EmitEvent {
-                session_id,
-                event: SessionEvent::Error {
-                    message: format!("Missing model for tool result on operation {op_id}"),
-                },
-            }];
-        }
-    };
-
     if is_direct_bash {
         let command = match &op.kind {
             OperationKind::DirectBash { command } => command.clone(),
@@ -650,6 +634,18 @@ fn handle_tool_result(
         return effects;
     }
 
+    let model = match state.operation_models.get(&op_id).cloned() {
+        Some(model) => model,
+        None => {
+            return vec![Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: format!("Missing model for tool result on operation {op_id}"),
+                },
+            }];
+        }
+    };
+
     let event = match &tool_result {
         ToolResult::Error(e) => SessionEvent::ToolCallFailed {
             id: tool_call_id.clone(),
@@ -681,10 +677,7 @@ fn handle_tool_result(
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::MessageAdded {
-            message: tool_message,
-            model: model.clone(),
-        },
+        event: SessionEvent::ToolMessageAdded { message: tool_message },
     });
 
     let all_tools_complete = state
@@ -767,7 +760,7 @@ fn handle_model_response_complete(
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::MessageAdded { message, model },
+        event: SessionEvent::AssistantMessageAdded { message, model },
     });
 
     if tool_calls.is_empty() {
@@ -823,7 +816,6 @@ fn handle_direct_bash(
     op_id: crate::app::domain::types::OpId,
     message_id: crate::app::domain::types::MessageId,
     command: String,
-    model: crate::config::model::ModelId,
     timestamp: u64,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
@@ -852,15 +844,11 @@ fn handle_direct_bash(
             command: command.clone(),
         },
     );
-    state.operation_models.insert(op_id, model.clone());
     state.operation_messages.insert(op_id, message_id);
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::MessageAdded {
-            message,
-            model: model.clone(),
-        },
+        event: SessionEvent::UserMessageAdded { message },
     });
 
     effects.push(Effect::EmitEvent {
@@ -1007,7 +995,9 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
         SessionEvent::SessionCreated { config, .. } => {
             state.session_config = Some(config.clone());
         }
-        SessionEvent::MessageAdded { message, .. } => {
+        SessionEvent::AssistantMessageAdded { message, .. }
+        | SessionEvent::UserMessageAdded { message }
+        | SessionEvent::ToolMessageAdded { message } => {
             state.conversation.add_message(message.clone());
             state.conversation.active_message_id = Some(message.id().to_string());
         }
@@ -1100,7 +1090,7 @@ fn handle_compaction_complete(
     vec![
         Effect::EmitEvent {
             session_id,
-            event: SessionEvent::MessageAdded {
+            event: SessionEvent::AssistantMessageAdded {
                 message: summary_message,
                 model,
             },

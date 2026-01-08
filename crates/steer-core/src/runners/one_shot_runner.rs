@@ -91,12 +91,12 @@ impl OneShotRunner {
 
         while let Some(envelope) = subscription.recv().await {
             match envelope.event {
-                SessionEvent::MessageAdded { message, model: _ } => {
+                SessionEvent::AssistantMessageAdded { message, model: _ } => {
                     info!(
                         session_id = %session_id,
                         role = ?message.role(),
                         id = %message.id(),
-                        "MessageAdded event"
+                        "AssistantMessageAdded event"
                     );
                     messages.push(message);
                 }

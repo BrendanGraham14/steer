@@ -97,7 +97,6 @@ pub enum Action {
         op_id: OpId,
         message_id: MessageId,
         command: String,
-        model: ModelId,
         timestamp: u64,
     },
 

@@ -312,7 +312,7 @@ impl AgentInterpreter {
                 }
 
                 AgentOutput::EmitMessage { message } => {
-                    self.emit_event(SessionEvent::MessageAdded {
+                    self.emit_event(SessionEvent::AssistantMessageAdded {
                         message: message.clone(),
                         model: agent_config.model.clone(),
                     })

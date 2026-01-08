@@ -29,7 +29,9 @@ impl EventProcessor for MessageEventProcessor {
     fn can_handle(&self, event: &ClientEvent) -> bool {
         matches!(
             event,
-            ClientEvent::MessageAdded { .. }
+            ClientEvent::AssistantMessageAdded { .. }
+                | ClientEvent::UserMessageAdded { .. }
+                | ClientEvent::ToolMessageAdded { .. }
                 | ClientEvent::MessageUpdated { .. }
                 | ClientEvent::MessageDelta { .. }
                 | ClientEvent::ThinkingDelta { .. }
@@ -43,7 +45,9 @@ impl EventProcessor for MessageEventProcessor {
         ctx: &mut ProcessingContext,
     ) -> ProcessingResult {
         match event {
-            ClientEvent::MessageAdded { message, .. } => {
+            ClientEvent::AssistantMessageAdded { message, .. }
+            | ClientEvent::UserMessageAdded { message }
+            | ClientEvent::ToolMessageAdded { message } => {
                 self.handle_message_added(message, ctx);
                 ProcessingResult::Handled
             }
@@ -469,7 +473,7 @@ mod tests {
         // Process the Assistant message
         let result = processor
             .process(
-                ClientEvent::MessageAdded {
+                ClientEvent::AssistantMessageAdded {
                     message: assistant_message,
                     model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
                 },

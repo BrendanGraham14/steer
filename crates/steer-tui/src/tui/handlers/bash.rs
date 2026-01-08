@@ -62,9 +62,7 @@ impl Tui {
             // Execute the bash command
             let command = self.input_panel_state.content();
             if !command.trim().is_empty() {
-                self.client
-                    .execute_bash_command(command, self.current_model.clone())
-                    .await?;
+                self.client.execute_bash_command(command).await?;
                 self.input_panel_state.clear(); // Clear after executing
                 self.input_mode = self.default_input_mode();
                 self.input_panel_state

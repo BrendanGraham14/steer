@@ -2,9 +2,15 @@ use super::types::*;
 
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
-    MessageAdded {
+    AssistantMessageAdded {
         message: Message,
         model: ModelId,
+    },
+    UserMessageAdded {
+        message: Message,
+    },
+    ToolMessageAdded {
+        message: Message,
     },
     MessageUpdated {
         message: Message,

@@ -115,7 +115,11 @@ mod tests {
         match effect {
             Effect::EmitEvent { event, .. } => EffectSnapshot::EmitEvent {
                 event_type: match event {
-                    SessionEvent::MessageAdded { .. } => "MessageAdded".to_string(),
+                    SessionEvent::AssistantMessageAdded { .. } => {
+                        "AssistantMessageAdded".to_string()
+                    }
+                    SessionEvent::UserMessageAdded { .. } => "UserMessageAdded".to_string(),
+                    SessionEvent::ToolMessageAdded { .. } => "ToolMessageAdded".to_string(),
                     SessionEvent::OperationStarted { .. } => "OperationStarted".to_string(),
                     SessionEvent::OperationCompleted { .. } => "OperationCompleted".to_string(),
                     SessionEvent::OperationCancelled { .. } => "OperationCancelled".to_string(),
@@ -300,7 +304,7 @@ mod tests {
             }],
             expected_effects: vec![
                 EffectSnapshot::EmitEvent {
-                    event_type: "MessageAdded".to_string(),
+                    event_type: "UserMessageAdded".to_string(),
                 },
                 EffectSnapshot::EmitEvent {
                     event_type: "OperationStarted".to_string(),
@@ -341,14 +345,14 @@ mod tests {
             ],
             expected_effects: vec![
                 EffectSnapshot::EmitEvent {
-                    event_type: "MessageAdded".to_string(),
+                    event_type: "UserMessageAdded".to_string(),
                 },
                 EffectSnapshot::EmitEvent {
                     event_type: "OperationStarted".to_string(),
                 },
                 EffectSnapshot::CallModel,
                 EffectSnapshot::EmitEvent {
-                    event_type: "MessageAdded".to_string(),
+                    event_type: "AssistantMessageAdded".to_string(),
                 },
                 EffectSnapshot::EmitEvent {
                     event_type: "OperationCompleted".to_string(),

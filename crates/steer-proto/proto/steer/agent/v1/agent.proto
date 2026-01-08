@@ -44,7 +44,9 @@ message SessionEvent {
   google.protobuf.Timestamp timestamp = 2;
 
   oneof event {
-    MessageAddedEvent message_added = 3;
+    AssistantMessageAddedEvent assistant_message_added = 3;
+    UserMessageAddedEvent user_message_added = 16;
+    ToolMessageAddedEvent tool_message_added = 17;
     MessageUpdatedEvent message_updated = 4;
     ToolCallStartedEvent tool_call_started = 6;
     ToolCallCompletedEvent tool_call_completed = 7;
@@ -65,9 +67,23 @@ message SessionEvent {
 }
 
 // Event message definitions
-message MessageAddedEvent {
-  Message message = 1;
-  ModelSpec model = 2;
+// Assistant message - corresponds to a model response
+message AssistantMessageAddedEvent {
+  string id = 1;
+  AssistantMessage message = 2;
+  ModelSpec model = 3;
+}
+
+// User-authored message - no model attribution
+message UserMessageAddedEvent {
+  string id = 1;
+  UserMessage message = 2;
+}
+
+// Tool result message - no model attribution
+message ToolMessageAddedEvent {
+  string id = 1;
+  ToolMessage message = 2;
 }
 
 message MessageUpdatedEvent {
@@ -252,7 +268,8 @@ message CompactSessionResponse {
 message ExecuteBashCommandRequest {
   string session_id = 1;
   string command = 2;
-  ModelSpec model = 3;
+  reserved 3;
+  reserved "model";
 }
 
 message ExecuteBashCommandResponse {

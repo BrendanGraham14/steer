@@ -337,7 +337,6 @@ impl AgentClient {
     pub async fn execute_bash_command(
         &self,
         command: String,
-        model: steer_core::config::model::ModelId,
     ) -> GrpcResult<()> {
         let session_id = self
             .session_id
@@ -352,7 +351,6 @@ impl AgentClient {
         let request = Request::new(proto::ExecuteBashCommandRequest {
             session_id,
             command,
-            model: Some(model_to_proto(model)),
         });
 
         self.client

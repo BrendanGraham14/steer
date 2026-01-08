@@ -24,9 +24,20 @@ pub enum SessionEvent {
         parent_session_id: Option<SessionId>,
     },
 
-    MessageAdded {
+    /// Assistant-authored message; includes the model that produced it.
+    AssistantMessageAdded {
         message: Message,
         model: ModelId,
+    },
+
+    /// User-authored message; no model attribution.
+    UserMessageAdded {
+        message: Message,
+    },
+
+    /// Tool result message; no model attribution.
+    ToolMessageAdded {
+        message: Message,
     },
 
     MessageUpdated {

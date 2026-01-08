@@ -656,7 +656,6 @@ impl RuntimeHandle {
         &self,
         session_id: SessionId,
         command: String,
-        model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let op_id = OpId::new();
         let message_id = MessageId::new();
@@ -667,7 +666,6 @@ impl RuntimeHandle {
             op_id,
             message_id,
             command,
-            model,
             timestamp,
         };
 

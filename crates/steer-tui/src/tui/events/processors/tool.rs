@@ -284,7 +284,7 @@ mod tests {
             };
             let _ = msg_proc
                 .process(
-                    ClientEvent::MessageAdded {
+                    ClientEvent::AssistantMessageAdded {
                         message: assistant,
                         model: model.clone(),
                     },
