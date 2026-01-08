@@ -157,7 +157,7 @@ mod tests {
 
     fn snapshot_state(state: &AppState) -> StateSnapshot {
         StateSnapshot {
-            message_count: state.conversation.messages.len(),
+            message_count: state.message_graph.messages.len(),
             has_operation: state.current_operation.is_some(),
             operation_kind: state.current_operation.as_ref().map(|op| match op.kind {
                 OperationKind::AgentLoop => "AgentLoop".to_string(),
@@ -444,7 +444,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.conversation.messages.len(), 1);
+        assert_eq!(state.message_graph.messages.len(), 1);
         assert!(state.current_operation.is_some());
 
         let tool_call = ToolCall {
@@ -470,7 +470,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.conversation.messages.len(), 2);
+        assert_eq!(state.message_graph.messages.len(), 2);
         assert!(state.pending_approval.is_some());
 
         state.approved_tools.insert("bash".to_string());
@@ -511,7 +511,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.conversation.messages.len(), 3);
+        assert_eq!(state.message_graph.messages.len(), 3);
 
         let _ = reduce(
             &mut state,
@@ -526,7 +526,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.conversation.messages.len(), 4);
+        assert_eq!(state.message_graph.messages.len(), 4);
         assert!(state.current_operation.is_none());
     }
 

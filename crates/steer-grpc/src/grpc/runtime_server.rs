@@ -370,7 +370,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 })),
             };
 
-            for message in state.conversation.messages {
+            for message in state.message_graph.messages {
                 let proto_msg = message_to_proto(message)
                     .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
                 yield GetSessionResponse {
@@ -432,11 +432,11 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
             info!(
                 "Found session state with {} messages and {} approved tools",
-                state.conversation.messages.len(),
+                state.message_graph.messages.len(),
                 state.approved_tools.len()
             );
 
-            for msg in state.conversation.messages {
+            for msg in state.message_graph.messages {
                 let proto_msg = message_to_proto(msg)
                     .map_err(|e| Status::internal(format!("Failed to convert message: {e}")))?;
                 yield GetConversationResponse {

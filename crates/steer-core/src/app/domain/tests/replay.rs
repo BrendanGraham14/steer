@@ -79,8 +79,8 @@ mod tests {
         }
 
         assert_eq!(
-            live_state.conversation.messages.len(),
-            replayed_state.conversation.messages.len(),
+            live_state.message_graph.messages.len(),
+            replayed_state.message_graph.messages.len(),
             "Message count should match after replay"
         );
 
@@ -153,8 +153,8 @@ mod tests {
         }
 
         assert_eq!(
-            live_state.conversation.messages.len(),
-            replayed_state.conversation.messages.len(),
+            live_state.message_graph.messages.len(),
+            replayed_state.message_graph.messages.len(),
             "Message count should match"
         );
 
@@ -325,8 +325,8 @@ mod tests {
         }
 
         assert_eq!(
-            hydrated_state.conversation.messages.len(),
-            manually_replayed.conversation.messages.len(),
+            hydrated_state.message_graph.messages.len(),
+            manually_replayed.message_graph.messages.len(),
             "Message count should match"
         );
 
@@ -392,16 +392,16 @@ mod tests {
         }
 
         assert_eq!(
-            live_state.conversation.messages.len(),
-            replayed_state.conversation.messages.len(),
+            live_state.message_graph.messages.len(),
+            replayed_state.message_graph.messages.len(),
             "Should have same number of messages"
         );
 
         for (i, (live_msg, replayed_msg)) in live_state
-            .conversation
+            .message_graph
             .messages
             .iter()
-            .zip(replayed_state.conversation.messages.iter())
+            .zip(replayed_state.message_graph.messages.iter())
             .enumerate()
         {
             assert_eq!(
@@ -468,7 +468,7 @@ mod tests {
         let session_id = deterministic_session_id();
         let mut state = AppState::new(session_id);
 
-        let initial_message_count = state.conversation.messages.len();
+        let initial_message_count = state.message_graph.messages.len();
         let initial_event_seq = state.event_sequence;
 
         let _ = reduce(
@@ -481,7 +481,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.conversation.messages.len(),
+            state.message_graph.messages.len(),
             initial_message_count,
             "No messages should be added"
         );
@@ -537,8 +537,8 @@ mod tests {
         }
 
         assert_eq!(
-            live_state.conversation.messages.len(),
-            partial_state.conversation.messages.len(),
+            live_state.message_graph.messages.len(),
+            partial_state.message_graph.messages.len(),
             "Incremental replay should produce same state"
         );
     }

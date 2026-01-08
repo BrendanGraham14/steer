@@ -468,21 +468,21 @@ impl SessionActor {
 
                 let messages: Vec<crate::app::conversation::Message> = self
                     .state
-                    .conversation
+                    .message_graph
                     .get_thread_messages()
                     .into_iter()
                     .cloned()
                     .collect();
                 let compacted_head = self
                     .state
-                    .conversation
+                    .message_graph
                     .active_message_id
                     .clone()
                     .map(MessageId::from)
                     .unwrap_or_default();
                 let previous_active = self
                     .state
-                    .conversation
+                    .message_graph
                     .active_message_id
                     .clone()
                     .map(MessageId::from);

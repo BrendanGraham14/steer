@@ -214,7 +214,7 @@ fn handle_user_input(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
-    let parent_id = state.conversation.active_message_id.clone();
+    let parent_id = state.message_graph.active_message_id.clone();
 
     let message = Message {
         data: MessageData::User {
@@ -227,8 +227,8 @@ fn handle_user_input(
         parent_message_id: parent_id,
     };
 
-    state.conversation.add_message(message.clone());
-    state.conversation.active_message_id = Some(message_id.0.clone());
+    state.message_graph.add_message(message.clone());
+    state.message_graph.active_message_id = Some(message_id.0.clone());
 
     state.start_operation(op_id, OperationKind::AgentLoop);
     state.operation_models.insert(op_id, model.clone());
@@ -253,7 +253,7 @@ fn handle_user_input(
         op_id,
         model,
         messages: state
-            .conversation
+            .message_graph
             .get_thread_messages()
             .into_iter()
             .cloned()
@@ -290,7 +290,7 @@ fn handle_user_edited_message(
     let mut effects = Vec::new();
 
     let parent_id = state
-        .conversation
+        .message_graph
         .messages
         .iter()
         .find(|m| m.id() == original_message_id.0)
@@ -305,8 +305,8 @@ fn handle_user_edited_message(
         parent_message_id: parent_id,
     };
 
-    state.conversation.add_message(message.clone());
-    state.conversation.active_message_id = Some(new_message_id.0.clone());
+    state.message_graph.add_message(message.clone());
+    state.message_graph.active_message_id = Some(new_message_id.0.clone());
 
     state.start_operation(op_id, OperationKind::AgentLoop);
     state.operation_models.insert(op_id, model.clone());
@@ -331,7 +331,7 @@ fn handle_user_edited_message(
         op_id,
         model,
         messages: state
-            .conversation
+            .message_graph
             .get_thread_messages()
             .into_iter()
             .cloned()
@@ -630,7 +630,7 @@ fn handle_tool_result(
 
         let updated = state.operation_messages.remove(&op_id).and_then(|id| {
             state
-                .conversation
+                .message_graph
                 .update_command_execution(
                     id.as_str(),
                     command.clone(),
@@ -639,7 +639,7 @@ fn handle_tool_result(
                     exit_code,
                 )
                 .or_else(|| {
-                    let parent_id = state.conversation.active_message_id.clone();
+                    let parent_id = state.message_graph.active_message_id.clone();
                     let timestamp = Message::current_timestamp();
                     Some(Message {
                         data: MessageData::User {
@@ -703,7 +703,7 @@ fn handle_tool_result(
 
     effects.push(Effect::EmitEvent { session_id, event });
 
-    let parent_id = state.conversation.active_message_id.clone();
+    let parent_id = state.message_graph.active_message_id.clone();
     let tool_message = Message {
         data: MessageData::Tool {
             tool_use_id: tool_call_id.0.clone(),
@@ -713,7 +713,7 @@ fn handle_tool_result(
         id: format!("tool_result_{}", tool_call_id.0),
         parent_message_id: parent_id,
     };
-    state.conversation.add_message(tool_message.clone());
+    state.message_graph.add_message(tool_message.clone());
 
     effects.push(Effect::EmitEvent {
         session_id,
@@ -735,7 +735,7 @@ fn handle_tool_result(
             op_id,
             model,
             messages: state
-                .conversation
+                .message_graph
                 .get_thread_messages()
                 .into_iter()
                 .cloned()
@@ -774,7 +774,7 @@ fn handle_model_response_complete(
         })
         .collect();
 
-    let parent_id = state.conversation.active_message_id.clone();
+    let parent_id = state.message_graph.active_message_id.clone();
 
     let message = Message {
         data: MessageData::Assistant {
@@ -785,8 +785,8 @@ fn handle_model_response_complete(
         parent_message_id: parent_id,
     };
 
-    state.conversation.add_message(message.clone());
-    state.conversation.active_message_id = Some(message_id.0.clone());
+    state.message_graph.add_message(message.clone());
+    state.message_graph.active_message_id = Some(message_id.0.clone());
 
     let model = match state.operation_models.get(&op_id).cloned() {
         Some(model) => model,
@@ -862,7 +862,7 @@ fn handle_direct_bash(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
-    let parent_id = state.conversation.active_message_id.clone();
+    let parent_id = state.message_graph.active_message_id.clone();
     let message = Message {
         data: MessageData::User {
             content: vec![UserContent::CommandExecution {
@@ -877,8 +877,8 @@ fn handle_direct_bash(
         parent_message_id: parent_id,
     };
 
-    state.conversation.add_message(message.clone());
-    state.conversation.active_message_id = Some(message_id.0.clone());
+    state.message_graph.add_message(message.clone());
+    state.message_graph.active_message_id = Some(message_id.0.clone());
 
     state.start_operation(
         op_id,
@@ -925,7 +925,7 @@ fn handle_request_compaction(
     model: crate::config::model::ModelId,
 ) -> Vec<Effect> {
     const MIN_MESSAGES_FOR_COMPACT: usize = 3;
-    let message_count = state.conversation.get_thread_messages().len();
+    let message_count = state.message_graph.get_thread_messages().len();
 
     if message_count < MIN_MESSAGES_FOR_COMPACT {
         return vec![Effect::EmitEvent {
@@ -980,7 +980,7 @@ fn handle_cancel(
 
     if let Some(pending) = state.pending_approval.take() {
         let tool_result = ToolResult::Error(ToolError::Cancelled(pending.tool_call.name.clone()));
-        let parent_id = state.conversation.active_message_id.clone();
+        let parent_id = state.message_graph.active_message_id.clone();
 
         let message = Message {
             data: MessageData::Tool {
@@ -991,7 +991,7 @@ fn handle_cancel(
             id: format!("cancelled_{}", pending.tool_call.id),
             parent_message_id: parent_id,
         };
-        state.conversation.add_message(message);
+        state.message_graph.add_message(message);
     }
 
     state.approval_queue.clear();
@@ -1040,11 +1040,11 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
         SessionEvent::AssistantMessageAdded { message, .. }
         | SessionEvent::UserMessageAdded { message }
         | SessionEvent::ToolMessageAdded { message } => {
-            state.conversation.add_message(message.clone());
-            state.conversation.active_message_id = Some(message.id().to_string());
+            state.message_graph.add_message(message.clone());
+            state.message_graph.active_message_id = Some(message.id().to_string());
         }
         SessionEvent::MessageUpdated { message } => {
-            state.conversation.replace_message(message.clone());
+            state.message_graph.replace_message(message.clone());
         }
         SessionEvent::ApprovalDecided {
             decision, remember, ..
@@ -1126,7 +1126,7 @@ fn handle_compaction_complete(
         timestamp,
     };
 
-    state.conversation.add_message(summary_message.clone());
+    state.message_graph.add_message(summary_message.clone());
 
     let record = CompactionRecord::with_timestamp(
         compaction_id,
@@ -1284,7 +1284,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.conversation.messages.len(), 1);
+        assert_eq!(state.message_graph.messages.len(), 1);
         assert!(state.current_operation.is_some());
         assert!(
             effects

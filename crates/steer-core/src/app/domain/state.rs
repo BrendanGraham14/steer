@@ -12,7 +12,7 @@ pub struct AppState {
     pub session_id: SessionId,
     pub session_config: Option<SessionConfig>,
 
-    pub conversation: MessageGraph,
+    pub message_graph: MessageGraph,
 
     pub cached_system_prompt: Option<String>,
 
@@ -95,7 +95,7 @@ impl AppState {
         Self {
             session_id,
             session_config: None,
-            conversation: MessageGraph::new(),
+            message_graph: MessageGraph::new(),
             cached_system_prompt: None,
             tools: Vec::new(),
             approved_tools: HashSet::new(),

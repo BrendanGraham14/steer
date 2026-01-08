@@ -168,8 +168,8 @@ mod tests {
             let effects2 = reduce(&mut state2, action);
 
             prop_assert_eq!(
-                state1.conversation.messages.len(),
-                state2.conversation.messages.len(),
+                state1.message_graph.messages.len(),
+                state2.message_graph.messages.len(),
                 "Message counts should be equal"
             );
             prop_assert_eq!(
@@ -212,7 +212,7 @@ mod tests {
                 effects.iter().any(|e| matches!(e, Effect::CallModel { .. })),
                 "Should emit CallModel effect"
             );
-            prop_assert_eq!(state.conversation.messages.len(), 1, "Should add one message");
+            prop_assert_eq!(state.message_graph.messages.len(), 1, "Should add one message");
         }
 
         #[test]
