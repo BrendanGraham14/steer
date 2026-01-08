@@ -5,12 +5,10 @@ use tracing::info;
 use super::Command;
 use std::path::PathBuf;
 use steer_core::catalog::CatalogConfig;
-use steer_core::config::model::ModelId;
 
 pub struct ServeCommand {
     pub port: u16,
     pub bind: String,
-    pub model: ModelId,
     pub session_db: Option<std::path::PathBuf>,
     pub catalogs: Vec<PathBuf>,
 }
@@ -36,13 +34,8 @@ impl Command for ServeCommand {
                 .collect(),
         );
 
-        let config = steer_grpc::ServiceHostConfig::with_catalog(
-            db_path,
-            self.model.clone(),
-            addr,
-            catalog_config,
-        )
-        .map_err(|e| eyre!("Failed to create service config: {}", e))?;
+        let config = steer_grpc::ServiceHostConfig::with_catalog(db_path, addr, catalog_config)
+            .map_err(|e| eyre!("Failed to create service config: {}", e))?;
 
         let mut host = steer_grpc::ServiceHost::new(config)
             .await

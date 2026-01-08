@@ -188,9 +188,6 @@ async fn main() -> Result<()> {
             bind,
             catalogs: server_catalogs,
         } => {
-            // Use builtin default model for the server
-            let default_model = steer_core::config::model::builtin::opus();
-
             // Merge catalogs: prefer subcommand if provided, else use global
             let catalogs = if !server_catalogs.is_empty() {
                 server_catalogs
@@ -202,7 +199,6 @@ async fn main() -> Result<()> {
             let command = ServeCommand {
                 port,
                 bind,
-                model: default_model,
                 session_db: cli.session_db.clone(),
                 catalogs: catalogs.iter().map(PathBuf::from).collect(),
             };
@@ -336,8 +332,8 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
             ..Default::default()
         };
 
-        let loader =
-            SessionConfigLoader::new(params.session_config_path.clone()).with_overrides(overrides);
+        let loader = SessionConfigLoader::new(model_id.clone(), params.session_config_path.clone())
+            .with_overrides(overrides);
 
         let session_config = loader.load().await?;
 
@@ -395,29 +391,6 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         }
     }
 
-    // If no session_id, we need to create a new session
-    if session_id.is_none() {
-        // Load session config (explicit path if provided, else auto-discovery or defaults)
-        let overrides = SessionConfigOverrides {
-            system_prompt: params.system_prompt.clone(),
-            ..Default::default()
-        };
-
-        let loader =
-            SessionConfigLoader::new(params.session_config_path.clone()).with_overrides(overrides);
-
-        let session_config = loader.load().await?;
-
-        // Create the session
-        let new_session_id = client
-            .create_session(session_config)
-            .await
-            .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
-        tracing::info!("Created session from config: {}", new_session_id);
-        println!("Session ID: {new_session_id}");
-        session_id = Some(new_session_id);
-    }
-
     // Use builtin default model for TUI initially
     let default_model = steer_core::config::model::builtin::opus();
 
@@ -446,6 +419,29 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     } else {
         default_model
     };
+
+    // If no session_id, we need to create a new session
+    if session_id.is_none() {
+        // Load session config (explicit path if provided, else auto-discovery or defaults)
+        let overrides = SessionConfigOverrides {
+            system_prompt: params.system_prompt.clone(),
+            ..Default::default()
+        };
+
+        let loader = SessionConfigLoader::new(model_id.clone(), params.session_config_path.clone())
+            .with_overrides(overrides);
+
+        let session_config = loader.load().await?;
+
+        // Create the session
+        let new_session_id = client
+            .create_session(session_config)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
+        tracing::info!("Created session from config: {}", new_session_id);
+        println!("Session ID: {new_session_id}");
+        session_id = Some(new_session_id);
+    }
 
     // Run TUI with the client
     tui::run_tui(

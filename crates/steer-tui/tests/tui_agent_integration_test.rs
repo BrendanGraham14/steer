@@ -101,7 +101,6 @@ async fn test_tui_agent_service_file_listing() {
     let bind_addr = "127.0.0.1:50051".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -125,6 +124,7 @@ async fn test_tui_agent_service_file_listing() {
     let mut grpc_client = AgentServiceClient::new(channel.clone());
 
     // Test 1: Create a session with local workspace
+    let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
             config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
@@ -136,6 +136,10 @@ async fn test_tui_agent_service_file_listing() {
         metadata: [("test".to_string(), "true".to_string())]
             .into_iter()
             .collect(),
+        default_model: Some(steer_proto::agent::v1::ModelSpec {
+            provider_id: default_model.0.storage_key(),
+            model_id: default_model.1.clone(),
+        }),
         ..Default::default()
     };
 
@@ -254,7 +258,6 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     let bind_addr = "127.0.0.1:50052".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -271,6 +274,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
         .unwrap();
     // Create session
     let mut grpc_client = AgentServiceClient::new(channel.clone());
+    let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
             config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
@@ -278,6 +282,10 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
                     path: workspace_path.to_string_lossy().to_string(),
                 },
             )),
+        }),
+        default_model: Some(steer_proto::agent::v1::ModelSpec {
+            provider_id: default_model.0.storage_key(),
+            model_id: default_model.1.clone(),
         }),
         ..Default::default()
     };
@@ -358,7 +366,6 @@ async fn test_workspace_changed_event_flow() {
     let bind_addr = "127.0.0.1:50053".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -376,6 +383,7 @@ async fn test_workspace_changed_event_flow() {
 
     // Create session
     let mut grpc_client = AgentServiceClient::new(channel.clone());
+    let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let create_req = CreateSessionRequest {
         workspace_config: Some(WorkspaceConfig {
             config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
@@ -383,6 +391,10 @@ async fn test_workspace_changed_event_flow() {
                     path: workspace_path.to_string_lossy().to_string(),
                 },
             )),
+        }),
+        default_model: Some(steer_proto::agent::v1::ModelSpec {
+            provider_id: default_model.0.storage_key(),
+            model_id: default_model.1.clone(),
         }),
         ..Default::default()
     };

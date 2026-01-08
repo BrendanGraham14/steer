@@ -13,14 +13,12 @@ use steer_core::app::domain::runtime::{RuntimeHandle, RuntimeService};
 use steer_core::app::domain::session::{SessionCatalog, SqliteEventStore};
 use steer_core::auth::storage::AuthStorage;
 use steer_core::catalog::CatalogConfig;
-use steer_core::config::model::ModelId;
 use steer_core::tools::ToolSystemBuilder;
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
 
 #[derive(Clone)]
 pub struct ServiceHostConfig {
     pub db_path: std::path::PathBuf,
-    pub default_model: ModelId,
     pub bind_addr: SocketAddr,
     pub auth_storage: Arc<dyn AuthStorage>,
     pub catalog_config: CatalogConfig,
@@ -30,7 +28,6 @@ impl std::fmt::Debug for ServiceHostConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ServiceHostConfig")
             .field("db_path", &self.db_path)
-            .field("default_model", &self.default_model)
             .field("bind_addr", &self.bind_addr)
             .field("auth_storage", &"Arc<dyn AuthStorage>")
             .field("catalog_config", &self.catalog_config)
@@ -39,11 +36,7 @@ impl std::fmt::Debug for ServiceHostConfig {
 }
 
 impl ServiceHostConfig {
-    pub fn new(
-        db_path: std::path::PathBuf,
-        default_model: ModelId,
-        bind_addr: SocketAddr,
-    ) -> Result<Self> {
+    pub fn new(db_path: std::path::PathBuf, bind_addr: SocketAddr) -> Result<Self> {
         let auth_storage = Arc::new(
             steer_core::auth::DefaultAuthStorage::new()
                 .map_err(|e| GrpcError::CoreError(e.into()))?,
@@ -51,7 +44,6 @@ impl ServiceHostConfig {
 
         Ok(Self {
             db_path,
-            default_model,
             bind_addr,
             auth_storage,
             catalog_config: CatalogConfig::default(),
@@ -60,7 +52,6 @@ impl ServiceHostConfig {
 
     pub fn with_catalog(
         db_path: std::path::PathBuf,
-        default_model: ModelId,
         bind_addr: SocketAddr,
         catalog_config: CatalogConfig,
     ) -> Result<Self> {
@@ -71,7 +62,6 @@ impl ServiceHostConfig {
 
         Ok(Self {
             db_path,
-            default_model,
             bind_addr,
             auth_storage,
             catalog_config,
@@ -252,7 +242,6 @@ mod tests {
 
         let config = ServiceHostConfig {
             db_path,
-            default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
             catalog_config: CatalogConfig::default(),
