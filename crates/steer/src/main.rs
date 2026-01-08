@@ -274,9 +274,14 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         .clone()
         .unwrap_or_else(steer_core::config::model::builtin::opus);
 
+    let session_db_path = match params.session_db.clone() {
+        Some(path) => path,
+        None => steer_core::utils::session::create_session_store_path()?,
+    };
+
     let local_grpc_setup = local_server::setup_local_grpc_with_catalog(
         default_model.clone(),
-        params.session_db.clone(),
+        Some(session_db_path),
         steer_core::catalog::CatalogConfig::with_catalogs(catalog_paths),
     )
     .await

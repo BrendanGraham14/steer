@@ -1427,12 +1427,10 @@ pub async fn run_tui(
     };
 
     let (session_id, messages) = if let Some(session_id) = session_id {
-        let (messages, _approved_tools) = client
-            .get_conversation(&session_id)
-            .await
-            .map_err(Box::new)?;
+        let (messages, _approved_tools) =
+            client.resume_session(&session_id).await.map_err(Box::new)?;
         info!(
-            "Loaded session: {} with {} messages",
+            "Resumed session: {} with {} messages",
             session_id,
             messages.len()
         );

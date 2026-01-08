@@ -95,6 +95,16 @@ impl AgentClient {
         Ok(session.id)
     }
 
+    pub async fn resume_session(
+        &self,
+        session_id: &str,
+    ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
+        let result = self.get_conversation(session_id).await?;
+        *self.session_id.lock().await = Some(session_id.to_string());
+        info!("Resumed session: {}", session_id);
+        Ok(result)
+    }
+
     pub async fn subscribe_session_events(&self) -> GrpcResult<()> {
         let session_id = self
             .session_id
@@ -103,7 +113,8 @@ impl AgentClient {
             .as_ref()
             .cloned()
             .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "No session ID - call create_session first".to_string(),
+                reason: "No active session - call create_session or resume_session first"
+                    .to_string(),
             })?;
 
         debug!("Subscribing to session events for session: {}", session_id);
