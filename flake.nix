@@ -87,12 +87,8 @@
               openssl
               sqlite
             ]
-            ++ pkgs.lib.optionals stdenv.isDarwin [
-              darwin.apple_sdk.frameworks.CoreServices
-              darwin.apple_sdk.frameworks.SystemConfiguration
-              darwin.apple_sdk.frameworks.Security
-              libiconv
-            ]
+            # Darwin frameworks (CoreServices, SystemConfiguration, Security, libiconv)
+            # are now included automatically via apple-sdk in stdenv
             ++ pkgs.lib.optionals stdenv.isLinux [
               # Linux-specific dependencies
             ];
