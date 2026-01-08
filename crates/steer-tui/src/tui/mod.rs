@@ -411,7 +411,7 @@ impl Tui {
 
         self.push_notice(
             NoticeLevel::Info,
-            format!("Started new session: {}", new_session_id),
+            format!("Started new session: {new_session_id}"),
         );
 
         self.load_file_cache().await;
@@ -980,14 +980,12 @@ impl Tui {
             {
                 self.push_notice(NoticeLevel::Error, format!("Cannot edit message: {e}"));
             }
-        } else {
-            if let Err(e) = self
-                .client
-                .send_message(content, self.current_model.clone())
-                .await
-            {
-                self.push_notice(NoticeLevel::Error, format!("Cannot send message: {e}"));
-            }
+        } else if let Err(e) = self
+            .client
+            .send_message(content, self.current_model.clone())
+            .await
+        {
+            self.push_notice(NoticeLevel::Error, format!("Cannot send message: {e}"));
         }
         Ok(())
     }
@@ -1595,7 +1593,7 @@ mod tests {
         // Create a TUI instance for testing
         let path = tempdir().unwrap().path().to_path_buf();
         let (client, _server_handle) = local_client_and_server(Some(path)).await;
-        let model = steer_core::config::model::builtin::claude_3_5_sonnet_20241022();
+        let model = steer_core::config::model::builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 
@@ -1660,7 +1658,7 @@ mod tests {
         // Test edge case where Tool result arrives before Assistant message
         let path = tempdir().unwrap().path().to_path_buf();
         let (client, _server_handle) = local_client_and_server(Some(path)).await;
-        let model = steer_core::config::model::builtin::claude_3_5_sonnet_20241022();
+        let model = steer_core::config::model::builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 

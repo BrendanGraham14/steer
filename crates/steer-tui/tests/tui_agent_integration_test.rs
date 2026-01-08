@@ -101,7 +101,7 @@ async fn test_tui_agent_service_file_listing() {
     let bind_addr = "127.0.0.1:50051".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
+        default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -254,7 +254,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     let bind_addr = "127.0.0.1:50052".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
+        default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
@@ -358,7 +358,7 @@ async fn test_workspace_changed_event_flow() {
     let bind_addr = "127.0.0.1:50053".parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
-        default_model: steer_core::config::model::builtin::claude_3_5_sonnet_20241022(),
+        default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),

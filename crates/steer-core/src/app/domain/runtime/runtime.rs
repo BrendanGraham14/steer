@@ -418,7 +418,7 @@ fn build_compaction_prompt(
 
     let conversation_text = messages
         .iter()
-        .map(|m| format_message_for_summary(m))
+        .map(format_message_for_summary)
         .collect::<Vec<_>>()
         .join("\n\n");
 
@@ -428,9 +428,8 @@ fn build_compaction_prompt(
          2. Important context established\n\
          3. Current task state\n\
          4. Critical information needed to continue\n\n\
-         Conversation:\n{}\n\n\
-         Summary:",
-        conversation_text
+         Conversation:\n{conversation_text}\n\n\
+         Summary:"
     );
 
     Message {
@@ -456,7 +455,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("User: {}", text)
+            format!("User: {text}")
         }
         MessageData::Assistant { content } => {
             let text = content
@@ -467,7 +466,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("Assistant: {}", text)
+            format!("Assistant: {text}")
         }
         MessageData::Tool { .. } => String::new(),
     }
@@ -479,7 +478,7 @@ mod tests {
     use crate::config::model::builtin;
 
     fn test_config() -> RuntimeConfig {
-        RuntimeConfig::new(builtin::claude_sonnet_4_20250514())
+        RuntimeConfig::new(builtin::claude_sonnet_4_5())
     }
 
     #[test]

@@ -546,8 +546,9 @@ fn ensure_thinking_first(blocks: Vec<ClaudeContentBlock>) -> Vec<ClaudeContentBl
 
     for block in blocks {
         match block {
-            ClaudeContentBlock::Thinking { .. }
-            | ClaudeContentBlock::RedactedThinking { .. } => thinking_blocks.push(block),
+            ClaudeContentBlock::Thinking { .. } | ClaudeContentBlock::RedactedThinking { .. } => {
+                thinking_blocks.push(block)
+            }
             _ => other_blocks.push(block),
         }
     }
@@ -1017,9 +1018,18 @@ impl Provider for AnthropicClient {
 
 #[derive(Debug)]
 enum BlockState {
-    Text { text: String },
-    Thinking { text: String, signature: Option<String> },
-    ToolUse { id: String, name: String, input: String },
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: String,
+    },
     Unknown,
 }
 
@@ -1037,7 +1047,10 @@ fn block_state_to_content(state: BlockState) -> Option<AssistantContent> {
                 None
             } else {
                 let thought = if let Some(sig) = signature {
-                    ThoughtContent::Signed { text, signature: sig }
+                    ThoughtContent::Signed {
+                        text,
+                        signature: sig,
+                    }
                 } else {
                     ThoughtContent::Simple { text }
                 };
@@ -1048,9 +1061,8 @@ fn block_state_to_content(state: BlockState) -> Option<AssistantContent> {
             if id.is_empty() || name.is_empty() {
                 None
             } else {
-                let parameters: serde_json::Value =
-                    serde_json::from_str(&input)
-                        .unwrap_or(serde_json::Value::Object(Default::default()));
+                let parameters: serde_json::Value = serde_json::from_str(&input)
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
                 Some(AssistantContent::ToolCall {
                     tool_call: ToolCall {
                         id,

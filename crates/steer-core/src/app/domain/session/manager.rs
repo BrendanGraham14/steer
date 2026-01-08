@@ -327,7 +327,7 @@ mod tests {
     use crate::config::model::builtin;
 
     fn test_config() -> SessionManagerConfig {
-        SessionManagerConfig::new(builtin::claude_sonnet_4_20250514())
+        SessionManagerConfig::new(builtin::claude_sonnet_4_5())
             .with_max_active(3)
             .with_idle_timeout(Duration::from_millis(100))
     }
@@ -402,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn test_idle_eviction() {
         let store = Arc::new(InMemoryEventStore::new());
-        let config = SessionManagerConfig::new(builtin::claude_sonnet_4_20250514())
+        let config = SessionManagerConfig::new(builtin::claude_sonnet_4_5())
             .with_max_active(10)
             .with_idle_timeout(Duration::from_millis(10));
         let mut manager = SessionManager::new(store, config).unwrap();

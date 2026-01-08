@@ -687,7 +687,7 @@ impl From<&Session> for SessionInfo {
 mod tests {
     use super::*;
     use crate::app::conversation::{Message, MessageData, UserContent};
-    use steer_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
+    use steer_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME};
 
     #[test]
     fn test_session_creation() {
@@ -812,9 +812,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_config_build_registry_no_default_backends() {
-        use crate::auth::DefaultAuthStorage;
-        use crate::config::LlmConfigProvider;
-
         // Test that BackendRegistry only contains user-configured backends.
         // Static tools (dispatch_agent, web_fetch) are now in ToolRegistry,
         // not BackendRegistry.
@@ -901,9 +898,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_server_tracking_in_build_registry() {
-        use crate::auth::DefaultAuthStorage;
-        use crate::config::LlmConfigProvider;
-
         // Create a session config with both good and bad MCP servers
         let mut config = SessionConfig::read_only();
 

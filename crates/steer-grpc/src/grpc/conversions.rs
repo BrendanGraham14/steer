@@ -773,15 +773,15 @@ pub(crate) fn proto_to_message(
                 .content
                 .into_iter()
                 .filter_map(|user_content| {
-                    user_content.content.and_then(|content| match content {
-                        user_content::Content::Text(text) => Some(UserContent::Text { text }),
+                    user_content.content.map(|content| match content {
+                        user_content::Content::Text(text) => UserContent::Text { text },
                         user_content::Content::CommandExecution(cmd) => {
-                            Some(UserContent::CommandExecution {
+                            UserContent::CommandExecution {
                                 command: cmd.command,
                                 stdout: cmd.stdout,
                                 stderr: cmd.stderr,
                                 exit_code: cmd.exit_code,
-                            })
+                            }
                         }
                     })
                 })
@@ -874,16 +874,14 @@ fn proto_user_message_to_core(
         .content
         .into_iter()
         .filter_map(|user_content| {
-            user_content.content.and_then(|content| match content {
-                user_content::Content::Text(text) => Some(UserContent::Text { text }),
-                user_content::Content::CommandExecution(cmd) => {
-                    Some(UserContent::CommandExecution {
-                        command: cmd.command,
-                        stdout: cmd.stdout,
-                        stderr: cmd.stderr,
-                        exit_code: cmd.exit_code,
-                    })
-                }
+            user_content.content.map(|content| match content {
+                user_content::Content::Text(text) => UserContent::Text { text },
+                user_content::Content::CommandExecution(cmd) => UserContent::CommandExecution {
+                    command: cmd.command,
+                    stdout: cmd.stdout,
+                    stderr: cmd.stderr,
+                    exit_code: cmd.exit_code,
+                },
             })
         })
         .collect();
@@ -919,11 +917,9 @@ fn proto_assistant_message_to_core(
                 }
                 assistant_content::Content::Thought(thought) => {
                     let thought_content = thought.thought_type.as_ref().map(|t| match t {
-                        thought_content::ThoughtType::Simple(simple) => {
-                            ThoughtContent::Simple {
-                                text: simple.text.clone(),
-                            }
-                        }
+                        thought_content::ThoughtType::Simple(simple) => ThoughtContent::Simple {
+                            text: simple.text.clone(),
+                        },
                         thought_content::ThoughtType::Signed(signed) => ThoughtContent::Signed {
                             text: signed.text.clone(),
                             signature: signed.signature.clone(),
@@ -1082,25 +1078,23 @@ pub(crate) fn session_event_to_proto(
             let id = proto_message.id;
             let message_variant = proto_message.message;
             let assistant_message = match message_variant {
-                Some(proto::message::Message::Assistant(assistant_message)) => {
-                    assistant_message
-                }
+                Some(proto::message::Message::Assistant(assistant_message)) => assistant_message,
                 Some(proto::message::Message::User(_)) => {
                     return Err(ConversionError::InvalidVariant {
                         expected: "assistant".to_string(),
                         actual: "user".to_string(),
-                    })
+                    });
                 }
                 Some(proto::message::Message::Tool(_)) => {
                     return Err(ConversionError::InvalidVariant {
                         expected: "assistant".to_string(),
                         actual: "tool".to_string(),
-                    })
+                    });
                 }
                 None => {
                     return Err(ConversionError::MissingField {
                         field: "message".to_string(),
-                    })
+                    });
                 }
             };
 
@@ -1122,18 +1116,18 @@ pub(crate) fn session_event_to_proto(
                     return Err(ConversionError::InvalidVariant {
                         expected: "user".to_string(),
                         actual: "assistant".to_string(),
-                    })
+                    });
                 }
                 Some(proto::message::Message::Tool(_)) => {
                     return Err(ConversionError::InvalidVariant {
                         expected: "user".to_string(),
                         actual: "tool".to_string(),
-                    })
+                    });
                 }
                 None => {
                     return Err(ConversionError::MissingField {
                         field: "message".to_string(),
-                    })
+                    });
                 }
             };
 
@@ -1154,18 +1148,18 @@ pub(crate) fn session_event_to_proto(
                     return Err(ConversionError::InvalidVariant {
                         expected: "tool".to_string(),
                         actual: "assistant".to_string(),
-                    })
+                    });
                 }
                 Some(proto::message::Message::User(_)) => {
                     return Err(ConversionError::InvalidVariant {
                         expected: "tool".to_string(),
                         actual: "user".to_string(),
-                    })
+                    });
                 }
                 None => {
                     return Err(ConversionError::MissingField {
                         field: "message".to_string(),
-                    })
+                    });
                 }
             };
 
@@ -1549,7 +1543,7 @@ fn parse_op_id(s: &str) -> Result<crate::client_api::OpId, ConversionError> {
     uuid::Uuid::parse_str(s)
         .map(crate::client_api::OpId::from)
         .map_err(|_| ConversionError::InvalidData {
-            message: format!("Invalid op_id: {}", s),
+            message: format!("Invalid op_id: {s}"),
         })
 }
 
@@ -1557,7 +1551,7 @@ fn parse_request_id(s: &str) -> Result<crate::client_api::RequestId, ConversionE
     uuid::Uuid::parse_str(s)
         .map(crate::client_api::RequestId::from)
         .map_err(|_| ConversionError::InvalidData {
-            message: format!("Invalid request_id: {}", s),
+            message: format!("Invalid request_id: {s}"),
         })
 }
 

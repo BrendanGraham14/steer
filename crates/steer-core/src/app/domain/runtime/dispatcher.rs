@@ -290,7 +290,7 @@ mod tests {
             coalescer.push(StreamDelta::TextChunk {
                 op_id,
                 message_id,
-                delta: format!("chunk {}", i),
+                delta: format!("chunk {i}"),
             });
         }
 

@@ -182,7 +182,7 @@ mod id_preservation_tests {
             ClientEvent::ProcessingStarted { op_id: received } => {
                 assert_eq!(op_id, received);
             }
-            other => panic!("Expected ProcessingStarted, got {:?}", other),
+            other => panic!("Expected ProcessingStarted, got {other:?}"),
         }
     }
 
@@ -198,7 +198,7 @@ mod id_preservation_tests {
             ClientEvent::ProcessingCompleted { op_id: received } => {
                 assert_eq!(op_id, received);
             }
-            other => panic!("Expected ProcessingCompleted, got {:?}", other),
+            other => panic!("Expected ProcessingCompleted, got {other:?}"),
         }
     }
 
@@ -223,7 +223,7 @@ mod id_preservation_tests {
                 assert_eq!(op_id, received);
                 assert_eq!(pending_tool_calls, 0);
             }
-            other => panic!("Expected OperationCancelled, got {:?}", other),
+            other => panic!("Expected OperationCancelled, got {other:?}"),
         }
     }
 
@@ -252,7 +252,7 @@ mod id_preservation_tests {
                 assert_eq!(tool_call.name, received_tool.name);
                 assert_eq!(tool_call.parameters, received_tool.parameters);
             }
-            other => panic!("Expected ApprovalRequested, got {:?}", other),
+            other => panic!("Expected ApprovalRequested, got {other:?}"),
         }
     }
 }
@@ -280,7 +280,7 @@ mod event_conversion_tests {
             ClientEvent::CompactResult { result } => {
                 assert!(matches!(result, CompactResult::Success(ref s) if s == "summary"));
             }
-            other => panic!("Expected CompactResult, got {:?}", other),
+            other => panic!("Expected CompactResult, got {other:?}"),
         }
     }
 
@@ -307,7 +307,7 @@ mod event_conversion_tests {
                 assert_eq!(msg, message_id);
                 assert_eq!(delta, "thinking...");
             }
-            other => panic!("Expected ThinkingDelta, got {:?}", other),
+            other => panic!("Expected ThinkingDelta, got {other:?}"),
         }
 
         let tool_call_id = ToolCallId::from_string("tool_1");
@@ -334,7 +334,7 @@ mod event_conversion_tests {
                 assert_eq!(received_tool, tool_call_id);
                 assert_eq!(chunk, "{\"x\":");
             }
-            other => panic!("Expected ToolCallDelta, got {:?}", other),
+            other => panic!("Expected ToolCallDelta, got {other:?}"),
         }
     }
 }

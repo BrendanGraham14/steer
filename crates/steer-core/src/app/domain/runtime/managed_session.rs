@@ -58,10 +58,8 @@ impl RuntimeManagedSession {
         tokio::spawn(async move {
             let mut event_rx = event_rx;
             while let Some((sid, event)) = event_rx.recv().await {
-                if sid == forward_session_id {
-                    if session_event_tx.send(event).await.is_err() {
-                        break;
-                    }
+                if sid == forward_session_id && session_event_tx.send(event).await.is_err() {
+                    break;
                 }
             }
         });

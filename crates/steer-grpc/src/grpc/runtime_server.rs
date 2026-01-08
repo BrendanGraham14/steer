@@ -162,17 +162,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     Ok(delta) => {
                         let sequence_num = last_sequence_deltas.load(Ordering::Relaxed);
                         let delta_sequence = delta_sequence_counter.fetch_add(1, Ordering::Relaxed);
-                        let proto_event = match stream_delta_to_proto(
-                            delta,
-                            sequence_num,
-                            delta_sequence,
-                        ) {
-                            Ok(event) => event,
-                            Err(e) => {
-                                warn!("Failed to convert stream delta: {}", e);
-                                continue;
-                            }
-                        };
+                        let proto_event =
+                            match stream_delta_to_proto(delta, sequence_num, delta_sequence) {
+                                Ok(event) => event,
+                                Err(e) => {
+                                    warn!("Failed to convert stream delta: {}", e);
+                                    continue;
+                                }
+                            };
 
                         if let Err(e) = delta_tx.send(Ok(proto_event)).await {
                             warn!("Failed to send delta to client: {}", e);
@@ -562,7 +559,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .get_session_config(session_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to get session config: {e}")))?
-            .ok_or_else(|| Status::not_found(format!("Session not found: {}", session_id)))?;
+            .ok_or_else(|| Status::not_found(format!("Session not found: {session_id}")))?;
 
         let workspace =
             steer_core::workspace::create_workspace(&config.workspace.to_workspace_config())

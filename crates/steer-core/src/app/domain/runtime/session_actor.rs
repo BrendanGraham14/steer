@@ -275,11 +275,7 @@ impl SessionActor {
                 tools,
                 ..
             } => {
-                let cancel_token = self
-                    .active_operations
-                    .entry(op_id)
-                    .or_insert_with(CancellationToken::new)
-                    .clone();
+                let cancel_token = self.active_operations.entry(op_id).or_default().clone();
 
                 let interpreter = self.interpreter.clone();
                 let action_tx = self.internal_action_tx.clone();
@@ -338,11 +334,7 @@ impl SessionActor {
             Effect::ExecuteTool {
                 op_id, tool_call, ..
             } => {
-                let cancel_token = self
-                    .active_operations
-                    .entry(op_id)
-                    .or_insert_with(CancellationToken::new)
-                    .clone();
+                let cancel_token = self.active_operations.entry(op_id).or_default().clone();
 
                 let interpreter = self.interpreter.clone();
                 let action_tx = self.internal_action_tx.clone();
@@ -415,11 +407,7 @@ impl SessionActor {
                 op_id,
                 model,
             } => {
-                let cancel_token = self
-                    .active_operations
-                    .entry(op_id)
-                    .or_insert_with(CancellationToken::new)
-                    .clone();
+                let cancel_token = self.active_operations.entry(op_id).or_default().clone();
 
                 let interpreter = self.interpreter.clone();
                 let action_tx = self.internal_action_tx.clone();
@@ -437,7 +425,7 @@ impl SessionActor {
                     .active_message_id
                     .clone()
                     .map(MessageId::from)
-                    .unwrap_or_else(MessageId::new);
+                    .unwrap_or_default();
                 let previous_active = self
                     .state
                     .conversation
@@ -623,7 +611,7 @@ fn build_compaction_prompt(
 
     let conversation_text = messages
         .iter()
-        .map(|m| format_message_for_summary(m))
+        .map(format_message_for_summary)
         .collect::<Vec<_>>()
         .join("\n\n");
 
@@ -633,9 +621,8 @@ fn build_compaction_prompt(
          2. Important context established\n\
          3. Current task state\n\
          4. Critical information needed to continue\n\n\
-         Conversation:\n{}\n\n\
-         Summary:",
-        conversation_text
+         Conversation:\n{conversation_text}\n\n\
+         Summary:"
     );
 
     Message {
@@ -661,7 +648,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("User: {}", text)
+            format!("User: {text}")
         }
         MessageData::Assistant { content } => {
             let text = content
@@ -672,7 +659,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("Assistant: {}", text)
+            format!("Assistant: {text}")
         }
         MessageData::Tool { .. } => String::new(),
     }

@@ -226,7 +226,7 @@ mod tests {
             Arc::new(ValidatorRegistry::new()),
         ));
 
-        let config = RuntimeConfig::new(builtin::claude_sonnet_4_20250514());
+        let config = RuntimeConfig::new(builtin::claude_sonnet_4_5());
 
         RuntimeService::spawn(event_store, api_client, tool_executor, config)
     }
@@ -259,7 +259,7 @@ mod tests {
             .metadata
             .insert("mode".to_string(), "headless".to_string());
 
-        let model = builtin::claude_sonnet_4_20250514();
+        let model = builtin::claude_sonnet_4_5();
         let result = OneShotRunner::run_new_session(
             &runtime.handle,
             config,
@@ -322,7 +322,7 @@ mod tests {
         let runtime = create_test_runtime().await;
 
         let fake_session_id = SessionId::new();
-        let model = builtin::claude_sonnet_4_20250514();
+        let model = builtin::claude_sonnet_4_5();
         let result = OneShotRunner::run_in_session(
             &runtime.handle,
             fake_session_id,
@@ -355,7 +355,7 @@ mod tests {
             .insert("test".to_string(), "api_test".to_string());
 
         let session_id = runtime.handle.create_session(config).await.unwrap();
-        let model = builtin::claude_sonnet_4_20250514();
+        let model = builtin::claude_sonnet_4_5();
 
         let result = OneShotRunner::run_in_session(
             &runtime.handle,
@@ -415,7 +415,7 @@ mod tests {
             .insert("test".to_string(), "context_test".to_string());
 
         let session_id = runtime.handle.create_session(config).await.unwrap();
-        let model = builtin::claude_sonnet_4_20250514();
+        let model = builtin::claude_sonnet_4_5();
 
         let result1 = OneShotRunner::run_in_session(
             &runtime.handle,
@@ -483,7 +483,7 @@ mod tests {
         let mut config = create_test_session_config();
         config.tool_config = SessionToolConfig::read_only();
         config.tool_config.approval_policy = create_test_tool_approval_policy();
-        let model = builtin::claude_sonnet_4_20250514();
+        let model = builtin::claude_sonnet_4_5();
 
         let result = OneShotRunner::run_new_session(
             &runtime.handle,

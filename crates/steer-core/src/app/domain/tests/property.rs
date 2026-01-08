@@ -16,7 +16,7 @@ mod tests {
     use steer_tools::result::{ExternalResult, ToolResult};
 
     fn test_model() -> crate::config::model::ModelId {
-        builtin::claude_sonnet_4_20250514()
+        builtin::claude_sonnet_4_5()
     }
 
     fn arb_session_id() -> impl Strategy<Value = SessionId> {
@@ -28,7 +28,7 @@ mod tests {
     }
 
     fn arb_message_id() -> impl Strategy<Value = MessageId> {
-        "[a-z]{1,10}".prop_map(|s| MessageId::from_string(&format!("msg_{s}")))
+        "[a-z]{1,10}".prop_map(|s| MessageId::from_string(format!("msg_{s}")))
     }
 
     fn arb_request_id() -> impl Strategy<Value = RequestId> {
@@ -36,11 +36,11 @@ mod tests {
     }
 
     fn arb_tool_call_id() -> impl Strategy<Value = ToolCallId> {
-        "[a-z]{1,10}".prop_map(|s| ToolCallId::from_string(&format!("tc_{s}")))
+        "[a-z]{1,10}".prop_map(|s| ToolCallId::from_string(format!("tc_{s}")))
     }
 
     fn arb_non_empty_string() -> impl Strategy<Value = NonEmptyString> {
-        "[a-zA-Z0-9 ]{1,50}".prop_filter_map("non-empty", |s| NonEmptyString::new(s))
+        "[a-zA-Z0-9 ]{1,50}".prop_filter_map("non-empty", NonEmptyString::new)
     }
 
     fn arb_tool_name() -> impl Strategy<Value = String> {

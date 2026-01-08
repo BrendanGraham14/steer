@@ -922,8 +922,9 @@ impl XAIClient {
                                         entry.name = name.clone();
                                     }
                                 }
+                            }
 
-                            if !tool_call_positions.contains_key(&tc.index) {
+                            if let std::collections::hash_map::Entry::Vacant(e) = tool_call_positions.entry(tc.index) {
                                 let pos = content.len();
                                 content.push(AssistantContent::ToolCall {
                                     tool_call: steer_tools::ToolCall {
@@ -933,7 +934,7 @@ impl XAIClient {
                                     },
                                 });
                                 tool_call_indices.push(Some(tc.index));
-                                tool_call_positions.insert(tc.index, pos);
+                                e.insert(pos);
                             }
 
                             if !entry.id.is_empty()

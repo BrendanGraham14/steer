@@ -6,8 +6,8 @@ use steer_core::config::model::{ModelId, builtin};
 
 use steer_core::test_utils;
 use steer_tools::result::{ExternalResult, ToolResult};
-use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use steer_tools::tools::LS_TOOL_NAME;
+use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use steer_workspace::Workspace;
 use steer_workspace::local::LocalWorkspace;
 
@@ -308,7 +308,6 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
                 text: format!(
                     "You must call the {LS_TOOL_NAME} tool with path '.' exactly once. Do not call any other tools. Do not answer with text before the tool call."
                 ),
-                    .to_string(),
             }],
         },
         timestamp,
@@ -1588,7 +1587,7 @@ async fn test_api_streaming_cancellation() {
                 chunks_before_cancel += 1;
                 // Cancel after receiving a few chunks
                 if chunks_before_cancel >= 3 {
-                    println!("Cancelling stream after {} chunks", chunks_before_cancel);
+                    println!("Cancelling stream after {chunks_before_cancel} chunks");
                     token_clone.cancel();
                 }
             }
@@ -1617,7 +1616,6 @@ async fn test_api_streaming_cancellation() {
     );
 
     println!(
-        "Cancellation test passed! Chunks before cancel: {}, Got cancelled signal: {}",
-        chunks_before_cancel, got_cancelled
+        "Cancellation test passed! Chunks before cancel: {chunks_before_cancel}, Got cancelled signal: {got_cancelled}"
     );
 }

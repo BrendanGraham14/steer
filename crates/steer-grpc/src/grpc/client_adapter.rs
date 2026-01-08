@@ -334,10 +334,7 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn execute_bash_command(
-        &self,
-        command: String,
-    ) -> GrpcResult<()> {
+    pub async fn execute_bash_command(&self, command: String) -> GrpcResult<()> {
         let session_id = self
             .session_id
             .lock()

@@ -362,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn test_since_sequence_replay_returns_persisted_events() {
         let setup = setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
         )
@@ -425,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_flow_end_to_end() {
-        let model = steer_core::config::model::builtin::claude_sonnet_4_20250514();
+        let model = steer_core::config::model::builtin::claude_sonnet_4_5();
         let setup = setup_local_grpc_with_stub_provider(model.clone())
             .await
             .expect("local grpc setup");
@@ -497,7 +497,7 @@ mod tests {
                         Some(steer_proto::agent::v1::compact_result::Result::Success(success)) => {
                             compact_summary = Some(success.summary);
                         }
-                        other => panic!("unexpected compact result: {:?}", other),
+                        other => panic!("unexpected compact result: {other:?}"),
                     }
                 }
                 Some(steer_proto::agent::v1::session_event::Event::ConversationCompacted(e)) => {
@@ -516,7 +516,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_requires_model_spec() {
         let setup = setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
         )
@@ -548,7 +548,7 @@ mod tests {
     #[tokio::test]
     async fn test_edit_message_requires_model_spec() {
         let setup = setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
         )
@@ -580,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn test_compact_session_requires_model_spec() {
         let setup = setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
         )
@@ -610,7 +610,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_bash_command_does_not_require_model_spec() {
         let setup = setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
         )

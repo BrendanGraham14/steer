@@ -7,7 +7,7 @@ pub async fn local_client_and_server(
 ) -> (AgentClient, tokio::task::JoinHandle<()>) {
     use steer_grpc::local_server::setup_local_grpc;
     let (channel, server_handle) = setup_local_grpc(
-        steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+        steer_core::config::model::builtin::claude_sonnet_4_5(),
         session_dir,
     )
     .await

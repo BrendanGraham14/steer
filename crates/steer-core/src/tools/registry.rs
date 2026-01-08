@@ -51,12 +51,9 @@ impl ToolRegistry {
     }
 
     pub fn find_mcp_backend(&self, tool_name: &str) -> Option<&Arc<McpBackend>> {
-        for backend in &self.mcp_backends {
-            if backend.has_tool(tool_name) {
-                return Some(backend);
-            }
-        }
-        None
+        self.mcp_backends
+            .iter()
+            .find(|&backend| backend.has_tool(tool_name))
     }
 
     pub fn is_static_tool(&self, name: &str) -> bool {

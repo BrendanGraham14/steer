@@ -151,22 +151,13 @@ impl ChatRenderable for MessageWidget {
                                     if !wrote_command {
                                         lines.push(Line::from(vec![
                                             Span::styled(prompt, prompt_style),
-                                            Span::styled(
-                                                wrapped_line.to_string(),
-                                                command_style,
-                                            ),
+                                            Span::styled(wrapped_line.to_string(), command_style),
                                         ]));
                                         wrote_command = true;
                                     } else {
                                         lines.push(Line::from(vec![
-                                            Span::styled(
-                                                indent,
-                                                ratatui::style::Style::default(),
-                                            ),
-                                            Span::styled(
-                                                wrapped_line.to_string(),
-                                                command_style,
-                                            ),
+                                            Span::styled(indent, ratatui::style::Style::default()),
+                                            Span::styled(wrapped_line.to_string(), command_style),
                                         ]));
                                     }
                                 }

@@ -94,14 +94,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             message_id,
             command,
             timestamp,
-        } => handle_direct_bash(
-            state,
-            session_id,
-            op_id,
-            message_id,
-            command,
-            timestamp,
-        ),
+        } => handle_direct_bash(state, session_id, op_id, message_id, command, timestamp),
 
         Action::RequestCompaction {
             session_id,
@@ -585,37 +578,34 @@ fn handle_tool_result(
             other => (format!("{other:?}"), String::new(), 0),
         };
 
-        let updated = state
-            .operation_messages
-            .remove(&op_id)
-            .and_then(|id| {
-                state
-                    .conversation
-                    .update_command_execution(
-                        id.as_str(),
-                        command.clone(),
-                        stdout.clone(),
-                        stderr.clone(),
-                        exit_code,
-                    )
-                    .or_else(|| {
-                        let parent_id = state.conversation.active_message_id.clone();
-                        let timestamp = Message::current_timestamp();
-                        Some(Message {
-                            data: MessageData::User {
-                                content: vec![UserContent::CommandExecution {
-                                    command: command.clone(),
-                                    stdout: stdout.clone(),
-                                    stderr: stderr.clone(),
-                                    exit_code,
-                                }],
-                            },
-                            timestamp,
-                            id: id.to_string(),
-                            parent_message_id: parent_id,
-                        })
+        let updated = state.operation_messages.remove(&op_id).and_then(|id| {
+            state
+                .conversation
+                .update_command_execution(
+                    id.as_str(),
+                    command.clone(),
+                    stdout.clone(),
+                    stderr.clone(),
+                    exit_code,
+                )
+                .or_else(|| {
+                    let parent_id = state.conversation.active_message_id.clone();
+                    let timestamp = Message::current_timestamp();
+                    Some(Message {
+                        data: MessageData::User {
+                            content: vec![UserContent::CommandExecution {
+                                command: command.clone(),
+                                stdout: stdout.clone(),
+                                stderr: stderr.clone(),
+                                exit_code,
+                            }],
+                        },
+                        timestamp,
+                        id: id.to_string(),
+                        parent_message_id: parent_id,
                     })
-            });
+                })
+        });
 
         state.complete_operation();
 
@@ -677,7 +667,9 @@ fn handle_tool_result(
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::ToolMessageAdded { message: tool_message },
+        event: SessionEvent::ToolMessageAdded {
+            message: tool_message,
+        },
     });
 
     let all_tools_complete = state
@@ -862,7 +854,7 @@ fn handle_direct_bash(
     });
 
     let tool_call = steer_tools::ToolCall {
-        id: format!("direct_bash_{}", op_id),
+        id: format!("direct_bash_{op_id}"),
         name: BASH_TOOL_NAME.to_string(),
         parameters: serde_json::json!({ "command": command }),
     };
@@ -921,7 +913,7 @@ fn handle_cancel(
     let mut effects = Vec::new();
 
     let op = match &state.current_operation {
-        Some(op) if target_op.map_or(true, |t| t == op.op_id) => op.clone(),
+        Some(op) if target_op.is_none_or(|t| t == op.op_id) => op.clone(),
         _ => return effects,
     };
 
@@ -1152,7 +1144,7 @@ mod tests {
         let session_id = state.session_id;
         let op_id = OpId::new();
         let message_id = MessageId::new();
-        let model = builtin::claude_sonnet_4_20250514();
+        let model = builtin::claude_sonnet_4_5();
 
         let effects = reduce(
             &mut state,
@@ -1203,13 +1195,13 @@ mod tests {
         });
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
         let effects = reduce(
             &mut state,
@@ -1241,13 +1233,13 @@ mod tests {
         });
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
         let tool_call = steer_tools::ToolCall {
             id: "tc_1".to_string(),
@@ -1332,7 +1324,7 @@ mod tests {
         });
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
         let tool_call = steer_tools::ToolCall {
             id: "tc_1".to_string(),
@@ -1383,7 +1375,7 @@ mod tests {
         });
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
         let content = vec![AssistantContent::Text {
             text: "Hello! How can I help?".to_string(),
@@ -1424,7 +1416,7 @@ mod tests {
         });
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
         let effects = reduce(
             &mut state,
@@ -1463,7 +1455,7 @@ mod tests {
         });
         state
             .operation_models
-            .insert(op_id, builtin::claude_sonnet_4_20250514());
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
         let effects = reduce(
             &mut state,

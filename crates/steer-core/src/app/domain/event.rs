@@ -1,8 +1,6 @@
 use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory};
-use crate::app::domain::types::{
-    CompactionRecord, OpId, RequestId, SessionId, ToolCallId,
-};
+use crate::app::domain::types::{CompactionRecord, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};

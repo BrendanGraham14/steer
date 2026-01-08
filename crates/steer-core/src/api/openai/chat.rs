@@ -598,8 +598,9 @@ impl Client {
                                         entry.name = name.clone();
                                     }
                                 }
+                            }
 
-                            if !tool_call_positions.contains_key(&tc.index) {
+                            if let std::collections::hash_map::Entry::Vacant(e) = tool_call_positions.entry(tc.index) {
                                 let pos = content.len();
                                 content.push(AssistantContent::ToolCall {
                                     tool_call: steer_tools::ToolCall {
@@ -609,7 +610,7 @@ impl Client {
                                     },
                                 });
                                 tool_call_indices.push(Some(tc.index));
-                                tool_call_positions.insert(tc.index, pos);
+                                e.insert(pos);
                             }
 
                             if !entry.id.is_empty()
@@ -1145,7 +1146,7 @@ mod tests {
                     got_message_complete = true;
                     assert!(!response.content.is_empty());
                 }
-                StreamChunk::Error(e) => panic!("Unexpected error: {:?}", e),
+                StreamChunk::Error(e) => panic!("Unexpected error: {e:?}"),
                 _ => {}
             }
         }
@@ -1157,8 +1158,7 @@ mod tests {
         );
         assert!(
             accumulated_text.to_lowercase().contains("hello"),
-            "Response should contain 'hello', got: {}",
-            accumulated_text
+            "Response should contain 'hello', got: {accumulated_text}"
         );
     }
 }

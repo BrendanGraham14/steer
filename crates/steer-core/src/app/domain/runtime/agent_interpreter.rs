@@ -18,19 +18,10 @@ use crate::tools::ToolExecutor;
 use super::interpreter::EffectInterpreter;
 use super::stepper::{AgentConfig, AgentInput, AgentOutput, AgentState, AgentStepper};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentInterpreterConfig {
     pub auto_approve_tools: bool,
     pub parent_session_id: Option<SessionId>,
-}
-
-impl Default for AgentInterpreterConfig {
-    fn default() -> Self {
-        Self {
-            auto_approve_tools: false,
-            parent_session_id: None,
-        }
-    }
 }
 
 impl AgentInterpreterConfig {

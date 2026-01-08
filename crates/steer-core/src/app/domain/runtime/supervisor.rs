@@ -776,7 +776,7 @@ mod tests {
             Arc::new(ValidatorRegistry::new()),
         ));
 
-        let config = RuntimeConfig::new(builtin::claude_sonnet_4_20250514());
+        let config = RuntimeConfig::new(builtin::claude_sonnet_4_5());
 
         (event_store, api_client, tool_executor, config)
     }

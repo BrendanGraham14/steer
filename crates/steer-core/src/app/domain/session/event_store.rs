@@ -98,7 +98,7 @@ impl EventStore for InMemoryEventStore {
         event: &SessionEvent,
     ) -> Result<u64, EventStoreError> {
         let mut events = self.events.write().unwrap();
-        let session_events = events.entry(session_id).or_insert_with(Vec::new);
+        let session_events = events.entry(session_id).or_default();
 
         let seq = session_events.last().map(|(s, _)| s + 1).unwrap_or(0);
         session_events.push((seq, event.clone()));
@@ -139,7 +139,7 @@ impl EventStore for InMemoryEventStore {
 
     async fn create_session(&self, session_id: SessionId) -> Result<(), EventStoreError> {
         let mut events = self.events.write().unwrap();
-        events.entry(session_id).or_insert_with(Vec::new);
+        events.entry(session_id).or_default();
         Ok(())
     }
 

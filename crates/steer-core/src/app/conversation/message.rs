@@ -23,7 +23,9 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UserContent {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     CommandExecution {
         command: String,
         stdout: String,

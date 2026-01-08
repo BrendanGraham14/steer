@@ -457,7 +457,7 @@ mod tests {
 
     fn test_config() -> AgentConfig {
         AgentConfig {
-            model: builtin::claude_sonnet_4_20250514(),
+            model: builtin::claude_sonnet_4_5(),
             system_prompt: None,
             tools: vec![],
         }

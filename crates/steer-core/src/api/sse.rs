@@ -21,9 +21,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     let event_stream = byte_stream
-        .map(|result| {
-            result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-        })
+        .map(|result| result.map_err(|e| std::io::Error::other(e.to_string())))
         .eventsource()
         .map(|result| {
             result

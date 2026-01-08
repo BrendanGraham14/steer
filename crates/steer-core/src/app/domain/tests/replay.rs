@@ -14,7 +14,7 @@ mod tests {
     use steer_tools::ToolCall;
 
     fn test_model() -> crate::config::model::ModelId {
-        builtin::claude_sonnet_4_20250514()
+        builtin::claude_sonnet_4_5()
     }
 
     fn deterministic_session_id() -> SessionId {
@@ -407,8 +407,7 @@ mod tests {
             assert_eq!(
                 live_msg.id(),
                 replayed_msg.id(),
-                "Message {} ID should match",
-                i
+                "Message {i} ID should match"
             );
         }
     }

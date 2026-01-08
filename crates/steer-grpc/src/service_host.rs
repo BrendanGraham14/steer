@@ -255,7 +255,7 @@ mod tests {
 
         let config = ServiceHostConfig {
             db_path,
-            default_model: steer_core::config::model::builtin::claude_sonnet_4_20250514(),
+            default_model: steer_core::config::model::builtin::claude_sonnet_4_5(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
             catalog_config: CatalogConfig::default(),

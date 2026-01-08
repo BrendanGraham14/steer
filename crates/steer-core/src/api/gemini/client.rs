@@ -1319,7 +1319,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_convert_gemini_stream_text_deltas() {
-        use crate::api::error::StreamError;
         use crate::api::provider::StreamChunk;
         use crate::api::sse::SseEvent;
         use futures::StreamExt;
@@ -1528,7 +1527,7 @@ mod tests {
                     got_message_complete = true;
                     assert!(!response.content.is_empty());
                 }
-                StreamChunk::Error(e) => panic!("Unexpected error: {:?}", e),
+                StreamChunk::Error(e) => panic!("Unexpected error: {e:?}"),
                 _ => {}
             }
         }
@@ -1540,8 +1539,7 @@ mod tests {
         );
         assert!(
             accumulated_text.to_lowercase().contains("hello"),
-            "Response should contain 'hello', got: {}",
-            accumulated_text
+            "Response should contain 'hello', got: {accumulated_text}"
         );
     }
 }
