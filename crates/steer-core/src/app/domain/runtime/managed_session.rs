@@ -11,7 +11,7 @@ use crate::app::domain::types::{NonEmptyString, OpId, RequestId, SessionId};
 use crate::config::model::ModelId;
 use crate::tools::ToolExecutor;
 
-use super::runtime::{AppRuntime, RuntimeConfig, RuntimeError};
+use super::driver::{Driver, RuntimeConfig, RuntimeError};
 
 pub struct RuntimeManagedSession {
     session_id: SessionId,
@@ -34,7 +34,7 @@ impl RuntimeManagedSession {
 
         let config = RuntimeConfig::new(default_model);
         let mut runtime =
-            AppRuntime::new(event_store, api_client, tool_executor, config, event_tx)?;
+            Driver::new(event_store, api_client, tool_executor, config, event_tx)?;
 
         let session_id = runtime.create_session().await?;
 
@@ -168,7 +168,7 @@ impl RuntimeManagedSession {
     }
 }
 
-async fn dispatch_action(runtime: &mut AppRuntime, action: Action) -> Result<(), RuntimeError> {
+async fn dispatch_action(runtime: &mut Driver, action: Action) -> Result<(), RuntimeError> {
     let session_id = action
         .session_id()
         .ok_or_else(|| RuntimeError::InvalidInput {

@@ -40,6 +40,7 @@ impl RuntimeAgentService {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn parse_session_id(session_id: &str) -> Result<SessionId, Status> {
         Uuid::parse_str(session_id)
             .map(SessionId::from)

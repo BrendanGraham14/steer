@@ -223,7 +223,10 @@ struct ClaudeUsage {
 #[serde(tag = "type")]
 enum ClaudeStreamEvent {
     #[serde(rename = "message_start")]
-    MessageStart { message: ClaudeMessageStart },
+    MessageStart {
+        #[allow(dead_code)]
+        message: ClaudeMessageStart,
+    },
     #[serde(rename = "content_block_start")]
     ContentBlockStart {
         index: usize,
@@ -235,7 +238,9 @@ enum ClaudeStreamEvent {
     ContentBlockStop { index: usize },
     #[serde(rename = "message_delta")]
     MessageDelta {
+        #[allow(dead_code)]
         delta: ClaudeMessageDeltaData,
+        #[allow(dead_code)]
         #[serde(default)]
         usage: Option<ClaudeUsage>,
     },
@@ -249,8 +254,10 @@ enum ClaudeStreamEvent {
 
 #[derive(Debug, Deserialize)]
 struct ClaudeMessageStart {
+    #[allow(dead_code)]
     #[serde(default)]
     id: String,
+    #[allow(dead_code)]
     #[serde(default)]
     model: String,
 }
@@ -271,17 +278,18 @@ struct ClaudeContentBlockStart {
 #[serde(tag = "type")]
 enum ClaudeDelta {
     #[serde(rename = "text_delta")]
-    TextDelta { text: String },
+    Text { text: String },
     #[serde(rename = "thinking_delta")]
-    ThinkingDelta { thinking: String },
+    Thinking { thinking: String },
     #[serde(rename = "input_json_delta")]
-    InputJsonDelta { partial_json: String },
+    InputJson { partial_json: String },
     #[serde(rename = "signature_delta")]
-    SignatureDelta { signature: String },
+    Signature { signature: String },
 }
 
 #[derive(Debug, Deserialize)]
 struct ClaudeMessageDeltaData {
+    #[allow(dead_code)]
     #[serde(default)]
     stop_reason: Option<String>,
 }
@@ -386,16 +394,16 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
             // Convert UserContent to Claude format
             let combined_text = content
                 .iter()
-                .filter_map(|user_content| match user_content {
-                    UserContent::Text { text } => Some(text.clone()),
+                .map(|user_content| match user_content {
+                    UserContent::Text { text } => text.clone(),
                     UserContent::CommandExecution {
                         command,
                         stdout,
                         stderr,
                         exit_code,
-                    } => Some(UserContent::format_command_execution_as_xml(
+                    } => UserContent::format_command_execution_as_xml(
                         command, stdout, stderr, *exit_code,
-                    )),
+                    ),
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -1150,7 +1158,7 @@ fn convert_claude_stream(
                     }
                 }
                 ClaudeStreamEvent::ContentBlockDelta { index, delta } => match delta {
-                    ClaudeDelta::TextDelta { text } => {
+                    ClaudeDelta::Text { text } => {
                         match block_states.get_mut(&index) {
                             Some(BlockState::Text { text: buf }) => buf.push_str(&text),
                             _ => {
@@ -1159,7 +1167,7 @@ fn convert_claude_stream(
                         }
                         yield StreamChunk::TextDelta(text);
                     }
-                    ClaudeDelta::ThinkingDelta { thinking } => {
+                    ClaudeDelta::Thinking { thinking } => {
                         match block_states.get_mut(&index) {
                             Some(BlockState::Thinking { text, .. }) => text.push_str(&thinking),
                             _ => {
@@ -1174,14 +1182,14 @@ fn convert_claude_stream(
                         }
                         yield StreamChunk::ThinkingDelta(thinking);
                     }
-                    ClaudeDelta::SignatureDelta { signature } => {
+                    ClaudeDelta::Signature { signature } => {
                         if let Some(BlockState::Thinking { signature: sig, .. }) =
                             block_states.get_mut(&index)
                         {
                             *sig = Some(signature);
                         }
                     }
-                    ClaudeDelta::InputJsonDelta { partial_json } => {
+                    ClaudeDelta::InputJson { partial_json } => {
                         if let Some(BlockState::ToolUse { id, input, .. }) =
                             block_states.get_mut(&index)
                         {

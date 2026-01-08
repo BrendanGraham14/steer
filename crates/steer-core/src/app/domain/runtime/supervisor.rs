@@ -123,6 +123,7 @@ struct RuntimeSupervisor {
     event_store: Arc<dyn EventStore>,
     api_client: Arc<ApiClient>,
     tool_executor: Arc<ToolExecutor>,
+    #[allow(dead_code)]
     config: RuntimeConfig,
 }
 
@@ -228,7 +229,7 @@ impl RuntimeSupervisor {
         self.event_store.create_session(session_id).await?;
 
         let session_created_event = SessionEvent::SessionCreated {
-            config: config.clone(),
+            config: Box::new(config.clone()),
             metadata: config.metadata.clone(),
             parent_session_id: None,
         };

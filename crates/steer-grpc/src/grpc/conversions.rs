@@ -293,16 +293,16 @@ pub(crate) fn message_to_proto(
             let user_msg = proto::UserMessage {
                 content: content
                     .iter()
-                    .filter_map(|user_content| match user_content {
-                        UserContent::Text { text } => Some(proto::UserContent {
+                    .map(|user_content| match user_content {
+                        UserContent::Text { text } => proto::UserContent {
                             content: Some(proto::user_content::Content::Text(text.clone())),
-                        }),
+                        },
                         UserContent::CommandExecution {
                             command,
                             stdout,
                             stderr,
                             exit_code,
-                        } => Some(proto::UserContent {
+                        } => proto::UserContent {
                             content: Some(proto::user_content::Content::CommandExecution(
                                 proto::CommandExecution {
                                     command: command.clone(),
@@ -311,7 +311,7 @@ pub(crate) fn message_to_proto(
                                     exit_code: *exit_code,
                                 },
                             )),
-                        }),
+                        },
                     })
                     .collect(),
                 timestamp: message.timestamp,
@@ -988,7 +988,7 @@ fn compaction_record_to_proto(
 fn compaction_record_from_proto(
     record: proto::CompactionRecord,
 ) -> Result<steer_core::app::domain::types::CompactionRecord, ConversionError> {
-    use chrono::{DateTime, NaiveDateTime, Utc};
+    use chrono::{DateTime, Utc};
     use steer_core::app::domain::types::{CompactionId, MessageId};
 
     let id = uuid::Uuid::parse_str(&record.id).map_err(|_| ConversionError::InvalidData {
@@ -997,10 +997,7 @@ fn compaction_record_from_proto(
 
     let created_at = record
         .created_at
-        .and_then(|ts| {
-            NaiveDateTime::from_timestamp_opt(ts.seconds, ts.nanos as u32)
-                .map(|dt| DateTime::<Utc>::from_utc(dt, Utc))
-        })
+        .and_then(|ts| DateTime::<Utc>::from_timestamp(ts.seconds, ts.nanos as u32))
         .unwrap_or_else(Utc::now);
 
     Ok(steer_core::app::domain::types::CompactionRecord {

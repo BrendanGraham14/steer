@@ -152,9 +152,9 @@ impl Message {
         match &self.data {
             MessageData::User { content } => content
                 .iter()
-                .filter_map(|c| match c {
-                    UserContent::Text { text } => Some(text.clone()),
-                    UserContent::CommandExecution { stdout, .. } => Some(stdout.clone()),
+                .map(|c| match c {
+                    UserContent::Text { text } => text.clone(),
+                    UserContent::CommandExecution { stdout, .. } => stdout.clone(),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),

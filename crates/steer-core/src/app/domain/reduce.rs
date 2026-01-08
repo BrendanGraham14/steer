@@ -29,12 +29,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         } => handle_user_edited_message(
             state,
             session_id,
-            message_id,
-            new_content,
-            op_id,
-            new_message_id,
-            model,
-            timestamp,
+            UserEditedMessageParams {
+                original_message_id: message_id,
+                new_content,
+                op_id,
+                new_message_id,
+                model,
+                timestamp,
+            },
         ),
 
         Action::ToolApprovalRequested {
@@ -145,14 +147,16 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         } => handle_compaction_complete(
             state,
             session_id,
-            op_id,
-            compaction_id,
-            summary_message_id,
-            summary,
-            compacted_head_message_id,
-            previous_active_message_id,
-            model,
-            timestamp,
+            CompactionCompleteParams {
+                op_id,
+                compaction_id,
+                summary_message_id,
+                summary,
+                compacted_head_message_id,
+                previous_active_message_id,
+                model_name: model,
+                timestamp,
+            },
         ),
 
         Action::CompactionFailed {
@@ -227,16 +231,28 @@ fn handle_user_input(
     effects
 }
 
-fn handle_user_edited_message(
-    state: &mut AppState,
-    session_id: crate::app::domain::types::SessionId,
+struct UserEditedMessageParams {
     original_message_id: crate::app::domain::types::MessageId,
     new_content: String,
     op_id: crate::app::domain::types::OpId,
     new_message_id: crate::app::domain::types::MessageId,
     model: crate::config::model::ModelId,
     timestamp: u64,
+}
+
+fn handle_user_edited_message(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    params: UserEditedMessageParams,
 ) -> Vec<Effect> {
+    let UserEditedMessageParams {
+        original_message_id,
+        new_content,
+        op_id,
+        new_message_id,
+        model,
+        timestamp,
+    } = params;
     let mut effects = Vec::new();
 
     let parent_id = state
@@ -985,7 +1001,7 @@ fn handle_hydrate(
 pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
-            state.session_config = Some(config.clone());
+            state.session_config = Some((**config).clone());
         }
         SessionEvent::AssistantMessageAdded { message, .. }
         | SessionEvent::UserMessageAdded { message }
@@ -1027,9 +1043,7 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     state.event_sequence += 1;
 }
 
-fn handle_compaction_complete(
-    state: &mut AppState,
-    session_id: crate::app::domain::types::SessionId,
+struct CompactionCompleteParams {
     op_id: crate::app::domain::types::OpId,
     compaction_id: crate::app::domain::types::CompactionId,
     summary_message_id: crate::app::domain::types::MessageId,
@@ -1038,9 +1052,26 @@ fn handle_compaction_complete(
     previous_active_message_id: Option<crate::app::domain::types::MessageId>,
     model_name: String,
     timestamp: u64,
+}
+
+fn handle_compaction_complete(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    params: CompactionCompleteParams,
 ) -> Vec<Effect> {
     use crate::app::conversation::{AssistantContent, Message, MessageData};
     use crate::app::domain::types::CompactionRecord;
+
+    let CompactionCompleteParams {
+        op_id,
+        compaction_id,
+        summary_message_id,
+        summary,
+        compacted_head_message_id,
+        previous_active_message_id,
+        model_name,
+        timestamp,
+    } = params;
 
     let summary_message = Message {
         data: MessageData::Assistant {

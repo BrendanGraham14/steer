@@ -813,10 +813,7 @@ fn resolve_call_id(
     }
 
     let candidate =
-        extract_non_empty_str(value, "item_id").or_else(|| extract_non_empty_str(value, "id"));
-    let Some(candidate) = candidate else {
-        return None;
-    };
+        extract_non_empty_str(value, "item_id").or_else(|| extract_non_empty_str(value, "id"))?;
 
     if let Some(mapped) = item_to_call_id.get(&candidate) {
         return Some(mapped.clone());

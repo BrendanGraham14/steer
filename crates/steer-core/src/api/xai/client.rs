@@ -362,16 +362,16 @@ impl XAIClient {
                     // Convert UserContent to text
                     let combined_text = content
                         .iter()
-                        .filter_map(|user_content| match user_content {
-                            UserContent::Text { text } => Some(text.clone()),
+                        .map(|user_content| match user_content {
+                            UserContent::Text { text } => text.clone(),
                             UserContent::CommandExecution {
                                 command,
                                 stdout,
                                 stderr,
                                 exit_code,
-                            } => Some(UserContent::format_command_execution_as_xml(
+                            } => UserContent::format_command_execution_as_xml(
                                 command, stdout, stderr, *exit_code,
-                            )),
+                            ),
                         })
                         .collect::<Vec<_>>()
                         .join("\n");

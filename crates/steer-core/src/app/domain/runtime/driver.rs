@@ -57,7 +57,7 @@ impl RuntimeConfig {
     }
 }
 
-pub struct AppRuntime {
+pub struct Driver {
     session_manager: SessionManager,
     interpreter: EffectInterpreter,
     #[allow(dead_code)]
@@ -66,7 +66,7 @@ pub struct AppRuntime {
     event_tx: mpsc::Sender<(SessionId, SessionEvent)>,
 }
 
-impl AppRuntime {
+impl Driver {
     pub fn new(
         store: Arc<dyn EventStore>,
         api_client: Arc<ApiClient>,

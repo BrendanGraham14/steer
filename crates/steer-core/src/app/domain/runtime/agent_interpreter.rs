@@ -57,7 +57,7 @@ impl AgentInterpreter {
             .map_err(|e| AgentInterpreterError::EventStore(e.to_string()))?;
 
         let session_created_event = SessionEvent::SessionCreated {
-            config: SessionConfig::read_only(),
+            config: Box::new(SessionConfig::read_only()),
             metadata: HashMap::new(),
             parent_session_id: config.parent_session_id,
         };

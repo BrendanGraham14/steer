@@ -16,7 +16,7 @@ use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, OpId, SessionId};
 use crate::tools::{McpBackend, ToolBackend, ToolExecutor};
 
-use super::interpreter::EffectInterpreter;
+use super::interpreter::{DeltaStreamContext, EffectInterpreter};
 use super::subscription::{SessionEventEnvelope, SessionEventSubscription, UnsubscribeSignal};
 
 const EVENT_BROADCAST_CAPACITY: usize = 256;
@@ -285,7 +285,8 @@ impl SessionActor {
 
                 tokio::spawn(async move {
                     let (delta_tx, mut delta_rx) = mpsc::channel::<StreamDelta>(64);
-                    let delta_context = Some((op_id, message_id.clone()));
+                    let delta_stream =
+                        Some(DeltaStreamContext::new(delta_tx, (op_id, message_id.clone())));
 
                     let delta_forward_task = {
                         let delta_broadcast = delta_broadcast.clone();
@@ -303,8 +304,7 @@ impl SessionActor {
                             system_prompt,
                             tools,
                             cancel_token,
-                            Some(delta_tx),
-                            delta_context,
+                            delta_stream,
                         )
                         .await;
 

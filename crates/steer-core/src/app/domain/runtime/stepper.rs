@@ -95,6 +95,15 @@ pub struct AgentConfig {
     pub tools: Vec<ToolSchema>,
 }
 
+struct ToolCompletionContext {
+    messages: Vec<Message>,
+    pending_results: HashMap<ToolCallId, ToolCall>,
+    completed_results: Vec<(ToolCallId, ToolResult)>,
+    tool_call_id: ToolCallId,
+    message_id: MessageId,
+    timestamp: u64,
+}
+
 pub struct AgentStepper {
     config: AgentConfig,
 }
@@ -168,13 +177,15 @@ impl AgentStepper {
                     timestamp,
                 },
             ) => self.handle_tool_completed(
-                messages,
-                pending_results,
-                completed_results,
-                tool_call_id,
+                ToolCompletionContext {
+                    messages,
+                    pending_results,
+                    completed_results,
+                    tool_call_id,
+                    message_id,
+                    timestamp,
+                },
                 result,
-                message_id,
-                timestamp,
             ),
 
             (
@@ -190,13 +201,15 @@ impl AgentStepper {
                     timestamp,
                 },
             ) => self.handle_tool_failed(
-                messages,
-                pending_results,
-                completed_results,
-                tool_call_id,
+                ToolCompletionContext {
+                    messages,
+                    pending_results,
+                    completed_results,
+                    tool_call_id,
+                    message_id,
+                    timestamp,
+                },
                 error,
-                message_id,
-                timestamp,
             ),
 
             (_, AgentInput::Cancel) => (AgentState::Cancelled, vec![AgentOutput::Cancelled]),
@@ -365,51 +378,46 @@ impl AgentStepper {
 
     fn handle_tool_completed(
         &self,
-        mut messages: Vec<Message>,
-        mut pending_results: HashMap<ToolCallId, ToolCall>,
-        mut completed_results: Vec<(ToolCallId, ToolResult)>,
-        tool_call_id: ToolCallId,
+        mut context: ToolCompletionContext,
         result: ToolResult,
-        message_id: MessageId,
-        timestamp: u64,
     ) -> (AgentState, Vec<AgentOutput>) {
         let mut outputs = vec![];
 
-        if let Some(tool_call) = pending_results.remove(&tool_call_id) {
-            let parent_id = messages.last().map(|m| m.id().to_string());
+        if let Some(tool_call) = context.pending_results.remove(&context.tool_call_id) {
+            let parent_id = context.messages.last().map(|m| m.id().to_string());
 
             let tool_message = Message {
                 data: MessageData::Tool {
                     tool_use_id: tool_call.id.clone(),
                     result: result.clone(),
                 },
-                timestamp,
-                id: message_id.0.clone(),
+                timestamp: context.timestamp,
+                id: context.message_id.0.clone(),
                 parent_message_id: parent_id,
             };
 
-            messages.push(tool_message.clone());
+            context.messages.push(tool_message.clone());
             outputs.push(AgentOutput::EmitMessage {
                 message: tool_message,
             });
-            completed_results.push((tool_call_id, result));
+            context.completed_results.push((context.tool_call_id, result));
         }
 
-        if pending_results.is_empty() {
+        if context.pending_results.is_empty() {
             outputs.push(AgentOutput::CallModel {
                 model: self.config.model.clone(),
-                messages: messages.clone(),
+                messages: context.messages.clone(),
                 system_prompt: self.config.system_prompt.clone(),
                 tools: self.config.tools.clone(),
             });
 
-            (AgentState::AwaitingModel { messages }, outputs)
+            (AgentState::AwaitingModel { messages: context.messages }, outputs)
         } else {
             (
                 AgentState::AwaitingToolResults {
-                    messages,
-                    pending_results,
-                    completed_results,
+                    messages: context.messages,
+                    pending_results: context.pending_results,
+                    completed_results: context.completed_results,
                 },
                 outputs,
             )
@@ -418,24 +426,11 @@ impl AgentStepper {
 
     fn handle_tool_failed(
         &self,
-        messages: Vec<Message>,
-        pending_results: HashMap<ToolCallId, ToolCall>,
-        completed_results: Vec<(ToolCallId, ToolResult)>,
-        tool_call_id: ToolCallId,
+        context: ToolCompletionContext,
         error: ToolError,
-        message_id: MessageId,
-        timestamp: u64,
     ) -> (AgentState, Vec<AgentOutput>) {
         let result = ToolResult::Error(error);
-        self.handle_tool_completed(
-            messages,
-            pending_results,
-            completed_results,
-            tool_call_id,
-            result,
-            message_id,
-            timestamp,
-        )
+        self.handle_tool_completed(context, result)
     }
 
     pub fn needs_model_call(&self, state: &AgentState) -> bool {

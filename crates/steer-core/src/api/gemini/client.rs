@@ -373,20 +373,20 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
             crate::app::conversation::MessageData::User { content, .. } => {
                 let parts: Vec<GeminiRequestPart> = content
                     .iter()
-                    .filter_map(|user_content| match user_content {
+                    .map(|user_content| match user_content {
                         UserContent::Text { text } => {
-                            Some(GeminiRequestPart::Text { text: text.clone() })
+                            GeminiRequestPart::Text { text: text.clone() }
                         }
                         UserContent::CommandExecution {
                             command,
                             stdout,
                             stderr,
                             exit_code,
-                        } => Some(GeminiRequestPart::Text {
+                        } => GeminiRequestPart::Text {
                             text: UserContent::format_command_execution_as_xml(
                                 command, stdout, stderr, *exit_code,
                             ),
-                        }),
+                        },
                     })
                     .collect();
 

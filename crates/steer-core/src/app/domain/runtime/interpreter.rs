@@ -20,6 +20,17 @@ pub struct EffectInterpreter {
     session_id: Option<SessionId>,
 }
 
+pub(crate) struct DeltaStreamContext {
+    tx: mpsc::Sender<StreamDelta>,
+    context: (OpId, MessageId),
+}
+
+impl DeltaStreamContext {
+    pub(crate) fn new(tx: mpsc::Sender<StreamDelta>, context: (OpId, MessageId)) -> Self {
+        Self { tx, context }
+    }
+}
+
 impl EffectInterpreter {
     pub fn new(api_client: Arc<ApiClient>, tool_executor: Arc<ToolExecutor>) -> Self {
         Self {
@@ -49,20 +60,18 @@ impl EffectInterpreter {
             tools,
             cancel_token,
             None,
-            None,
         )
         .await
     }
 
-    pub async fn call_model_with_deltas(
+    pub(crate) async fn call_model_with_deltas(
         &self,
         model: ModelId,
         messages: Vec<Message>,
         system_prompt: Option<String>,
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
-        delta_tx: Option<mpsc::Sender<StreamDelta>>,
-        delta_context: Option<(OpId, MessageId)>,
+        delta_stream: Option<DeltaStreamContext>,
     ) -> Result<Vec<AssistantContent>, String> {
         let tools_option = if tools.is_empty() { None } else { Some(tools) };
 
@@ -83,34 +92,37 @@ impl EffectInterpreter {
         while let Some(chunk) = stream.next().await {
             match chunk {
                 StreamChunk::TextDelta(text) => {
-                    if let (Some(tx), Some((op_id, message_id))) = (&delta_tx, &delta_context) {
+                    if let Some(delta_stream) = &delta_stream {
+                        let (op_id, message_id) = &delta_stream.context;
                         let delta = StreamDelta::TextChunk {
                             op_id: *op_id,
                             message_id: message_id.clone(),
                             delta: text,
                         };
-                        let _ = tx.send(delta).await;
+                        let _ = delta_stream.tx.send(delta).await;
                     }
                 }
                 StreamChunk::ThinkingDelta(thinking) => {
-                    if let (Some(tx), Some((op_id, message_id))) = (&delta_tx, &delta_context) {
+                    if let Some(delta_stream) = &delta_stream {
+                        let (op_id, message_id) = &delta_stream.context;
                         let delta = StreamDelta::ThinkingChunk {
                             op_id: *op_id,
                             message_id: message_id.clone(),
                             delta: thinking,
                         };
-                        let _ = tx.send(delta).await;
+                        let _ = delta_stream.tx.send(delta).await;
                     }
                 }
                 StreamChunk::ToolUseInputDelta { id, delta } => {
-                    if let (Some(tx), Some((op_id, message_id))) = (&delta_tx, &delta_context) {
+                    if let Some(delta_stream) = &delta_stream {
+                        let (op_id, message_id) = &delta_stream.context;
                         let delta = StreamDelta::ToolCallChunk {
                             op_id: *op_id,
                             message_id: message_id.clone(),
                             tool_call_id: ToolCallId::from_string(&id),
                             delta: ToolCallDelta::ArgumentChunk(delta),
                         };
-                        let _ = tx.send(delta).await;
+                        let _ = delta_stream.tx.send(delta).await;
                     }
                 }
                 StreamChunk::MessageComplete(response) => {
