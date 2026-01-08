@@ -190,7 +190,7 @@ mod tests {
     use super::*;
     use crate::api::Client as ApiClient;
     use crate::app::conversation::{AssistantContent, MessageData};
-    use crate::app::domain::runtime::{RuntimeConfig, RuntimeService};
+    use crate::app::domain::runtime::RuntimeService;
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::validation::ValidatorRegistry;
     use crate::config::model::builtin;
@@ -226,9 +226,7 @@ mod tests {
             Arc::new(ValidatorRegistry::new()),
         ));
 
-        let config = RuntimeConfig::new(builtin::claude_sonnet_4_5());
-
-        RuntimeService::spawn(event_store, api_client, tool_executor, config)
+        RuntimeService::spawn(event_store, api_client, tool_executor)
     }
 
     fn create_test_session_config() -> SessionConfig {

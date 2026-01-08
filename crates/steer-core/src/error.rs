@@ -1,9 +1,7 @@
 use steer_workspace::WorkspaceError;
 use thiserror::Error;
 
-use crate::{
-    api::ApiError, app::domain::session::SessionManagerError, auth::AuthError, tools::ToolError,
-};
+use crate::{api::ApiError, auth::AuthError, tools::ToolError};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -13,8 +11,6 @@ pub enum Error {
     Api(#[from] ApiError),
     #[error(transparent)]
     Auth(#[from] AuthError),
-    #[error(transparent)]
-    SessionManager(#[from] SessionManagerError),
     #[error(transparent)]
     Workspace(#[from] WorkspaceError),
     #[error(transparent)]

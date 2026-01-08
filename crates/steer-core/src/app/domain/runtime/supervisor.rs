@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -43,23 +42,6 @@ pub enum RuntimeError {
 
     #[error("Supervisor shutting down")]
     ShuttingDown,
-}
-
-#[derive(Debug, Clone)]
-pub struct RuntimeConfig {
-    pub max_active_sessions: usize,
-    pub idle_timeout: Duration,
-    pub default_model: ModelId,
-}
-
-impl RuntimeConfig {
-    pub fn new(default_model: ModelId) -> Self {
-        Self {
-            max_active_sessions: 100,
-            idle_timeout: Duration::from_secs(300),
-            default_model,
-        }
-    }
 }
 
 pub(crate) enum SupervisorCmd {
@@ -123,8 +105,6 @@ struct RuntimeSupervisor {
     event_store: Arc<dyn EventStore>,
     api_client: Arc<ApiClient>,
     tool_executor: Arc<ToolExecutor>,
-    #[allow(dead_code)]
-    config: RuntimeConfig,
 }
 
 impl RuntimeSupervisor {
@@ -132,14 +112,12 @@ impl RuntimeSupervisor {
         event_store: Arc<dyn EventStore>,
         api_client: Arc<ApiClient>,
         tool_executor: Arc<ToolExecutor>,
-        config: RuntimeConfig,
     ) -> Self {
         Self {
             sessions: HashMap::new(),
             event_store,
             api_client,
             tool_executor,
-            config,
         }
     }
 
@@ -710,11 +688,10 @@ impl RuntimeService {
         event_store: Arc<dyn EventStore>,
         api_client: Arc<ApiClient>,
         tool_executor: Arc<ToolExecutor>,
-        config: RuntimeConfig,
     ) -> Self {
         let (tx, rx) = mpsc::channel(64);
 
-        let supervisor = RuntimeSupervisor::new(event_store, api_client, tool_executor, config);
+        let supervisor = RuntimeSupervisor::new(event_store, api_client, tool_executor);
         let task = tokio::spawn(supervisor.run(rx));
 
         let handle = RuntimeHandle { tx };
@@ -744,7 +721,6 @@ mod tests {
     use super::*;
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::validation::ValidatorRegistry;
-    use crate::config::model::builtin;
     use crate::tools::BackendRegistry;
 
     async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {
@@ -755,12 +731,7 @@ mod tests {
         .unwrap()
     }
 
-    async fn create_test_deps() -> (
-        Arc<dyn EventStore>,
-        Arc<ApiClient>,
-        Arc<ToolExecutor>,
-        RuntimeConfig,
-    ) {
+    async fn create_test_deps() -> (Arc<dyn EventStore>, Arc<ApiClient>, Arc<ToolExecutor>) {
         let event_store = Arc::new(InMemoryEventStore::new());
         let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
@@ -777,9 +748,7 @@ mod tests {
             Arc::new(ValidatorRegistry::new()),
         ));
 
-        let config = RuntimeConfig::new(builtin::claude_sonnet_4_5());
-
-        (event_store, api_client, tool_executor, config)
+        (event_store, api_client, tool_executor)
     }
 
     fn test_session_config() -> SessionConfig {
@@ -795,8 +764,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session() {
-        let (event_store, api_client, tool_executor, config) = create_test_deps().await;
-        let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let session_id = service
             .handle
@@ -811,8 +780,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_suspend_and_resume_session() {
-        let (event_store, api_client, tool_executor, config) = create_test_deps().await;
-        let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let session_id = service
             .handle
@@ -831,8 +800,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_session() {
-        let (event_store, api_client, tool_executor, config) = create_test_deps().await;
-        let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let session_id = service
             .handle
@@ -851,8 +820,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscribe_events() {
-        let (event_store, api_client, tool_executor, config) = create_test_deps().await;
-        let service = RuntimeService::spawn(event_store, api_client, tool_executor, config);
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let session_id = service
             .handle

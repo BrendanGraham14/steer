@@ -3,7 +3,7 @@ use crate::grpc::error::GrpcError;
 type Result<T> = std::result::Result<T, GrpcError>;
 use std::sync::Arc;
 use steer_core::api::Client as ApiClient;
-use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeService};
+use steer_core::app::domain::runtime::RuntimeService;
 use steer_core::app::domain::session::{InMemoryEventStore, SessionCatalog};
 use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
@@ -62,7 +62,7 @@ pub struct LocalGrpcSetup {
 }
 
 pub async fn setup_local_grpc_with_catalog(
-    default_model: ModelId,
+    _default_model: ModelId,
     session_db_path: Option<std::path::PathBuf>,
     catalog_config: CatalogConfig,
 ) -> Result<LocalGrpcSetup> {
@@ -128,10 +128,7 @@ pub async fn setup_local_grpc_with_catalog(
     )
     .build();
 
-    let runtime_config = RuntimeConfig::new(default_model);
-
-    let runtime_service =
-        RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+    let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
     let (channel, server_handle) = create_local_channel(
         &runtime_service,
@@ -312,9 +309,7 @@ mod tests {
         )
         .build();
 
-        let runtime_config = RuntimeConfig::new(default_model);
-        let runtime_service =
-            RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+        let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let (channel, server_handle) = create_local_channel(
             &runtime_service,

@@ -8,7 +8,7 @@ pub use steer_core::{api, app, config, runners, session, tools, utils, workspace
 use eyre::Result;
 use std::sync::Arc;
 use steer_core::api::Client as ApiClient;
-use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeHandle, RuntimeService};
+use steer_core::app::domain::runtime::{RuntimeHandle, RuntimeService};
 use steer_core::app::domain::session::SqliteEventStore;
 use steer_core::app::domain::types::SessionId;
 use steer_core::config::model::ModelId;
@@ -99,9 +99,7 @@ impl RuntimeBuilder {
         )
         .build();
 
-        let runtime_config = RuntimeConfig::new(model_id.clone());
-
-        let service = RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+        let service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         Ok((service, model_id))
     }

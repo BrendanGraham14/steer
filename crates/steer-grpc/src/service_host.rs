@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::grpc::RuntimeAgentService;
 use steer_core::api::Client as ApiClient;
-use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeHandle, RuntimeService};
+use steer_core::app::domain::runtime::{RuntimeHandle, RuntimeService};
 use steer_core::app::domain::session::{SessionCatalog, SqliteEventStore};
 use steer_core::auth::storage::AuthStorage;
 use steer_core::catalog::CatalogConfig;
@@ -142,10 +142,7 @@ impl ServiceHost {
         )
         .build();
 
-        let runtime_config = RuntimeConfig::new(config.default_model.clone());
-
-        let runtime_service =
-            RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+        let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let runtime_handle = runtime_service.handle();
 

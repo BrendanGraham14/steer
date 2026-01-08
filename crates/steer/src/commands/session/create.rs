@@ -6,7 +6,7 @@ use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 
 use steer_core::api::Client as ApiClient;
-use steer_core::app::domain::runtime::{RuntimeConfig, RuntimeService};
+use steer_core::app::domain::runtime::RuntimeService;
 use steer_core::app::domain::session::SqliteEventStore;
 use steer_core::tools::ToolSystemBuilder;
 
@@ -90,7 +90,7 @@ impl Command for CreateSessionCommand {
         )
         .build();
 
-        let default_model = if let Some(ref model_str) = self.model {
+        let _default_model = if let Some(ref model_str) = self.model {
             model_registry
                 .resolve(model_str)
                 .map_err(|e| eyre!("Invalid model: {}", e))?
@@ -98,10 +98,7 @@ impl Command for CreateSessionCommand {
             steer_core::config::model::builtin::opus()
         };
 
-        let runtime_config = RuntimeConfig::new(default_model);
-
-        let runtime_service =
-            RuntimeService::spawn(event_store, api_client, tool_executor, runtime_config);
+        let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
 
         let session_id = runtime_service
             .handle()
