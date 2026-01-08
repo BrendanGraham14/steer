@@ -333,8 +333,10 @@ impl SessionActor {
 
                 tokio::spawn(async move {
                     let (delta_tx, mut delta_rx) = mpsc::channel::<StreamDelta>(64);
-                    let delta_stream =
-                        Some(DeltaStreamContext::new(delta_tx, (op_id, message_id.clone())));
+                    let delta_stream = Some(DeltaStreamContext::new(
+                        delta_tx,
+                        (op_id, message_id.clone()),
+                    ));
 
                     let delta_forward_task = {
                         let delta_broadcast = delta_broadcast.clone();

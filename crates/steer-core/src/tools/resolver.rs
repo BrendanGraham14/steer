@@ -64,11 +64,7 @@ impl SessionMcpBackends {
 
     pub async fn is_current_generation(&self, server_name: &str, generation: u64) -> bool {
         let generations = self.generations.read().await;
-        generations
-            .get(server_name)
-            .copied()
-            .unwrap_or(0)
-            == generation
+        generations.get(server_name).copied().unwrap_or(0) == generation
     }
 
     pub async fn register(&self, server_name: String, backend: Arc<McpBackend>) {

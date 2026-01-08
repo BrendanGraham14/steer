@@ -1568,7 +1568,12 @@ mod tests {
             },
         );
 
-        assert!(!state.tools.iter().any(|t| t.name.starts_with("mcp__alpha__")));
+        assert!(
+            !state
+                .tools
+                .iter()
+                .any(|t| t.name.starts_with("mcp__alpha__"))
+        );
         assert!(state.tools.iter().any(|t| t.name == "bash"));
     }
 

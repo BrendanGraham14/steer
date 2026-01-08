@@ -184,7 +184,6 @@ impl AgentClient {
         let request = Request::new(proto::SendMessageRequest {
             session_id,
             message,
-            attachments: vec![],
             model: Some(proto::ModelSpec {
                 provider_id: model.0.storage_key(),
                 model_id: model.1,

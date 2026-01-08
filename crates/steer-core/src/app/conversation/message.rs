@@ -32,7 +32,6 @@ pub enum UserContent {
         stderr: String,
         exit_code: i32,
     },
-    // TODO: support attachments
 }
 
 impl UserContent {

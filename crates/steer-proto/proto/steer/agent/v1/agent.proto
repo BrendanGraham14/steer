@@ -220,8 +220,7 @@ message CreateSessionResponse {
 message SendMessageRequest {
   string session_id = 1;
   string message = 2;
-  repeated Attachment attachments = 3;
-  ModelSpec model = 4;  // Required; client chooses from ListModels
+  ModelSpec model = 3;  // Required; client chooses from ListModels
 }
 
 message SendMessageResponse {
@@ -596,12 +595,7 @@ message ToolCallState {
   optional ToolResult result = 5;
 }
 
-message Attachment {
-  string name = 1;
-  string content_type = 2;
-  bytes data = 3;
-  map<string, string> metadata = 4;
-}
+
 
 message Usage {
   uint32 input_tokens = 1;

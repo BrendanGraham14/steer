@@ -400,7 +400,9 @@ impl AgentStepper {
             outputs.push(AgentOutput::EmitMessage {
                 message: tool_message,
             });
-            context.completed_results.push((context.tool_call_id, result));
+            context
+                .completed_results
+                .push((context.tool_call_id, result));
         }
 
         if context.pending_results.is_empty() {
@@ -411,7 +413,12 @@ impl AgentStepper {
                 tools: self.config.tools.clone(),
             });
 
-            (AgentState::AwaitingModel { messages: context.messages }, outputs)
+            (
+                AgentState::AwaitingModel {
+                    messages: context.messages,
+                },
+                outputs,
+            )
         } else {
             (
                 AgentState::AwaitingToolResults {

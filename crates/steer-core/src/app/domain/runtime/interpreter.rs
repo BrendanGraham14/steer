@@ -60,15 +60,8 @@ impl EffectInterpreter {
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
     ) -> Result<Vec<AssistantContent>, String> {
-        self.call_model_with_deltas(
-            model,
-            messages,
-            system_prompt,
-            tools,
-            cancel_token,
-            None,
-        )
-        .await
+        self.call_model_with_deltas(model, messages, system_prompt, tools, cancel_token, None)
+            .await
     }
 
     pub(crate) async fn call_model_with_deltas(

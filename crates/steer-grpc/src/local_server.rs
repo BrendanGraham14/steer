@@ -452,7 +452,6 @@ mod tests {
             .send_message(tonic::Request::new(SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: "first".to_string(),
-                attachments: vec![],
                 model: Some(model_spec.clone()),
             }))
             .await
@@ -464,7 +463,6 @@ mod tests {
             .send_message(tonic::Request::new(SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: "second".to_string(),
-                attachments: vec![],
                 model: Some(model_spec.clone()),
             }))
             .await
@@ -529,7 +527,6 @@ mod tests {
         let request = tonic::Request::new(SendMessageRequest {
             session_id: session_id.to_string(),
             message: "hello".to_string(),
-            attachments: vec![],
             model: None,
         });
 
