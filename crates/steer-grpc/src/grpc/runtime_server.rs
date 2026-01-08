@@ -123,67 +123,128 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let event_tx = tx.clone();
         let last_sequence_events = last_sequence.clone();
+        let delta_sequence_counter = delta_sequence.clone();
+        let min_live_seq = min_live_seq;
         tokio::spawn(async move {
-            let mut subscription = subscription;
-            while let Some(envelope) = subscription.recv().await {
-                if let Some(min_seq) = min_live_seq {
-                    if envelope.seq < min_seq {
-                        continue;
-                    }
-                }
-
-                let proto_event = match session_event_to_proto(envelope.event, envelope.seq) {
+            async fn send_delta(
+                delta: steer_core::app::domain::delta::StreamDelta,
+                tx: &mpsc::Sender<Result<proto::SessionEvent, Status>>,
+                last_sequence: &Arc<AtomicU64>,
+                delta_sequence: &Arc<AtomicU64>,
+            ) -> Result<(), ()> {
+                let sequence_num = last_sequence.load(Ordering::Relaxed);
+                let delta_sequence = delta_sequence.fetch_add(1, Ordering::Relaxed);
+                let proto_event = match stream_delta_to_proto(delta, sequence_num, delta_sequence) {
                     Ok(event) => event,
                     Err(e) => {
-                        warn!("Failed to convert session event: {}", e);
-                        continue;
+                        warn!("Failed to convert stream delta: {}", e);
+                        return Ok(());
                     }
                 };
 
-                if proto_event.event.is_none() {
-                    continue;
+                if let Err(e) = tx.send(Ok(proto_event)).await {
+                    warn!("Failed to send delta to client: {}", e);
+                    return Err(());
                 }
 
-                if let Err(e) = event_tx.send(Ok(proto_event)).await {
-                    warn!("Failed to send event to client: {}", e);
+                Ok(())
+            }
+
+            let mut subscription = subscription;
+            let mut delta_rx = delta_subscription;
+            let mut events_closed = false;
+            let mut deltas_closed = false;
+
+            loop {
+                if events_closed && deltas_closed {
                     break;
                 }
-                last_sequence_events.store(envelope.seq, Ordering::Relaxed);
-            }
-            debug!("Event forwarding task ended for session: {}", session_id);
-        });
 
-        let delta_tx = tx.clone();
-        let last_sequence_deltas = last_sequence.clone();
-        let delta_sequence_counter = delta_sequence.clone();
-        tokio::spawn(async move {
-            let mut delta_rx = delta_subscription;
-            loop {
-                match delta_rx.recv().await {
-                    Ok(delta) => {
-                        let sequence_num = last_sequence_deltas.load(Ordering::Relaxed);
-                        let delta_sequence = delta_sequence_counter.fetch_add(1, Ordering::Relaxed);
-                        let proto_event =
-                            match stream_delta_to_proto(delta, sequence_num, delta_sequence) {
-                                Ok(event) => event,
-                                Err(e) => {
-                                    warn!("Failed to convert stream delta: {}", e);
+                tokio::select! {
+                    envelope = subscription.recv(), if !events_closed => {
+                        match envelope {
+                            Some(envelope) => {
+                                loop {
+                                    match delta_rx.try_recv() {
+                                        Ok(delta) => {
+                                            if send_delta(
+                                                delta,
+                                                &event_tx,
+                                                &last_sequence_events,
+                                                &delta_sequence_counter,
+                                            )
+                                            .await
+                                            .is_err()
+                                            {
+                                                return;
+                                            }
+                                        }
+                                        Err(broadcast::error::TryRecvError::Empty) => break,
+                                        Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                                            warn!("Delta subscription lagged by {} messages", skipped);
+                                            continue;
+                                        }
+                                        Err(broadcast::error::TryRecvError::Closed) => {
+                                            deltas_closed = true;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if let Some(min_seq) = min_live_seq
+                                    && envelope.seq < min_seq {
+                                        continue;
+                                    }
+
+                                let proto_event = match session_event_to_proto(envelope.event, envelope.seq) {
+                                    Ok(event) => event,
+                                    Err(e) => {
+                                        warn!("Failed to convert session event: {}", e);
+                                        continue;
+                                    }
+                                };
+
+                                if proto_event.event.is_none() {
                                     continue;
                                 }
-                            };
 
-                        if let Err(e) = delta_tx.send(Ok(proto_event)).await {
-                            warn!("Failed to send delta to client: {}", e);
-                            break;
+                                if let Err(e) = event_tx.send(Ok(proto_event)).await {
+                                    warn!("Failed to send event to client: {}", e);
+                                    break;
+                                }
+                                last_sequence_events.store(envelope.seq, Ordering::Relaxed);
+                            }
+                            None => {
+                                events_closed = true;
+                            }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        warn!("Delta subscription lagged by {} messages", skipped);
+                    delta = delta_rx.recv(), if !deltas_closed => {
+                        match delta {
+                            Ok(delta) => {
+                                if send_delta(
+                                    delta,
+                                    &event_tx,
+                                    &last_sequence_events,
+                                    &delta_sequence_counter,
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                warn!("Delta subscription lagged by {} messages", skipped);
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                deltas_closed = true;
+                            }
+                        }
                     }
-                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
-            debug!("Delta forwarding task ended for session: {}", session_id);
+            debug!("Event forwarding task ended for session: {}", session_id);
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))

@@ -308,7 +308,13 @@ impl SessionActor {
                         )
                         .await;
 
-                    delta_forward_task.abort();
+                    if let Err(e) = delta_forward_task.await {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            error = %e,
+                            "Delta forward task ended unexpectedly"
+                        );
+                    }
 
                     let action = match result {
                         Ok(content) => Action::ModelResponseComplete {
