@@ -15,7 +15,7 @@ use super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use steer_core::app::MessageData;
 use steer_core::app::conversation::{Message, UserContent};
-use steer_core::session::ToolApprovalPolicy;
+use steer_core::session::{ApprovalRules, ToolApprovalPolicy, UnapprovedBehavior};
 
 pub struct HeadlessCommand {
     pub model: Option<String>,
@@ -148,7 +148,13 @@ impl HeadlessCommand {
             .iter()
             .map(|s| s.to_string())
             .collect::<std::collections::HashSet<String>>();
-            ToolApprovalPolicy::PreApproved { tools: all_tools }
+            ToolApprovalPolicy {
+                default_behavior: UnapprovedBehavior::Prompt,
+                preapproved: ApprovalRules {
+                    tools: all_tools,
+                    per_tool: std::collections::HashMap::new(),
+                },
+            }
         };
 
         config.tool_config.approval_policy = auto_approve_policy;

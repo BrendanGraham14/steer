@@ -273,52 +273,91 @@ impl Default for ToolVisibility {
     }
 }
 
-/// Tool-specific configuration for bash
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
-pub struct BashToolConfig {
-    /// Command patterns that are pre-approved for execution
-    #[serde(default)]
-    pub approved_patterns: Vec<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolDecision {
+    Allow,
+    Ask,
+    Deny,
 }
 
-/// Tool approval policy configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UnapprovedBehavior {
+    #[default]
+    Prompt,
+    Deny,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ToolApprovalPolicy {
-    /// Always ask for approval before executing any tool
-    AlwaysAsk,
+pub enum ToolRule {
+    Bash { patterns: Vec<String> },
+}
 
-    /// Pre-approved tools execute without asking
-    PreApproved { tools: HashSet<String> },
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ApprovalRules {
+    #[serde(default)]
+    pub tools: HashSet<String>,
+    #[serde(default)]
+    pub per_tool: HashMap<String, ToolRule>,
+}
 
-    /// Mixed policy: some tools pre-approved, others require approval
-    Mixed {
-        pre_approved: HashSet<String>,
-        ask_for_others: bool,
-    },
+impl ApprovalRules {
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty() && self.per_tool.is_empty()
+    }
+
+    pub fn bash_patterns(&self) -> Option<&[String]> {
+        self.per_tool.get("bash").map(|rule| match rule {
+            ToolRule::Bash { patterns } => patterns.as_slice(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ToolApprovalPolicy {
+    pub default_behavior: UnapprovedBehavior,
+    #[serde(default)]
+    pub preapproved: ApprovalRules,
+}
+
+impl Default for ToolApprovalPolicy {
+    fn default() -> Self {
+        Self {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules::default(),
+        }
+    }
 }
 
 impl ToolApprovalPolicy {
-    pub fn is_tool_approved(&self, tool_name: &str) -> bool {
-        match self {
-            ToolApprovalPolicy::AlwaysAsk => false,
-            ToolApprovalPolicy::PreApproved { tools } => tools.contains(tool_name),
-            ToolApprovalPolicy::Mixed {
-                pre_approved,
-                ask_for_others: _,
-            } => pre_approved.contains(tool_name),
+    pub fn tool_decision(&self, tool_name: &str) -> ToolDecision {
+        if self.preapproved.tools.contains(tool_name) {
+            ToolDecision::Allow
+        } else {
+            match self.default_behavior {
+                UnapprovedBehavior::Prompt => ToolDecision::Ask,
+                UnapprovedBehavior::Deny => ToolDecision::Deny,
+            }
         }
     }
 
-    pub fn should_ask_for_approval(&self, tool_name: &str) -> bool {
-        match self {
-            ToolApprovalPolicy::AlwaysAsk => true,
-            ToolApprovalPolicy::PreApproved { tools } => !tools.contains(tool_name),
-            ToolApprovalPolicy::Mixed {
-                pre_approved,
-                ask_for_others,
-            } => !pre_approved.contains(tool_name) && *ask_for_others,
-        }
+    pub fn is_bash_pattern_preapproved(&self, command: &str) -> bool {
+        let Some(patterns) = self.preapproved.bash_patterns() else {
+            return false;
+        };
+        patterns.iter().any(|pattern| {
+            if pattern == command {
+                return true;
+            }
+            glob::Pattern::new(pattern)
+                .map(|glob| glob.matches(command))
+                .unwrap_or(false)
+        })
+    }
+
+    pub fn pre_approved_tools(&self) -> &HashSet<String> {
+        &self.preapproved.tools
     }
 }
 
@@ -368,28 +407,12 @@ pub enum BackendConfig {
     },
 }
 
-/// Tool configuration for the session
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionToolConfig {
-    /// Backend configurations for this session
     pub backends: Vec<BackendConfig>,
-    /// Tool visibility - controls which tools are shown to the AI agent
     pub visibility: ToolVisibility,
-    /// Tool approval policy - controls when user approval is needed
     pub approval_policy: ToolApprovalPolicy,
-    /// Additional metadata for tool configuration
     pub metadata: HashMap<String, String>,
-    /// Tool-specific configurations
-    #[serde(default)]
-    pub tools: HashMap<String, ToolSpecificConfig>,
-}
-
-/// Tool-specific configurations
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum ToolSpecificConfig {
-    /// Configuration for the bash tool
-    Bash(BashToolConfig),
 }
 
 impl Default for SessionToolConfig {
@@ -397,22 +420,19 @@ impl Default for SessionToolConfig {
         Self {
             backends: Vec::new(),
             visibility: ToolVisibility::All,
-            approval_policy: ToolApprovalPolicy::AlwaysAsk,
+            approval_policy: ToolApprovalPolicy::default(),
             metadata: HashMap::new(),
-            tools: HashMap::new(),
         }
     }
 }
 
 impl SessionToolConfig {
-    /// Minimal read-only configuration
     pub fn read_only() -> Self {
         Self {
-            backends: Vec::new(), // Use default backends
+            backends: Vec::new(),
             visibility: ToolVisibility::ReadOnly,
-            approval_policy: ToolApprovalPolicy::AlwaysAsk,
+            approval_policy: ToolApprovalPolicy::default(),
             metadata: HashMap::new(),
-            tools: HashMap::new(),
         }
     }
 }
@@ -707,29 +727,90 @@ mod tests {
         let session = Session::new("test-session".to_string(), config.clone());
 
         assert_eq!(session.id, "test-session");
-        assert!(
+        assert_eq!(
             session
                 .config
                 .tool_config
                 .approval_policy
-                .should_ask_for_approval("any_tool")
+                .tool_decision("any_tool"),
+            ToolDecision::Ask
         );
         assert_eq!(session.state.message_count(), 0);
     }
 
     #[test]
-    fn test_tool_approval_policy() {
-        let policy = ToolApprovalPolicy::PreApproved {
-            tools: ["read_file", "list_files"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+    fn test_tool_approval_policy_prompt_unapproved() {
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: ["read_file", "list_files"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                per_tool: HashMap::new(),
+            },
         };
 
-        assert!(policy.is_tool_approved("read_file"));
-        assert!(!policy.is_tool_approved("write_file"));
-        assert!(!policy.should_ask_for_approval("read_file"));
-        assert!(policy.should_ask_for_approval("write_file"));
+        assert_eq!(policy.tool_decision("read_file"), ToolDecision::Allow);
+        assert_eq!(policy.tool_decision("write_file"), ToolDecision::Ask);
+    }
+
+    #[test]
+    fn test_tool_approval_policy_deny_unapproved() {
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Deny,
+            preapproved: ApprovalRules {
+                tools: ["read_file", "list_files"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                per_tool: HashMap::new(),
+            },
+        };
+
+        assert_eq!(policy.tool_decision("read_file"), ToolDecision::Allow);
+        assert_eq!(policy.tool_decision("write_file"), ToolDecision::Deny);
+    }
+
+    #[test]
+    fn test_tool_approval_policy_default() {
+        let policy = ToolApprovalPolicy::default();
+
+        assert_eq!(policy.tool_decision("read_file"), ToolDecision::Ask);
+        assert_eq!(policy.tool_decision("write_file"), ToolDecision::Ask);
+    }
+
+    #[test]
+    fn test_bash_pattern_matching() {
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: HashSet::new(),
+                per_tool: [(
+                    "bash".to_string(),
+                    ToolRule::Bash {
+                        patterns: vec![
+                            "git status".to_string(),
+                            "git log*".to_string(),
+                            "git * --oneline".to_string(),
+                            "ls -?a*".to_string(),
+                            "cargo build*".to_string(),
+                        ],
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+        };
+
+        assert!(policy.is_bash_pattern_preapproved("git status"));
+        assert!(policy.is_bash_pattern_preapproved("git log --oneline"));
+        assert!(policy.is_bash_pattern_preapproved("git show --oneline"));
+        assert!(policy.is_bash_pattern_preapproved("ls -la"));
+        assert!(policy.is_bash_pattern_preapproved("cargo build --release"));
+        assert!(!policy.is_bash_pattern_preapproved("git commit"));
+        assert!(!policy.is_bash_pattern_preapproved("ls -l"));
+        assert!(!policy.is_bash_pattern_preapproved("rm -rf /"));
     }
 
     #[test]
@@ -807,12 +888,12 @@ mod tests {
     #[test]
     fn test_session_tool_config_read_only() {
         let config = SessionToolConfig::read_only();
-        assert_eq!(config.backends.len(), 0); // Empty backends means use defaults
+        assert_eq!(config.backends.len(), 0);
         assert!(matches!(config.visibility, ToolVisibility::ReadOnly));
-        assert!(matches!(
-            config.approval_policy,
-            ToolApprovalPolicy::AlwaysAsk
-        ));
+        assert_eq!(
+            config.approval_policy.default_behavior,
+            UnapprovedBehavior::Prompt
+        );
     }
 
     #[tokio::test]

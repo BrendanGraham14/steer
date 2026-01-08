@@ -239,9 +239,16 @@ mod tests {
     }
 
     fn create_test_tool_approval_policy() -> ToolApprovalPolicy {
+        use crate::session::state::{ApprovalRules, UnapprovedBehavior};
         let tools = read_only_workspace_tools();
         let tool_names = tools.iter().map(|t| t.name().to_string()).collect();
-        ToolApprovalPolicy::PreApproved { tools: tool_names }
+        ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: tool_names,
+                per_tool: std::collections::HashMap::new(),
+            },
+        }
     }
 
     #[tokio::test]

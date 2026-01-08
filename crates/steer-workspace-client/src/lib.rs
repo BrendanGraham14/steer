@@ -474,6 +474,7 @@ fn convert_error_detail_to_tool_error(detail: ToolErrorDetail) -> steer_tools::T
         Kind::Timeout => steer_tools::ToolError::Timeout(detail.tool_name),
         Kind::UnknownTool => steer_tools::ToolError::UnknownTool(detail.tool_name),
         Kind::DeniedByUser => steer_tools::ToolError::DeniedByUser(detail.tool_name),
+        Kind::DeniedByPolicy => steer_tools::ToolError::DeniedByPolicy(detail.tool_name),
         Kind::Internal | Kind::Unset => steer_tools::ToolError::InternalError(detail.message),
     }
 }
@@ -529,5 +530,17 @@ mod tests {
         );
         assert_eq!(env_info.readme_content, Some("# My Project".to_string()));
         assert_eq!(env_info.claude_md_content, None);
+    }
+
+    #[test]
+    fn test_convert_error_detail_denied_by_policy() {
+        let detail = ToolErrorDetail {
+            kind: tool_error_detail::Kind::DeniedByPolicy as i32,
+            tool_name: "bash".to_string(),
+            message: "Tool execution denied by policy: bash".to_string(),
+        };
+
+        let error = convert_error_detail_to_tool_error(detail);
+        assert!(matches!(error, steer_tools::ToolError::DeniedByPolicy(name) if name == "bash"));
     }
 }

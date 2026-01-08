@@ -80,6 +80,7 @@ message ToolErrorDetail {
     UNKNOWN_TOOL = 6;
     DENIED_BY_USER = 7;
     INTERNAL = 8;
+    DENIED_BY_POLICY = 9;
   }
   Kind kind = 1;
   string tool_name = 2;

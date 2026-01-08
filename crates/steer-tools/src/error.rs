@@ -25,7 +25,10 @@ pub enum ToolError {
     Io { tool_name: String, message: String },
 
     #[error("{0} requires approval to run")]
-    DeniedByUser(String), // Tool name
+    DeniedByUser(String),
+
+    #[error("{0} denied by approval policy")]
+    DeniedByPolicy(String),
 }
 
 impl ToolError {

@@ -6,8 +6,8 @@ use steer_core::app::conversation::{
 use steer_core::app::domain::SessionEvent;
 
 use steer_core::session::state::{
-    BackendConfig, BashToolConfig, RemoteAuth, SessionConfig, SessionToolConfig,
-    ToolApprovalPolicy, ToolFilter, ToolSpecificConfig, ToolVisibility, WorkspaceConfig,
+    ApprovalRules, BackendConfig, RemoteAuth, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
+    ToolFilter, ToolRule, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
 };
 use steer_proto::agent::v1 as proto;
 use steer_proto::common::v1 as common;
@@ -145,6 +145,7 @@ fn tool_error_to_proto(error: &steer_tools::error::ToolError) -> proto::ToolErro
         ToolError::Cancelled(name) => ErrorType::Cancelled(name.clone()),
         ToolError::Timeout(name) => ErrorType::Timeout(name.clone()),
         ToolError::DeniedByUser(name) => ErrorType::DeniedByUser(name.clone()),
+        ToolError::DeniedByPolicy(name) => ErrorType::DeniedByPolicy(name.clone()),
         ToolError::InternalError(msg) => ErrorType::InternalError(msg.clone()),
         ToolError::Io { tool_name, message } => ErrorType::Io(proto::IoError {
             tool_name: tool_name.clone(),
@@ -277,6 +278,7 @@ fn proto_to_tool_error(
         ErrorType::Cancelled(name) => ToolError::Cancelled(name),
         ErrorType::Timeout(name) => ToolError::Timeout(name),
         ErrorType::DeniedByUser(name) => ToolError::DeniedByUser(name),
+        ErrorType::DeniedByPolicy(name) => ToolError::DeniedByPolicy(name),
         ErrorType::InternalError(msg) => ToolError::InternalError(msg),
         ErrorType::Io(e) => ToolError::Io {
             tool_name: e.tool_name,
@@ -401,40 +403,36 @@ pub(crate) fn message_to_proto(
     })
 }
 
-/// Convert internal ToolApprovalPolicy to protobuf
 pub(crate) fn tool_approval_policy_to_proto(
     policy: &ToolApprovalPolicy,
 ) -> proto::ToolApprovalPolicy {
-    use proto::{
-        AlwaysAskPolicy, ApprovalDecision, MixedPolicy, PreApprovedPolicy,
-        tool_approval_policy::Policy,
-    };
-
-    let policy_variant = match policy {
-        ToolApprovalPolicy::AlwaysAsk => Policy::AlwaysAsk(AlwaysAskPolicy {
-            timeout_ms: None,
-            default_decision: Some(ApprovalDecision {
-                decision_type: Some(proto::approval_decision::DecisionType::Deny(true)),
-            }),
-        }),
-        ToolApprovalPolicy::PreApproved { tools } => Policy::PreApproved(PreApprovedPolicy {
-            tools: tools.iter().cloned().collect(),
-        }),
-        ToolApprovalPolicy::Mixed {
-            pre_approved,
-            ask_for_others,
-        } => Policy::Mixed(MixedPolicy {
-            pre_approved_tools: pre_approved.iter().cloned().collect(),
-            ask_for_others: *ask_for_others,
-            timeout_ms: None,
-            default_decision: Some(ApprovalDecision {
-                decision_type: Some(proto::approval_decision::DecisionType::Deny(true)),
-            }),
-        }),
-    };
-
     proto::ToolApprovalPolicy {
-        policy: Some(policy_variant),
+        default_behavior: match policy.default_behavior {
+            UnapprovedBehavior::Prompt => proto::UnapprovedBehavior::Prompt.into(),
+            UnapprovedBehavior::Deny => proto::UnapprovedBehavior::Deny.into(),
+        },
+        preapproved: Some(approval_rules_to_proto(&policy.preapproved)),
+    }
+}
+
+fn approval_rules_to_proto(rules: &ApprovalRules) -> proto::ApprovalRules {
+    proto::ApprovalRules {
+        tools: rules.tools.iter().cloned().collect(),
+        per_tool: rules
+            .per_tool
+            .iter()
+            .map(|(name, rule)| (name.clone(), tool_rule_to_proto(rule)))
+            .collect(),
+    }
+}
+
+fn tool_rule_to_proto(rule: &ToolRule) -> proto::ToolRule {
+    match rule {
+        ToolRule::Bash { patterns } => proto::ToolRule {
+            rule: Some(proto::tool_rule::Rule::Bash(proto::BashRule {
+                patterns: patterns.clone(),
+            })),
+        },
     }
 }
 
@@ -542,7 +540,6 @@ pub(crate) fn backend_config_to_proto(config: &BackendConfig) -> proto::BackendC
     }
 }
 
-/// Convert internal SessionToolConfig to protobuf
 pub(crate) fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto::SessionToolConfig {
     proto::SessionToolConfig {
         backends: config
@@ -553,34 +550,11 @@ pub(crate) fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto:
         metadata: config.metadata.clone(),
         visibility: Some(tool_visibility_to_proto(&config.visibility)),
         approval_policy: Some(tool_approval_policy_to_proto(&config.approval_policy)),
-        tools: config
-            .tools
-            .iter()
-            .map(|(name, config)| (name.clone(), tool_specific_config_to_proto(config)))
-            .collect(),
     }
 }
 
-pub(crate) fn tool_specific_config_to_proto(
-    config: &ToolSpecificConfig,
-) -> proto::ToolSpecificConfig {
-    match config {
-        ToolSpecificConfig::Bash(bash_config) => proto::ToolSpecificConfig {
-            config: Some(proto::tool_specific_config::Config::Bash(
-                proto::BashToolConfig {
-                    approved_patterns: bash_config.approved_patterns.clone(),
-                },
-            )),
-        },
-    }
-}
-
-/// Convert internal SessionConfig to protobuf
 pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
     proto::SessionConfig {
-        tool_policy: Some(tool_approval_policy_to_proto(
-            &config.tool_config.approval_policy,
-        )),
         tool_config: Some(session_tool_config_to_proto(&config.tool_config)),
         metadata: config.metadata.clone(),
         workspace_config: Some(workspace_config_to_proto(&config.workspace)),
@@ -656,31 +630,45 @@ pub(crate) fn proto_to_tool_visibility(
     }
 }
 
-/// Convert from protobuf ToolApprovalPolicy to internal ToolApprovalPolicy
 pub(crate) fn proto_to_tool_approval_policy(
     proto_policy: Option<proto::ToolApprovalPolicy>,
 ) -> ToolApprovalPolicy {
     match proto_policy {
         Some(policy) => {
-            match policy.policy {
-                Some(proto::tool_approval_policy::Policy::AlwaysAsk(_)) => {
-                    ToolApprovalPolicy::AlwaysAsk
-                }
-                Some(proto::tool_approval_policy::Policy::PreApproved(pre_approved)) => {
-                    ToolApprovalPolicy::PreApproved {
-                        tools: pre_approved.tools.into_iter().collect(),
-                    }
-                }
-                Some(proto::tool_approval_policy::Policy::Mixed(mixed)) => {
-                    ToolApprovalPolicy::Mixed {
-                        pre_approved: mixed.pre_approved_tools.into_iter().collect(),
-                        ask_for_others: mixed.ask_for_others,
-                    }
-                }
-                None => ToolApprovalPolicy::AlwaysAsk, // Default
+            let default_behavior =
+                match proto::UnapprovedBehavior::try_from(policy.default_behavior) {
+                    Ok(proto::UnapprovedBehavior::Deny) => UnapprovedBehavior::Deny,
+                    _ => UnapprovedBehavior::Prompt,
+                };
+            let preapproved = policy
+                .preapproved
+                .map(proto_to_approval_rules)
+                .unwrap_or_default();
+            ToolApprovalPolicy {
+                default_behavior,
+                preapproved,
             }
         }
-        None => ToolApprovalPolicy::AlwaysAsk, // Default
+        None => ToolApprovalPolicy::default(),
+    }
+}
+
+fn proto_to_approval_rules(proto_rules: proto::ApprovalRules) -> ApprovalRules {
+    ApprovalRules {
+        tools: proto_rules.tools.into_iter().collect(),
+        per_tool: proto_rules
+            .per_tool
+            .into_iter()
+            .filter_map(|(name, rule)| proto_to_tool_rule(rule).map(|r| (name, r)))
+            .collect(),
+    }
+}
+
+fn proto_to_tool_rule(proto_rule: proto::ToolRule) -> Option<ToolRule> {
+    match proto_rule.rule? {
+        proto::tool_rule::Rule::Bash(bash) => Some(ToolRule::Bash {
+            patterns: bash.patterns,
+        }),
     }
 }
 
@@ -721,25 +709,6 @@ pub(crate) fn proto_to_tool_config(proto_config: proto::SessionToolConfig) -> Se
         approval_policy: proto_to_tool_approval_policy(proto_config.approval_policy),
         visibility: proto_to_tool_visibility(proto_config.visibility),
         metadata: proto_config.metadata,
-        tools: proto_config
-            .tools
-            .into_iter()
-            .filter_map(|(name, config)| {
-                proto_to_tool_specific_config(config).map(|config| (name, config))
-            })
-            .collect(),
-    }
-}
-
-pub(crate) fn proto_to_tool_specific_config(
-    proto_config: proto::ToolSpecificConfig,
-) -> Option<ToolSpecificConfig> {
-    match proto_config.config? {
-        proto::tool_specific_config::Config::Bash(bash_config) => {
-            Some(ToolSpecificConfig::Bash(BashToolConfig {
-                approved_patterns: bash_config.approved_patterns,
-            }))
-        }
     }
 }
 

@@ -3,7 +3,7 @@ use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpSe
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
-use crate::session::state::BackendConfig;
+use crate::session::state::{BackendConfig, ToolDecision};
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
@@ -351,44 +351,114 @@ fn handle_tool_approval_requested(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
-    if is_pre_approved(state, &tool_call) {
-        let op_id = state
-            .current_operation
-            .as_ref()
-            .map(|o| o.op_id)
-            .expect("Operation should exist");
+    let decision = get_tool_decision(state, &tool_call);
 
-        effects.push(Effect::ExecuteTool {
-            session_id,
-            op_id,
-            tool_call,
-        });
-        return effects;
+    match decision {
+        ToolDecision::Allow => {
+            let op_id = state
+                .current_operation
+                .as_ref()
+                .map(|o| o.op_id)
+                .expect("Operation should exist");
+
+            effects.push(Effect::ExecuteTool {
+                session_id,
+                op_id,
+                tool_call,
+            });
+        }
+        ToolDecision::Deny => {
+            let op_id = state
+                .current_operation
+                .as_ref()
+                .map(|o| o.op_id)
+                .expect("Operation should exist");
+            let model = state
+                .operation_models
+                .get(&op_id)
+                .cloned()
+                .expect("Model should exist for operation");
+
+            let tool_result = ToolResult::Error(ToolError::DeniedByPolicy(tool_call.name.clone()));
+            let parent_id = state.message_graph.active_message_id.clone();
+            let tool_message = Message {
+                data: MessageData::Tool {
+                    tool_use_id: tool_call.id.clone(),
+                    result: tool_result.clone(),
+                },
+                timestamp: 0,
+                id: format!("denied_{}", tool_call.id),
+                parent_message_id: parent_id,
+            };
+            state.message_graph.add_message(tool_message.clone());
+
+            effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::ToolCallFailed {
+                    id: tool_call.id.clone().into(),
+                    name: tool_call.name.clone(),
+                    error: format!("Tool '{}' denied by policy", tool_call.name),
+                    model: model.clone(),
+                },
+            });
+
+            effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::ToolMessageAdded {
+                    message: tool_message,
+                },
+            });
+
+            let all_tools_complete = state
+                .current_operation
+                .as_ref()
+                .map(|op| op.pending_tool_calls.is_empty())
+                .unwrap_or(true);
+            let no_pending_approvals =
+                state.pending_approval.is_none() && state.approval_queue.is_empty();
+
+            if all_tools_complete && no_pending_approvals {
+                effects.push(Effect::CallModel {
+                    session_id,
+                    op_id,
+                    model,
+                    messages: state
+                        .message_graph
+                        .get_thread_messages()
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    system_prompt: state.cached_system_prompt.clone(),
+                    tools: state.tools.clone(),
+                });
+            }
+        }
+        ToolDecision::Ask => {
+            if state.pending_approval.is_some() {
+                state.approval_queue.push_back(QueuedApproval { tool_call });
+                return effects;
+            }
+
+            state.pending_approval = Some(PendingApproval {
+                request_id,
+                tool_call: tool_call.clone(),
+            });
+
+            effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::ApprovalRequested {
+                    request_id,
+                    tool_call: tool_call.clone(),
+                },
+            });
+
+            effects.push(Effect::RequestUserApproval {
+                session_id,
+                request_id,
+                tool_call,
+            });
+        }
     }
-
-    if state.pending_approval.is_some() {
-        state.approval_queue.push_back(QueuedApproval { tool_call });
-        return effects;
-    }
-
-    state.pending_approval = Some(PendingApproval {
-        request_id,
-        tool_call: tool_call.clone(),
-    });
-
-    effects.push(Effect::EmitEvent {
-        session_id,
-        event: SessionEvent::ApprovalRequested {
-            request_id,
-            tool_call: tool_call.clone(),
-        },
-    });
-
-    effects.push(Effect::RequestUserApproval {
-        session_id,
-        request_id,
-        tool_call,
-    });
 
     effects
 }
@@ -472,50 +542,127 @@ fn process_next_queued_approval(
     let mut effects = Vec::new();
 
     while let Some(queued) = state.approval_queue.pop_front() {
-        if is_pre_approved(state, &queued.tool_call) {
-            let op_id = state
-                .current_operation
-                .as_ref()
-                .map(|o| o.op_id)
-                .expect("Operation should exist");
+        let decision = get_tool_decision(state, &queued.tool_call);
 
-            effects.push(Effect::ExecuteTool {
-                session_id,
-                op_id,
-                tool_call: queued.tool_call,
-            });
-            continue;
+        match decision {
+            ToolDecision::Allow => {
+                let op_id = state
+                    .current_operation
+                    .as_ref()
+                    .map(|o| o.op_id)
+                    .expect("Operation should exist");
+
+                effects.push(Effect::ExecuteTool {
+                    session_id,
+                    op_id,
+                    tool_call: queued.tool_call,
+                });
+                continue;
+            }
+            ToolDecision::Deny => {
+                let op_id = state
+                    .current_operation
+                    .as_ref()
+                    .map(|o| o.op_id)
+                    .expect("Operation should exist");
+                let model = state
+                    .operation_models
+                    .get(&op_id)
+                    .cloned()
+                    .expect("Model should exist for operation");
+
+                let tool_result =
+                    ToolResult::Error(ToolError::DeniedByPolicy(queued.tool_call.name.clone()));
+                let parent_id = state.message_graph.active_message_id.clone();
+                let tool_message = Message {
+                    data: MessageData::Tool {
+                        tool_use_id: queued.tool_call.id.clone(),
+                        result: tool_result.clone(),
+                    },
+                    timestamp: 0,
+                    id: format!("denied_{}", queued.tool_call.id),
+                    parent_message_id: parent_id,
+                };
+                state.message_graph.add_message(tool_message.clone());
+
+                effects.push(Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::ToolCallFailed {
+                        id: queued.tool_call.id.clone().into(),
+                        name: queued.tool_call.name.clone(),
+                        error: format!("Tool '{}' denied by policy", queued.tool_call.name),
+                        model: model.clone(),
+                    },
+                });
+
+                effects.push(Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::ToolMessageAdded {
+                        message: tool_message,
+                    },
+                });
+                continue;
+            }
+            ToolDecision::Ask => {
+                let request_id = crate::app::domain::types::RequestId::new();
+                state.pending_approval = Some(PendingApproval {
+                    request_id,
+                    tool_call: queued.tool_call.clone(),
+                });
+
+                effects.push(Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::ApprovalRequested {
+                        request_id,
+                        tool_call: queued.tool_call.clone(),
+                    },
+                });
+
+                effects.push(Effect::RequestUserApproval {
+                    session_id,
+                    request_id,
+                    tool_call: queued.tool_call,
+                });
+
+                break;
+            }
         }
+    }
 
-        let request_id = crate::app::domain::types::RequestId::new();
-        state.pending_approval = Some(PendingApproval {
-            request_id,
-            tool_call: queued.tool_call.clone(),
-        });
+    let all_tools_complete = state
+        .current_operation
+        .as_ref()
+        .map(|op| op.pending_tool_calls.is_empty())
+        .unwrap_or(true);
+    let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
-        effects.push(Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::ApprovalRequested {
-                request_id,
-                tool_call: queued.tool_call.clone(),
-            },
-        });
-
-        effects.push(Effect::RequestUserApproval {
-            session_id,
-            request_id,
-            tool_call: queued.tool_call,
-        });
-
-        break;
+    if all_tools_complete && no_pending_approvals {
+        if let Some(op) = &state.current_operation {
+            let op_id = op.op_id;
+            if let Some(model) = state.operation_models.get(&op_id).cloned() {
+                effects.push(Effect::CallModel {
+                    session_id,
+                    op_id,
+                    model,
+                    messages: state
+                        .message_graph
+                        .get_thread_messages()
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    system_prompt: state.cached_system_prompt.clone(),
+                    tools: state.tools.clone(),
+                });
+            }
+        }
     }
 
     effects
 }
 
-fn is_pre_approved(state: &AppState, tool_call: &steer_tools::ToolCall) -> bool {
+fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> ToolDecision {
     if state.approved_tools.contains(&tool_call.name) {
-        return true;
+        return ToolDecision::Allow;
     }
 
     if tool_call.name == BASH_TOOL_NAME
@@ -523,10 +670,21 @@ fn is_pre_approved(state: &AppState, tool_call: &steer_tools::ToolCall) -> bool 
             tool_call.parameters.clone(),
         )
     {
-        return state.is_bash_pattern_approved(&params.command);
+        if state.is_bash_pattern_approved(&params.command) {
+            return ToolDecision::Allow;
+        }
     }
 
-    false
+    state
+        .session_config
+        .as_ref()
+        .map(|config| {
+            config
+                .tool_config
+                .approval_policy
+                .tool_decision(&tool_call.name)
+        })
+        .unwrap_or(ToolDecision::Ask)
 }
 
 fn handle_tool_execution_started(
@@ -1036,6 +1194,21 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
             state.session_config = Some((**config).clone());
+
+            state.approved_tools = config
+                .tool_config
+                .approval_policy
+                .pre_approved_tools()
+                .clone();
+
+            if let Some(patterns) = config
+                .tool_config
+                .approval_policy
+                .preapproved
+                .bash_patterns()
+            {
+                state.static_bash_patterns = patterns.to_vec();
+            }
         }
         SessionEvent::AssistantMessageAdded { message, .. }
         | SessionEvent::UserMessageAdded { message }
@@ -1244,9 +1417,11 @@ mod tests {
         MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
     };
     use crate::config::model::builtin;
-    use crate::session::state::{SessionConfig, ToolVisibility};
+    use crate::session::state::{
+        ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolVisibility, UnapprovedBehavior,
+    };
     use std::collections::HashSet;
-    use steer_tools::{InputSchema, ToolSchema};
+    use steer_tools::{InputSchema, ToolError, ToolSchema};
 
     fn test_state() -> AppState {
         AppState::new(SessionId::new())
@@ -1388,6 +1563,70 @@ mod tests {
                 .any(|e| matches!(e, Effect::ExecuteTool { .. }))
         );
         assert!(state.pending_approval.is_none());
+    }
+
+    #[test]
+    fn test_denied_tool_request_emits_failure_message() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let mut config = SessionConfig::read_only();
+        config.tool_config.approval_policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Deny,
+            preapproved: ApprovalRules::default(),
+        };
+        state.session_config = Some(config);
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_1".to_string(),
+            name: "test_tool".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolApprovalRequested {
+                session_id,
+                request_id: RequestId::new(),
+                tool_call,
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::EmitEvent { event: SessionEvent::ToolCallFailed { .. }, .. }))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::EmitEvent { event: SessionEvent::ToolMessageAdded { .. }, .. }))
+        );
+        assert!(!effects.iter().any(|e| matches!(e, Effect::ExecuteTool { .. })));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::RequestUserApproval { .. })));
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert_eq!(state.message_graph.messages.len(), 1);
+
+        match &state.message_graph.messages[0].data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::DeniedByPolicy(name) if name == "test_tool"))
+                }
+                _ => panic!("expected denied tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
     }
 
     #[test]

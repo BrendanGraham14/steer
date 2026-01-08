@@ -1,7 +1,7 @@
 use super::conversions::*;
 use steer_core::session::state::{
-    BackendConfig, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter, ToolVisibility,
-    WorkspaceConfig,
+    ApprovalRules, BackendConfig, RemoteAuth, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
+    ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
 };
 use steer_core::tools::McpTransport;
 
@@ -84,24 +84,24 @@ prop_compose! {
     fn arb_session_tool_config()(
         backends in prop::collection::vec(arb_backend_config(), 0..3),
         visibility in prop::sample::select(vec![ToolVisibility::All, ToolVisibility::ReadOnly]),
-        approval_variant in 0..2usize,
+        default_behavior in prop::sample::select(vec![UnapprovedBehavior::Prompt, UnapprovedBehavior::Deny]),
         pre_approved_tools in prop::collection::vec("[a-z]+", 0..5),
         metadata_key in "[a-z]+",
         metadata_value in "[a-z0-9]+",
     ) -> SessionToolConfig {
         let mut metadata = HashMap::new();
         metadata.insert(metadata_key, metadata_value);
-        let approval_policy = match approval_variant {
-            0 => ToolApprovalPolicy::AlwaysAsk,
-            _ => ToolApprovalPolicy::PreApproved {
+        let approval_policy = ToolApprovalPolicy {
+            default_behavior,
+            preapproved: ApprovalRules {
                 tools: pre_approved_tools.into_iter().collect(),
+                per_tool: HashMap::new(),
             },
         };
         SessionToolConfig {
             backends,
             visibility,
             approval_policy,
-            tools: HashMap::new(),
             metadata,
         }
     }

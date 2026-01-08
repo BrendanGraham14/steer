@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 use crate::client_api::ClientEvent;
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
-    session_tool_config_to_proto, tool_approval_policy_to_proto, workspace_config_to_proto,
+    session_tool_config_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 
@@ -66,12 +66,10 @@ impl AgentClient {
     pub async fn create_session(&self, config: SessionConfig) -> GrpcResult<String> {
         debug!("Creating new session with gRPC server");
 
-        let tool_policy = tool_approval_policy_to_proto(&config.tool_config.approval_policy);
         let workspace_config = workspace_config_to_proto(&config.workspace);
         let tool_config = session_tool_config_to_proto(&config.tool_config);
 
         let request = Request::new(CreateSessionRequest {
-            tool_policy: Some(tool_policy),
             metadata: config.metadata,
             tool_config: Some(tool_config),
             workspace_config: Some(workspace_config),
@@ -676,19 +674,28 @@ impl AgentClient {
 #[cfg(test)]
 mod tests {
     use crate::grpc::conversions::tool_approval_policy_to_proto;
-    use steer_core::session::ToolApprovalPolicy;
-    use steer_proto::agent::v1::tool_approval_policy::Policy;
+    use steer_core::session::{ApprovalRules, ToolApprovalPolicy, UnapprovedBehavior};
+    use steer_proto::agent::v1::UnapprovedBehavior as ProtoBehavior;
 
     #[test]
     fn test_convert_tool_approval_policy() {
-        let policy = ToolApprovalPolicy::AlwaysAsk;
+        let policy = ToolApprovalPolicy::default();
         let proto_policy = tool_approval_policy_to_proto(&policy);
-        assert!(matches!(proto_policy.policy, Some(Policy::AlwaysAsk(_))));
+        assert_eq!(proto_policy.default_behavior, ProtoBehavior::Prompt as i32);
+        assert!(proto_policy.preapproved.is_some());
 
         let mut tools = std::collections::HashSet::new();
         tools.insert("bash".to_string());
-        let policy = ToolApprovalPolicy::PreApproved { tools };
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Deny,
+            preapproved: ApprovalRules {
+                tools,
+                per_tool: std::collections::HashMap::new(),
+            },
+        };
         let proto_policy = tool_approval_policy_to_proto(&policy);
-        assert!(matches!(proto_policy.policy, Some(Policy::PreApproved(_))));
+        assert_eq!(proto_policy.default_behavior, ProtoBehavior::Deny as i32);
+        let preapproved = proto_policy.preapproved.unwrap();
+        assert!(preapproved.tools.contains(&"bash".to_string()));
     }
 }

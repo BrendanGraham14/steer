@@ -101,7 +101,12 @@ impl RemoteWorkspaceService {
             ToolError::DeniedByUser(tool_name) => (
                 Kind::DeniedByUser,
                 tool_name.clone(),
-                format!("Tool execution denied: {tool_name}"),
+                format!("Tool execution denied by user: {tool_name}"),
+            ),
+            ToolError::DeniedByPolicy(tool_name) => (
+                Kind::DeniedByPolicy,
+                tool_name.clone(),
+                format!("Tool execution denied by policy: {tool_name}"),
             ),
             ToolError::InternalError(msg) => (Kind::Internal, String::new(), msg.clone()),
         };
@@ -130,7 +135,10 @@ impl RemoteWorkspaceService {
                 Status::internal(format!("IO error in tool {tool_name}: {message}"))
             }
             ToolError::DeniedByUser(tool_name) => {
-                Status::permission_denied(format!("Tool execution denied: {tool_name}"))
+                Status::permission_denied(format!("Tool execution denied by user: {tool_name}"))
+            }
+            ToolError::DeniedByPolicy(tool_name) => {
+                Status::permission_denied(format!("Tool execution denied by policy: {tool_name}"))
             }
             ToolError::Timeout(tool_name) => {
                 Status::deadline_exceeded(format!("Tool {tool_name} execution timed out"))
@@ -574,5 +582,21 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         // when either all files are sent or the receiver is dropped (client cancellation).
 
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::tool_error_detail::Kind;
+
+    #[test]
+    fn test_tool_error_detail_denied_by_policy() {
+        let detail =
+            RemoteWorkspaceService::tool_error_to_detail(&ToolError::DeniedByPolicy("bash".into()));
+
+        assert_eq!(detail.kind, Kind::DeniedByPolicy as i32);
+        assert_eq!(detail.tool_name, "bash");
+        assert!(detail.message.contains("denied by policy"));
     }
 }

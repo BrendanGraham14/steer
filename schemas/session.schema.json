@@ -216,27 +216,61 @@
         }
       ]
     },
-    "PartialBashConfig": {
+    "PartialApprovalConfig": {
+      "description": "Tool approval configuration with pre-approved tools and bash patterns",
       "type": "object",
       "properties": {
-        "approved_patterns": {
-          "type": [
-            "array",
-            "null"
-          ],
+        "default_behavior": {
+          "description": "Behavior for unapproved tools: 'prompt' asks user, 'deny' auto-rejects",
+          "$ref": "#/$defs/UnapprovedBehavior"
+        },
+        "tools": {
+          "description": "Set of pre-approved tool names that execute without prompting",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "bash": {
+          "description": "Bash-specific approval rules with glob patterns",
+          "$ref": "#/$defs/PartialBashApproval"
+        }
+      }
+    },
+    "PartialBashApproval": {
+      "description": "Bash command approval patterns using glob syntax",
+      "type": "object",
+      "properties": {
+        "patterns": {
+          "description": "Glob patterns for pre-approved bash commands (e.g., 'git status', 'cargo build*')",
+          "type": "array",
           "items": {
             "type": "string"
           }
         }
-      }
+      },
+      "required": [
+        "patterns"
+      ]
+    },
+    "UnapprovedBehavior": {
+      "description": "How to handle tools that are not pre-approved",
+      "type": "string",
+      "enum": [
+        "prompt",
+        "deny"
+      ]
     },
     "PartialToolConfig": {
       "type": "object",
       "properties": {
-        "approval_policy": {
+        "approvals": {
+          "description": "Tool approval policy configuration",
           "anyOf": [
             {
-              "$ref": "#/$defs/ToolApprovalPolicyConfig"
+              "$ref": "#/$defs/PartialApprovalConfig"
             },
             {
               "type": "null"
@@ -252,16 +286,6 @@
             "$ref": "#/$defs/BackendConfig"
           }
         },
-        "tools": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": {
-            "$ref": "#/$defs/PartialToolSpecificConfig"
-          },
-          "default": null
-        },
         "visibility": {
           "anyOf": [
             {
@@ -274,13 +298,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "PartialToolSpecificConfig": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/PartialBashConfig"
-        }
-      ]
     },
     "PartialWorkspaceConfig": {
       "oneOf": [
@@ -373,80 +390,6 @@
           "required": [
             "ApiKey"
           ]
-        }
-      ]
-    },
-    "ToolApprovalPolicy": {
-      "description": "Tool approval policy configuration",
-      "oneOf": [
-        {
-          "description": "Always ask for approval before executing any tool",
-          "type": "object",
-          "properties": {
-            "type": {
-              "type": "string",
-              "const": "always_ask"
-            }
-          },
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "description": "Pre-approved tools execute without asking",
-          "type": "object",
-          "properties": {
-            "tools": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "type": {
-              "type": "string",
-              "const": "pre_approved"
-            }
-          },
-          "required": [
-            "type",
-            "tools"
-          ]
-        },
-        {
-          "description": "Mixed policy: some tools pre-approved, others require approval",
-          "type": "object",
-          "properties": {
-            "ask_for_others": {
-              "type": "boolean"
-            },
-            "pre_approved": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "type": {
-              "type": "string",
-              "const": "mixed"
-            }
-          },
-          "required": [
-            "type",
-            "pre_approved",
-            "ask_for_others"
-          ]
-        }
-      ]
-    },
-    "ToolApprovalPolicyConfig": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "$ref": "#/$defs/ToolApprovalPolicy"
         }
       ]
     },

@@ -3,7 +3,10 @@
 
 [tool_config]
 visibility = "all"
-approval_policy = "always_ask"
+
+[tool_config.approvals]
+default_behavior = "prompt"
+tools = []
 
 [[tool_config.backends]]
 type = "mcp"
@@ -15,8 +18,8 @@ type = "stdio"
 command = "npx"
 args = ["-y", "mcp-remote", "https://mcp.linear.app/sse"]
 
-[tool_config.tools.bash]
-approved_patterns = [
+[tool_config.approvals.bash]
+patterns = [
   "*git status*",
   "*git log*",
   "*cargo build*",
