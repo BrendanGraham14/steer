@@ -25,34 +25,42 @@ impl Command for CreateSessionCommand {
             metadata: self.metadata.clone(),
         };
 
-        if let Some(remote_addr) = &self.remote {
+        let mut local_grpc_setup = None;
+        let client = if let Some(remote_addr) = &self.remote {
             println!("Creating remote session at {remote_addr}");
+            if !self.catalogs.is_empty() {
+                tracing::warn!("Ignoring --catalog for remote session creation");
+            }
+            if self.session_db.is_some() {
+                tracing::warn!("Ignoring --session-db for remote session creation");
+            }
+            AgentClient::connect(remote_addr)
+                .await
+                .map_err(|e| eyre!("Failed to connect to remote server: {}", e))?
+        } else {
+            let catalog_paths = self.normalize_catalog_paths();
 
-            return Err(eyre!(
-                "Remote session creation with TUI is not available in this command. Use the steer-tui binary instead."
-            ));
-        }
+            let db_path = match &self.session_db {
+                Some(path) => path.clone(),
+                None => steer_core::utils::session::create_session_store_path()?,
+            };
 
-        let catalog_paths = self.normalize_catalog_paths();
+            let catalog_config = CatalogConfig::with_catalogs(catalog_paths);
 
-        let db_path = match &self.session_db {
-            Some(path) => path.clone(),
-            None => steer_core::utils::session::create_session_store_path()?,
-        };
-
-        let catalog_config = CatalogConfig::with_catalogs(catalog_paths);
-
-        let local_grpc_setup = steer_grpc::local_server::setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::opus(),
-            Some(db_path),
-            catalog_config,
-        )
-        .await
-        .map_err(|e| eyre!("Failed to setup local gRPC: {}", e))?;
-
-        let client = AgentClient::from_channel(local_grpc_setup.channel)
+            let setup = steer_grpc::local_server::setup_local_grpc_with_catalog(
+                steer_core::config::model::builtin::opus(),
+                Some(db_path),
+                catalog_config,
+            )
             .await
-            .map_err(|e| eyre!("Failed to create gRPC client: {}", e))?;
+            .map_err(|e| eyre!("Failed to setup local gRPC: {}", e))?;
+
+            let client = AgentClient::from_channel(setup.channel.clone())
+                .await
+                .map_err(|e| eyre!("Failed to create gRPC client: {}", e))?;
+            local_grpc_setup = Some(setup);
+            client
+        };
 
         let model_input = self.model.as_deref().unwrap_or("opus");
         let default_model = client
@@ -70,8 +78,10 @@ impl Command for CreateSessionCommand {
             .await
             .map_err(|e| eyre!("Failed to create session: {}", e))?;
 
-        local_grpc_setup.server_handle.abort();
-        local_grpc_setup.runtime_service.shutdown().await;
+        if let Some(setup) = local_grpc_setup {
+            setup.server_handle.abort();
+            setup.runtime_service.shutdown().await;
+        }
 
         println!("Created session: {session_id}");
         Ok(())
