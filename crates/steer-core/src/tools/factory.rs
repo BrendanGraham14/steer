@@ -4,7 +4,7 @@ use crate::api::Client as ApiClient;
 use crate::app::domain::session::EventStore;
 use crate::app::validation::ValidatorRegistry;
 use crate::model_registry::ModelRegistry;
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WorkspaceManager};
 
 use super::BackendRegistry;
 use super::agent_spawner_impl::DefaultAgentSpawner;
@@ -24,6 +24,7 @@ pub struct ToolSystemBuilder {
     model_registry: Arc<ModelRegistry>,
     backend_registry: Arc<BackendRegistry>,
     validators: Arc<ValidatorRegistry>,
+    workspace_manager: Option<Arc<dyn WorkspaceManager>>,
 }
 
 impl ToolSystemBuilder {
@@ -40,6 +41,7 @@ impl ToolSystemBuilder {
             model_registry,
             backend_registry: Arc::new(BackendRegistry::new()),
             validators: Arc::new(ValidatorRegistry::new()),
+            workspace_manager: None,
         }
     }
 
@@ -50,6 +52,11 @@ impl ToolSystemBuilder {
 
     pub fn with_validators(mut self, validators: Arc<ValidatorRegistry>) -> Self {
         self.validators = validators;
+        self
+    }
+
+    pub fn with_workspace_manager(mut self, manager: Arc<dyn WorkspaceManager>) -> Self {
+        self.workspace_manager = Some(manager);
         self
     }
 
@@ -69,12 +76,15 @@ impl ToolSystemBuilder {
 
         let model_caller = Arc::new(DefaultModelCaller::new(self.api_client.clone()));
 
-        let services = Arc::new(
+        let mut services =
             ToolServices::new(self.workspace.clone(), self.event_store, self.api_client)
                 .with_agent_spawner(agent_spawner)
                 .with_model_caller(model_caller)
-                .with_network(),
-        );
+                .with_network();
+        if let Some(manager) = self.workspace_manager {
+            services = services.with_workspace_manager(manager);
+        }
+        let services = Arc::new(services);
 
         let mut registry = ToolRegistry::new();
 

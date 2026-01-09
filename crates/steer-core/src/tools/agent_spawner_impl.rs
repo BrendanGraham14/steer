@@ -10,6 +10,7 @@ use crate::app::domain::runtime::{
 };
 use crate::app::domain::session::EventStore;
 use crate::model_registry::ModelRegistry;
+use crate::session::state::{SessionConfig, SessionToolConfig, WorkspaceConfig};
 use crate::tools::ToolExecutor;
 use crate::workspace::Workspace;
 
@@ -45,9 +46,27 @@ impl AgentSpawner for DefaultAgentSpawner {
         config: SubAgentConfig,
         cancel_token: CancellationToken,
     ) -> Result<SubAgentResult, SubAgentError> {
-        let interpreter_config = AgentInterpreterConfig::for_sub_agent(config.parent_session_id);
+        let workspace = config
+            .workspace
+            .clone()
+            .unwrap_or_else(|| self.workspace.clone());
+        let workspace_path = workspace.working_directory().to_path_buf();
 
-        let tool_executor = Arc::new(ToolExecutor::with_workspace(self.workspace.clone()));
+        let mut session_config = SessionConfig::read_only(config.model.clone());
+        session_config.workspace = WorkspaceConfig::Local { path: workspace_path };
+        session_config.workspace_ref = config.workspace_ref.clone();
+        session_config.workspace_id = config.workspace_id;
+        session_config.workspace_name = config.workspace_name.clone();
+        session_config.parent_session_id = Some(config.parent_session_id);
+        session_config.tool_config = SessionToolConfig::read_only();
+
+        let interpreter_config = AgentInterpreterConfig {
+            auto_approve_tools: true,
+            parent_session_id: Some(config.parent_session_id),
+            session_config: Some(session_config),
+        };
+
+        let tool_executor = Arc::new(ToolExecutor::with_workspace(workspace));
 
         let interpreter = AgentInterpreter::new(
             self.event_store.clone(),

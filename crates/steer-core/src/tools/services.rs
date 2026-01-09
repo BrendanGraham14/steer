@@ -8,7 +8,7 @@ use crate::app::conversation::Message;
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::SessionId;
 use crate::config::model::ModelId;
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, WorkspaceId, WorkspaceManager, WorkspaceRef};
 
 use super::capability::Capabilities;
 use steer_tools::ToolSchema;
@@ -29,6 +29,10 @@ pub struct SubAgentConfig {
     pub allowed_tools: Vec<String>,
     pub model: ModelId,
     pub system_prompt: Option<String>,
+    pub workspace: Option<Arc<dyn Workspace>>,
+    pub workspace_ref: Option<WorkspaceRef>,
+    pub workspace_id: Option<WorkspaceId>,
+    pub workspace_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +83,7 @@ pub struct ToolServices {
 
     agent_spawner: Option<Arc<dyn AgentSpawner>>,
     model_caller: Option<Arc<dyn ModelCaller>>,
+    workspace_manager: Option<Arc<dyn WorkspaceManager>>,
 
     available_capabilities: Capabilities,
 }
@@ -95,6 +100,7 @@ impl ToolServices {
             api_client,
             agent_spawner: None,
             model_caller: None,
+            workspace_manager: None,
             available_capabilities: Capabilities::WORKSPACE,
         }
     }
@@ -108,6 +114,11 @@ impl ToolServices {
     pub fn with_model_caller(mut self, caller: Arc<dyn ModelCaller>) -> Self {
         self.model_caller = Some(caller);
         self.available_capabilities |= Capabilities::MODEL_CALLER;
+        self
+    }
+
+    pub fn with_workspace_manager(mut self, manager: Arc<dyn WorkspaceManager>) -> Self {
+        self.workspace_manager = Some(manager);
         self
     }
 
@@ -126,6 +137,10 @@ impl ToolServices {
 
     pub fn model_caller(&self) -> Option<&Arc<dyn ModelCaller>> {
         self.model_caller.as_ref()
+    }
+
+    pub fn workspace_manager(&self) -> Option<&Arc<dyn WorkspaceManager>> {
+        self.workspace_manager.as_ref()
     }
 }
 

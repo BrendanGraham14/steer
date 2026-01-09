@@ -23,6 +23,7 @@ use super::stepper::{AgentConfig, AgentInput, AgentOutput, AgentState, AgentStep
 pub struct AgentInterpreterConfig {
     pub auto_approve_tools: bool,
     pub parent_session_id: Option<SessionId>,
+    pub session_config: Option<SessionConfig>,
 }
 
 impl AgentInterpreterConfig {
@@ -30,6 +31,7 @@ impl AgentInterpreterConfig {
         Self {
             auto_approve_tools: true,
             parent_session_id: Some(parent_session_id),
+            session_config: None,
         }
     }
 }
@@ -57,8 +59,16 @@ impl AgentInterpreter {
             .await
             .map_err(|e| AgentInterpreterError::EventStore(e.to_string()))?;
 
+        let mut session_config = config
+            .session_config
+            .clone()
+            .unwrap_or_else(|| SessionConfig::read_only(default_model()));
+        if session_config.parent_session_id.is_none() {
+            session_config.parent_session_id = config.parent_session_id;
+        }
+
         let session_created_event = SessionEvent::SessionCreated {
-            config: Box::new(SessionConfig::read_only(default_model())),
+            config: Box::new(session_config),
             metadata: HashMap::new(),
             parent_session_id: config.parent_session_id,
         };

@@ -115,15 +115,24 @@ impl ServiceHost {
             model_registry.clone(),
         ));
 
+        let workspace_root =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let workspace = steer_core::workspace::create_workspace(
             &steer_core::workspace::WorkspaceConfig::Local {
-                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                path: workspace_root.clone(),
             },
         )
         .await
         .map_err(|e| GrpcError::InvalidSessionState {
             reason: format!("Failed to create workspace: {e}"),
         })?;
+        let workspace_manager = Arc::new(
+            LocalWorkspaceManager::new(workspace_root.clone())
+                .await
+                .map_err(|e| GrpcError::InvalidSessionState {
+                    reason: format!("Failed to create workspace manager: {e}"),
+                })?,
+        );
 
         let tool_executor = ToolSystemBuilder::new(
             workspace,
@@ -131,6 +140,7 @@ impl ServiceHost {
             api_client.clone(),
             model_registry.clone(),
         )
+        .with_workspace_manager(workspace_manager)
         .build();
 
         let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
