@@ -255,7 +255,7 @@ mod tests {
     use crate::tools::{BackendRegistry, ToolExecutor};
     use dotenvy::dotenv;
     use std::sync::Arc;
-    use steer_tools::tools::read_only_workspace_tools;
+    use std::sync::Mutex as StdMutex;
 
     async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {
         crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
@@ -302,8 +302,10 @@ mod tests {
 
     fn create_test_tool_approval_policy() -> ToolApprovalPolicy {
         use crate::session::state::{ApprovalRules, UnapprovedBehavior};
-        let tools = read_only_workspace_tools();
-        let tool_names = tools.iter().map(|t| t.name().to_string()).collect();
+        let tool_names = READ_ONLY_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
         ToolApprovalPolicy {
             default_behavior: UnapprovedBehavior::Prompt,
             preapproved: ApprovalRules {

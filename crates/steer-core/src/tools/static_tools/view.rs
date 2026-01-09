@@ -4,11 +4,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::FileContentResult;
-use steer_tools::tools::view::ViewParams;
-
-use super::to_tools_context;
+use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
 
 pub const VIEW_TOOL_NAME: &str = "read_file";
 
@@ -41,23 +38,17 @@ impl StaticTool for ViewTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let view_params = ViewParams {
+        let request = ReadFileRequest {
             file_path: params.file_path,
             offset: params.offset,
             limit: params.limit,
         };
-
-        let params_json = serde_json::to_value(view_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::ViewTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        ctx.services
+            .workspace
+            .read_file(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+            .map_err(|e| StaticToolError::execution(e.to_string()))
     }
 }

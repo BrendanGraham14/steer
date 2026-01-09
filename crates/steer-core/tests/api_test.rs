@@ -5,10 +5,16 @@ use steer_core::app::conversation::{AssistantContent, Message, MessageData, User
 use steer_core::config::model::{ModelId, builtin};
 
 use steer_core::test_utils;
+use steer_core::tools::ToolRegistry;
+use steer_core::tools::capability::Capabilities;
+use steer_core::tools::static_tools::{
+    AstGrepTool, BashTool, DispatchAgentTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool,
+    MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
+};
 use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::tools::LS_TOOL_NAME;
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
-use steer_workspace::Workspace;
+use steer_workspace::{Workspace, WorkspaceOpContext};
 use steer_workspace::local::LocalWorkspace;
 
 use serde_json::json;
@@ -30,6 +36,25 @@ fn models_to_test() -> Vec<ModelId> {
         builtin::gemini_3_flash_preview(),
         builtin::grok_4_1_fast_reasoning(),
     ]
+}
+
+async fn default_tool_schemas() -> Vec<Tool> {
+    let mut registry = ToolRegistry::new();
+    registry.register_static(GrepTool);
+    registry.register_static(GlobTool);
+    registry.register_static(LsTool);
+    registry.register_static(ViewTool);
+    registry.register_static(BashTool);
+    registry.register_static(EditTool);
+    registry.register_static(MultiEditTool);
+    registry.register_static(ReplaceTool);
+    registry.register_static(AstGrepTool);
+    registry.register_static(TodoReadTool);
+    registry.register_static(TodoWriteTool);
+    registry.register_static(DispatchAgentTool);
+    registry.register_static(FetchTool);
+
+    registry.available_schemas(Capabilities::all()).await
 }
 
 #[tokio::test]
@@ -149,13 +174,7 @@ async fn test_api_with_tools() {
 
     // Get tools operation_cancelled
     let temp_dir = TempDir::new().unwrap();
-    let workspace = Arc::new(
-        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
-            .await
-            .unwrap(),
-    );
-
-    let tools = workspace.available_tools().await; // Get the Vec<Tool>
+    let tools = default_tool_schemas().await;
     let pwd = temp_dir.path().to_path_buf(); // Use temp directory path
 
     for model in models_to_test() {
@@ -234,8 +253,11 @@ async fn test_api_with_tools() {
                     .await
                     .unwrap(),
             );
-            let ctx = steer_tools::ExecutionContext::new(first_tool_call.id.clone());
-            let result = workspace.execute_tool(first_tool_call, ctx).await;
+            let params: steer_workspace::ListDirectoryRequest =
+                serde_json::from_value(first_tool_call.parameters.clone())
+                    .expect("ls params should deserialize");
+            let ctx = WorkspaceOpContext::new(first_tool_call.id.clone(), CancellationToken::new());
+            let result = workspace.list_directory(params, &ctx).await;
 
             // Assert tool execution success within the task
             assert!(
@@ -245,7 +267,11 @@ async fn test_api_with_tools() {
                 result.err() // Use .err() for assertion message
             );
 
-            println!("{:?} Tool result: {}", model, result.unwrap().llm_format()); // Unwrap after assertion
+            println!(
+                "{:?} Tool result entries: {}",
+                model,
+                result.unwrap().entries.len()
+            ); // Unwrap after assertion
             println!("Tools API test for {model:?} passed successfully!");
 
             Ok::<_, ApiError>(model) // Return model on success
@@ -293,13 +319,7 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
         steer_core::api::openai::OpenAIMode::Responses,
     );
 
-    let temp_dir = TempDir::new().unwrap();
-    let workspace = Arc::new(
-        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
-            .await
-            .unwrap(),
-    );
-    let tools = workspace.available_tools().await;
+    let tools = default_tool_schemas().await;
 
     let timestamp = Message::current_timestamp();
     let messages = vec![Message {
@@ -936,14 +956,8 @@ async fn test_gemini_api_with_multiple_tool_responses() {
             required: vec!["location".to_string()],
         },
     };
-    // Get available tools from workspace
-    let temp_dir = TempDir::new().unwrap();
-    let workspace = Arc::new(
-        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
-            .await
-            .unwrap(),
-    );
-    let mut tools = workspace.available_tools().await;
+    // Get available tools
+    let mut tools = default_tool_schemas().await;
     tools.push(weather_tool);
 
     let response = client
@@ -1259,15 +1273,9 @@ async fn test_api_streaming_with_tools() {
 
     let mut tasks = Vec::new();
 
-    // Get tools from workspace
+    // Get tools
     let temp_dir = TempDir::new().unwrap();
-    let workspace = Arc::new(
-        LocalWorkspace::with_path(temp_dir.path().to_path_buf())
-            .await
-            .unwrap(),
-    );
-
-    let tools = workspace.available_tools().await;
+    let tools = default_tool_schemas().await;
     let pwd = temp_dir.path().to_path_buf();
 
     for model in models_to_test() {

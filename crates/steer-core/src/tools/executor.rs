@@ -11,12 +11,10 @@ use crate::tools::resolver::BackendResolver;
 use crate::tools::services::ToolServices;
 use crate::tools::static_tool::{StaticToolContext, StaticToolError};
 use crate::tools::{BackendRegistry, ExecutionContext};
-use crate::workspace::Workspace;
 use steer_tools::{ToolCall, ToolSchema, result::ToolResult};
 
 #[derive(Clone)]
 pub struct ToolExecutor {
-    pub(crate) workspace: Arc<dyn Workspace>,
     pub(crate) backend_registry: Arc<BackendRegistry>,
     pub(crate) validators: Arc<ValidatorRegistry>,
     pub(crate) llm_config_provider: Option<LlmConfigProvider>,
@@ -25,9 +23,8 @@ pub struct ToolExecutor {
 }
 
 impl ToolExecutor {
-    pub fn with_workspace(workspace: Arc<dyn Workspace>) -> Self {
+    pub fn with_workspace(_workspace: Arc<dyn crate::workspace::Workspace>) -> Self {
         Self {
-            workspace,
             backend_registry: Arc::new(BackendRegistry::new()),
             validators: Arc::new(ValidatorRegistry::new()),
             llm_config_provider: None,
@@ -37,12 +34,11 @@ impl ToolExecutor {
     }
 
     pub fn with_components(
-        workspace: Arc<dyn Workspace>,
+        _workspace: Arc<dyn crate::workspace::Workspace>,
         backend_registry: Arc<BackendRegistry>,
         validators: Arc<ValidatorRegistry>,
     ) -> Self {
         Self {
-            workspace,
             backend_registry,
             validators,
             llm_config_provider: None,
@@ -52,13 +48,12 @@ impl ToolExecutor {
     }
 
     pub fn with_all_components(
-        workspace: Arc<dyn Workspace>,
+        _workspace: Arc<dyn crate::workspace::Workspace>,
         backend_registry: Arc<BackendRegistry>,
         validators: Arc<ValidatorRegistry>,
         llm_config_provider: LlmConfigProvider,
     ) -> Self {
         Self {
-            workspace,
             backend_registry,
             validators,
             llm_config_provider: Some(llm_config_provider),
@@ -82,11 +77,6 @@ impl ToolExecutor {
             && registry.is_static_tool(tool_name)
         {
             return Ok(registry.requires_approval(tool_name));
-        }
-
-        let workspace_tools = self.workspace.available_tools().await;
-        if workspace_tools.iter().any(|t| t.name == tool_name) {
-            return Ok(self.workspace.requires_approval(tool_name).await?);
         }
 
         match self.backend_registry.get_backend_for_tool(tool_name) {
@@ -133,12 +123,6 @@ impl ToolExecutor {
                 static_tool_names.insert(schema.name.clone());
             }
             schemas.extend(static_schemas);
-        }
-
-        for schema in self.workspace.available_tools().await {
-            if !static_tool_names.contains(&schema.name) {
-                schemas.push(schema);
-            }
         }
 
         if let Some(resolver) = session_resolver {
@@ -270,14 +254,6 @@ impl ToolExecutor {
 
         let context = builder.build();
 
-        let workspace_tools = self.workspace.available_tools().await;
-        if workspace_tools.iter().any(|t| &t.name == tool_name) {
-            debug!(target: "tool_executor", "Executing workspace tool: {} ({})", tool_name, tool_id);
-            return self
-                .execute_workspace_tool(&self.workspace, tool_call, &context)
-                .await;
-        }
-
         if let Some(resolver) = session_resolver
             && let Some(backend) = resolver.resolve(tool_name).await
         {
@@ -352,6 +328,21 @@ impl ToolExecutor {
         Span::current().record("tool.name", tool_name);
         Span::current().record("tool.id", tool_id);
 
+        if let Some((registry, services)) =
+            self.tool_registry.as_ref().zip(self.tool_services.as_ref())
+            && let Some(tool) = registry.static_tool(tool_name)
+        {
+            debug!(
+                target: "app.tool_executor.execute_tool_direct",
+                "Executing static tool {} ({}) directly (no validation)",
+                tool_name,
+                tool_id
+            );
+            return self
+                .execute_static_tool(tool, tool_call, SessionId::new(), services, token)
+                .await;
+        }
+
         // Create execution context
         let mut builder = ExecutionContext::builder(
             "direct".to_string(), // Mark as direct execution
@@ -366,21 +357,6 @@ impl ToolExecutor {
         }
 
         let context = builder.build();
-
-        // First check if it's a workspace tool (no validation for direct execution)
-        let workspace_tools = self.workspace.available_tools().await;
-        if workspace_tools.iter().any(|t| &t.name == tool_name) {
-            debug!(
-                target: "app.tool_executor.execute_tool_direct",
-                "Executing workspace tool {} ({}) directly (no validation)",
-                tool_name,
-                tool_id
-            );
-
-            return self
-                .execute_workspace_tool(&self.workspace, tool_call, &context)
-                .await;
-        }
 
         // Otherwise check external backends
         let backend = self
@@ -407,34 +383,4 @@ impl ToolExecutor {
         backend.execute(tool_call, &context).await
     }
 
-    /// Helper method to execute a workspace tool
-    async fn execute_workspace_tool(
-        &self,
-        workspace: &Arc<dyn Workspace>,
-        tool_call: &ToolCall,
-        context: &ExecutionContext,
-    ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
-        // Convert ExecutionContext to steer-tools ExecutionContext
-        let tools_context = steer_tools::ExecutionContext::new(context.tool_call_id.clone())
-            .with_cancellation_token(context.cancellation_token.clone());
-
-        workspace
-            .execute_tool(tool_call, tools_context)
-            .await
-            .map_err(|e| {
-                // Map WorkspaceError variants to structured ToolError
-                use steer_workspace::WorkspaceError;
-                match e {
-                    WorkspaceError::ToolExecution(msg) => steer_tools::ToolError::Execution {
-                        tool_name: tool_call.name.clone(),
-                        message: msg,
-                    },
-                    WorkspaceError::Io(msg) => steer_tools::ToolError::Io {
-                        tool_name: tool_call.name.clone(),
-                        message: msg,
-                    },
-                    _ => steer_tools::ToolError::InternalError(e.to_string()),
-                }
-            })
-    }
 }

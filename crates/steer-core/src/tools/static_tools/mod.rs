@@ -22,12 +22,12 @@ pub use replace::ReplaceTool;
 pub use todo::{TodoReadTool, TodoWriteTool};
 pub use view::ViewTool;
 
-use steer_tools::ExecutionContext as ToolsExecutionContext;
-
-use super::static_tool::StaticToolContext;
-
-pub(crate) fn to_tools_context(ctx: &StaticToolContext) -> ToolsExecutionContext {
-    ToolsExecutionContext::new(ctx.tool_call_id.0.clone())
-        .with_cancellation_token(ctx.cancellation_token.clone())
-        .with_working_directory(ctx.services.workspace.working_directory().to_path_buf())
-}
+pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
+    grep::GREP_TOOL_NAME,
+    astgrep::AST_GREP_TOOL_NAME,
+    glob::GLOB_TOOL_NAME,
+    ls::LS_TOOL_NAME,
+    view::VIEW_TOOL_NAME,
+    todo::TODO_READ_TOOL_NAME,
+    todo::TODO_WRITE_TOOL_NAME,
+];

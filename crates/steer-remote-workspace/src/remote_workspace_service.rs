@@ -1,119 +1,48 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
-use steer_tools::tools::workspace_tools;
-use steer_tools::traits::ExecutableTool;
-use steer_tools::{ExecutionContext, ToolError};
-use steer_workspace::utils::FileListingUtils;
-use steer_workspace::{EnvironmentInfo, VcsInfo, VcsKind, VcsStatus};
+use steer_workspace::local::LocalWorkspace;
+use steer_workspace::{VcsInfo, VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceOpContext};
 
 use crate::proto::{
+    ApplyEditsRequest as GrpcApplyEditsRequest, AstGrepRequest as GrpcAstGrepRequest,
     ExecuteToolRequest, ExecuteToolResponse, GetAgentInfoRequest, GetAgentInfoResponse,
     GetToolApprovalRequirementsRequest, GetToolApprovalRequirementsResponse, GetToolSchemasRequest,
-    GetToolSchemasResponse, HealthRequest, HealthResponse, HealthStatus, ListFilesRequest,
-    ListFilesResponse, ToolSchema as GrpcToolSchema, execute_tool_response::Result as ProtoResult,
+    GetToolSchemasResponse, GlobRequest as GrpcGlobRequest, GrepRequest as GrpcGrepRequest,
+    HealthRequest, HealthResponse, HealthStatus, ListDirectoryRequest as GrpcListDirectoryRequest,
+    ListFilesRequest, ListFilesResponse, ReadFileRequest as GrpcReadFileRequest,
+    WriteFileRequest as GrpcWriteFileRequest,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
 };
 use steer_proto::common::v1::{
-    BashResult as ProtoBashResult, ColumnRange as ProtoColumnRange, EditResult as ProtoEditResult,
+    ColumnRange as ProtoColumnRange, EditResult as ProtoEditResult,
     FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
     FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult,
     SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult,
-    TodoListResult as ProtoTodoListResult, TodoWriteResult as ProtoTodoWriteResult,
 };
 
-use steer_grpc::grpc::{convert_todo_item_to_proto, convert_todo_write_file_operation_to_proto};
-
-/// Agent service implementation that executes tools locally
-///
-/// This service receives tool execution requests via gRPC and executes them
-/// using the standard tool executor. It's designed to run on remote machines,
-/// VMs, or containers to provide remote tool execution capabilities.
+/// Remote workspace service that exposes workspace operations over gRPC.
 pub struct RemoteWorkspaceService {
-    working_dir: PathBuf,
-    tools: Arc<HashMap<String, Box<dyn ExecutableTool>>>,
+    workspace: Arc<LocalWorkspace>,
     version: String,
 }
 
 impl RemoteWorkspaceService {
-    /// Create a new RemoteWorkspaceService with the standard tool set
-    pub fn new(working_dir: PathBuf) -> Result<Self, ToolError> {
-        Self::with_tools(workspace_tools(), working_dir)
-    }
-
-    /// Create a new RemoteWorkspaceService with a custom set of tools
-    pub fn with_tools(
-        tools_list: Vec<Box<dyn ExecutableTool>>,
-        working_dir: PathBuf,
-    ) -> Result<Self, ToolError> {
-        let mut tools: HashMap<String, Box<dyn ExecutableTool>> = HashMap::new();
-
-        // Register the provided tools
-        for tool in tools_list {
-            tools.insert(tool.name().to_string(), tool);
-        }
-
+    /// Create a new RemoteWorkspaceService backed by a local workspace.
+    pub async fn new(working_dir: PathBuf) -> Result<Self, WorkspaceError> {
+        let workspace = LocalWorkspace::with_path(working_dir).await?;
         Ok(Self {
-            working_dir,
-            tools: Arc::new(tools),
+            workspace: Arc::new(workspace),
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
     }
 
-    /// Get the supported tools from the tool executor
+    /// Get the supported tool names for legacy compatibility.
     pub fn get_supported_tools(&self) -> Vec<String> {
-        self.tools.keys().cloned().collect()
-    }
-
-    /// Convert a ToolError to a ToolErrorDetail payload
-    fn tool_error_to_detail(error: &ToolError) -> crate::proto::ToolErrorDetail {
-        use crate::proto::tool_error_detail::Kind;
-
-        let (kind, tool_name, message) = match error {
-            ToolError::Execution { tool_name, message } => {
-                (Kind::Execution, tool_name.clone(), message.clone())
-            }
-            ToolError::Io { tool_name, message } => (Kind::Io, tool_name.clone(), message.clone()),
-            ToolError::InvalidParams(tool_name, message) => {
-                (Kind::InvalidParams, tool_name.clone(), message.clone())
-            }
-            ToolError::Cancelled(tool_name) => (
-                Kind::Cancelled,
-                tool_name.clone(),
-                format!("{tool_name} was cancelled"),
-            ),
-            ToolError::Timeout(tool_name) => (
-                Kind::Timeout,
-                tool_name.clone(),
-                format!("{tool_name} execution timed out"),
-            ),
-            ToolError::UnknownTool(tool_name) => (
-                Kind::UnknownTool,
-                tool_name.clone(),
-                format!("Unknown tool: {tool_name}"),
-            ),
-            ToolError::DeniedByUser(tool_name) => (
-                Kind::DeniedByUser,
-                tool_name.clone(),
-                format!("Tool execution denied by user: {tool_name}"),
-            ),
-            ToolError::DeniedByPolicy(tool_name) => (
-                Kind::DeniedByPolicy,
-                tool_name.clone(),
-                format!("Tool execution denied by policy: {tool_name}"),
-            ),
-            ToolError::InternalError(msg) => (Kind::Internal, String::new(), msg.clone()),
-        };
-
-        crate::proto::ToolErrorDetail {
-            kind: kind as i32,
-            tool_name,
-            message,
-        }
+        Vec::new()
     }
 
     fn convert_vcs_to_proto(info: VcsInfo) -> crate::proto::VcsInfo {
@@ -247,164 +176,73 @@ impl RemoteWorkspaceService {
         }
     }
 
-    /// Convert a ToolError to a gRPC Status
-    fn tool_error_to_status(error: ToolError) -> Status {
-        match error {
-            ToolError::Cancelled(_) => Status::cancelled("Tool execution was cancelled"),
-            ToolError::UnknownTool(tool_name) => {
-                Status::not_found(format!("Unknown tool: {tool_name}"))
-            }
-            ToolError::InvalidParams(tool_name, message) => Status::invalid_argument(format!(
-                "Invalid parameters for tool {tool_name}: {message}"
-            )),
-            ToolError::Execution { tool_name, message } => {
-                Status::internal(format!("Tool {tool_name} execution failed: {message}"))
-            }
-            ToolError::Io { tool_name, message } => {
-                Status::internal(format!("IO error in tool {tool_name}: {message}"))
-            }
-            ToolError::DeniedByUser(tool_name) => {
-                Status::permission_denied(format!("Tool execution denied by user: {tool_name}"))
-            }
-            ToolError::DeniedByPolicy(tool_name) => {
-                Status::permission_denied(format!("Tool execution denied by policy: {tool_name}"))
-            }
-            ToolError::Timeout(tool_name) => {
-                Status::deadline_exceeded(format!("Tool {tool_name} execution timed out"))
-            }
-            ToolError::InternalError(message) => {
-                Status::internal(format!("Internal error: {message}"))
-            }
+    fn search_result_to_proto(search_result: &steer_workspace::SearchResult) -> ProtoSearchResult {
+        let proto_matches = search_result
+            .matches
+            .iter()
+            .map(|m| ProtoSearchMatch {
+                file_path: m.file_path.clone(),
+                line_number: m.line_number as u64,
+                line_content: m.line_content.clone(),
+                column_range: m.column_range.map(|(start, end)| ProtoColumnRange {
+                    start: start as u64,
+                    end: end as u64,
+                }),
+            })
+            .collect();
+
+        ProtoSearchResult {
+            matches: proto_matches,
+            total_files_searched: search_result.total_files_searched as u64,
+            search_completed: search_result.search_completed,
         }
     }
 
-    /// Convert a typed tool output to a proto result
-    fn tool_result_to_proto_result(
-        result: &steer_tools::result::ToolResult,
-    ) -> Option<ProtoResult> {
-        // Match on the ToolResult enum variants
-        match result {
-            steer_tools::result::ToolResult::Search(search_result) => {
-                let proto_matches = search_result
-                    .matches
-                    .iter()
-                    .map(|m| ProtoSearchMatch {
-                        file_path: m.file_path.clone(),
-                        line_number: m.line_number as u64,
-                        line_content: m.line_content.clone(),
-                        column_range: m.column_range.map(|(start, end)| ProtoColumnRange {
-                            start: start as u64,
-                            end: end as u64,
-                        }),
-                    })
-                    .collect();
+    fn file_list_result_to_proto(
+        file_list: &steer_workspace::FileListResult,
+    ) -> ProtoFileListResult {
+        let proto_entries = file_list
+            .entries
+            .iter()
+            .map(|e| ProtoFileEntry {
+                path: e.path.clone(),
+                is_directory: e.is_directory,
+                size: e.size,
+                permissions: e.permissions.clone(),
+            })
+            .collect();
 
-                Some(ProtoResult::SearchResult(ProtoSearchResult {
-                    matches: proto_matches,
-                    total_files_searched: search_result.total_files_searched as u64,
-                    search_completed: search_result.search_completed,
-                }))
-            }
+        ProtoFileListResult {
+            entries: proto_entries,
+            base_path: file_list.base_path.clone(),
+        }
+    }
 
-            steer_tools::result::ToolResult::FileList(file_list) => {
-                let proto_entries = file_list
-                    .entries
-                    .iter()
-                    .map(|e| ProtoFileEntry {
-                        path: e.path.clone(),
-                        is_directory: e.is_directory,
-                        size: e.size,
-                        permissions: e.permissions.clone(),
-                    })
-                    .collect();
+    fn file_content_result_to_proto(
+        file_content: &steer_workspace::FileContentResult,
+    ) -> ProtoFileContentResult {
+        ProtoFileContentResult {
+            content: file_content.content.clone(),
+            file_path: file_content.file_path.clone(),
+            line_count: file_content.line_count as u64,
+            truncated: file_content.truncated,
+        }
+    }
 
-                Some(ProtoResult::FileListResult(ProtoFileListResult {
-                    entries: proto_entries,
-                    base_path: file_list.base_path.clone(),
-                }))
-            }
+    fn edit_result_to_proto(edit_result: &steer_workspace::EditResult) -> ProtoEditResult {
+        ProtoEditResult {
+            file_path: edit_result.file_path.clone(),
+            changes_made: edit_result.changes_made as u64,
+            file_created: edit_result.file_created,
+            old_content: edit_result.old_content.clone(),
+            new_content: edit_result.new_content.clone(),
+        }
+    }
 
-            steer_tools::result::ToolResult::FileContent(file_content) => {
-                Some(ProtoResult::FileContentResult(ProtoFileContentResult {
-                    content: file_content.content.clone(),
-                    file_path: file_content.file_path.clone(),
-                    line_count: file_content.line_count as u64,
-                    truncated: file_content.truncated,
-                }))
-            }
-
-            steer_tools::result::ToolResult::Edit(edit_result) => {
-                Some(ProtoResult::EditResult(ProtoEditResult {
-                    file_path: edit_result.file_path.clone(),
-                    changes_made: edit_result.changes_made as u64,
-                    file_created: edit_result.file_created,
-                    old_content: edit_result.old_content.clone(),
-                    new_content: edit_result.new_content.clone(),
-                }))
-            }
-
-            steer_tools::result::ToolResult::Bash(bash_result) => {
-                Some(ProtoResult::BashResult(ProtoBashResult {
-                    stdout: bash_result.stdout.clone(),
-                    stderr: bash_result.stderr.clone(),
-                    exit_code: bash_result.exit_code,
-                    command: bash_result.command.clone(),
-                }))
-            }
-
-            steer_tools::result::ToolResult::Glob(glob_result) => {
-                Some(ProtoResult::GlobResult(ProtoGlobResult {
-                    matches: glob_result.matches.clone(),
-                    pattern: glob_result.pattern.clone(),
-                }))
-            }
-
-            steer_tools::result::ToolResult::TodoRead(todo_list) => {
-                let proto_todos = todo_list
-                    .todos
-                    .iter()
-                    .map(convert_todo_item_to_proto)
-                    .collect();
-
-                Some(ProtoResult::TodoListResult(ProtoTodoListResult {
-                    todos: proto_todos,
-                }))
-            }
-
-            steer_tools::result::ToolResult::TodoWrite(todo_write_result) => {
-                let proto_todos = todo_write_result
-                    .todos
-                    .iter()
-                    .map(convert_todo_item_to_proto)
-                    .collect();
-
-                Some(ProtoResult::TodoWriteResult(ProtoTodoWriteResult {
-                    todos: proto_todos,
-                    operation: convert_todo_write_file_operation_to_proto(
-                        &todo_write_result.operation,
-                    ) as i32,
-                }))
-            }
-
-            steer_tools::result::ToolResult::Fetch(_) => {
-                // Fetch results are not handled in the remote workspace
-                None
-            }
-
-            steer_tools::result::ToolResult::Agent(_) => {
-                // Agent results are not handled in the remote workspace
-                None
-            }
-
-            steer_tools::result::ToolResult::External(_) => {
-                // External results are not handled in the remote workspace
-                None
-            }
-
-            steer_tools::result::ToolResult::Error(_) => {
-                // Errors are handled differently
-                None
-            }
+    fn glob_result_to_proto(glob_result: &steer_workspace::GlobResult) -> ProtoGlobResult {
+        ProtoGlobResult {
+            matches: glob_result.matches.clone(),
+            pattern: glob_result.pattern.clone(),
         }
     }
 }
@@ -417,113 +255,17 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         &self,
         _request: Request<GetToolSchemasRequest>,
     ) -> Result<Response<GetToolSchemasResponse>, Status> {
-        let mut schemas = Vec::new();
-
-        for (name, tool) in self.tools.iter() {
-            let input_schema = tool.input_schema();
-            let input_schema_json = serde_json::to_string(&input_schema)
-                .map_err(|e| Status::internal(format!("Failed to serialize schema: {e}")))?;
-
-            schemas.push(GrpcToolSchema {
-                name: name.clone(),
-                description: tool.description(),
-                input_schema_json,
-            });
-        }
-
-        Ok(Response::new(GetToolSchemasResponse { tools: schemas }))
+        Ok(Response::new(GetToolSchemasResponse { tools: Vec::new() }))
     }
 
-    /// Execute a tool call on the agent
+    /// Execute a tool call on the agent (legacy API).
     async fn execute_tool(
         &self,
-        request: Request<ExecuteToolRequest>,
+        _request: Request<ExecuteToolRequest>,
     ) -> Result<Response<ExecuteToolResponse>, Status> {
-        let start_time = std::time::Instant::now();
-        let req = request.into_inner();
-
-        // Parse the tool parameters
-        let parameters: serde_json::Value =
-            serde_json::from_str(&req.parameters_json).map_err(|e| {
-                Status::invalid_argument(format!("Failed to parse tool parameters: {e}"))
-            })?;
-
-        // Look up the tool
-        let tool = self
-            .tools
-            .get(&req.tool_name)
-            .ok_or_else(|| Status::not_found(format!("Unknown tool: {}", req.tool_name)))?;
-
-        // Create a cancellation token and a drop guard. When the gRPC request is cancelled,
-        // this async function will be dropped, which triggers the drop guard to cancel the token.
-        // This ensures that long-running tools (like bash commands) are properly cancelled.
-        let cancellation_token = tokio_util::sync::CancellationToken::new();
-        let _guard = cancellation_token.clone().drop_guard();
-
-        // Create execution context
-        let context = ExecutionContext::new(req.tool_call_id.clone())
-            .with_cancellation_token(cancellation_token);
-
-        let result = tool.run(parameters, &context).await;
-
-        let end_time = std::time::Instant::now();
-        let duration = end_time - start_time;
-
-        // Convert result to response
-        let response = match result {
-            Ok(tool_result) => {
-                // Convert to a typed result
-                let proto_result = Self::tool_result_to_proto_result(&tool_result);
-
-                ExecuteToolResponse {
-                    success: true,
-                    result: proto_result.or_else(|| {
-                        // Fallback to string result
-                        Some(ProtoResult::StringResult(tool_result.llm_format()))
-                    }),
-                    error: String::new(),
-                    started_at: Some(prost_types::Timestamp {
-                        seconds: start_time.elapsed().as_secs() as i64,
-                        nanos: 0,
-                    }),
-                    completed_at: Some(prost_types::Timestamp {
-                        seconds: duration.as_secs() as i64,
-                        nanos: duration.subsec_nanos() as i32,
-                    }),
-                    metadata: std::collections::HashMap::new(),
-                    error_detail: None,
-                }
-            }
-            Err(error) => {
-                // For some errors, we want to return them as successful responses
-                // with the error in the error field, rather than failing the gRPC call
-                match &error {
-                    ToolError::Cancelled(_) => {
-                        return Err(Status::cancelled("Tool execution was cancelled"));
-                    }
-                    ToolError::UnknownTool(_) => {
-                        return Err(Self::tool_error_to_status(error));
-                    }
-                    _ => ExecuteToolResponse {
-                        success: false,
-                        result: None,
-                        error: error.to_string(),
-                        started_at: Some(prost_types::Timestamp {
-                            seconds: start_time.elapsed().as_secs() as i64,
-                            nanos: 0,
-                        }),
-                        completed_at: Some(prost_types::Timestamp {
-                            seconds: duration.as_secs() as i64,
-                            nanos: duration.subsec_nanos() as i32,
-                        }),
-                        metadata: std::collections::HashMap::new(),
-                        error_detail: Some(Self::tool_error_to_detail(&error)),
-                    },
-                }
-            }
-        };
-
-        Ok(Response::new(response))
+        Err(Status::unimplemented(
+            "execute_tool is deprecated; use workspace ops instead",
+        ))
     }
 
     /// Get information about the agent and available tools
@@ -543,7 +285,10 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                 ),
                 (
                     "working_directory".to_string(),
-                    self.working_dir.to_string_lossy().to_string(),
+                    self.workspace
+                        .working_directory()
+                        .to_string_lossy()
+                        .to_string(),
                 ),
             ]),
         };
@@ -559,7 +304,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         // Simple health check - we could add more sophisticated checks here
         let response = HealthResponse {
             status: HealthStatus::Serving as i32,
-            message: "Agent is healthy and ready to execute tools".to_string(),
+            message: "Workspace service is healthy and ready to execute operations".to_string(),
             details: std::collections::HashMap::from([(
                 "tool_count".to_string(),
                 self.get_supported_tools().len().to_string(),
@@ -572,20 +317,9 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
     /// Get tool approval requirements
     async fn get_tool_approval_requirements(
         &self,
-        request: Request<GetToolApprovalRequirementsRequest>,
+        _request: Request<GetToolApprovalRequirementsRequest>,
     ) -> Result<Response<GetToolApprovalRequirementsResponse>, Status> {
-        let req = request.into_inner();
-        let mut approval_requirements = std::collections::HashMap::new();
-
-        for tool_name in req.tool_names {
-            if let Some(tool) = self.tools.get(&tool_name) {
-                approval_requirements.insert(tool_name, tool.requires_approval());
-            } else {
-                // Unknown tools are not included in the response
-                // This matches the behavior of the local backend which returns UnknownTool error
-            }
-        }
-
+        let approval_requirements = std::collections::HashMap::new();
         Ok(Response::new(GetToolApprovalRequirementsResponse {
             approval_requirements,
         }))
@@ -596,16 +330,11 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         &self,
         request: Request<crate::proto::GetEnvironmentInfoRequest>,
     ) -> Result<Response<crate::proto::GetEnvironmentInfoResponse>, Status> {
-        let req = request.into_inner();
-
-        // Use the provided working directory or current directory
-        let working_directory = if let Some(dir) = req.working_directory {
-            dir
-        } else {
-            self.working_dir.to_string_lossy().to_string()
-        };
-
-        let env_info = EnvironmentInfo::collect_for_path(Path::new(&working_directory))
+        let _req = request.into_inner();
+        let env_info = self
+            .workspace
+            .environment()
+            .await
             .map_err(|e| Status::internal(format!("Failed to collect environment info: {e}")))?;
 
         let response = crate::proto::GetEnvironmentInfoResponse {
@@ -630,13 +359,13 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         request: Request<ListFilesRequest>,
     ) -> Result<Response<Self::ListFilesStream>, Status> {
         let req = request.into_inner();
+        let workspace = self.workspace.clone();
 
         // Create the response stream
         let (tx, rx) = mpsc::channel(100);
 
         // Spawn task to stream the files
         tokio::spawn(async move {
-            // Use the shared file listing utility
             let query = if req.query.is_empty() {
                 None
             } else {
@@ -648,7 +377,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
                 None
             };
 
-            let files = match FileListingUtils::list_files(Path::new("."), query, max_results) {
+            let files = match workspace.list_files(query, max_results).await {
                 Ok(files) => files,
                 Err(e) => {
                     tracing::error!("Error listing files: {}", e);
@@ -676,20 +405,176 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
 
         Ok(Response::new(ReceiverStream::new(rx)))
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::proto::tool_error_detail::Kind;
+    async fn read_file(
+        &self,
+        request: Request<GrpcReadFileRequest>,
+    ) -> Result<Response<ProtoFileContentResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("read_file", cancellation_token);
+        let params = steer_workspace::ReadFileRequest {
+            file_path: req.file_path,
+            offset: req.offset,
+            limit: req.limit,
+        };
 
-    #[test]
-    fn test_tool_error_detail_denied_by_policy() {
-        let detail =
-            RemoteWorkspaceService::tool_error_to_detail(&ToolError::DeniedByPolicy("bash".into()));
+        let result = self
+            .workspace
+            .read_file(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("ReadFile failed: {e}")))?;
 
-        assert_eq!(detail.kind, Kind::DeniedByPolicy as i32);
-        assert_eq!(detail.tool_name, "bash");
-        assert!(detail.message.contains("denied by policy"));
+        Ok(Response::new(Self::file_content_result_to_proto(&result)))
+    }
+
+    async fn list_directory(
+        &self,
+        request: Request<GrpcListDirectoryRequest>,
+    ) -> Result<Response<ProtoFileListResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("ls", cancellation_token);
+        let params = steer_workspace::ListDirectoryRequest {
+            path: req.path,
+            ignore: if req.ignore.is_empty() {
+                None
+            } else {
+                Some(req.ignore)
+            },
+        };
+
+        let result = self
+            .workspace
+            .list_directory(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("ListDirectory failed: {e}")))?;
+
+        Ok(Response::new(Self::file_list_result_to_proto(&result)))
+    }
+
+    async fn glob(
+        &self,
+        request: Request<GrpcGlobRequest>,
+    ) -> Result<Response<ProtoGlobResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("glob", cancellation_token);
+        let params = steer_workspace::GlobRequest {
+            pattern: req.pattern,
+            path: req.path,
+        };
+
+        let result = self
+            .workspace
+            .glob(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("Glob failed: {e}")))?;
+
+        Ok(Response::new(Self::glob_result_to_proto(&result)))
+    }
+
+    async fn grep(
+        &self,
+        request: Request<GrpcGrepRequest>,
+    ) -> Result<Response<ProtoSearchResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("grep", cancellation_token);
+        let params = steer_workspace::GrepRequest {
+            pattern: req.pattern,
+            include: req.include,
+            path: req.path,
+        };
+
+        let result = self
+            .workspace
+            .grep(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("Grep failed: {e}")))?;
+
+        Ok(Response::new(Self::search_result_to_proto(&result)))
+    }
+
+    async fn ast_grep(
+        &self,
+        request: Request<GrpcAstGrepRequest>,
+    ) -> Result<Response<ProtoSearchResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("astgrep", cancellation_token);
+        let params = steer_workspace::AstGrepRequest {
+            pattern: req.pattern,
+            lang: req.lang,
+            include: req.include,
+            exclude: req.exclude,
+            path: req.path,
+        };
+
+        let result = self
+            .workspace
+            .astgrep(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("AstGrep failed: {e}")))?;
+
+        Ok(Response::new(Self::search_result_to_proto(&result)))
+    }
+
+    async fn apply_edits(
+        &self,
+        request: Request<GrpcApplyEditsRequest>,
+    ) -> Result<Response<ProtoEditResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("edit", cancellation_token);
+        let edits = req
+            .edits
+            .into_iter()
+            .map(|edit| steer_workspace::EditOperation {
+                old_string: edit.old_string,
+                new_string: edit.new_string,
+            })
+            .collect::<Vec<_>>();
+
+        let params = steer_workspace::ApplyEditsRequest {
+            file_path: req.file_path,
+            edits,
+        };
+
+        let result = self
+            .workspace
+            .apply_edits(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("ApplyEdits failed: {e}")))?;
+
+        Ok(Response::new(Self::edit_result_to_proto(&result)))
+    }
+
+    async fn write_file(
+        &self,
+        request: Request<GrpcWriteFileRequest>,
+    ) -> Result<Response<ProtoEditResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("write_file", cancellation_token);
+        let params = steer_workspace::WriteFileRequest {
+            file_path: req.file_path,
+            content: req.content,
+        };
+
+        let result = self
+            .workspace
+            .write_file(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("WriteFile failed: {e}")))?;
+
+        Ok(Response::new(Self::edit_result_to_proto(&result)))
     }
 }

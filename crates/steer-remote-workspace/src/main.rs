@@ -46,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the remote backend service
     let remote_workspace_service = RemoteWorkspaceService::new(working_dir)
+        .await
         .map_err(|e| format!("Failed to create remote backend service: {e}"))?;
 
     info!(

@@ -65,7 +65,6 @@ quote = "1.0.40"
 proc-macro2 = "1.0.95"
 schemars = { version = "1.0", features = ["derive"] }
 
-steer-macros.workspace = true
 steer-proto.workspace = true
 steer-tools.workspace = true
 steer-core.workspace = true

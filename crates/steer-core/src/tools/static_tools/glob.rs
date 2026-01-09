@@ -4,11 +4,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::GlobResult;
-use steer_tools::tools::glob::GlobParams;
-
-use super::to_tools_context;
+use steer_workspace::{GlobRequest, WorkspaceOpContext};
 
 pub const GLOB_TOOL_NAME: &str = "glob";
 
@@ -38,22 +35,16 @@ impl StaticTool for GlobTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let glob_params = GlobParams {
+        let request = GlobRequest {
             pattern: params.pattern,
             path: params.path,
         };
-
-        let params_json = serde_json::to_value(glob_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::GlobTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        ctx.services
+            .workspace
+            .glob(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+            .map_err(|e| StaticToolError::execution(e.to_string()))
     }
 }

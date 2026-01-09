@@ -3,6 +3,8 @@ pub mod error;
 pub mod local;
 pub mod local_manager;
 pub mod manager;
+pub mod ops;
+pub mod result;
 pub mod utils;
 mod workspace_registry;
 
@@ -12,12 +14,19 @@ pub use error::{
     EnvironmentManagerError, EnvironmentManagerResult, Result, WorkspaceError,
     WorkspaceManagerError, WorkspaceManagerResult,
 };
-pub use local_manager::LocalWorkspaceManager;
 pub use local::LocalEnvironmentManager;
+pub use local_manager::LocalWorkspaceManager;
 pub use manager::{
     CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
     EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, RepoManager,
     WorkspaceCreateStrategy, WorkspaceManager,
+};
+pub use ops::{
+    ApplyEditsRequest, AstGrepRequest, EditOperation, GlobRequest, GrepRequest,
+    ListDirectoryRequest, ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
+};
+pub use result::{
+    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
 };
 
 // Module with the trait and core types
@@ -52,18 +61,46 @@ pub trait Workspace: Send + Sync + std::fmt::Debug {
     /// Get the working directory for this workspace
     fn working_directory(&self) -> &std::path::Path;
 
-    /// Execute a tool in this workspace
-    async fn execute_tool(
+    /// Read file contents with optional offset/limit.
+    async fn read_file(
         &self,
-        tool_call: &steer_tools::ToolCall,
-        context: steer_tools::ExecutionContext,
-    ) -> Result<steer_tools::result::ToolResult>;
+        request: ReadFileRequest,
+        ctx: &WorkspaceOpContext,
+    ) -> Result<FileContentResult>;
 
-    /// Get available tools in this workspace
-    async fn available_tools(&self) -> Vec<steer_tools::ToolSchema>;
+    /// List a directory (similar to ls).
+    async fn list_directory(
+        &self,
+        request: ListDirectoryRequest,
+        ctx: &WorkspaceOpContext,
+    ) -> Result<FileListResult>;
 
-    /// Check if a tool requires approval
-    async fn requires_approval(&self, tool_name: &str) -> Result<bool>;
+    /// Apply glob patterns.
+    async fn glob(&self, request: GlobRequest, ctx: &WorkspaceOpContext) -> Result<GlobResult>;
+
+    /// Text search (grep-style).
+    async fn grep(&self, request: GrepRequest, ctx: &WorkspaceOpContext) -> Result<SearchResult>;
+
+    /// AST search (astgrep-style).
+    async fn astgrep(
+        &self,
+        request: AstGrepRequest,
+        ctx: &WorkspaceOpContext,
+    ) -> Result<SearchResult>;
+
+    /// Apply one or more edits to a file.
+    async fn apply_edits(
+        &self,
+        request: ApplyEditsRequest,
+        ctx: &WorkspaceOpContext,
+    ) -> Result<EditResult>;
+
+    /// Write/replace entire file content.
+    async fn write_file(
+        &self,
+        request: WriteFileRequest,
+        ctx: &WorkspaceOpContext,
+    ) -> Result<EditResult>;
 }
 
 /// Metadata about a workspace

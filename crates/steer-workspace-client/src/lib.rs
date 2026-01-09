@@ -1,149 +1,94 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
 use steer_proto::remote_workspace::v1::{
-    ExecuteToolRequest, ExecuteToolResponse, GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
-    GetToolApprovalRequirementsRequest, GetToolSchemasRequest, ListFilesRequest, ToolErrorDetail,
-    remote_workspace_service_client::RemoteWorkspaceServiceClient, tool_error_detail,
+    ApplyEditsRequest as ProtoApplyEditsRequest, AstGrepRequest as ProtoAstGrepRequest,
+    EditOperation as ProtoEditOperation, GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
+    GlobRequest as ProtoGlobRequest, GrepRequest as ProtoGrepRequest,
+    ListDirectoryRequest as ProtoListDirectoryRequest, ListFilesRequest,
+    ReadFileRequest as ProtoReadFileRequest, WriteFileRequest as ProtoWriteFileRequest,
+    remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
-use steer_tools::{
-    ToolCall, ToolSchema,
-    result::ToolResult,
-    tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation},
+use steer_tools::result::{
+    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
 };
 use steer_workspace::{
-    EnvironmentInfo, GitCommitSummary, GitHead, GitStatus, GitStatusEntry, GitStatusSummary,
-    JjChange, JjChangeType, JjCommitSummary, JjStatus, RemoteAuth, Result, VcsInfo, VcsKind,
-    VcsStatus, Workspace, WorkspaceError, WorkspaceMetadata, WorkspaceType,
+    ApplyEditsRequest, AstGrepRequest, EnvironmentInfo, GitCommitSummary, GitHead, GitStatus,
+    GitStatusEntry, GitStatusSummary, GlobRequest, GrepRequest, JjChange, JjChangeType,
+    JjCommitSummary, JjStatus, ListDirectoryRequest, ReadFileRequest, RemoteAuth, Result, VcsInfo,
+    VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceMetadata, WorkspaceOpContext,
+    WorkspaceType, WriteFileRequest,
 };
 
-/// Serializable version of ExecutionContext for remote transmission
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializableExecutionContext {
-    pub tool_call_id: String,
-    pub working_directory: std::path::PathBuf,
-}
+fn convert_search_result(proto_result: steer_proto::common::v1::SearchResult) -> SearchResult {
+    let matches = proto_result
+        .matches
+        .into_iter()
+        .map(|m| SearchMatch {
+            file_path: m.file_path,
+            line_number: m.line_number as usize,
+            line_content: m.line_content,
+            column_range: m
+                .column_range
+                .map(|cr| (cr.start as usize, cr.end as usize)),
+        })
+        .collect();
 
-impl From<&steer_tools::ExecutionContext> for SerializableExecutionContext {
-    fn from(context: &steer_tools::ExecutionContext) -> Self {
-        Self {
-            tool_call_id: context.tool_call_id.clone(),
-            working_directory: context.working_directory.clone(),
-        }
+    SearchResult {
+        matches,
+        total_files_searched: proto_result.total_files_searched as usize,
+        search_completed: proto_result.search_completed,
     }
 }
 
-/// Convert gRPC tool response to ToolResult
-fn convert_tool_response(response: ExecuteToolResponse) -> Result<ToolResult> {
-    use steer_proto::remote_workspace::v1::execute_tool_response::Result as ProtoResult;
-    use steer_tools::result::{
-        BashResult, EditResult, ExternalResult, FileContentResult, FileEntry, FileListResult,
-        GlobResult, SearchMatch, SearchResult, TodoListResult, TodoWriteResult,
-    };
+fn convert_file_list_result(
+    proto_result: steer_proto::common::v1::FileListResult,
+) -> FileListResult {
+    let entries = proto_result
+        .entries
+        .into_iter()
+        .map(|e| FileEntry {
+            path: e.path,
+            is_directory: e.is_directory,
+            size: e.size,
+            permissions: e.permissions,
+        })
+        .collect();
 
-    match response.result {
-        Some(ProtoResult::StringResult(s)) => {
-            // Legacy string result - treat as External
-            Ok(ToolResult::External(ExternalResult {
-                tool_name: "remote".to_string(),
-                payload: s,
-            }))
-        }
-        Some(ProtoResult::SearchResult(proto_result)) => {
-            let matches = proto_result
-                .matches
-                .into_iter()
-                .map(|m| SearchMatch {
-                    file_path: m.file_path,
-                    line_number: m.line_number as usize,
-                    line_content: m.line_content,
-                    column_range: m
-                        .column_range
-                        .map(|cr| (cr.start as usize, cr.end as usize)),
-                })
-                .collect();
+    FileListResult {
+        entries,
+        base_path: proto_result.base_path,
+    }
+}
 
-            Ok(ToolResult::Search(SearchResult {
-                matches,
-                total_files_searched: proto_result.total_files_searched as usize,
-                search_completed: proto_result.search_completed,
-            }))
-        }
-        Some(ProtoResult::FileListResult(proto_result)) => {
-            let entries = proto_result
-                .entries
-                .into_iter()
-                .map(|e| FileEntry {
-                    path: e.path,
-                    is_directory: e.is_directory,
-                    size: e.size,
-                    permissions: e.permissions,
-                })
-                .collect();
+fn convert_file_content_result(
+    proto_result: steer_proto::common::v1::FileContentResult,
+) -> FileContentResult {
+    FileContentResult {
+        content: proto_result.content,
+        file_path: proto_result.file_path,
+        line_count: proto_result.line_count as usize,
+        truncated: proto_result.truncated,
+    }
+}
 
-            Ok(ToolResult::FileList(FileListResult {
-                entries,
-                base_path: proto_result.base_path,
-            }))
-        }
-        Some(ProtoResult::FileContentResult(proto_result)) => {
-            Ok(ToolResult::FileContent(FileContentResult {
-                content: proto_result.content,
-                file_path: proto_result.file_path,
-                line_count: proto_result.line_count as usize,
-                truncated: proto_result.truncated,
-            }))
-        }
-        Some(ProtoResult::EditResult(proto_result)) => Ok(ToolResult::Edit(EditResult {
-            file_path: proto_result.file_path,
-            changes_made: proto_result.changes_made as usize,
-            file_created: proto_result.file_created,
-            old_content: proto_result.old_content,
-            new_content: proto_result.new_content,
-        })),
-        Some(ProtoResult::BashResult(proto_result)) => Ok(ToolResult::Bash(BashResult {
-            stdout: proto_result.stdout,
-            stderr: proto_result.stderr,
-            exit_code: proto_result.exit_code,
-            command: proto_result.command,
-        })),
-        Some(ProtoResult::GlobResult(proto_result)) => Ok(ToolResult::Glob(GlobResult {
-            matches: proto_result.matches,
-            pattern: proto_result.pattern,
-        })),
-        Some(ProtoResult::TodoListResult(proto_result)) => {
-            let todos = proto_result
-                .todos
-                .into_iter()
-                .map(convert_proto_to_todo_item)
-                .collect();
+fn convert_edit_result(proto_result: steer_proto::common::v1::EditResult) -> EditResult {
+    EditResult {
+        file_path: proto_result.file_path,
+        changes_made: proto_result.changes_made as usize,
+        file_created: proto_result.file_created,
+        old_content: proto_result.old_content,
+        new_content: proto_result.new_content,
+    }
+}
 
-            Ok(ToolResult::TodoRead(TodoListResult { todos }))
-        }
-        Some(ProtoResult::TodoWriteResult(proto_result)) => {
-            let todos = proto_result
-                .todos
-                .into_iter()
-                .map(convert_proto_to_todo_item)
-                .collect();
-
-            Ok(ToolResult::TodoWrite(TodoWriteResult {
-                todos,
-                operation: convert_proto_to_todo_write_file_operation(
-                    steer_proto::common::v1::TodoWriteFileOperation::try_from(
-                        proto_result.operation,
-                    )
-                    .unwrap_or(steer_proto::common::v1::TodoWriteFileOperation::OperationUnset),
-                ),
-            }))
-        }
-        _ => Err(WorkspaceError::ToolExecution(
-            "No result returned from remote execution".to_string(),
-        )),
+fn convert_glob_result(proto_result: steer_proto::common::v1::GlobResult) -> GlobResult {
+    GlobResult {
+        matches: proto_result.matches,
+        pattern: proto_result.pattern,
     }
 }
 
@@ -438,169 +383,135 @@ impl Workspace for RemoteWorkspace {
         std::path::Path::new("/remote")
     }
 
-    async fn execute_tool(
+    async fn read_file(
         &self,
-        tool_call: &ToolCall,
-        context: steer_tools::ExecutionContext,
-    ) -> Result<ToolResult> {
+        request: ReadFileRequest,
+        _ctx: &WorkspaceOpContext,
+    ) -> Result<FileContentResult> {
         let mut client = self.client.clone();
-
-        // Serialize the execution context
-        let context_json = serde_json::to_string(&SerializableExecutionContext::from(&context))
-            .map_err(|e| {
-                WorkspaceError::ToolExecution(format!("Failed to serialize context: {e}"))
-            })?;
-
-        // Serialize tool parameters
-        let parameters_json = serde_json::to_string(&tool_call.parameters).map_err(|e| {
-            WorkspaceError::ToolExecution(format!("Failed to serialize parameters: {e}"))
-        })?;
-
-        let request = tonic::Request::new(ExecuteToolRequest {
-            tool_call_id: tool_call.id.clone(),
-            tool_name: tool_call.name.clone(),
-            parameters_json,
-            context_json,
-            timeout_ms: Some(30000), // 30 second default
+        let request = tonic::Request::new(ProtoReadFileRequest {
+            file_path: request.file_path,
+            offset: request.offset,
+            limit: request.limit,
         });
-
         let response = client
-            .execute_tool(request)
+            .read_file(request)
             .await
-            .map_err(|e| WorkspaceError::Status(format!("Failed to execute tool: {e}")))?
+            .map_err(|e| WorkspaceError::Status(format!("Failed to read file: {e}")))?
             .into_inner();
-
-        if !response.success {
-            // Use typed error_detail if available, otherwise fall back to string
-            let tool_error = if let Some(detail) = response.error_detail {
-                convert_error_detail_to_tool_error(detail)
-            } else {
-                // Fallback for older servers
-                steer_tools::ToolError::Execution {
-                    tool_name: tool_call.name.clone(),
-                    message: response.error,
-                }
-            };
-            return Ok(ToolResult::Error(tool_error));
-        }
-
-        convert_tool_response(response)
+        Ok(convert_file_content_result(response))
     }
 
-    async fn available_tools(&self) -> Vec<ToolSchema> {
+    async fn list_directory(
+        &self,
+        request: ListDirectoryRequest,
+        _ctx: &WorkspaceOpContext,
+    ) -> Result<FileListResult> {
         let mut client = self.client.clone();
-
-        let request = tonic::Request::new(GetToolSchemasRequest {});
-
-        match client.get_tool_schemas(request).await {
-            Ok(response) => {
-                response
-                    .into_inner()
-                    .tools
-                    .into_iter()
-                    .map(|schema| {
-                        // Parse the JSON input schema
-                        let input_schema = serde_json::from_str(&schema.input_schema_json)
-                            .unwrap_or_else(|_| steer_tools::InputSchema {
-                                properties: serde_json::Map::new(),
-                                required: Vec::new(),
-                                schema_type: "object".to_string(),
-                            });
-
-                        ToolSchema {
-                            name: schema.name,
-                            description: schema.description,
-                            input_schema,
-                        }
-                    })
-                    .collect()
-            }
-            Err(_) => Vec::new(),
-        }
-    }
-
-    async fn requires_approval(&self, tool_name: &str) -> Result<bool> {
-        let mut client = self.client.clone();
-
-        let request = tonic::Request::new(GetToolApprovalRequirementsRequest {
-            tool_names: vec![tool_name.to_string()],
+        let request = tonic::Request::new(ProtoListDirectoryRequest {
+            path: request.path,
+            ignore: request.ignore.unwrap_or_default(),
         });
-
         let response = client
-            .get_tool_approval_requirements(request)
+            .list_directory(request)
             .await
-            .map_err(|e| {
-                WorkspaceError::ToolExecution(format!("Failed to get approval requirements: {e}"))
-            })?
+            .map_err(|e| WorkspaceError::Status(format!("Failed to list directory: {e}")))?
             .into_inner();
-
-        response
-            .approval_requirements
-            .get(tool_name)
-            .copied()
-            .ok_or_else(|| WorkspaceError::ToolExecution(format!("Unknown tool: {tool_name}")))
+        Ok(convert_file_list_result(response))
     }
-}
 
-fn convert_proto_to_todo_item(item: steer_proto::common::v1::TodoItem) -> TodoItem {
-    TodoItem {
-        id: item.id.clone(),
-        content: item.content.clone(),
-        status: match steer_proto::common::v1::TodoStatus::try_from(item.status) {
-            Ok(steer_proto::common::v1::TodoStatus::Pending) => TodoStatus::Pending,
-            Ok(steer_proto::common::v1::TodoStatus::InProgress) => TodoStatus::InProgress,
-            Ok(steer_proto::common::v1::TodoStatus::Completed) => TodoStatus::Completed,
-            Ok(steer_proto::common::v1::TodoStatus::StatusUnset) => TodoStatus::Pending,
-            Err(_) => TodoStatus::Pending,
-        },
-        priority: match steer_proto::common::v1::TodoPriority::try_from(item.priority) {
-            Ok(steer_proto::common::v1::TodoPriority::High) => TodoPriority::High,
-            Ok(steer_proto::common::v1::TodoPriority::Medium) => TodoPriority::Medium,
-            Ok(steer_proto::common::v1::TodoPriority::Low) => TodoPriority::Low,
-            Ok(steer_proto::common::v1::TodoPriority::PriorityUnset) => TodoPriority::Low,
-            Err(_) => TodoPriority::Low,
-        },
+    async fn glob(&self, request: GlobRequest, _ctx: &WorkspaceOpContext) -> Result<GlobResult> {
+        let mut client = self.client.clone();
+        let request = tonic::Request::new(ProtoGlobRequest {
+            pattern: request.pattern,
+            path: request.path,
+        });
+        let response = client
+            .glob(request)
+            .await
+            .map_err(|e| WorkspaceError::Status(format!("Failed to glob: {e}")))?
+            .into_inner();
+        Ok(convert_glob_result(response))
     }
-}
 
-fn convert_proto_to_todo_write_file_operation(
-    operation: steer_proto::common::v1::TodoWriteFileOperation,
-) -> TodoWriteFileOperation {
-    match operation {
-        steer_proto::common::v1::TodoWriteFileOperation::Created => TodoWriteFileOperation::Created,
-        steer_proto::common::v1::TodoWriteFileOperation::Modified => {
-            TodoWriteFileOperation::Modified
-        }
-        steer_proto::common::v1::TodoWriteFileOperation::OperationUnset => {
-            TodoWriteFileOperation::Created
-        }
+    async fn grep(&self, request: GrepRequest, _ctx: &WorkspaceOpContext) -> Result<SearchResult> {
+        let mut client = self.client.clone();
+        let request = tonic::Request::new(ProtoGrepRequest {
+            pattern: request.pattern,
+            include: request.include,
+            path: request.path,
+        });
+        let response = client
+            .grep(request)
+            .await
+            .map_err(|e| WorkspaceError::Status(format!("Failed to grep: {e}")))?
+            .into_inner();
+        Ok(convert_search_result(response))
     }
-}
 
-/// Convert proto ToolErrorDetail to ToolError
-fn convert_error_detail_to_tool_error(detail: ToolErrorDetail) -> steer_tools::ToolError {
-    use tool_error_detail::Kind;
+    async fn astgrep(
+        &self,
+        request: AstGrepRequest,
+        _ctx: &WorkspaceOpContext,
+    ) -> Result<SearchResult> {
+        let mut client = self.client.clone();
+        let request = tonic::Request::new(ProtoAstGrepRequest {
+            pattern: request.pattern,
+            lang: request.lang,
+            include: request.include,
+            exclude: request.exclude,
+            path: request.path,
+        });
+        let response = client
+            .ast_grep(request)
+            .await
+            .map_err(|e| WorkspaceError::Status(format!("Failed to astgrep: {e}")))?
+            .into_inner();
+        Ok(convert_search_result(response))
+    }
 
-    let kind = Kind::try_from(detail.kind).unwrap_or(Kind::Internal);
+    async fn apply_edits(
+        &self,
+        request: ApplyEditsRequest,
+        _ctx: &WorkspaceOpContext,
+    ) -> Result<EditResult> {
+        let mut client = self.client.clone();
+        let edits = request
+            .edits
+            .into_iter()
+            .map(|edit| ProtoEditOperation {
+                old_string: edit.old_string,
+                new_string: edit.new_string,
+            })
+            .collect();
+        let request = tonic::Request::new(ProtoApplyEditsRequest {
+            file_path: request.file_path,
+            edits,
+        });
+        let response = client
+            .apply_edits(request)
+            .await
+            .map_err(|e| WorkspaceError::Status(format!("Failed to apply edits: {e}")))?
+            .into_inner();
+        Ok(convert_edit_result(response))
+    }
 
-    match kind {
-        Kind::Execution => steer_tools::ToolError::Execution {
-            tool_name: detail.tool_name,
-            message: detail.message,
-        },
-        Kind::Io => steer_tools::ToolError::Io {
-            tool_name: detail.tool_name,
-            message: detail.message,
-        },
-        Kind::InvalidParams => {
-            steer_tools::ToolError::InvalidParams(detail.tool_name, detail.message)
-        }
-        Kind::Cancelled => steer_tools::ToolError::Cancelled(detail.tool_name),
-        Kind::Timeout => steer_tools::ToolError::Timeout(detail.tool_name),
-        Kind::UnknownTool => steer_tools::ToolError::UnknownTool(detail.tool_name),
-        Kind::DeniedByUser => steer_tools::ToolError::DeniedByUser(detail.tool_name),
-        Kind::DeniedByPolicy => steer_tools::ToolError::DeniedByPolicy(detail.tool_name),
-        Kind::Internal | Kind::Unset => steer_tools::ToolError::InternalError(detail.message),
+    async fn write_file(
+        &self,
+        request: WriteFileRequest,
+        _ctx: &WorkspaceOpContext,
+    ) -> Result<EditResult> {
+        let mut client = self.client.clone();
+        let request = tonic::Request::new(ProtoWriteFileRequest {
+            file_path: request.file_path,
+            content: request.content,
+        });
+        let response = client
+            .write_file(request)
+            .await
+            .map_err(|e| WorkspaceError::Status(format!("Failed to write file: {e}")))?
+            .into_inner();
+        Ok(convert_edit_result(response))
     }
 }
 
@@ -687,15 +598,4 @@ mod tests {
         assert_eq!(env_info.memory_file_name, None);
     }
 
-    #[test]
-    fn test_convert_error_detail_denied_by_policy() {
-        let detail = ToolErrorDetail {
-            kind: tool_error_detail::Kind::DeniedByPolicy as i32,
-            tool_name: "bash".to_string(),
-            message: "Tool execution denied by policy: bash".to_string(),
-        };
-
-        let error = convert_error_detail_to_tool_error(detail);
-        assert!(matches!(error, steer_tools::ToolError::DeniedByPolicy(name) if name == "bash"));
-    }
 }

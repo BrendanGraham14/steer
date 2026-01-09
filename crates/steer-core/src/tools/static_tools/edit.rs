@@ -4,12 +4,8 @@ use serde::Deserialize;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::{EditResult, MultiEditResult};
-use steer_tools::tools::edit::EditParams;
-use steer_tools::tools::edit::multi_edit::MultiEditParams;
-
-use super::to_tools_context;
+use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
 
 pub const EDIT_TOOL_NAME: &str = "edit_file";
 pub const MULTI_EDIT_TOOL_NAME: &str = "multi_edit_file";
@@ -87,24 +83,20 @@ impl StaticTool for EditTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let edit_params = EditParams {
+        let request = ApplyEditsRequest {
             file_path: params.file_path,
-            old_string: params.old_string,
-            new_string: params.new_string,
+            edits: vec![EditOperation {
+                old_string: params.old_string,
+                new_string: params.new_string,
+            }],
         };
-
-        let params_json = serde_json::to_value(edit_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::EditTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        ctx.services
+            .workspace
+            .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+            .map_err(|e| StaticToolError::execution(e.to_string()))
     }
 }
 
@@ -137,29 +129,25 @@ impl StaticTool for MultiEditTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let multi_edit_params = MultiEditParams {
+        let request = ApplyEditsRequest {
             file_path: params.file_path,
             edits: params
                 .edits
                 .into_iter()
-                .map(|e| steer_tools::tools::edit::SingleEditOperation {
+                .map(|e| EditOperation {
                     old_string: e.old_string,
                     new_string: e.new_string,
                 })
                 .collect(),
         };
-
-        let params_json = serde_json::to_value(multi_edit_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::MultiEditTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        let result = ctx
+            .services
+            .workspace
+            .apply_edits(request, &op_ctx)
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+        Ok(MultiEditResult(result))
     }
 }

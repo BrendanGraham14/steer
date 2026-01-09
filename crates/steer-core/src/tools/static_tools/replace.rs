@@ -4,11 +4,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::ReplaceResult;
-use steer_tools::tools::replace::ReplaceParams;
-
-use super::to_tools_context;
+use steer_workspace::{WriteFileRequest, WorkspaceOpContext};
 
 pub const REPLACE_TOOL_NAME: &str = "write_file";
 
@@ -42,22 +39,18 @@ Before using this tool:
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let replace_params = ReplaceParams {
+        let request = WriteFileRequest {
             file_path: params.file_path,
             content: params.content,
         };
-
-        let params_json = serde_json::to_value(replace_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::ReplaceTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        let result = ctx
+            .services
+            .workspace
+            .write_file(request, &op_ctx)
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+        Ok(ReplaceResult(result))
     }
 }

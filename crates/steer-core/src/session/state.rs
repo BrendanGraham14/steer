@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use crate::app::{Message, MessageData};
 use crate::tools::{BackendRegistry, McpTransport, ToolBackend};
-use steer_tools::tools::read_only_workspace_tools;
 use steer_tools::{ToolCall, result::ToolResult};
 
 /// State of an MCP server connection
@@ -226,9 +225,9 @@ impl SessionConfig {
         match &self.tool_config.visibility {
             ToolVisibility::All => tools,
             ToolVisibility::ReadOnly => {
-                let read_only_names: HashSet<String> = read_only_workspace_tools()
+                let read_only_names: HashSet<String> = READ_ONLY_TOOL_NAMES
                     .iter()
-                    .map(|t| t.name().to_string())
+                    .map(|name| (*name).to_string())
                     .collect();
 
                 tools
@@ -269,7 +268,6 @@ impl SessionConfig {
 /// Tool visibility configuration - controls which tools are shown to the AI agent
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "tools", rename_all = "snake_case")]
-#[derive(Default)]
 pub enum ToolVisibility {
     /// Show all registered tools to the AI
     All,

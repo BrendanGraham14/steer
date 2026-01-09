@@ -1290,15 +1290,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dirs"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
-dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
 name = "dirs-sys"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6170,7 +6161,7 @@ dependencies = [
  "color-eyre",
  "colored",
  "comfy-table",
- "dirs 5.0.1",
+ "dirs",
  "dotenvy",
  "eyre",
  "futures",
@@ -6200,7 +6191,6 @@ dependencies = [
  "similar",
  "steer-core",
  "steer-grpc",
- "steer-macros",
  "steer-proto",
  "steer-tools",
  "steer-tui",
@@ -6226,7 +6216,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-anthropic"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -6243,7 +6233,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-openai"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -6263,7 +6253,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-plugin"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "async-trait",
  "keyring",
@@ -6285,7 +6275,7 @@ dependencies = [
  "chrono",
  "colored",
  "directories",
- "dirs 5.0.1",
+ "dirs",
  "dotenvy",
  "eventsource-stream",
  "futures",
@@ -6326,7 +6316,6 @@ dependencies = [
  "steer-auth-anthropic",
  "steer-auth-openai",
  "steer-auth-plugin",
- "steer-macros",
  "steer-proto",
  "steer-tools",
  "steer-workspace",
@@ -6378,16 +6367,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "steer-macros"
-version = "0.8.2"
-dependencies = [
- "proc-macro2",
- "quote",
- "schemars",
- "syn",
-]
-
-[[package]]
 name = "steer-proto"
 version = "0.8.2"
 dependencies = [
@@ -6404,16 +6383,13 @@ name = "steer-remote-workspace"
 version = "0.8.2"
 dependencies = [
  "clap",
- "fuzzy-matcher",
  "gethostname",
- "ignore",
  "prost 0.13.5",
  "prost-types",
- "serde_json",
  "steer-grpc",
  "steer-proto",
- "steer-tools",
  "steer-workspace",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -6426,32 +6402,12 @@ dependencies = [
 name = "steer-tools"
 version = "0.8.2"
 dependencies = [
- "ast-grep-core",
- "ast-grep-language",
- "async-trait",
- "chrono",
- "dirs 6.0.0",
- "glob",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
- "hex",
- "ignore",
- "once_cell",
- "regex",
- "reqwest",
  "schemars",
  "serde",
  "serde_json",
- "steer-macros",
+ "steer-workspace",
  "strum 0.27.2",
- "tempfile",
  "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -6511,21 +6467,27 @@ dependencies = [
 name = "steer-workspace"
 version = "0.8.2"
 dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
  "async-trait",
  "chrono",
  "fuzzy-matcher",
  "gethostname",
  "gix 0.73.0",
+ "glob",
+ "grep-regex",
+ "grep-searcher",
  "ignore",
  "jj-lib",
+ "once_cell",
  "prost 0.13.5",
  "prost-types",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
  "sqlx",
  "steer-proto",
- "steer-tools",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

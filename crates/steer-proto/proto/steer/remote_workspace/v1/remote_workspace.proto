@@ -28,6 +28,27 @@ service RemoteWorkspaceService {
 
   // List files in the workspace for fuzzy finding
   rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
+
+  // Read file content with optional offset/limit
+  rpc ReadFile(ReadFileRequest) returns (steer.common.v1.FileContentResult);
+
+  // List a directory (ls-style)
+  rpc ListDirectory(ListDirectoryRequest) returns (steer.common.v1.FileListResult);
+
+  // Glob search
+  rpc Glob(GlobRequest) returns (steer.common.v1.GlobResult);
+
+  // Text search (grep)
+  rpc Grep(GrepRequest) returns (steer.common.v1.SearchResult);
+
+  // AST search (astgrep)
+  rpc AstGrep(AstGrepRequest) returns (steer.common.v1.SearchResult);
+
+  // Apply one or more edits to a file
+  rpc ApplyEdits(ApplyEditsRequest) returns (steer.common.v1.EditResult);
+
+  // Write/replace file contents
+  rpc WriteFile(WriteFileRequest) returns (steer.common.v1.EditResult);
 }
 
 message ExecuteToolRequest {
@@ -242,4 +263,49 @@ message ListFilesRequest {
 
 message ListFilesResponse {
   repeated string paths = 1; // workspace-relative paths
+}
+
+message ReadFileRequest {
+  string file_path = 1;
+  optional uint64 offset = 2;
+  optional uint64 limit = 3;
+}
+
+message ListDirectoryRequest {
+  string path = 1;
+  repeated string ignore = 2;
+}
+
+message GlobRequest {
+  string pattern = 1;
+  optional string path = 2;
+}
+
+message GrepRequest {
+  string pattern = 1;
+  optional string include = 2;
+  optional string path = 3;
+}
+
+message AstGrepRequest {
+  string pattern = 1;
+  optional string lang = 2;
+  optional string include = 3;
+  optional string exclude = 4;
+  optional string path = 5;
+}
+
+message EditOperation {
+  string old_string = 1;
+  string new_string = 2;
+}
+
+message ApplyEditsRequest {
+  string file_path = 1;
+  repeated EditOperation edits = 2;
+}
+
+message WriteFileRequest {
+  string file_path = 1;
+  string content = 2;
 }

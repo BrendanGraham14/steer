@@ -1,16 +1,13 @@
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::fs;
+use std::path::PathBuf;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::{TodoListResult, TodoWriteResult};
-use steer_tools::tools::todo::read::TodoReadParams;
-use steer_tools::tools::todo::write::TodoWriteParams;
-use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
-
-use super::to_tools_context;
+use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 
 pub const TODO_READ_TOOL_NAME: &str = "TodoRead";
 pub const TODO_WRITE_TOOL_NAME: &str = "TodoWrite";
@@ -48,20 +45,12 @@ Usage:
         _params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
+        if ctx.is_cancelled() {
+            return Err(StaticToolError::Cancelled);
+        }
 
-        let read_params = TodoReadParams {};
-
-        let params_json = serde_json::to_value(read_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::TodoReadTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
-            .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+        let todos = read_todos().map_err(|e| StaticToolError::Io(e.to_string()))?;
+        Ok(TodoListResult { todos })
     }
 }
 
@@ -119,7 +108,9 @@ Task Management:
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
+        if ctx.is_cancelled() {
+            return Err(StaticToolError::Cancelled);
+        }
 
         let todos: Vec<TodoItem> = params
             .todos
@@ -140,17 +131,61 @@ Task Management:
             })
             .collect();
 
-        let write_params = TodoWriteParams { todos };
+        let operation =
+            write_todos(&todos).map_err(|e| StaticToolError::Io(e.to_string()))?;
 
-        let params_json = serde_json::to_value(write_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::TodoWriteTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
-            .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+        Ok(TodoWriteResult { todos, operation })
     }
+}
+
+fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
+    let home_dir = dirs::home_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
+    })?;
+    let todos_dir = home_dir.join(".steer").join("todos");
+
+    if !todos_dir.exists() {
+        fs::create_dir_all(&todos_dir)?;
+    }
+
+    Ok(todos_dir)
+}
+
+fn get_todo_file_path() -> Result<PathBuf, std::io::Error> {
+    let workspace_id = match std::env::var("STEER_WORKSPACE_ID") {
+        Ok(id) => id,
+        Err(_) => {
+            let current_dir = std::env::current_dir()?;
+            hex::encode(current_dir.to_string_lossy().as_bytes())
+        }
+    };
+    let dir = get_todos_dir()?;
+    Ok(dir.join(format!("{workspace_id}.json")))
+}
+
+fn read_todos() -> Result<Vec<TodoItem>, std::io::Error> {
+    let file_path = get_todo_file_path()?;
+
+    if !file_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&file_path)?;
+    serde_json::from_str(&content)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+fn write_todos(todos: &[TodoItem]) -> Result<TodoWriteFileOperation, std::io::Error> {
+    let file_path = get_todo_file_path()?;
+    let file_existed = file_path.exists();
+
+    let content = serde_json::to_string_pretty(todos)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    fs::write(&file_path, content)?;
+
+    Ok(if file_existed {
+        TodoWriteFileOperation::Modified
+    } else {
+        TodoWriteFileOperation::Created
+    })
 }

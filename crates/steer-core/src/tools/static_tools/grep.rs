@@ -4,11 +4,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::GrepResult;
-use steer_tools::tools::grep::GrepParams;
-
-use super::to_tools_context;
+use steer_workspace::{GrepRequest, WorkspaceOpContext};
 
 pub const GREP_TOOL_NAME: &str = "grep";
 
@@ -42,23 +39,19 @@ impl StaticTool for GrepTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let grep_params = GrepParams {
+        let request = GrepRequest {
             pattern: params.pattern,
             include: params.include,
             path: params.path,
         };
-
-        let params_json = serde_json::to_value(grep_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::GrepTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        let result = ctx
+            .services
+            .workspace
+            .grep(request, &op_ctx)
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+        Ok(GrepResult(result))
     }
 }

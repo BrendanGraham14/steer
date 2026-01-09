@@ -4,11 +4,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::FileListResult;
-use steer_tools::tools::ls::LsParams;
-
-use super::to_tools_context;
+use steer_workspace::{ListDirectoryRequest, WorkspaceOpContext};
 
 pub const LS_TOOL_NAME: &str = "ls";
 
@@ -35,22 +32,16 @@ impl StaticTool for LsTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let ls_params = LsParams {
+        let request = ListDirectoryRequest {
             path: params.path,
             ignore: params.ignore,
         };
-
-        let params_json = serde_json::to_value(ls_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::LsTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        ctx.services
+            .workspace
+            .list_directory(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+            .map_err(|e| StaticToolError::execution(e.to_string()))
     }
 }

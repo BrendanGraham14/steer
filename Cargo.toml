@@ -17,7 +17,6 @@ steer-auth-openai = { version = "0.8.2", path = "crates/steer-auth-openai" }
 steer-auth-plugin = { version = "0.8.2", path = "crates/steer-auth-plugin" }
 steer-core = { version = "0.8.2", path = "crates/steer-core" }
 steer-grpc = { version = "0.8.2", path = "crates/steer-grpc" }
-steer-macros = { version = "0.8.2", path = "crates/steer-macros" }
 steer-proto = { version = "0.8.2", path = "crates/steer-proto" }
 steer-remote-workspace = { version = "0.8.2", path = "crates/steer-remote-workspace" }
 steer-tools = { version = "0.8.2", path = "crates/steer-tools" }

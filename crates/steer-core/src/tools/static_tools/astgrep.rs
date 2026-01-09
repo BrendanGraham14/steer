@@ -4,11 +4,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::Tool;
 use steer_tools::result::AstGrepResult;
-use steer_tools::tools::astgrep::AstGrepParams;
-
-use super::to_tools_context;
+use steer_workspace::{AstGrepRequest, WorkspaceOpContext};
 
 pub const AST_GREP_TOOL_NAME: &str = "astgrep";
 
@@ -52,25 +49,21 @@ Automatically respects .gitignore files"#;
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError> {
-        let tools_ctx = to_tools_context(ctx);
-
-        let astgrep_params = AstGrepParams {
+        let request = AstGrepRequest {
             pattern: params.pattern,
             lang: params.lang,
             include: params.include,
             exclude: params.exclude,
             path: params.path,
         };
-
-        let params_json = serde_json::to_value(astgrep_params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
-
-        let tool = steer_tools::tools::AstGrepTool;
-        let result = tool
-            .execute(params_json, &tools_ctx)
+        let op_ctx =
+            WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
+        let result = ctx
+            .services
+            .workspace
+            .astgrep(request, &op_ctx)
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
-
-        Ok(result)
+        Ok(AstGrepResult(result))
     }
 }
