@@ -1,5 +1,6 @@
 use crate::grpc::error::ConversionError;
 use chrono::{DateTime, Utc};
+use std::path::PathBuf;
 use steer_core::app::conversation::{
     AssistantContent, Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
@@ -15,6 +16,7 @@ use steer_proto::common::v1 as common;
 use steer_proto::remote_workspace::v1 as remote_proto;
 use steer_tools::ToolCall;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
+use uuid::Uuid;
 
 /// Convert a core ModelId to proto ModelSpec
 pub fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec {
@@ -638,6 +640,244 @@ pub(crate) fn workspace_status_to_proto(
         path: status.path.to_string_lossy().to_string(),
         vcs: status.vcs.as_ref().map(vcs_info_to_proto),
     }
+}
+
+pub(crate) fn proto_to_workspace_info(
+    info: proto::WorkspaceInfo,
+) -> Result<steer_workspace::WorkspaceInfo, ConversionError> {
+    let workspace_id = parse_workspace_id(&info.workspace_id)?;
+    let environment_id = parse_environment_id(&info.environment_id)?;
+    let parent_workspace_id = match info.parent_workspace_id {
+        Some(value) if !value.is_empty() => Some(parse_workspace_id(&value)?),
+        _ => None,
+    };
+    let vcs_kind = info.vcs_kind.and_then(|value| match remote_proto::VcsKind::try_from(value) {
+        Ok(remote_proto::VcsKind::Git) => Some(steer_workspace::VcsKind::Git),
+        Ok(remote_proto::VcsKind::Jj) => Some(steer_workspace::VcsKind::Jj),
+        _ => None,
+    });
+
+    Ok(steer_workspace::WorkspaceInfo {
+        workspace_id,
+        environment_id,
+        parent_workspace_id,
+        name: info.name,
+        path: PathBuf::from(info.path),
+        vcs_kind,
+    })
+}
+
+pub(crate) fn proto_to_workspace_status(
+    status: proto::WorkspaceStatus,
+) -> Result<steer_workspace::WorkspaceStatus, ConversionError> {
+    let workspace_id = parse_workspace_id(&status.workspace_id)?;
+    let environment_id = parse_environment_id(&status.environment_id)?;
+    let vcs = match status.vcs {
+        Some(info) => Some(proto_to_vcs_info(info)?),
+        None => None,
+    };
+
+    Ok(steer_workspace::WorkspaceStatus {
+        workspace_id,
+        environment_id,
+        path: PathBuf::from(status.path),
+        vcs,
+    })
+}
+
+fn parse_environment_id(value: &str) -> Result<steer_workspace::EnvironmentId, ConversionError> {
+    if value.is_empty() {
+        return Ok(steer_workspace::EnvironmentId::local());
+    }
+    let uuid = Uuid::parse_str(value).map_err(|e| ConversionError::InvalidData {
+        message: format!("Invalid environment_id '{value}': {e}"),
+    })?;
+    Ok(steer_workspace::EnvironmentId::from_uuid(uuid))
+}
+
+fn parse_workspace_id(value: &str) -> Result<steer_workspace::WorkspaceId, ConversionError> {
+    if value.is_empty() {
+        return Err(ConversionError::InvalidData {
+            message: "workspace_id is empty".to_string(),
+        });
+    }
+    let uuid = Uuid::parse_str(value).map_err(|e| ConversionError::InvalidData {
+        message: format!("Invalid workspace_id '{value}': {e}"),
+    })?;
+    Ok(steer_workspace::WorkspaceId::from_uuid(uuid))
+}
+
+fn proto_to_vcs_info(
+    info: remote_proto::VcsInfo,
+) -> Result<steer_workspace::VcsInfo, ConversionError> {
+    let kind = match remote_proto::VcsKind::try_from(info.kind) {
+        Ok(remote_proto::VcsKind::Git) => steer_workspace::VcsKind::Git,
+        Ok(remote_proto::VcsKind::Jj) => steer_workspace::VcsKind::Jj,
+        _ => {
+            return Err(ConversionError::InvalidEnumValue {
+                value: info.kind,
+                enum_name: "VcsKind".to_string(),
+            })
+        }
+    };
+
+    let status = match info.status {
+        Some(remote_proto::vcs_info::Status::GitStatus(status)) => {
+            steer_workspace::VcsStatus::Git(proto_to_git_status(status)?)
+        }
+        Some(remote_proto::vcs_info::Status::JjStatus(status)) => {
+            steer_workspace::VcsStatus::Jj(proto_to_jj_status(status)?)
+        }
+        None => match kind {
+            steer_workspace::VcsKind::Git => steer_workspace::VcsStatus::Git(
+                steer_workspace::GitStatus::unavailable("Missing git status"),
+            ),
+            steer_workspace::VcsKind::Jj => steer_workspace::VcsStatus::Jj(
+                steer_workspace::JjStatus::unavailable("Missing jj status"),
+            ),
+        },
+    };
+
+    Ok(steer_workspace::VcsInfo {
+        kind,
+        root: PathBuf::from(info.root),
+        status,
+    })
+}
+
+fn proto_to_git_status(
+    status: remote_proto::GitStatus,
+) -> Result<steer_workspace::GitStatus, ConversionError> {
+    let head = match status.head {
+        Some(head) => {
+            let kind = remote_proto::GitHeadKind::try_from(head.kind).map_err(|_| {
+                ConversionError::InvalidEnumValue {
+                    value: head.kind,
+                    enum_name: "GitHeadKind".to_string(),
+                }
+            })?;
+            match kind {
+                remote_proto::GitHeadKind::Branch => {
+                    let branch = head.branch.ok_or_else(|| ConversionError::MissingField {
+                        field: "GitHead.branch".to_string(),
+                    })?;
+                    Some(steer_workspace::GitHead::Branch(branch))
+                }
+                remote_proto::GitHeadKind::Detached => Some(steer_workspace::GitHead::Detached),
+                remote_proto::GitHeadKind::Unborn => Some(steer_workspace::GitHead::Unborn),
+                remote_proto::GitHeadKind::Unspecified => None,
+            }
+        }
+        None => None,
+    };
+
+    let entries = status
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let summary = match remote_proto::GitStatusSummary::try_from(entry.summary) {
+                Ok(remote_proto::GitStatusSummary::Added) => {
+                    steer_workspace::GitStatusSummary::Added
+                }
+                Ok(remote_proto::GitStatusSummary::Removed) => {
+                    steer_workspace::GitStatusSummary::Removed
+                }
+                Ok(remote_proto::GitStatusSummary::Modified) => {
+                    steer_workspace::GitStatusSummary::Modified
+                }
+                Ok(remote_proto::GitStatusSummary::TypeChange) => {
+                    steer_workspace::GitStatusSummary::TypeChange
+                }
+                Ok(remote_proto::GitStatusSummary::Renamed) => {
+                    steer_workspace::GitStatusSummary::Renamed
+                }
+                Ok(remote_proto::GitStatusSummary::Copied) => {
+                    steer_workspace::GitStatusSummary::Copied
+                }
+                Ok(remote_proto::GitStatusSummary::IntentToAdd) => {
+                    steer_workspace::GitStatusSummary::IntentToAdd
+                }
+                Ok(remote_proto::GitStatusSummary::Conflict) => {
+                    steer_workspace::GitStatusSummary::Conflict
+                }
+                _ => {
+                    return Err(ConversionError::InvalidEnumValue {
+                        value: entry.summary,
+                        enum_name: "GitStatusSummary".to_string(),
+                    })
+                }
+            };
+            Ok(steer_workspace::GitStatusEntry {
+                summary,
+                path: entry.path,
+            })
+        })
+        .collect::<Result<Vec<_>, ConversionError>>()?;
+
+    let recent_commits = status
+        .recent_commits
+        .into_iter()
+        .map(|commit| steer_workspace::GitCommitSummary {
+            id: commit.id,
+            summary: commit.summary,
+        })
+        .collect();
+
+    Ok(steer_workspace::GitStatus {
+        head,
+        entries,
+        recent_commits,
+        error: status.error,
+    })
+}
+
+fn proto_to_jj_status(
+    status: remote_proto::JjStatus,
+) -> Result<steer_workspace::JjStatus, ConversionError> {
+    let changes = status
+        .changes
+        .into_iter()
+        .map(|change| {
+            let change_type = match remote_proto::JjChangeType::try_from(change.change_type) {
+                Ok(remote_proto::JjChangeType::Added) => steer_workspace::JjChangeType::Added,
+                Ok(remote_proto::JjChangeType::Removed) => steer_workspace::JjChangeType::Removed,
+                Ok(remote_proto::JjChangeType::Modified) => steer_workspace::JjChangeType::Modified,
+                _ => {
+                    return Err(ConversionError::InvalidEnumValue {
+                        value: change.change_type,
+                        enum_name: "JjChangeType".to_string(),
+                    })
+                }
+            };
+            Ok(steer_workspace::JjChange {
+                change_type,
+                path: change.path,
+            })
+        })
+        .collect::<Result<Vec<_>, ConversionError>>()?;
+
+    let working_copy = status.working_copy.map(|summary| steer_workspace::JjCommitSummary {
+        change_id: summary.change_id,
+        commit_id: summary.commit_id,
+        description: summary.description,
+    });
+
+    let parents = status
+        .parents
+        .into_iter()
+        .map(|summary| steer_workspace::JjCommitSummary {
+            change_id: summary.change_id,
+            commit_id: summary.commit_id,
+            description: summary.description,
+        })
+        .collect();
+
+    Ok(steer_workspace::JjStatus {
+        changes,
+        working_copy,
+        parents,
+        error: status.error,
+    })
 }
 
 fn vcs_info_to_proto(info: &steer_workspace::VcsInfo) -> remote_proto::VcsInfo {

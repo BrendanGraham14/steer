@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use steer::cli::{Cli, Commands};
 use steer::commands::{
     Command, headless::HeadlessCommand, serve::ServeCommand, session::SessionCommand,
+    workspace::WorkspaceCommand,
 };
 use steer::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use tracing::{debug, warn};
@@ -210,6 +211,14 @@ async fn main() -> Result<()> {
                 remote: cli.remote.clone(),
                 session_db: cli.session_db.clone(),
                 catalogs: cli.catalogs.clone(),
+            };
+            command.execute().await
+        }
+        Commands::Workspace { workspace_command } => {
+            let command = WorkspaceCommand {
+                command: workspace_command,
+                remote: cli.remote.clone(),
+                session_id: cli.session.clone(),
             };
             command.execute().await
         }

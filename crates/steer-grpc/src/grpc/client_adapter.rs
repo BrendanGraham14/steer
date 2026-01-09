@@ -7,7 +7,8 @@ use tracing::{debug, error, info, warn};
 use crate::client_api::ClientEvent;
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
-    session_tool_config_to_proto, workspace_config_to_proto,
+    proto_to_workspace_info, proto_to_workspace_status, session_tool_config_to_proto,
+    workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 
@@ -17,8 +18,8 @@ use steer_core::app::conversation::Message;
 use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
-    GetMcpServersRequest, GetSessionRequest, ListSessionsRequest, SessionInfo, SessionState,
-    agent_service_client::AgentServiceClient,
+    GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest, ListSessionsRequest,
+    ListWorkspacesRequest, SessionInfo, SessionState, agent_service_client::AgentServiceClient,
 };
 
 pub struct AgentClient {
@@ -689,6 +690,60 @@ impl AgentClient {
         }
 
         Ok(all_files)
+    }
+
+    pub async fn list_workspaces(
+        &self,
+        environment_id: Option<String>,
+        include_deleted: bool,
+    ) -> GrpcResult<Vec<steer_workspace::WorkspaceInfo>> {
+        let request = Request::new(ListWorkspacesRequest {
+            environment_id: environment_id.unwrap_or_default(),
+            include_deleted,
+        });
+        let response = self
+            .client
+            .lock()
+            .await
+            .list_workspaces(request)
+            .await
+            .map_err(Box::new)?;
+
+        let workspaces = response
+            .into_inner()
+            .workspaces
+            .into_iter()
+            .map(proto_to_workspace_info)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(workspaces)
+    }
+
+    pub async fn get_workspace_status(
+        &self,
+        workspace_id: &str,
+    ) -> GrpcResult<steer_workspace::WorkspaceStatus> {
+        let request = Request::new(GetWorkspaceStatusRequest {
+            workspace_id: workspace_id.to_string(),
+        });
+
+        let response = self
+            .client
+            .lock()
+            .await
+            .get_workspace_status(request)
+            .await
+            .map_err(Box::new)?;
+
+        let status =
+            response
+                .into_inner()
+                .status
+                .ok_or_else(|| GrpcError::InvalidSessionState {
+                    reason: "Workspace status missing from response".to_string(),
+                })?;
+
+        Ok(proto_to_workspace_status(status)?)
     }
 }
 

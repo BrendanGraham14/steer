@@ -380,6 +380,34 @@ impl Tui {
         });
     }
 
+    fn format_workspace_status(&self, status: &steer_core::workspace::WorkspaceStatus) -> String {
+        use steer_core::workspace::LlmStatus;
+
+        let mut output = String::new();
+        output.push_str(&format!("Workspace: {}\n", status.workspace_id.as_uuid()));
+        output.push_str(&format!(
+            "Environment: {}\n",
+            status.environment_id.as_uuid()
+        ));
+        output.push_str(&format!("Path: {}\n", status.path.display()));
+
+        match &status.vcs {
+            Some(vcs) => {
+                output.push_str(&format!(
+                    "VCS: {} ({})\n\n",
+                    vcs.kind.as_str(),
+                    vcs.root.display()
+                ));
+                output.push_str(&vcs.status.as_llm_string());
+            }
+            None => {
+                output.push_str("VCS: <none>\n");
+            }
+        }
+
+        output
+    }
+
     async fn start_new_session(&mut self) -> Result<()> {
         use std::collections::HashMap;
         use steer_core::session::state::{SessionConfig, SessionToolConfig, WorkspaceConfig};
@@ -1227,6 +1255,62 @@ impl Tui {
                             tui_cmd.as_command_str(),
                             TuiCommandResponse::ListMcpServers(servers),
                         );
+                    }
+                    TuiCommand::Workspace(ref workspace_id) => {
+                        let target_id = if let Some(workspace_id) = workspace_id.clone() {
+                            Some(workspace_id)
+                        } else {
+                            let session = match self.client.get_session(&self.session_id).await? {
+                                Some(session) => session,
+                                None => {
+                                    self.push_notice(
+                                        NoticeLevel::Error,
+                                        "Session not found for workspace status".to_string(),
+                                    );
+                                    return Ok(());
+                                }
+                            };
+                            let config = match session.config {
+                                Some(config) => config,
+                                None => {
+                                    self.push_notice(
+                                        NoticeLevel::Error,
+                                        "Session config missing for workspace status".to_string(),
+                                    );
+                                    return Ok(());
+                                }
+                            };
+                            config.workspace_id.or_else(|| {
+                                config.workspace_ref.map(|reference| reference.workspace_id)
+                            })
+                        };
+
+                        let target_id = match target_id {
+                            Some(id) if !id.is_empty() => id,
+                            _ => {
+                                self.push_notice(
+                                    NoticeLevel::Error,
+                                    "Workspace id not available for current session".to_string(),
+                                );
+                                return Ok(());
+                            }
+                        };
+
+                        match self.client.get_workspace_status(&target_id).await {
+                            Ok(status) => {
+                                let response = self.format_workspace_status(&status);
+                                self.push_tui_response(
+                                    tui_cmd.as_command_str(),
+                                    TuiCommandResponse::Text(response),
+                                );
+                            }
+                            Err(e) => {
+                                self.push_notice(
+                                    NoticeLevel::Error,
+                                    format!("Failed to get workspace status: {e}"),
+                                );
+                            }
+                        }
                     }
                     TuiCommand::Custom(custom_cmd) => match custom_cmd {
                         crate::tui::custom_commands::CustomCommand::Prompt { prompt, .. } => {

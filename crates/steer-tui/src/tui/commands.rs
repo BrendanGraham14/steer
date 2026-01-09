@@ -33,6 +33,8 @@ pub enum TuiCommand {
     EditingMode(Option<String>),
     /// Show MCP server connection status
     Mcp,
+    /// Show workspace status
+    Workspace(Option<String>),
     /// Custom user-defined command
     Custom(CustomCommand),
 }
@@ -49,6 +51,7 @@ pub enum TuiCommandType {
     Help,
     EditingMode,
     Mcp,
+    Workspace,
 }
 
 impl TuiCommandType {
@@ -61,6 +64,7 @@ impl TuiCommandType {
             TuiCommandType::Help => self.to_string(),
             TuiCommandType::EditingMode => self.to_string(),
             TuiCommandType::Mcp => self.to_string(),
+            TuiCommandType::Workspace => self.to_string(),
         }
     }
 
@@ -73,6 +77,7 @@ impl TuiCommandType {
             TuiCommandType::Help => "Show help information",
             TuiCommandType::EditingMode => "Switch between editing modes (simple/vim)",
             TuiCommandType::Mcp => "Show MCP server connection status",
+            TuiCommandType::Workspace => "Show workspace status",
         }
     }
 
@@ -85,6 +90,7 @@ impl TuiCommandType {
             TuiCommandType::Help => format!("/{} [command]", self.command_name()),
             TuiCommandType::EditingMode => format!("/{} [simple|vim]", self.command_name()),
             TuiCommandType::Mcp => format!("/{}", self.command_name()),
+            TuiCommandType::Workspace => format!("/{} [workspace_id]", self.command_name()),
         }
     }
 }
@@ -167,6 +173,10 @@ impl TuiCommand {
                         Ok(TuiCommand::EditingMode(mode_name))
                     }
                     TuiCommandType::Mcp => Ok(TuiCommand::Mcp),
+                    TuiCommandType::Workspace => {
+                        let workspace_id = parts.get(1).map(|s| s.to_string());
+                        Ok(TuiCommand::Workspace(workspace_id))
+                    }
                 };
             }
         }
@@ -192,6 +202,14 @@ impl TuiCommand {
                 format!("{} {}", TuiCommandType::EditingMode.command_name(), mode)
             }
             TuiCommand::Mcp => TuiCommandType::Mcp.command_name().to_string(),
+            TuiCommand::Workspace(None) => TuiCommandType::Workspace.command_name().to_string(),
+            TuiCommand::Workspace(Some(workspace_id)) => {
+                format!(
+                    "{} {}",
+                    TuiCommandType::Workspace.command_name(),
+                    workspace_id
+                )
+            }
             TuiCommand::Custom(cmd) => cmd.name().to_string(),
         }
     }
@@ -281,6 +299,10 @@ mod tests {
         assert!(matches!(
             AppCommand::parse("/mcp").unwrap(),
             AppCommand::Tui(TuiCommand::Mcp)
+        ));
+        assert!(matches!(
+            AppCommand::parse("/workspace").unwrap(),
+            AppCommand::Tui(TuiCommand::Workspace(None))
         ));
     }
 

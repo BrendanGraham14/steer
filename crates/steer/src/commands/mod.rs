@@ -5,6 +5,7 @@ pub mod headless;
 pub mod preferences;
 pub mod serve;
 pub mod session;
+pub mod workspace;
 
 #[async_trait]
 pub trait Command {

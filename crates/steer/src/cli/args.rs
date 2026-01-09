@@ -123,6 +123,11 @@ pub enum Commands {
         #[command(subcommand)]
         session_command: SessionCommands,
     },
+    /// Workspace management commands
+    Workspace {
+        #[command(subcommand)]
+        workspace_command: WorkspaceCommands,
+    },
     /// Show a notification (internal use only)
     #[clap(hide = true)]
     Notify {
@@ -183,5 +188,27 @@ pub enum SessionCommands {
     Show {
         /// Session ID to show
         session_id: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum WorkspaceCommands {
+    /// List workspaces
+    List {
+        /// Environment ID to list (defaults to local)
+        #[arg(long)]
+        environment_id: Option<String>,
+        /// Include deleted workspaces
+        #[arg(long)]
+        include_deleted: bool,
+    },
+    /// Show workspace status
+    Status {
+        /// Workspace ID to inspect
+        #[arg(long)]
+        workspace_id: Option<String>,
+        /// Session ID to derive the workspace from (defaults to --session if provided)
+        #[arg(long)]
+        session_id: Option<String>,
     },
 }

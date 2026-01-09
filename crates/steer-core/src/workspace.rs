@@ -1,8 +1,9 @@
 use steer_workspace::WorkspaceError;
 pub use steer_workspace::{
-    CreateWorkspaceRequest, EnvironmentId, EnvironmentInfo, ListWorkspacesRequest, RemoteAuth,
-    Workspace, WorkspaceConfig, WorkspaceCreateStrategy, WorkspaceId, WorkspaceInfo,
-    WorkspaceManager, WorkspaceMetadata, WorkspaceRef, WorkspaceStatus, WorkspaceType,
+    CreateWorkspaceRequest, EnvironmentId, EnvironmentInfo, ListWorkspacesRequest,
+    LocalWorkspaceManager, RemoteAuth, Workspace, WorkspaceConfig, WorkspaceCreateStrategy,
+    WorkspaceId, WorkspaceInfo, WorkspaceManager, WorkspaceMetadata, WorkspaceRef,
+    WorkspaceStatus, WorkspaceType, LlmStatus, VcsInfo, VcsKind, VcsStatus,
 };
 
 use crate::error::Result;
