@@ -4,6 +4,7 @@
 //! and provide validation for constrained types like NonEmptyString.
 
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
@@ -11,9 +12,9 @@ use uuid::Uuid;
 /// Session identifier - unique per session.
 ///
 /// Sessions are the top-level container for conversations and tool state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
-pub struct SessionId(pub Uuid);
+pub struct SessionId(#[schemars(with = "String")] pub Uuid);
 
 impl SessionId {
     /// Create a new random session ID.

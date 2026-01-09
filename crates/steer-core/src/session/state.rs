@@ -135,6 +135,14 @@ impl Session {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionConfig {
     pub workspace: WorkspaceConfig,
+    #[serde(default)]
+    pub workspace_ref: Option<crate::workspace::WorkspaceRef>,
+    #[serde(default)]
+    pub workspace_id: Option<crate::workspace::WorkspaceId>,
+    #[serde(default)]
+    pub parent_session_id: Option<crate::app::domain::types::SessionId>,
+    #[serde(default)]
+    pub workspace_name: Option<String>,
     pub tool_config: SessionToolConfig,
     /// Optional custom system prompt to use for the session. If `None`, Steer will
     /// fall back to its built-in default prompt.
@@ -243,6 +251,10 @@ impl SessionConfig {
             workspace: WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             },
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config: SessionToolConfig::read_only(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -722,6 +734,10 @@ mod tests {
             workspace: WorkspaceConfig::Local {
                 path: PathBuf::from("/test/path"),
             },
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -908,6 +924,10 @@ mod tests {
             workspace: WorkspaceConfig::Local {
                 path: PathBuf::from("/test/path"),
             },
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config: SessionToolConfig::default(), // No backends configured
             system_prompt: None,
             metadata: HashMap::new(),

@@ -233,6 +233,10 @@ mod tests {
         SessionConfig {
             default_model: builtin::claude_sonnet_4_5(),
             workspace: WorkspaceConfig::default(),
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: std::collections::HashMap::new(),

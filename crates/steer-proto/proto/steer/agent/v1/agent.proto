@@ -224,6 +224,10 @@ message CreateSessionRequest {
   optional WorkspaceConfig workspace_config = 4;
   optional string system_prompt = 5;
   ModelSpec default_model = 6;  // Required: default model for the session
+  optional string workspace_id = 7;
+  optional WorkspaceRef workspace_ref = 8;
+  optional string parent_session_id = 9;
+  optional string workspace_name = 10;
 }
 
 message CreateSessionResponse {
@@ -430,6 +434,10 @@ message SessionConfig {
   WorkspaceConfig workspace_config = 4;
   optional string system_prompt = 5;
   ModelSpec default_model = 6;
+  optional string workspace_id = 7;
+  optional WorkspaceRef workspace_ref = 8;
+  optional string parent_session_id = 9;
+  optional string workspace_name = 10;
 }
 
 // Environment management

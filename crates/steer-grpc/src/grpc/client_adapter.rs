@@ -75,6 +75,22 @@ impl AgentClient {
             workspace_config: Some(workspace_config),
             system_prompt: config.system_prompt,
             default_model: Some(model_to_proto(config.default_model)),
+            workspace_id: config.workspace_id.map(|id| id.as_uuid().to_string()),
+            workspace_ref: config.workspace_ref.as_ref().map(|reference| proto::WorkspaceRef {
+                environment_id: reference.environment_id.as_uuid().to_string(),
+                workspace_id: reference.workspace_id.as_uuid().to_string(),
+                path: reference.path.to_string_lossy().to_string(),
+                vcs_kind: reference.vcs_kind.as_ref().map(|kind| match kind {
+                    steer_workspace::VcsKind::Git => {
+                        steer_proto::remote_workspace::v1::VcsKind::Git as i32
+                    }
+                    steer_workspace::VcsKind::Jj => {
+                        steer_proto::remote_workspace::v1::VcsKind::Jj as i32
+                    }
+                }),
+            }),
+            parent_session_id: config.parent_session_id.as_ref().map(|id| id.to_string()),
+            workspace_name: config.workspace_name.clone(),
         });
 
         let response = self

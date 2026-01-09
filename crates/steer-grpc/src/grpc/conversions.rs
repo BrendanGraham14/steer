@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use steer_core::app::conversation::{
     AssistantContent, Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
+use steer_core::app::domain::types::SessionId;
 use steer_core::app::domain::{SessionEvent, StreamDelta, ToolCallDelta as CoreToolCallDelta};
 
 use steer_core::session::state::{
@@ -561,6 +562,18 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
         workspace_config: Some(workspace_config_to_proto(&config.workspace)),
         system_prompt: config.system_prompt.clone(),
         default_model: Some(model_to_proto(config.default_model.clone())),
+        workspace_id: config.workspace_id.map(|id| id.as_uuid().to_string()),
+        workspace_ref: config.workspace_ref.as_ref().map(|reference| proto::WorkspaceRef {
+            environment_id: reference.environment_id.as_uuid().to_string(),
+            workspace_id: reference.workspace_id.as_uuid().to_string(),
+            path: reference.path.to_string_lossy().to_string(),
+            vcs_kind: reference.vcs_kind.as_ref().map(|kind| match kind {
+                steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git as i32,
+                steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj as i32,
+            }),
+        }),
+        parent_session_id: config.parent_session_id.as_ref().map(SessionId::to_string),
+        workspace_name: config.workspace_name.clone(),
     }
 }
 

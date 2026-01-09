@@ -162,6 +162,10 @@ impl SessionConfigLoader {
             discovered.unwrap_or(SessionConfig {
                 default_model: self.default_model.clone(),
                 workspace: WorkspaceConfig::default(),
+                workspace_ref: None,
+                workspace_id: None,
+                parent_session_id: None,
+                workspace_name: None,
                 tool_config: SessionToolConfig::default(),
                 system_prompt: None,
                 metadata: HashMap::new(),
@@ -253,6 +257,10 @@ impl SessionConfigLoader {
         Ok(SessionConfig {
             default_model: self.default_model.clone(),
             workspace,
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config,
             system_prompt: partial.system_prompt,
             metadata: partial.metadata.unwrap_or_default(),

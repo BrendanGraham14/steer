@@ -386,6 +386,10 @@ impl Tui {
 
         let session_config = SessionConfig {
             workspace: WorkspaceConfig::default(),
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
@@ -1451,6 +1455,10 @@ pub async fn run_tui(
             } else {
                 steer_core::session::state::WorkspaceConfig::default()
             },
+            workspace_ref: None,
+            workspace_id: None,
+            parent_session_id: None,
+            workspace_name: None,
             tool_config: SessionToolConfig::default(),
             system_prompt,
             metadata: HashMap::new(),

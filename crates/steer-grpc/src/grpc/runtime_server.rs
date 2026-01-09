@@ -351,8 +351,27 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map(proto_to_workspace_config)
             .unwrap_or_default();
 
+        let workspace_id = match req.workspace_id {
+            Some(value) => Some(Self::parse_workspace_id(&value)?),
+            None => None,
+        };
+
+        let workspace_ref = match req.workspace_ref {
+            Some(reference) => Some(Self::proto_to_workspace_ref(reference)?),
+            None => None,
+        };
+
+        let parent_session_id = match req.parent_session_id {
+            Some(value) => Some(Self::parse_session_id(&value)?),
+            None => None,
+        };
+
         let session_config = SessionConfig {
             workspace: workspace_config,
+            workspace_ref,
+            workspace_id,
+            parent_session_id,
+            workspace_name: req.workspace_name,
             tool_config,
             system_prompt: req.system_prompt,
             metadata: req.metadata,
