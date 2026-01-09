@@ -1,7 +1,7 @@
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
@@ -19,47 +19,12 @@ pub struct GrepToolParams {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct GrepToolOutput {
-    pub matches: Vec<GrepMatch>,
-    pub total_files_searched: usize,
-    pub search_completed: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GrepMatch {
-    pub file_path: String,
-    pub line_number: usize,
-    pub line_content: String,
-    pub column_range: Option<(usize, usize)>,
-}
-
-impl From<GrepResult> for GrepToolOutput {
-    fn from(r: GrepResult) -> Self {
-        Self {
-            matches: r
-                .0
-                .matches
-                .into_iter()
-                .map(|m| GrepMatch {
-                    file_path: m.file_path,
-                    line_number: m.line_number,
-                    line_content: m.line_content,
-                    column_range: m.column_range,
-                })
-                .collect(),
-            total_files_searched: r.0.total_files_searched,
-            search_completed: r.0.search_completed,
-        }
-    }
-}
-
 pub struct GrepTool;
 
 #[async_trait]
 impl StaticTool for GrepTool {
     type Params = GrepToolParams;
-    type Output = GrepToolOutput;
+    type Output = GrepResult;
 
     const NAME: &'static str = GREP_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Fast content search built on ripgrep for blazing performance at any scale.
@@ -94,6 +59,6 @@ impl StaticTool for GrepTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

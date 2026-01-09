@@ -1,7 +1,7 @@
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
@@ -18,33 +18,12 @@ pub struct ReplaceToolParams {
     pub content: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ReplaceToolOutput {
-    pub file_path: String,
-    pub changes_made: usize,
-    pub file_created: bool,
-    pub old_content: Option<String>,
-    pub new_content: Option<String>,
-}
-
-impl From<ReplaceResult> for ReplaceToolOutput {
-    fn from(r: ReplaceResult) -> Self {
-        Self {
-            file_path: r.0.file_path,
-            changes_made: r.0.changes_made,
-            file_created: r.0.file_created,
-            old_content: r.0.old_content,
-            new_content: r.0.new_content,
-        }
-    }
-}
-
 pub struct ReplaceTool;
 
 #[async_trait]
 impl StaticTool for ReplaceTool {
     type Params = ReplaceToolParams;
-    type Output = ReplaceToolOutput;
+    type Output = ReplaceResult;
 
     const NAME: &'static str = REPLACE_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Writes a file to the local filesystem.
@@ -79,6 +58,6 @@ Before using this tool:
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

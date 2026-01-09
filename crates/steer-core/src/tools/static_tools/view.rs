@@ -1,7 +1,7 @@
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
@@ -19,31 +19,12 @@ pub struct ViewToolParams {
     pub limit: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ViewToolOutput {
-    pub content: String,
-    pub file_path: String,
-    pub line_count: usize,
-    pub truncated: bool,
-}
-
-impl From<FileContentResult> for ViewToolOutput {
-    fn from(r: FileContentResult) -> Self {
-        Self {
-            content: r.content,
-            file_path: r.file_path,
-            line_count: r.line_count,
-            truncated: r.truncated,
-        }
-    }
-}
-
 pub struct ViewTool;
 
 #[async_trait]
 impl StaticTool for ViewTool {
     type Params = ViewToolParams;
-    type Output = ViewToolOutput;
+    type Output = FileContentResult;
 
     const NAME: &'static str = VIEW_TOOL_NAME;
     const DESCRIPTION: &'static str = concat!(
@@ -77,6 +58,6 @@ impl StaticTool for ViewTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

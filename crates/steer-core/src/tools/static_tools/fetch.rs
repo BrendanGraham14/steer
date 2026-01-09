@@ -7,6 +7,7 @@ use crate::config::model::builtin::claude_haiku_4_5 as summarization_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::result::{FetchResult, ToolResult};
 
 pub const FETCH_TOOL_NAME: &str = "web_fetch";
 
@@ -33,10 +34,19 @@ pub struct FetchParams {
     pub prompt: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct FetchOutput {
     pub url: String,
     pub content: String,
+}
+
+impl From<FetchOutput> for ToolResult {
+    fn from(output: FetchOutput) -> Self {
+        ToolResult::Fetch(FetchResult {
+            url: output.url,
+            content: output.content,
+        })
+    }
 }
 
 pub struct FetchTool;

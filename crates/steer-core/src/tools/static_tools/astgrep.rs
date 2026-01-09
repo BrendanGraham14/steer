@@ -1,7 +1,7 @@
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
@@ -21,47 +21,12 @@ pub struct AstGrepToolParams {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct AstGrepToolOutput {
-    pub matches: Vec<AstGrepMatch>,
-    pub total_files_searched: usize,
-    pub search_completed: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AstGrepMatch {
-    pub file_path: String,
-    pub line_number: usize,
-    pub line_content: String,
-    pub column_range: Option<(usize, usize)>,
-}
-
-impl From<AstGrepResult> for AstGrepToolOutput {
-    fn from(r: AstGrepResult) -> Self {
-        Self {
-            matches: r
-                .0
-                .matches
-                .into_iter()
-                .map(|m| AstGrepMatch {
-                    file_path: m.file_path,
-                    line_number: m.line_number,
-                    line_content: m.line_content,
-                    column_range: m.column_range,
-                })
-                .collect(),
-            total_files_searched: r.0.total_files_searched,
-            search_completed: r.0.search_completed,
-        }
-    }
-}
-
 pub struct AstGrepTool;
 
 #[async_trait]
 impl StaticTool for AstGrepTool {
     type Params = AstGrepToolParams;
-    type Output = AstGrepToolOutput;
+    type Output = AstGrepResult;
 
     const NAME: &'static str = AST_GREP_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Structural code search using abstract syntax trees (AST).
@@ -106,6 +71,6 @@ Automatically respects .gitignore files"#;
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

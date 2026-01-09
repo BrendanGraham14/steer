@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
@@ -19,31 +19,12 @@ pub struct BashToolParams {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct BashToolOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub command: String,
-}
-
-impl From<BashResult> for BashToolOutput {
-    fn from(r: BashResult) -> Self {
-        Self {
-            stdout: r.stdout,
-            stderr: r.stderr,
-            exit_code: r.exit_code,
-            command: r.command,
-        }
-    }
-}
-
 pub struct BashTool;
 
 #[async_trait]
 impl StaticTool for BashTool {
     type Params = BashToolParams;
-    type Output = BashToolOutput;
+    type Output = BashResult;
 
     const NAME: &'static str = BASH_TOOL_NAME;
     const DESCRIPTION: &'static str = "Run a bash command in the terminal";
@@ -71,6 +52,6 @@ impl StaticTool for BashTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

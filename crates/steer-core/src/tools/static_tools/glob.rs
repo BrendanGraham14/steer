@@ -1,7 +1,7 @@
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
@@ -18,27 +18,12 @@ pub struct GlobToolParams {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct GlobToolOutput {
-    pub matches: Vec<String>,
-    pub pattern: String,
-}
-
-impl From<GlobResult> for GlobToolOutput {
-    fn from(r: GlobResult) -> Self {
-        Self {
-            matches: r.matches,
-            pattern: r.pattern,
-        }
-    }
-}
-
 pub struct GlobTool;
 
 #[async_trait]
 impl StaticTool for GlobTool {
     type Params = GlobToolParams;
-    type Output = GlobToolOutput;
+    type Output = GlobResult;
 
     const NAME: &'static str = GLOB_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Fast file pattern matching tool that works with any codebase size.
@@ -69,6 +54,6 @@ impl StaticTool for GlobTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

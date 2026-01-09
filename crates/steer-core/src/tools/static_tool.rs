@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::domain::types::{SessionId, ToolCallId};
+use steer_tools::result::ToolResult;
 use steer_tools::ToolSchema;
 
 use super::capability::Capabilities;
@@ -60,7 +61,7 @@ impl StaticToolError {
 #[async_trait]
 pub trait StaticTool: Send + Sync + 'static {
     type Params: DeserializeOwned + JsonSchema + Send;
-    type Output: Serialize + Send;
+    type Output: Into<ToolResult> + Send;
 
     const NAME: &'static str;
     const DESCRIPTION: &'static str;
@@ -103,7 +104,7 @@ pub trait StaticToolErased: Send + Sync {
         &self,
         params: serde_json::Value,
         ctx: &StaticToolContext,
-    ) -> Result<serde_json::Value, StaticToolError>;
+    ) -> Result<ToolResult, StaticToolError>;
 }
 
 #[async_trait]
@@ -135,7 +136,7 @@ where
         &self,
         params: serde_json::Value,
         ctx: &StaticToolContext,
-    ) -> Result<serde_json::Value, StaticToolError> {
+    ) -> Result<ToolResult, StaticToolError> {
         let typed_params: T::Params = serde_json::from_value(params)
             .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
 
@@ -144,8 +145,6 @@ where
         }
 
         let result = self.execute(typed_params, ctx).await?;
-
-        serde_json::to_value(result)
-            .map_err(|e| StaticToolError::execution(format!("Failed to serialize output: {e}")))
+        Ok(result.into())
     }
 }

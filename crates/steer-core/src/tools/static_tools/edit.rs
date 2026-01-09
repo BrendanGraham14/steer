@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
-use steer_tools::result::EditResult;
+use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::edit::EditParams;
 use steer_tools::tools::edit::multi_edit::MultiEditParams;
 
@@ -19,27 +19,6 @@ pub struct EditToolParams {
     pub file_path: String,
     pub old_string: String,
     pub new_string: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct EditToolOutput {
-    pub file_path: String,
-    pub changes_made: usize,
-    pub file_created: bool,
-    pub old_content: Option<String>,
-    pub new_content: Option<String>,
-}
-
-impl From<EditResult> for EditToolOutput {
-    fn from(r: EditResult) -> Self {
-        Self {
-            file_path: r.file_path,
-            changes_made: r.changes_made,
-            file_created: r.file_created,
-            old_content: r.old_content,
-            new_content: r.new_content,
-        }
-    }
 }
 
 pub struct EditTool;
@@ -96,7 +75,7 @@ Remember: when making multiple file edits in a row to the same file, you should 
 #[async_trait]
 impl StaticTool for EditTool {
     type Params = EditToolParams;
-    type Output = EditToolOutput;
+    type Output = EditResult;
 
     const NAME: &'static str = EDIT_TOOL_NAME;
     const DESCRIPTION: &'static str = EDIT_DESCRIPTION;
@@ -125,7 +104,7 @@ impl StaticTool for EditTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }
 
@@ -146,7 +125,7 @@ pub struct MultiEditTool;
 #[async_trait]
 impl StaticTool for MultiEditTool {
     type Params = MultiEditToolParams;
-    type Output = EditToolOutput;
+    type Output = MultiEditResult;
 
     const NAME: &'static str = MULTI_EDIT_TOOL_NAME;
     const DESCRIPTION: &'static str = "This is a tool for making multiple edits to a single file in one operation. Prefer this tool over the edit_file tool when you need to make multiple edits to the same file.";
@@ -181,6 +160,6 @@ impl StaticTool for MultiEditTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.0.into())
+        Ok(result)
     }
 }

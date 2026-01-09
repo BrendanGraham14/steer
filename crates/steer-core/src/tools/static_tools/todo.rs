@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
@@ -18,42 +18,12 @@ pub const TODO_WRITE_TOOL_NAME: &str = "TodoWrite";
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TodoReadToolParams {}
 
-#[derive(Debug, Serialize)]
-pub struct TodoReadToolOutput {
-    pub todos: Vec<TodoItemOutput>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct TodoItemOutput {
-    pub content: String,
-    pub status: String,
-    pub priority: String,
-    pub id: String,
-}
-
-impl From<TodoListResult> for TodoReadToolOutput {
-    fn from(r: TodoListResult) -> Self {
-        Self {
-            todos: r
-                .todos
-                .into_iter()
-                .map(|t| TodoItemOutput {
-                    content: t.content,
-                    status: t.status.to_string(),
-                    priority: t.priority.to_string(),
-                    id: t.id,
-                })
-                .collect(),
-        }
-    }
-}
-
 pub struct TodoReadTool;
 
 #[async_trait]
 impl StaticTool for TodoReadTool {
     type Params = TodoReadToolParams;
-    type Output = TodoReadToolOutput;
+    type Output = TodoListResult;
 
     const NAME: &'static str = TODO_READ_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of
@@ -91,7 +61,7 @@ Usage:
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }
 
@@ -108,36 +78,12 @@ pub struct TodoItemInput {
     pub id: String,
 }
 
-#[derive(Debug, Serialize)]
-pub struct TodoWriteToolOutput {
-    pub todos: Vec<TodoItemOutput>,
-    pub operation: String,
-}
-
-impl From<TodoWriteResult> for TodoWriteToolOutput {
-    fn from(r: TodoWriteResult) -> Self {
-        Self {
-            todos: r
-                .todos
-                .into_iter()
-                .map(|t| TodoItemOutput {
-                    content: t.content,
-                    status: t.status.to_string(),
-                    priority: t.priority.to_string(),
-                    id: t.id,
-                })
-                .collect(),
-            operation: format!("{:?}", r.operation),
-        }
-    }
-}
-
 pub struct TodoWriteTool;
 
 #[async_trait]
 impl StaticTool for TodoWriteTool {
     type Params = TodoWriteToolParams;
-    type Output = TodoWriteToolOutput;
+    type Output = TodoWriteResult;
 
     const NAME: &'static str = TODO_WRITE_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
@@ -205,6 +151,6 @@ Task Management:
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }

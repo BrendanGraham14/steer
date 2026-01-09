@@ -91,16 +91,25 @@ mod tests {
     use crate::tools::static_tool::{StaticToolContext, StaticToolError};
     use async_trait::async_trait;
     use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
 
     #[derive(Debug, Deserialize, JsonSchema)]
     struct TestParams {
         value: String,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug)]
     struct TestOutput {
         result: String,
+    }
+
+    impl From<TestOutput> for steer_tools::result::ToolResult {
+        fn from(output: TestOutput) -> Self {
+            steer_tools::result::ToolResult::External(steer_tools::result::ExternalResult {
+                tool_name: "test_tool".to_string(),
+                payload: output.result,
+            })
+        }
     }
 
     struct TestTool;

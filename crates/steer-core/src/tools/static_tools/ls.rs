@@ -1,7 +1,7 @@
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
@@ -18,44 +18,12 @@ pub struct LsToolParams {
     pub ignore: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct LsToolOutput {
-    pub entries: Vec<FileEntry>,
-    pub base_path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct FileEntry {
-    pub path: String,
-    pub is_directory: bool,
-    pub size: Option<u64>,
-    pub permissions: Option<String>,
-}
-
-impl From<FileListResult> for LsToolOutput {
-    fn from(r: FileListResult) -> Self {
-        Self {
-            entries: r
-                .entries
-                .into_iter()
-                .map(|e| FileEntry {
-                    path: e.path,
-                    is_directory: e.is_directory,
-                    size: e.size,
-                    permissions: e.permissions,
-                })
-                .collect(),
-            base_path: r.base_path,
-        }
-    }
-}
-
 pub struct LsTool;
 
 #[async_trait]
 impl StaticTool for LsTool {
     type Params = LsToolParams;
-    type Output = LsToolOutput;
+    type Output = FileListResult;
 
     const NAME: &'static str = LS_TOOL_NAME;
     const DESCRIPTION: &'static str = "Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You should generally prefer the Glob and Grep tools, if you know which directories to search.";
@@ -83,6 +51,6 @@ impl StaticTool for LsTool {
             .await
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(result.into())
+        Ok(result)
     }
 }
