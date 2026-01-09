@@ -19,11 +19,10 @@ pub async fn create_local_channel(
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
+    workspace_root: std::path::PathBuf,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     let (tx, rx) = oneshot::channel();
 
-    let workspace_root =
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let workspace_manager = Arc::new(
         LocalWorkspaceManager::new(workspace_root.clone())
             .await
@@ -79,6 +78,7 @@ pub async fn setup_local_grpc_with_catalog(
     _default_model: ModelId,
     session_db_path: Option<std::path::PathBuf>,
     catalog_config: CatalogConfig,
+    workspace_root: Option<std::path::PathBuf>,
 ) -> Result<LocalGrpcSetup> {
     let (event_store, catalog): (
         Arc<dyn steer_core::app::domain::session::EventStore>,
@@ -123,8 +123,8 @@ pub async fn setup_local_grpc_with_catalog(
         model_registry.clone(),
     ));
 
-    let workspace_root =
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let workspace_root = workspace_root
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
     let workspace =
         steer_core::workspace::create_workspace(&steer_core::workspace::WorkspaceConfig::Local {
             path: workspace_root.clone(),
@@ -134,7 +134,7 @@ pub async fn setup_local_grpc_with_catalog(
             reason: format!("Failed to create workspace: {e}"),
         })?;
     let workspace_manager = Arc::new(
-        LocalWorkspaceManager::new(workspace_root)
+        LocalWorkspaceManager::new(workspace_root.clone())
             .await
             .map_err(|e| GrpcError::InvalidSessionState {
                 reason: format!("Failed to create workspace manager: {e}"),
@@ -158,6 +158,7 @@ pub async fn setup_local_grpc_with_catalog(
         model_registry,
         provider_registry,
         llm_config_provider,
+        workspace_root.clone(),
     )
     .await?;
 
@@ -171,10 +172,15 @@ pub async fn setup_local_grpc_with_catalog(
 pub async fn setup_local_grpc(
     default_model: ModelId,
     session_db_path: Option<std::path::PathBuf>,
+    workspace_root: Option<std::path::PathBuf>,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
-    let setup =
-        setup_local_grpc_with_catalog(default_model, session_db_path, CatalogConfig::default())
-            .await?;
+    let setup = setup_local_grpc_with_catalog(
+        default_model,
+        session_db_path,
+        CatalogConfig::default(),
+        workspace_root,
+    )
+    .await?;
     Ok((setup.channel, setup.server_handle))
 }
 #[cfg(test)]
@@ -191,6 +197,7 @@ mod tests {
         CompactSessionRequest, ExecuteBashCommandRequest, SendMessageRequest,
         SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,
     };
+    use tempfile::TempDir;
     use tokio::time::{Duration, timeout};
     use tokio_util::sync::CancellationToken;
     use tonic::Code;
@@ -223,7 +230,10 @@ mod tests {
         }
     }
 
-    async fn setup_local_grpc_with_stub_provider(default_model: ModelId) -> Result<LocalGrpcSetup> {
+    async fn setup_local_grpc_with_stub_provider(
+        default_model: ModelId,
+        workspace_root: std::path::PathBuf,
+    ) -> Result<LocalGrpcSetup> {
         let in_memory_store = Arc::new(InMemoryEventStore::new());
         let event_store: Arc<dyn steer_core::app::domain::session::EventStore> =
             in_memory_store.clone();
@@ -251,7 +261,7 @@ mod tests {
 
         let workspace = steer_core::workspace::create_workspace(
             &steer_core::workspace::WorkspaceConfig::Local {
-                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                path: workspace_root.clone(),
             },
         )
         .await
@@ -265,6 +275,13 @@ mod tests {
             api_client.clone(),
             model_registry.clone(),
         )
+        .with_workspace_manager(Arc::new(
+            LocalWorkspaceManager::new(workspace_root.clone())
+                .await
+                .map_err(|e| GrpcError::InvalidSessionState {
+                    reason: format!("Failed to create workspace manager: {e}"),
+                })?,
+        ))
         .build();
 
         let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
@@ -275,6 +292,7 @@ mod tests {
             model_registry,
             provider_registry,
             llm_config_provider,
+            workspace_root,
         )
         .await?;
 
@@ -283,6 +301,10 @@ mod tests {
             server_handle,
             runtime_service,
         })
+    }
+
+    fn test_workspace_root() -> TempDir {
+        TempDir::new().expect("workspace tempdir")
     }
 
     async fn next_event(
@@ -314,10 +336,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_since_sequence_replay_returns_persisted_events() {
+        let workspace_root = test_workspace_root();
         let setup = setup_local_grpc_with_catalog(
             steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
+            Some(workspace_root.path().to_path_buf()),
         )
         .await
         .expect("local grpc setup");
@@ -380,8 +404,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_flow_end_to_end() {
+        let workspace_root = test_workspace_root();
         let model = steer_core::config::model::builtin::claude_sonnet_4_5();
-        let setup = setup_local_grpc_with_stub_provider(model.clone())
+        let setup = setup_local_grpc_with_stub_provider(
+            model.clone(),
+            workspace_root.path().to_path_buf(),
+        )
             .await
             .expect("local grpc setup");
 
@@ -470,10 +498,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_message_uses_session_default_model_when_not_specified() {
+        let workspace_root = test_workspace_root();
         let setup = setup_local_grpc_with_catalog(
             steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
+            Some(workspace_root.path().to_path_buf()),
         )
         .await
         .expect("local grpc setup");
@@ -508,10 +538,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_compact_session_requires_model_spec() {
+        let workspace_root = test_workspace_root();
         let setup = setup_local_grpc_with_catalog(
             steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
+            Some(workspace_root.path().to_path_buf()),
         )
         .await
         .expect("local grpc setup");
@@ -540,10 +572,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_bash_command_does_not_require_model_spec() {
+        let workspace_root = test_workspace_root();
         let setup = setup_local_grpc_with_catalog(
             steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
             CatalogConfig::default(),
+            Some(workspace_root.path().to_path_buf()),
         )
         .await
         .expect("local grpc setup");

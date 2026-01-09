@@ -104,6 +104,7 @@ async fn test_tui_agent_service_file_listing() {
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
+        workspace_root: Some(workspace_path.clone()),
     };
 
     // Start the service host
@@ -261,6 +262,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
+        workspace_root: Some(workspace_path.clone()),
     };
 
     let mut service_host = ServiceHost::new(config).await.unwrap();
@@ -369,6 +371,7 @@ async fn test_workspace_changed_event_flow() {
         bind_addr,
         auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
         catalog_config: steer_core::catalog::CatalogConfig::default(),
+        workspace_root: Some(workspace_path.clone()),
     };
 
     let mut service_host = ServiceHost::new(config).await.unwrap();

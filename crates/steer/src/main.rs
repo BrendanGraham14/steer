@@ -292,6 +292,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         default_model.clone(),
         Some(session_db_path),
         steer_core::catalog::CatalogConfig::with_catalogs(catalog_paths),
+        None,
     )
     .await
     .map_err(|e| eyre::eyre!("Failed to setup local gRPC: {}", e))?;

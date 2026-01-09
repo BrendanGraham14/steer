@@ -51,6 +51,7 @@ impl Command for CreateSessionCommand {
                 steer_core::config::model::builtin::opus(),
                 Some(db_path),
                 catalog_config,
+                None,
             )
             .await
             .map_err(|e| eyre!("Failed to setup local gRPC: {}", e))?;

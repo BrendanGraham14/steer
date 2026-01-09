@@ -1684,8 +1684,9 @@ mod tests {
     async fn test_restore_messages_preserves_tool_call_params() {
         let _guard = TerminalCleanupGuard;
         // Create a TUI instance for testing
-        let path = tempdir().unwrap().path().to_path_buf();
-        let (client, _server_handle) = local_client_and_server(Some(path)).await;
+        let workspace_root = tempdir().unwrap();
+        let (client, _server_handle) =
+            local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
         let model = steer_core::config::model::builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
@@ -1749,8 +1750,9 @@ mod tests {
     async fn test_restore_messages_handles_tool_result_before_assistant() {
         let _guard = TerminalCleanupGuard;
         // Test edge case where Tool result arrives before Assistant message
-        let path = tempdir().unwrap().path().to_path_buf();
-        let (client, _server_handle) = local_client_and_server(Some(path)).await;
+        let workspace_root = tempdir().unwrap();
+        let (client, _server_handle) =
+            local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
         let model = steer_core::config::model::builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();

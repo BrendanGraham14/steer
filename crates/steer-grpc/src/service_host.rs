@@ -23,6 +23,7 @@ pub struct ServiceHostConfig {
     pub bind_addr: SocketAddr,
     pub auth_storage: Arc<dyn AuthStorage>,
     pub catalog_config: CatalogConfig,
+    pub workspace_root: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for ServiceHostConfig {
@@ -32,6 +33,7 @@ impl std::fmt::Debug for ServiceHostConfig {
             .field("bind_addr", &self.bind_addr)
             .field("auth_storage", &"Arc<dyn AuthStorage>")
             .field("catalog_config", &self.catalog_config)
+            .field("workspace_root", &self.workspace_root)
             .finish()
     }
 }
@@ -48,6 +50,7 @@ impl ServiceHostConfig {
             bind_addr,
             auth_storage,
             catalog_config: CatalogConfig::default(),
+            workspace_root: None,
         })
     }
 
@@ -66,6 +69,7 @@ impl ServiceHostConfig {
             bind_addr,
             auth_storage,
             catalog_config,
+            workspace_root: None,
         })
     }
 }
@@ -77,6 +81,7 @@ pub struct ServiceHost {
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
+    workspace_root: std::path::PathBuf,
     server_handle: Option<JoinHandle<Result<()>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     config: ServiceHostConfig,
@@ -115,8 +120,9 @@ impl ServiceHost {
             model_registry.clone(),
         ));
 
-        let workspace_root =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace_root = config.workspace_root.clone().unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        });
         let workspace = steer_core::workspace::create_workspace(
             &steer_core::workspace::WorkspaceConfig::Local {
                 path: workspace_root.clone(),
@@ -159,6 +165,7 @@ impl ServiceHost {
             model_registry,
             provider_registry,
             llm_config_provider,
+            workspace_root,
             server_handle: None,
             shutdown_tx: None,
             config,
@@ -172,8 +179,7 @@ impl ServiceHost {
             });
         }
 
-        let workspace_root =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace_root = self.workspace_root.clone();
         let workspace_manager = Arc::new(
             LocalWorkspaceManager::new(workspace_root.clone())
                 .await
@@ -269,6 +275,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
             catalog_config: CatalogConfig::default(),
+            workspace_root: Some(temp_dir.path().to_path_buf()),
         };
 
         (config, temp_dir)

@@ -215,12 +215,18 @@ mod tests {
         current_model: ModelId,
         messages_updated: bool,
         in_flight_operations: HashSet<OpId>,
+        _workspace_root: tempfile::TempDir,
     }
     async fn create_test_context() -> TestContext {
         let chat_store = ChatStore::new();
         let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
-        let (client, _server_handle) = crate::tui::test_utils::local_client_and_server(None).await;
+        let workspace_root = tempfile::TempDir::new().unwrap();
+        let (client, _server_handle) = crate::tui::test_utils::local_client_and_server(
+            None,
+            Some(workspace_root.path().to_path_buf()),
+        )
+        .await;
         let is_processing = false;
         let progress_message = None;
         let spinner_state = 0;
@@ -240,6 +246,7 @@ mod tests {
             current_model,
             messages_updated,
             in_flight_operations,
+            _workspace_root: workspace_root,
         }
     }
 

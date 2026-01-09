@@ -60,7 +60,7 @@ impl AgentClient {
 
     pub async fn local(default_model: steer_core::config::model::ModelId) -> GrpcResult<Self> {
         use crate::local_server::setup_local_grpc;
-        let (channel, _server_handle) = setup_local_grpc(default_model, None).await?;
+        let (channel, _server_handle) = setup_local_grpc(default_model, None, None).await?;
         Self::from_channel(channel).await
     }
 
