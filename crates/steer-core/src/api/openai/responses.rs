@@ -6,24 +6,53 @@ use tracing::{debug, error};
 
 use crate::api::error::{ApiError, StreamError};
 use crate::api::openai::responses_types::{
-    InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig, ReasoningSummary,
-    ReasoningSummaryPart, ResponseOutputItem, ResponsesApiResponse, ResponsesFunctionTool,
-    ResponsesRequest, ResponsesToolChoice,
+    ExtraValue, InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig,
+    ReasoningSummary, ReasoningSummaryPart, ResponseOutputItem, ResponsesApiResponse,
+    ResponsesFunctionTool, ResponsesRequest, ResponsesToolChoice,
 };
 use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
+use crate::auth::AuthStorage;
+use crate::auth::openai::{OpenAIOAuth, extract_chatgpt_account_id, refresh_if_needed};
 use crate::config::model::{ModelId, ModelParameters};
+use std::sync::Arc;
 use steer_tools::ToolSchema;
 
 const DEFAULT_API_URL: &str = "https://api.openai.com/v1/responses";
+const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const OPENAI_BETA: &str = "responses=experimental";
+const ORIGINATOR: &str = "codex_cli_rs";
+const CODEX_BASE_INSTRUCTIONS: &str = include_str!("../../../assets/codex/gpt-5.2-codex_prompt.md");
+const GPT_5_2_CODEX_MODEL_ID: &str = "gpt-5.2-codex";
+
+enum ResponsesAuth {
+    ApiKey(String),
+    OAuth {
+        storage: Arc<dyn AuthStorage>,
+        oauth: OpenAIOAuth,
+    },
+}
+
+impl Clone for ResponsesAuth {
+    fn clone(&self) -> Self {
+        match self {
+            ResponsesAuth::ApiKey(value) => ResponsesAuth::ApiKey(value.clone()),
+            ResponsesAuth::OAuth { storage, .. } => ResponsesAuth::OAuth {
+                storage: Arc::clone(storage),
+                oauth: OpenAIOAuth::new(),
+            },
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Client {
     http_client: reqwest::Client,
     base_url: String,
+    auth: ResponsesAuth,
 }
 
 impl Client {
@@ -32,15 +61,7 @@ impl Client {
     }
 
     pub(super) fn with_base_url(api_key: String, base_url: Option<String>) -> Self {
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {api_key}"))
-                .expect("Invalid API key format"),
-        );
-
         let http_client = reqwest::Client::builder()
-            .default_headers(headers)
             .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
             .build()
             .expect("Failed to build HTTP client");
@@ -51,6 +72,38 @@ impl Client {
         Self {
             http_client,
             base_url,
+            auth: ResponsesAuth::ApiKey(api_key),
+        }
+    }
+
+    pub(super) fn with_oauth(storage: Arc<dyn AuthStorage>) -> Self {
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            header::ACCEPT,
+            header::HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            header::HeaderName::from_static("openai-beta"),
+            header::HeaderValue::from_static(OPENAI_BETA),
+        );
+        headers.insert(
+            header::HeaderName::from_static("originator"),
+            header::HeaderValue::from_static(ORIGINATOR),
+        );
+
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
+            .build()
+            .expect("Failed to build HTTP client");
+
+        Self {
+            http_client,
+            base_url: CODEX_BASE_URL.to_string(),
+            auth: ResponsesAuth::OAuth {
+                storage,
+                oauth: OpenAIOAuth::new(),
+            },
         }
     }
 
@@ -63,6 +116,17 @@ impl Client {
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
     ) -> ResponsesRequest {
+        let mut instructions = system;
+        if matches!(self.auth, ResponsesAuth::OAuth { .. }) {
+            let system_prompt = instructions
+                .as_deref()
+                .map(str::trim)
+                .filter(|prompt| !prompt.is_empty())
+                .map(str::to_owned);
+            instructions =
+                Some(system_prompt.unwrap_or_else(|| CODEX_BASE_INSTRUCTIONS.to_string()));
+        }
+
         let input = self.convert_messages_to_input(&messages);
 
         let responses_tools = tools.map(|tools| {
@@ -120,12 +184,12 @@ impl Client {
             None
         };
 
-        ResponsesRequest {
+        let mut request = ResponsesRequest {
             model: model_id.1.clone(), // Use the model ID string
             input,
-            instructions: system,
+            instructions,
             previous_response_id: None,
-            temperature: call_options.as_ref().and_then(|o| o.temperature).or(None),
+            temperature: call_options.as_ref().and_then(|o| o.temperature),
             max_output_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
             max_tool_calls: None,
             parallel_tool_calls: Some(true),
@@ -139,6 +203,93 @@ impl Client {
             reasoning,
             text: None,
             extra: Default::default(),
+        };
+
+        if matches!(self.auth, ResponsesAuth::OAuth { .. }) {
+            request.extra.insert(
+                "include".to_string(),
+                ExtraValue::Array(vec![ExtraValue::String(
+                    "reasoning.encrypted_content".to_string(),
+                )]),
+            );
+        }
+
+        request
+    }
+
+    fn is_oauth(&self) -> bool {
+        matches!(self.auth, ResponsesAuth::OAuth { .. })
+    }
+
+    fn ensure_model_supported(&self, model_id: &ModelId) -> Result<(), ApiError> {
+        if matches!(self.auth, ResponsesAuth::ApiKey(_)) && model_id.1 == GPT_5_2_CODEX_MODEL_ID {
+            return Err(ApiError::Configuration(format!(
+                "{GPT_5_2_CODEX_MODEL_ID} is only available when using OpenAI OAuth"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn auth_headers(&self) -> Result<header::HeaderMap, ApiError> {
+        match &self.auth {
+            ResponsesAuth::ApiKey(value) => {
+                let mut headers = header::HeaderMap::new();
+                headers.insert(
+                    header::AUTHORIZATION,
+                    header::HeaderValue::from_str(&format!("Bearer {value}")).map_err(|e| {
+                        ApiError::AuthenticationFailed {
+                            provider: "openai".to_string(),
+                            details: format!("Invalid API key: {e}"),
+                        }
+                    })?,
+                );
+                Ok(headers)
+            }
+            ResponsesAuth::OAuth { storage, oauth } => {
+                let tokens = refresh_if_needed(storage, oauth).await.map_err(|e| {
+                    ApiError::AuthenticationFailed {
+                        provider: "openai".to_string(),
+                        details: e.to_string(),
+                    }
+                })?;
+
+                let id_token =
+                    tokens
+                        .id_token
+                        .as_deref()
+                        .ok_or_else(|| ApiError::AuthenticationFailed {
+                            provider: "openai".to_string(),
+                            details: "Missing id_token in OAuth credentials".to_string(),
+                        })?;
+
+                let account_id = extract_chatgpt_account_id(id_token).map_err(|e| {
+                    ApiError::AuthenticationFailed {
+                        provider: "openai".to_string(),
+                        details: e.to_string(),
+                    }
+                })?;
+
+                let mut headers = header::HeaderMap::new();
+                headers.insert(
+                    header::AUTHORIZATION,
+                    header::HeaderValue::from_str(&format!("Bearer {}", tokens.access_token))
+                        .map_err(|e| ApiError::AuthenticationFailed {
+                            provider: "openai".to_string(),
+                            details: format!("Invalid access token: {e}"),
+                        })?,
+                );
+                headers.insert(
+                    header::HeaderName::from_static("chatgpt-account-id"),
+                    header::HeaderValue::from_str(&account_id.0).map_err(|e| {
+                        ApiError::AuthenticationFailed {
+                            provider: "openai".to_string(),
+                            details: format!("Invalid account id: {e}"),
+                        }
+                    })?,
+                );
+
+                Ok(headers)
+            }
         }
     }
 
@@ -361,9 +512,20 @@ impl Client {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let request = self.build_request(model_id, messages, system, tools, call_options);
+        self.ensure_model_supported(model_id)?;
+        if self.is_oauth() {
+            return Err(ApiError::Configuration(
+                "OpenAI OAuth requests require streaming responses".to_string(),
+            ));
+        }
 
-        let request_builder = self.http_client.post(&self.base_url).json(&request);
+        let request = self.build_request(model_id, messages, system, tools, call_options);
+        let headers = self.auth_headers().await?;
+        let request_builder = self
+            .http_client
+            .post(&self.base_url)
+            .headers(headers)
+            .json(&request);
 
         let response = tokio::select! {
             biased;
@@ -494,10 +656,17 @@ impl Client {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
+        self.ensure_model_supported(model_id)?;
+
         let mut request = self.build_request(model_id, messages, system, tools, call_options);
         request.stream = Some(true);
 
-        let request_builder = self.http_client.post(&self.base_url).json(&request);
+        let headers = self.auth_headers().await?;
+        let request_builder = self
+            .http_client
+            .post(&self.base_url)
+            .headers(headers)
+            .json(&request);
         stream_responses_request(request_builder, token).await
     }
 

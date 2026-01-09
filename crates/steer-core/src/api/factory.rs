@@ -1,7 +1,7 @@
 use crate::api::error::ApiError;
 use crate::api::provider::Provider;
 use crate::api::{
-    claude::AnthropicClient, gemini::GeminiClient, openai::{CodexClient, OpenAIClient}, xai::XAIClient,
+    claude::AnthropicClient, gemini::GeminiClient, openai::OpenAIClient, xai::XAIClient,
 };
 use crate::auth::storage::Credential;
 use crate::config::provider::{ApiFormat, ProviderConfig};
@@ -114,7 +114,7 @@ pub fn create_provider_with_storage(
                         "OpenAI OAuth is only supported with responses API format".to_string(),
                     ));
                 }
-                return Ok(Arc::new(CodexClient::new(storage)));
+                return Ok(Arc::new(OpenAIClient::with_oauth(storage)));
             }
 
             match &provider_cfg.api_format {

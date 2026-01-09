@@ -1,12 +1,10 @@
 mod chat;
 mod client;
-mod codex;
 mod responses;
 mod responses_types;
 mod types;
 
 pub use client::OpenAIClient;
-pub use codex::CodexClient;
 
 /// Provider name constant for OpenAI
 pub(crate) const PROVIDER_NAME: &str = "openai";

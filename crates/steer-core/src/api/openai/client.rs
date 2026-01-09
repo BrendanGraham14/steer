@@ -4,9 +4,11 @@ use super::responses;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider};
 use crate::app::conversation::Message;
+use crate::auth::AuthStorage;
 use crate::config::model::{ModelId, ModelParameters};
 use async_trait::async_trait;
 use steer_tools::ToolSchema;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// Unified OpenAI client that supports both the Chat and Responses APIs.
@@ -15,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 /// and delegates requests based on the configured default mode.
 pub struct OpenAIClient {
     responses_client: responses::Client,
-    chat_client: chat::Client,
+    chat_client: Option<chat::Client>,
     default_mode: OpenAIMode,
 }
 
@@ -24,7 +26,7 @@ impl OpenAIClient {
     pub fn with_mode(api_key: String, mode: OpenAIMode) -> Self {
         Self {
             responses_client: responses::Client::new(api_key.clone()),
-            chat_client: chat::Client::new(api_key),
+            chat_client: Some(chat::Client::new(api_key)),
             default_mode: mode,
         }
     }
@@ -33,8 +35,16 @@ impl OpenAIClient {
     pub fn with_base_url_mode(api_key: String, base_url: Option<String>, mode: OpenAIMode) -> Self {
         Self {
             responses_client: responses::Client::with_base_url(api_key.clone(), base_url.clone()),
-            chat_client: chat::Client::with_base_url(api_key, base_url),
+            chat_client: Some(chat::Client::with_base_url(api_key, base_url)),
             default_mode: mode,
+        }
+    }
+
+    pub fn with_oauth(storage: Arc<dyn AuthStorage>) -> Self {
+        Self {
+            responses_client: responses::Client::with_oauth(storage),
+            chat_client: None,
+            default_mode: OpenAIMode::Responses,
         }
     }
 }
@@ -61,7 +71,12 @@ impl Provider for OpenAIClient {
                     .await
             }
             OpenAIMode::Chat => {
-                self.chat_client
+                let chat_client = self.chat_client.as_ref().ok_or_else(|| {
+                    ApiError::Configuration(
+                        "OpenAI chat mode is not available with OAuth authentication".to_string(),
+                    )
+                })?;
+                chat_client
                     .complete(model_id, messages, system, tools, call_options, token)
                     .await
             }
@@ -84,7 +99,12 @@ impl Provider for OpenAIClient {
                     .await
             }
             OpenAIMode::Chat => {
-                self.chat_client
+                let chat_client = self.chat_client.as_ref().ok_or_else(|| {
+                    ApiError::Configuration(
+                        "OpenAI chat mode is not available with OAuth authentication".to_string(),
+                    )
+                })?;
+                chat_client
                     .stream_complete(model_id, messages, system, tools, call_options, token)
                     .await
             }
