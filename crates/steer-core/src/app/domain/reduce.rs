@@ -360,6 +360,9 @@ fn handle_tool_approval_requested(
                 .as_ref()
                 .map(|o| o.op_id)
                 .expect("Operation should exist");
+            state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
+                &tool_call.id,
+            ));
 
             effects.push(Effect::ExecuteTool {
                 session_id,
@@ -522,6 +525,9 @@ fn handle_tool_approval_decided(
             .as_ref()
             .map(|o| o.op_id)
             .expect("Operation should exist");
+        state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
+            &pending.tool_call.id,
+        ));
 
         effects.push(Effect::ExecuteTool {
             session_id,
@@ -551,6 +557,9 @@ fn process_next_queued_approval(
                     .as_ref()
                     .map(|o| o.op_id)
                     .expect("Operation should exist");
+                state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
+                    &queued.tool_call.id,
+                ));
 
                 effects.push(Effect::ExecuteTool {
                     session_id,
@@ -1412,7 +1421,7 @@ fn emit_mcp_connect_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::domain::state::OperationState;
+    use crate::app::domain::state::{OperationState, PendingApproval};
     use crate::app::domain::types::{
         MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
     };
@@ -1580,7 +1589,7 @@ mod tests {
             .operation_models
             .insert(op_id, builtin::claude_sonnet_4_5());
 
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.approval_policy = ToolApprovalPolicy {
             default_behavior: UnapprovedBehavior::Deny,
             preapproved: ApprovalRules::default(),
@@ -1765,6 +1774,62 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn test_tool_approval_does_not_call_model_before_result() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_1".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command": "ls"}),
+        };
+        let request_id = RequestId::new();
+        state.pending_approval = Some(PendingApproval {
+            request_id,
+            tool_call: tool_call.clone(),
+        });
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolApprovalDecided {
+                session_id,
+                request_id,
+                decision: ApprovalDecision::Approved,
+                remember: None,
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ExecuteTool { .. }))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
+        assert!(
+            state
+                .current_operation
+                .as_ref()
+                .expect("Operation should exist")
+                .pending_tool_calls
+                .contains(&ToolCallId::from_string("tc_1"))
+        );
     }
 
     #[test]
