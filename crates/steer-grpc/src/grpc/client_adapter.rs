@@ -74,6 +74,7 @@ impl AgentClient {
             tool_config: Some(tool_config),
             workspace_config: Some(workspace_config),
             system_prompt: config.system_prompt,
+            default_model: Some(model_to_proto(config.default_model)),
         });
 
         let response = self

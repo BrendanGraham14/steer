@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests {
 
+    use crate::config::model::builtin;
     use crate::session::state::{BackendConfig, SessionConfig, ToolFilter};
     use crate::tools::execution_context::ExecutionContext;
     use crate::tools::mcp::test_servers::{TestMcpService, start_http_server, start_sse_server};
@@ -62,7 +63,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create a session config with an MCP backend
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "test-server".to_string(),
             transport: McpTransport::Tcp {
@@ -156,7 +157,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create a session config with a TCP MCP backend
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "tcp-server".to_string(),
             transport: McpTransport::Tcp {
@@ -240,7 +241,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
         // Create a session config with a Unix socket MCP backend
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "unix-server".to_string(),
             transport: McpTransport::Unix {
@@ -296,7 +297,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         // Create a session config with an SSE MCP backend
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "sse-server".to_string(),
             transport: McpTransport::Sse {
@@ -382,7 +383,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         // Create a session config with an SSE MCP backend with custom headers
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         let mut headers = HashMap::new();
         headers.insert("Authorization".to_string(), "Bearer token123".to_string());
         headers.insert("X-Custom-Header".to_string(), "custom-value".to_string());
@@ -446,7 +447,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         // Create a session config with an HTTP MCP backend
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "http-server".to_string(),
             transport: McpTransport::Http {
@@ -529,7 +530,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         // Create a session config with an HTTP MCP backend with custom headers
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         let mut headers = HashMap::new();
         headers.insert("X-API-Key".to_string(), "secret-key".to_string());
 
@@ -617,7 +618,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_config_resilience_with_failing_backends() {
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
 
         config.tool_config.backends.push(BackendConfig::Mcp {
             server_name: "will-fail".to_string(),

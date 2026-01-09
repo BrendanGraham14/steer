@@ -16,6 +16,7 @@ pub struct CreateSessionCommand {
     pub remote: Option<String>,
     pub system_prompt: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
+    pub model: Option<String>,
 }
 
 #[async_trait]
@@ -26,8 +27,18 @@ impl Command for CreateSessionCommand {
             metadata: self.metadata.clone(),
         };
 
-        let loader =
-            SessionConfigLoader::new(self.session_config.clone()).with_overrides(overrides);
+        let default_model = if let Some(model_str) = &self.model {
+            let registry = steer_core::model_registry::ModelRegistry::load(&[])
+                .map_err(|e| eyre!("Failed to load model registry: {}", e))?;
+            registry
+                .resolve(model_str)
+                .map_err(|e| eyre!("Failed to resolve model '{}': {}", model_str, e))?
+        } else {
+            steer_core::config::model::builtin::opus()
+        };
+
+        let loader = SessionConfigLoader::new(default_model, self.session_config.clone())
+            .with_overrides(overrides);
 
         let session_config = loader.load().await?;
 

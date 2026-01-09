@@ -559,6 +559,7 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
         metadata: config.metadata.clone(),
         workspace_config: Some(workspace_config_to_proto(&config.workspace)),
         system_prompt: config.system_prompt.clone(),
+        default_model: Some(model_to_proto(config.default_model.clone())),
     }
 }
 

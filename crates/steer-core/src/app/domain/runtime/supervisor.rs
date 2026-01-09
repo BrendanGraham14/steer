@@ -752,6 +752,7 @@ mod tests {
 
     fn test_session_config() -> SessionConfig {
         SessionConfig {
+            default_model: crate::config::model::builtin::claude_sonnet_4_5(),
             workspace: crate::session::state::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
             },

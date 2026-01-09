@@ -42,6 +42,12 @@ pub struct SessionMcpBackends {
     generations: RwLock<HashMap<String, u64>>,
 }
 
+impl Default for SessionMcpBackends {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionMcpBackends {
     pub fn new() -> Self {
         Self {

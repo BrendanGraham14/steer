@@ -79,10 +79,8 @@ pub async fn setup_local_grpc_with_catalog(
         );
         (sqlite_store.clone(), sqlite_store)
     } else {
-        (
-            Arc::new(InMemoryEventStore::new()),
-            Arc::new(InMemoryCatalog::new()),
-        )
+        let in_memory_store = Arc::new(InMemoryEventStore::new());
+        (in_memory_store.clone(), in_memory_store)
     };
 
     let model_registry = Arc::new(
@@ -155,72 +153,6 @@ pub async fn setup_local_grpc(
             .await?;
     Ok((setup.channel, setup.server_handle))
 }
-
-struct InMemoryCatalog {
-    sessions: tokio::sync::RwLock<
-        std::collections::HashMap<
-            steer_core::app::domain::types::SessionId,
-            steer_core::session::state::SessionConfig,
-        >,
-    >,
-}
-
-impl InMemoryCatalog {
-    fn new() -> Self {
-        Self {
-            sessions: tokio::sync::RwLock::new(std::collections::HashMap::new()),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl SessionCatalog for InMemoryCatalog {
-    async fn get_session_config(
-        &self,
-        session_id: steer_core::app::domain::types::SessionId,
-    ) -> std::result::Result<
-        Option<steer_core::session::state::SessionConfig>,
-        steer_core::app::domain::session::SessionCatalogError,
-    > {
-        let sessions = self.sessions.read().await;
-        Ok(sessions.get(&session_id).cloned())
-    }
-
-    async fn get_session_summary(
-        &self,
-        _session_id: steer_core::app::domain::types::SessionId,
-    ) -> std::result::Result<
-        Option<steer_core::app::domain::session::SessionSummary>,
-        steer_core::app::domain::session::SessionCatalogError,
-    > {
-        Ok(None)
-    }
-
-    async fn list_sessions(
-        &self,
-        _filter: steer_core::app::domain::session::SessionFilter,
-    ) -> std::result::Result<
-        Vec<steer_core::app::domain::session::SessionSummary>,
-        steer_core::app::domain::session::SessionCatalogError,
-    > {
-        Ok(vec![])
-    }
-
-    async fn update_session_catalog(
-        &self,
-        session_id: steer_core::app::domain::types::SessionId,
-        config: Option<&steer_core::session::state::SessionConfig>,
-        _increment_message_count: bool,
-        _new_model: Option<&str>,
-    ) -> std::result::Result<(), steer_core::app::domain::session::SessionCatalogError> {
-        if let Some(cfg) = config {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id, cfg.clone());
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,7 +164,7 @@ mod tests {
     use steer_core::config::model::ModelId;
     use steer_core::session::state::SessionConfig;
     use steer_proto::agent::v1::{
-        CompactSessionRequest, EditMessageRequest, ExecuteBashCommandRequest, SendMessageRequest,
+        CompactSessionRequest, ExecuteBashCommandRequest, SendMessageRequest,
         SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,
     };
     use tokio::time::{Duration, timeout};
@@ -268,8 +200,10 @@ mod tests {
     }
 
     async fn setup_local_grpc_with_stub_provider(default_model: ModelId) -> Result<LocalGrpcSetup> {
-        let event_store = Arc::new(InMemoryEventStore::new());
-        let catalog = Arc::new(InMemoryCatalog::new());
+        let in_memory_store = Arc::new(InMemoryEventStore::new());
+        let event_store: Arc<dyn steer_core::app::domain::session::EventStore> =
+            in_memory_store.clone();
+        let catalog: Arc<dyn SessionCatalog> = in_memory_store;
         let catalog_config = CatalogConfig::default();
 
         let model_registry = Arc::new(
@@ -367,7 +301,9 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only())
+            .create_session(SessionConfig::read_only(
+                steer_core::config::model::builtin::claude_sonnet_4_5(),
+            ))
             .await
             .expect("create session");
 
@@ -428,7 +364,9 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only())
+            .create_session(SessionConfig::read_only(
+                steer_core::config::model::builtin::claude_sonnet_4_5(),
+            ))
             .await
             .expect("create session");
 
@@ -507,7 +445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_message_requires_model_spec() {
+    async fn test_send_message_uses_session_default_model_when_not_specified() {
         let setup = setup_local_grpc_with_catalog(
             steer_core::config::model::builtin::claude_sonnet_4_5(),
             None,
@@ -519,7 +457,9 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only())
+            .create_session(SessionConfig::read_only(
+                steer_core::config::model::builtin::claude_sonnet_4_5(),
+            ))
             .await
             .expect("create session");
 
@@ -530,43 +470,16 @@ mod tests {
             model: None,
         });
 
-        let err = client
+        let response = client
             .send_message(request)
             .await
-            .expect_err("send_message should fail without model");
-        assert_eq!(err.code(), Code::InvalidArgument);
-    }
+            .expect("send_message should succeed using session default model")
+            .into_inner();
 
-    #[tokio::test]
-    async fn test_edit_message_requires_model_spec() {
-        let setup = setup_local_grpc_with_catalog(
-            steer_core::config::model::builtin::claude_sonnet_4_5(),
-            None,
-            CatalogConfig::default(),
-        )
-        .await
-        .expect("local grpc setup");
-
-        let session_id = setup
-            .runtime_service
-            .handle()
-            .create_session(SessionConfig::read_only())
-            .await
-            .expect("create session");
-
-        let mut client = AgentServiceClient::new(setup.channel.clone());
-        let request = tonic::Request::new(EditMessageRequest {
-            session_id: session_id.to_string(),
-            message_id: "message-id".to_string(),
-            new_content: "updated".to_string(),
-            model: None,
-        });
-
-        let err = client
-            .edit_message(request)
-            .await
-            .expect_err("edit_message should fail without model");
-        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(
+            response.operation.is_some(),
+            "Response should contain an operation"
+        );
     }
 
     #[tokio::test]
@@ -582,7 +495,9 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only())
+            .create_session(SessionConfig::read_only(
+                steer_core::config::model::builtin::claude_sonnet_4_5(),
+            ))
             .await
             .expect("create session");
 
@@ -612,7 +527,9 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only())
+            .create_session(SessionConfig::read_only(
+                steer_core::config::model::builtin::claude_sonnet_4_5(),
+            ))
             .await
             .expect("create session");
 

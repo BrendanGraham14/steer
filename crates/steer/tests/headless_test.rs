@@ -15,7 +15,7 @@ async fn test_headless_mode_integration() {
         .await
         .expect("Failed to create runtime");
 
-    let config = SessionConfig::read_only();
+    let config = SessionConfig::read_only(model.clone());
 
     let result = steer::run_once_new_session(&runtime.handle(), config, message, model)
         .await

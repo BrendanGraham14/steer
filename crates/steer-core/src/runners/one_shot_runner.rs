@@ -231,6 +231,7 @@ mod tests {
 
     fn create_test_session_config() -> SessionConfig {
         SessionConfig {
+            default_model: builtin::claude_sonnet_4_5(),
             workspace: WorkspaceConfig::default(),
             tool_config: SessionToolConfig::default(),
             system_prompt: None,

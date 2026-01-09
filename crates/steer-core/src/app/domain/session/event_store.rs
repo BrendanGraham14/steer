@@ -1,8 +1,12 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::types::SessionId;
+use crate::session::state::SessionConfig;
+
+use super::catalog::{SessionCatalog, SessionCatalogError, SessionFilter, SessionSummary};
 
 #[derive(Debug, Error)]
 pub enum EventStoreError {
@@ -74,12 +78,22 @@ pub trait EventStore: Send + Sync {
 
 pub struct InMemoryEventStore {
     events: std::sync::RwLock<std::collections::HashMap<SessionId, Vec<(u64, SessionEvent)>>>,
+    catalog: std::sync::RwLock<std::collections::HashMap<SessionId, InMemoryCatalogEntry>>,
+}
+
+struct InMemoryCatalogEntry {
+    config: SessionConfig,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    message_count: u32,
+    last_model: Option<String>,
 }
 
 impl InMemoryEventStore {
     pub fn new() -> Self {
         Self {
             events: std::sync::RwLock::new(std::collections::HashMap::new()),
+            catalog: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -102,6 +116,24 @@ impl EventStore for InMemoryEventStore {
 
         let seq = session_events.last().map(|(s, _)| s + 1).unwrap_or(0);
         session_events.push((seq, event.clone()));
+
+        drop(events);
+
+        if let SessionEvent::SessionCreated { config, .. } = event {
+            let mut catalog = self.catalog.write().unwrap();
+            let now = Utc::now();
+            catalog.insert(
+                session_id,
+                InMemoryCatalogEntry {
+                    config: *config.clone(),
+                    created_at: now,
+                    updated_at: now,
+                    message_count: 0,
+                    last_model: None,
+                },
+            );
+        }
+
         Ok(seq)
     }
 
@@ -146,12 +178,106 @@ impl EventStore for InMemoryEventStore {
     async fn delete_session(&self, session_id: SessionId) -> Result<(), EventStoreError> {
         let mut events = self.events.write().unwrap();
         events.remove(&session_id);
+        drop(events);
+
+        let mut catalog = self.catalog.write().unwrap();
+        catalog.remove(&session_id);
         Ok(())
     }
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>, EventStoreError> {
         let events = self.events.read().unwrap();
         Ok(events.keys().cloned().collect())
+    }
+}
+
+#[async_trait]
+impl SessionCatalog for InMemoryEventStore {
+    async fn get_session_config(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionConfig>, SessionCatalogError> {
+        let catalog = self.catalog.read().unwrap();
+        Ok(catalog.get(&session_id).map(|e| e.config.clone()))
+    }
+
+    async fn get_session_summary(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<SessionSummary>, SessionCatalogError> {
+        let catalog = self.catalog.read().unwrap();
+        Ok(catalog.get(&session_id).map(|e| SessionSummary {
+            id: session_id,
+            created_at: e.created_at,
+            updated_at: e.updated_at,
+            message_count: e.message_count,
+            last_model: e.last_model.clone(),
+        }))
+    }
+
+    async fn list_sessions(
+        &self,
+        filter: SessionFilter,
+    ) -> Result<Vec<SessionSummary>, SessionCatalogError> {
+        let catalog = self.catalog.read().unwrap();
+        let mut summaries: Vec<SessionSummary> = catalog
+            .iter()
+            .map(|(id, e)| SessionSummary {
+                id: *id,
+                created_at: e.created_at,
+                updated_at: e.updated_at,
+                message_count: e.message_count,
+                last_model: e.last_model.clone(),
+            })
+            .collect();
+
+        summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        if let Some(offset) = filter.offset {
+            summaries = summaries.into_iter().skip(offset).collect();
+        }
+        if let Some(limit) = filter.limit {
+            summaries.truncate(limit);
+        }
+
+        Ok(summaries)
+    }
+
+    async fn update_session_catalog(
+        &self,
+        session_id: SessionId,
+        config: Option<&SessionConfig>,
+        increment_message_count: bool,
+        new_model: Option<&str>,
+    ) -> Result<(), SessionCatalogError> {
+        let mut catalog = self.catalog.write().unwrap();
+
+        if let Some(entry) = catalog.get_mut(&session_id) {
+            if let Some(cfg) = config {
+                entry.config = cfg.clone();
+            }
+            if increment_message_count {
+                entry.message_count += 1;
+            }
+            if let Some(model) = new_model {
+                entry.last_model = Some(model.to_string());
+            }
+            entry.updated_at = Utc::now();
+        } else if let Some(cfg) = config {
+            let now = Utc::now();
+            catalog.insert(
+                session_id,
+                InMemoryCatalogEntry {
+                    config: cfg.clone(),
+                    created_at: now,
+                    updated_at: now,
+                    message_count: if increment_message_count { 1 } else { 0 },
+                    last_model: new_model.map(String::from),
+                },
+            );
+        }
+
+        Ok(())
     }
 }
 

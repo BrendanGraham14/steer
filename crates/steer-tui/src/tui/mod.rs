@@ -389,6 +389,7 @@ impl Tui {
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
+            default_model: self.current_model.clone(),
         };
 
         let new_session_id = self
@@ -1439,7 +1440,7 @@ pub async fn run_tui(
         (session_id, messages)
     } else {
         // Create a new session
-        let mut session_config = SessionConfig {
+        let session_config = SessionConfig {
             workspace: if let Some(ref dir) = directory {
                 steer_core::session::state::WorkspaceConfig::Local { path: dir.clone() }
             } else {
@@ -1448,13 +1449,8 @@ pub async fn run_tui(
             tool_config: SessionToolConfig::default(),
             system_prompt,
             metadata: HashMap::new(),
+            default_model: model.clone(),
         };
-
-        // Add the initial model to session metadata
-        session_config.metadata.insert(
-            "initial_model".to_string(),
-            format!("{}/{}", model.0.storage_key(), model.1),
-        );
 
         let session_id = client
             .create_session(session_config)

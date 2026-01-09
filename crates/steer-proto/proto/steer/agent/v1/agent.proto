@@ -211,6 +211,7 @@ message CreateSessionRequest {
   optional SessionToolConfig tool_config = 3;
   optional WorkspaceConfig workspace_config = 4;
   optional string system_prompt = 5;
+  ModelSpec default_model = 6;  // Required: default model for the session
 }
 
 message CreateSessionResponse {
@@ -220,7 +221,7 @@ message CreateSessionResponse {
 message SendMessageRequest {
   string session_id = 1;
   string message = 2;
-  ModelSpec model = 3;  // Required; client chooses from ListModels
+  optional ModelSpec model = 3;  // Optional; falls back to session's default_model
 }
 
 message SendMessageResponse {
@@ -231,7 +232,7 @@ message EditMessageRequest {
   string session_id = 1;
   string message_id = 2;
   string new_content = 3;
-  ModelSpec model = 4;  // Required; client chooses from ListModels
+  optional ModelSpec model = 4;  // Optional; falls back to session's default_model
 }
 
 message EditMessageResponse {
@@ -419,6 +420,7 @@ message SessionConfig {
   map<string, string> metadata = 3;
   WorkspaceConfig workspace_config = 4;
   optional string system_prompt = 5;
+  ModelSpec default_model = 6;
 }
 
 message SessionMetadata {

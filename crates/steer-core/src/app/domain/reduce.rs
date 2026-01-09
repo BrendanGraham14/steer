@@ -152,7 +152,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 &new_state,
                 McpServerState::Disconnected { .. } | McpServerState::Failed { .. }
             ) {
-                let prefix = format!("mcp__{}__", server_name);
+                let prefix = format!("mcp__{server_name}__");
                 state.tools.retain(|t| !t.name.starts_with(&prefix));
             }
 
@@ -1775,7 +1775,7 @@ mod tests {
         let mut allowed = HashSet::new();
         allowed.insert("mcp__alpha__allowed".to_string());
 
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
         config.tool_config.visibility = ToolVisibility::Whitelist(allowed);
         state.session_config = Some(config);
 

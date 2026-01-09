@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use url::Url;
@@ -6,7 +7,9 @@ use url::Url;
 pub use crate::config::toml_types::{ApiFormat, AuthScheme};
 
 /// Identifier for a provider (built-in or custom).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct ProviderId(pub String);
 

@@ -12,6 +12,7 @@ use crate::app::domain::action::ApprovalDecision;
 use crate::app::domain::event::{CancellationInfo, OperationKind, SessionEvent};
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
+use crate::config::model::builtin::default_model;
 use crate::session::state::SessionConfig;
 use crate::tools::ToolExecutor;
 
@@ -57,7 +58,7 @@ impl AgentInterpreter {
             .map_err(|e| AgentInterpreterError::EventStore(e.to_string()))?;
 
         let session_created_event = SessionEvent::SessionCreated {
-            config: Box::new(SessionConfig::read_only()),
+            config: Box::new(SessionConfig::read_only(default_model())),
             metadata: HashMap::new(),
             parent_session_id: config.parent_session_id,
         };

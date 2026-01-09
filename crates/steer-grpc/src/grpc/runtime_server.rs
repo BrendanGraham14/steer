@@ -256,6 +256,12 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<CreateSessionResponse>, Status> {
         let req = request.into_inner();
 
+        let default_model_spec = req
+            .default_model
+            .ok_or_else(|| Status::invalid_argument("Missing required default_model"))?;
+        let default_model = proto_to_model(&default_model_spec)
+            .map_err(|e| Status::invalid_argument(format!("Invalid default_model: {e}")))?;
+
         let tool_config = req
             .tool_config
             .map(proto_to_tool_config)
@@ -271,6 +277,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             tool_config,
             system_prompt: req.system_prompt,
             metadata: req.metadata,
+            default_model,
         };
 
         match self.runtime.create_session(session_config.clone()).await {
@@ -461,11 +468,18 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
 
-        let model_spec = req
-            .model
-            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
-        let model = proto_to_model(&model_spec)
-            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
+        let model = if let Some(model_spec) = req.model {
+            proto_to_model(&model_spec)
+                .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?
+        } else {
+            let config = self
+                .catalog
+                .get_session_config(session_id)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to get session config: {e}")))?
+                .ok_or_else(|| Status::not_found("Session config not found"))?;
+            config.default_model
+        };
 
         match self
             .runtime
@@ -497,11 +511,18 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         let req = request.into_inner();
         let session_id = Self::parse_session_id(&req.session_id)?;
 
-        let model_spec = req
-            .model
-            .ok_or_else(|| Status::invalid_argument("Missing model spec"))?;
-        let model = proto_to_model(&model_spec)
-            .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?;
+        let model = if let Some(model_spec) = req.model {
+            proto_to_model(&model_spec)
+                .map_err(|e| Status::invalid_argument(format!("Invalid model spec: {e}")))?
+        } else {
+            let config = self
+                .catalog
+                .get_session_config(session_id)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to get session config: {e}")))?
+                .ok_or_else(|| Status::not_found("Session config not found"))?;
+            config.default_model
+        };
 
         self.runtime
             .submit_edited_message(session_id, req.message_id, req.new_content, model)

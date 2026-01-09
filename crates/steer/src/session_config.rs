@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use steer_core::config::model::ModelId;
 use steer_core::session::{
     ApprovalRules, BackendConfig, RemoteAuth, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
     ToolRule, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
@@ -112,14 +113,16 @@ pub struct SessionConfigOverrides {
 
 /// Loads session configuration from files and applies overrides
 pub struct SessionConfigLoader {
+    default_model: ModelId,
     config_path: Option<PathBuf>,
     overrides: SessionConfigOverrides,
 }
 
 impl SessionConfigLoader {
-    pub fn new(config_path: Option<PathBuf>) -> Self {
+    pub fn new(default_model: ModelId, config_path: Option<PathBuf>) -> Self {
         debug!("Loading session config from: {:?}", config_path);
         Self {
+            default_model,
             config_path,
             overrides: SessionConfigOverrides::default(),
         }
@@ -157,6 +160,7 @@ impl SessionConfigLoader {
 
             // Fallback to defaults if nothing discovered
             discovered.unwrap_or(SessionConfig {
+                default_model: self.default_model.clone(),
                 workspace: WorkspaceConfig::default(),
                 tool_config: SessionToolConfig::default(),
                 system_prompt: None,
@@ -247,6 +251,7 @@ impl SessionConfigLoader {
         debug!("Loaded tool config: {:?}", tool_config);
 
         Ok(SessionConfig {
+            default_model: self.default_model.clone(),
             workspace,
             tool_config,
             system_prompt: partial.system_prompt,
@@ -328,7 +333,15 @@ impl SessionConfigLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use steer_core::config::provider::ProviderId;
     use steer_core::session::ToolFilter;
+
+    fn test_model() -> ModelId {
+        (
+            ProviderId("test-provider".to_string()),
+            "test-model".to_string(),
+        )
+    }
 
     #[tokio::test]
     async fn test_backend_serialization() {
@@ -421,7 +434,7 @@ project = "my-project"
 
     #[tokio::test]
     async fn test_config_loader() {
-        let loader = SessionConfigLoader::new(None);
+        let loader = SessionConfigLoader::new(test_model(), None);
         let config = loader.load().await.unwrap();
 
         // Should get defaults
@@ -440,7 +453,7 @@ project = "my-project"
             metadata: Some("key1=value1,key2=value2".to_string()),
         };
 
-        let loader = SessionConfigLoader::new(None).with_overrides(overrides);
+        let loader = SessionConfigLoader::new(test_model(), None).with_overrides(overrides);
         let config = loader.load().await.unwrap();
 
         assert_eq!(config.system_prompt, Some("Custom prompt".to_string()));
@@ -449,7 +462,10 @@ project = "my-project"
 
     #[tokio::test]
     async fn test_load_non_existent_file() {
-        let loader = SessionConfigLoader::new(Some(PathBuf::from("/tmp/non_existent_file.toml")));
+        let loader = SessionConfigLoader::new(
+            test_model(),
+            Some(PathBuf::from("/tmp/non_existent_file.toml")),
+        );
         let result = loader.load().await;
 
         assert!(result.is_err());
@@ -465,7 +481,7 @@ project = "my-project"
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "invalid toml syntax {{").unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let result = loader.load().await;
 
         assert!(result.is_err());
@@ -488,7 +504,7 @@ visibility = "invalid_value"
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let result = loader.load().await;
 
         assert!(result.is_err());
@@ -512,7 +528,7 @@ default_behavior = "invalid_value"
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let result = loader.load().await;
 
         assert!(
@@ -534,7 +550,7 @@ backends = [
 ]
 "#).unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let result = loader.load().await;
 
         assert!(result.is_err());
@@ -558,7 +574,7 @@ backends = [
 ]
 "#).unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let result = loader.load().await;
 
         assert!(result.is_err());
@@ -598,7 +614,7 @@ key2 = "original2"
             metadata: Some("key2=overridden2,key3=new3".to_string()),
         };
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()))
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()))
             .with_overrides(overrides);
         let config = loader.load().await.unwrap();
 
@@ -632,7 +648,7 @@ visibility = {{ whitelist = ["grep", "ls", "view"] }}
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         match &config.tool_config.visibility {
@@ -661,7 +677,7 @@ visibility = {{ blacklist = ["bash", "edit_file"] }}
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         match &config.tool_config.visibility {
@@ -691,7 +707,7 @@ auth = {{ Bearer = {{ token = "secret-token" }} }}
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         match &config.workspace {
@@ -732,7 +748,7 @@ patterns = [
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         let bash_rule = config
@@ -769,7 +785,7 @@ patterns = []
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         let bash_rule = config
@@ -808,7 +824,7 @@ patterns = ["ls -la", "pwd"]
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         assert!(matches!(config.tool_config.visibility, ToolVisibility::All));
@@ -849,7 +865,7 @@ tools = ["grep", "ls"]
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         assert!(
@@ -916,7 +932,7 @@ project = "test-project"
         )
         .unwrap();
 
-        let loader = SessionConfigLoader::new(Some(temp_file.path().to_path_buf()));
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
         assert_eq!(

@@ -48,7 +48,7 @@ impl Command for HeadlessCommand {
                 crate::run_once_in_session(&runtime.handle, session_id, message, model).await?
             }
             None => {
-                let session_config = self.build_session_config().await?;
+                let session_config = self.build_session_config(model.clone()).await?;
                 crate::run_once_new_session(&runtime.handle, session_config, message, model).await?
             }
         };
@@ -116,16 +116,20 @@ impl HeadlessCommand {
             .collect()
     }
 
-    async fn build_session_config(&self) -> Result<steer_core::session::state::SessionConfig> {
+    async fn build_session_config(
+        &self,
+        default_model: steer_core::config::model::ModelId,
+    ) -> Result<steer_core::session::state::SessionConfig> {
         let overrides = SessionConfigOverrides {
             system_prompt: self.system_prompt.clone(),
             ..Default::default()
         };
 
         let loader = if let Some(config_path) = &self.session_config {
-            SessionConfigLoader::new(Some(config_path.clone())).with_overrides(overrides)
+            SessionConfigLoader::new(default_model, Some(config_path.clone()))
+                .with_overrides(overrides)
         } else {
-            SessionConfigLoader::new(None).with_overrides(overrides)
+            SessionConfigLoader::new(default_model, None).with_overrides(overrides)
         };
 
         let mut config = loader.load().await?;

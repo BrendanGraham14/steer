@@ -141,6 +141,7 @@ pub struct SessionConfig {
     /// fall back to its built-in default prompt.
     pub system_prompt: Option<String>,
     pub metadata: HashMap<String, String>,
+    pub default_model: ModelId,
 }
 
 impl SessionConfig {
@@ -238,7 +239,7 @@ impl SessionConfig {
     }
 
     /// Minimal read-only configuration
-    pub fn read_only() -> Self {
+    pub fn read_only(default_model: ModelId) -> Self {
         Self {
             workspace: WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -246,6 +247,7 @@ impl SessionConfig {
             tool_config: SessionToolConfig::read_only(),
             system_prompt: None,
             metadata: HashMap::new(),
+            default_model,
         }
     }
 }
@@ -712,6 +714,7 @@ impl From<&Session> for SessionInfo {
 mod tests {
     use super::*;
     use crate::app::conversation::{Message, MessageData, UserContent};
+    use crate::config::model::builtin::claude_sonnet_4_5 as test_model;
     use steer_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME};
 
     #[test]
@@ -723,6 +726,7 @@ mod tests {
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
             metadata: HashMap::new(),
+            default_model: test_model(),
         };
         let session = Session::new("test-session".to_string(), config.clone());
 
@@ -908,6 +912,7 @@ mod tests {
             tool_config: SessionToolConfig::default(), // No backends configured
             system_prompt: None,
             metadata: HashMap::new(),
+            default_model: test_model(),
         };
 
         let (registry, _mcp_servers) = config.build_registry().await.unwrap();
@@ -985,7 +990,7 @@ mod tests {
     #[tokio::test]
     async fn test_mcp_server_tracking_in_build_registry() {
         // Create a session config with both good and bad MCP servers
-        let mut config = SessionConfig::read_only();
+        let mut config = SessionConfig::read_only(test_model());
 
         // This one should fail (invalid transport)
         config.tool_config.backends.push(BackendConfig::Mcp {
