@@ -352,3 +352,50 @@ impl WorkspaceManager for LocalWorkspaceManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_default_workspace_registered() {
+        let temp = TempDir::new().unwrap();
+        let manager = LocalWorkspaceManager::new(temp.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let workspaces = manager
+            .list_workspaces(ListWorkspacesRequest {
+                include_deleted: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(workspaces.len(), 1);
+        let workspace = &workspaces[0];
+        assert_eq!(workspace.name.as_deref(), Some("default"));
+        assert_eq!(workspace.path, temp.path());
+
+        let handle = manager.open_workspace(workspace.workspace_id).await.unwrap();
+        assert_eq!(handle.working_directory(), temp.path());
+    }
+
+    #[tokio::test]
+    async fn test_create_workspace_requires_jj_repo() {
+        let temp = TempDir::new().unwrap();
+        let manager = LocalWorkspaceManager::new(temp.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let result = manager
+            .create_workspace(CreateWorkspaceRequest {
+                base: None,
+                name: Some("child".to_string()),
+                parent_workspace_id: None,
+                strategy: WorkspaceCreateStrategy::JjWorkspace,
+            })
+            .await;
+
+        assert!(matches!(result, Err(WorkspaceManagerError::NotSupported(_))));
+    }
+}

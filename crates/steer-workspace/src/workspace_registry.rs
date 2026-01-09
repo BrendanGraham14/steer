@@ -217,3 +217,57 @@ impl WorkspaceRegistry {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_registry_insert_list_and_delete() {
+        let temp = TempDir::new().unwrap();
+        let registry = WorkspaceRegistry::open(temp.path()).await.unwrap();
+
+        let environment_id = EnvironmentId::local();
+        let workspace_id = WorkspaceId::new();
+        let info = WorkspaceInfo {
+            workspace_id,
+            environment_id,
+            parent_workspace_id: None,
+            name: Some("alpha".to_string()),
+            path: temp.path().join("alpha"),
+            vcs_kind: Some(VcsKind::Jj),
+        };
+
+        registry.insert_workspace(&info).await.unwrap();
+
+        let fetched = registry.fetch_workspace(workspace_id).await.unwrap();
+        let fetched = fetched.expect("expected workspace entry");
+        assert_eq!(fetched.workspace_id, workspace_id);
+        assert_eq!(fetched.environment_id, environment_id);
+        assert_eq!(fetched.name.as_deref(), Some("alpha"));
+
+        let list = registry
+            .list_workspaces(environment_id, false)
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+
+        registry.mark_deleted(workspace_id, Utc::now()).await.unwrap();
+        let list = registry
+            .list_workspaces(environment_id, false)
+            .await
+            .unwrap();
+        assert!(list.is_empty());
+
+        let list = registry
+            .list_workspaces(environment_id, true)
+            .await
+            .unwrap();
+        assert_eq!(list.len(), 1);
+
+        registry.delete_workspace(workspace_id).await.unwrap();
+        let fetched = registry.fetch_workspace(workspace_id).await.unwrap();
+        assert!(fetched.is_none());
+    }
+}
