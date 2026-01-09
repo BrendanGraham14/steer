@@ -1,14 +1,11 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
-use std::sync::Arc;
 
 use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 
-use steer_core::api::Client as ApiClient;
-use steer_core::app::domain::runtime::RuntimeService;
-use steer_core::app::domain::session::SqliteEventStore;
-use steer_core::tools::ToolSystemBuilder;
+use steer_core::catalog::CatalogConfig;
+use steer_grpc::AgentClient;
 
 pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
@@ -28,23 +25,6 @@ impl Command for CreateSessionCommand {
             metadata: self.metadata.clone(),
         };
 
-        let catalog_paths = self.normalize_catalog_paths();
-
-        let default_model = if let Some(model_str) = &self.model {
-            let registry = steer_core::model_registry::ModelRegistry::load(&catalog_paths)
-                .map_err(|e| eyre!("Failed to load model registry: {}", e))?;
-            registry
-                .resolve(model_str)
-                .map_err(|e| eyre!("Failed to resolve model '{}': {}", model_str, e))?
-        } else {
-            steer_core::config::model::builtin::opus()
-        };
-
-        let loader = SessionConfigLoader::new(default_model, self.session_config.clone())
-            .with_overrides(overrides);
-
-        let session_config = loader.load().await?;
-
         if let Some(remote_addr) = &self.remote {
             println!("Creating remote session at {remote_addr}");
 
@@ -53,65 +33,45 @@ impl Command for CreateSessionCommand {
             ));
         }
 
+        let catalog_paths = self.normalize_catalog_paths();
+
         let db_path = match &self.session_db {
             Some(path) => path.clone(),
             None => steer_core::utils::session::create_session_store_path()?,
         };
 
-        let event_store = Arc::new(
-            SqliteEventStore::new(&db_path)
-                .await
-                .map_err(|e| eyre!("Failed to open session database: {}", e))?,
-        );
+        let catalog_config = CatalogConfig::with_catalogs(catalog_paths);
 
-        let auth_storage = Arc::new(
-            steer_core::auth::DefaultAuthStorage::new()
-                .map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
-        );
-
-        let model_registry = Arc::new(
-            steer_core::model_registry::ModelRegistry::load(&[])
-                .map_err(|e| eyre!("Failed to load model registry: {}", e))?,
-        );
-
-        let provider_registry = Arc::new(
-            steer_core::auth::ProviderRegistry::load(&[])
-                .map_err(|e| eyre!("Failed to load provider registry: {}", e))?,
-        );
-
-        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
-
-        let api_client = Arc::new(ApiClient::new_with_deps(
-            llm_config_provider,
-            provider_registry,
-            model_registry.clone(),
-        ));
-
-        let workspace = steer_core::workspace::create_workspace(
-            &steer_core::workspace::WorkspaceConfig::Local {
-                path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-            },
+        let local_grpc_setup = steer_grpc::local_server::setup_local_grpc_with_catalog(
+            steer_core::config::model::builtin::opus(),
+            Some(db_path),
+            catalog_config,
         )
         .await
-        .map_err(|e| eyre!("Failed to create workspace: {}", e))?;
+        .map_err(|e| eyre!("Failed to setup local gRPC: {}", e))?;
 
-        let tool_executor = ToolSystemBuilder::new(
-            workspace,
-            event_store.clone(),
-            api_client.clone(),
-            model_registry.clone(),
-        )
-        .build();
+        let client = AgentClient::from_channel(local_grpc_setup.channel)
+            .await
+            .map_err(|e| eyre!("Failed to create gRPC client: {}", e))?;
 
-        let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
+        let model_input = self.model.as_deref().unwrap_or("opus");
+        let default_model = client
+            .resolve_model(model_input)
+            .await
+            .map_err(|e| eyre!("Failed to resolve model '{}': {}", model_input, e))?;
 
-        let session_id = runtime_service
-            .handle()
+        let loader = SessionConfigLoader::new(default_model, self.session_config.clone())
+            .with_overrides(overrides);
+
+        let session_config = loader.load().await?;
+
+        let session_id = client
             .create_session(session_config)
             .await
             .map_err(|e| eyre!("Failed to create session: {}", e))?;
 
-        runtime_service.shutdown().await;
+        local_grpc_setup.server_handle.abort();
+        local_grpc_setup.runtime_service.shutdown().await;
 
         println!("Created session: {session_id}");
         Ok(())
