@@ -695,11 +695,9 @@ impl AgentClient {
     pub async fn list_workspaces(
         &self,
         environment_id: Option<String>,
-        include_deleted: bool,
     ) -> GrpcResult<Vec<steer_workspace::WorkspaceInfo>> {
         let request = Request::new(ListWorkspacesRequest {
             environment_id: environment_id.unwrap_or_default(),
-            include_deleted,
         });
         let response = self
             .client

@@ -1082,9 +1082,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let workspaces = self
             .workspace_manager
-            .list_workspaces(steer_workspace::ListWorkspacesRequest {
-                include_deleted: req.include_deleted,
-            })
+            .list_workspaces(steer_workspace::ListWorkspacesRequest {})
             .await
             .map_err(Self::workspace_manager_error_to_status)?;
 
@@ -1125,18 +1123,9 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<proto::DeleteWorkspaceResponse>, Status> {
         let req = request.into_inner();
         let workspace_id = Self::parse_workspace_id(&req.workspace_id)?;
-        let policy = match proto::WorkspaceDeletePolicy::try_from(req.policy) {
-            Ok(proto::WorkspaceDeletePolicy::Soft) => {
-                steer_workspace::WorkspaceDeletePolicy::Soft
-            }
-            Ok(proto::WorkspaceDeletePolicy::Hard) => {
-                steer_workspace::WorkspaceDeletePolicy::Hard
-            }
-            _ => steer_workspace::WorkspaceDeletePolicy::Hard,
-        };
 
         self.workspace_manager
-            .delete_workspace(steer_workspace::DeleteWorkspaceRequest { workspace_id, policy })
+            .delete_workspace(steer_workspace::DeleteWorkspaceRequest { workspace_id })
             .await
             .map_err(Self::workspace_manager_error_to_status)?;
 

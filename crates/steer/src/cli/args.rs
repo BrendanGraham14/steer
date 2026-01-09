@@ -198,9 +198,6 @@ pub enum WorkspaceCommands {
         /// Environment ID to list (defaults to local)
         #[arg(long)]
         environment_id: Option<String>,
-        /// Include deleted workspaces
-        #[arg(long)]
-        include_deleted: bool,
     },
     /// Show workspace status
     Status {

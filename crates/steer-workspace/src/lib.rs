@@ -17,7 +17,7 @@ pub use local::LocalEnvironmentManager;
 pub use manager::{
     CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
     EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, WorkspaceCreateStrategy,
-    WorkspaceDeletePolicy, WorkspaceManager,
+    WorkspaceManager,
 };
 
 // Module with the trait and core types

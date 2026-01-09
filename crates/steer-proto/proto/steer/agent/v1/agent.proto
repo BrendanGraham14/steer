@@ -518,7 +518,8 @@ message CreateWorkspaceResponse {
 
 message ListWorkspacesRequest {
   string environment_id = 1;
-  bool include_deleted = 2;
+  reserved 2;
+  reserved "include_deleted";
 }
 
 message ListWorkspacesResponse {
@@ -533,15 +534,10 @@ message GetWorkspaceStatusResponse {
   WorkspaceStatus status = 1;
 }
 
-enum WorkspaceDeletePolicy {
-  WORKSPACE_DELETE_POLICY_UNSPECIFIED = 0;
-  WORKSPACE_DELETE_POLICY_HARD = 1;
-  WORKSPACE_DELETE_POLICY_SOFT = 2;
-}
-
 message DeleteWorkspaceRequest {
   string workspace_id = 1;
-  WorkspaceDeletePolicy policy = 2;
+  reserved 2;
+  reserved "policy";
 }
 
 message DeleteWorkspaceResponse {}

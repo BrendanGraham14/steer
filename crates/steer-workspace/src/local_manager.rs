@@ -2,13 +2,12 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::debug;
-use chrono::Utc;
 
 use crate::error::{WorkspaceManagerError, WorkspaceManagerResult};
 use crate::local::LocalWorkspace;
 use crate::manager::{
     CreateWorkspaceRequest, DeleteWorkspaceRequest, ListWorkspacesRequest, WorkspaceCreateStrategy,
-    WorkspaceDeletePolicy, WorkspaceManager,
+    WorkspaceManager,
 };
 use crate::utils::VcsUtils;
 use crate::{
@@ -253,10 +252,10 @@ impl WorkspaceManager for LocalWorkspaceManager {
 
     async fn list_workspaces(
         &self,
-        request: ListWorkspacesRequest,
+        _request: ListWorkspacesRequest,
     ) -> WorkspaceManagerResult<Vec<WorkspaceInfo>> {
         self.registry
-            .list_workspaces(self.environment_id, request.include_deleted)
+            .list_workspaces(self.environment_id)
             .await
     }
 
@@ -311,43 +310,34 @@ impl WorkspaceManager for LocalWorkspaceManager {
                 WorkspaceManagerError::NotFound(request.workspace_id.as_uuid().to_string())
             })?;
 
-        match request.policy {
-            WorkspaceDeletePolicy::Soft => {
-                self.registry
-                    .mark_deleted(request.workspace_id, Utc::now())
-                    .await?;
-            }
-            WorkspaceDeletePolicy::Hard => {
-                {
-                    let jj_root = self.ensure_jj_repo(&info.path)?;
-                    let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
-                    let workspace_name = workspace.workspace_name().to_owned();
-                    let mut tx = repo.start_transaction();
-                    tx.repo_mut()
-                        .remove_wc_commit(&workspace_name)
-                        .map_err(|e| {
-                            WorkspaceManagerError::Other(format!(
-                                "Failed to remove jj workspace: {e}"
-                            ))
-                        })?;
-                    let workspace_name_ref: &jj_lib::ref_name::WorkspaceName =
-                        workspace_name.as_ref();
-                    tx.commit(format!(
-                        "forget workspace '{}'",
-                        workspace_name_ref.as_str()
+        {
+            let jj_root = self.ensure_jj_repo(&info.path)?;
+            let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
+            let workspace_name = workspace.workspace_name().to_owned();
+            let mut tx = repo.start_transaction();
+            tx.repo_mut()
+                .remove_wc_commit(&workspace_name)
+                .map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to remove jj workspace: {e}"
                     ))
-                    .map_err(|e| {
-                        WorkspaceManagerError::Other(format!(
-                            "Failed to commit jj workspace removal: {e}"
-                        ))
-                    })?;
+                })?;
+            let workspace_name_ref: &jj_lib::ref_name::WorkspaceName =
+                workspace_name.as_ref();
+            tx.commit(format!(
+                "forget workspace '{}'",
+                workspace_name_ref.as_str()
+            ))
+            .map_err(|e| {
+                WorkspaceManagerError::Other(format!(
+                    "Failed to commit jj workspace removal: {e}"
+                ))
+            })?;
 
-                    std::fs::remove_dir_all(&info.path)?;
-                }
-
-                self.registry.delete_workspace(request.workspace_id).await?;
-            }
+            std::fs::remove_dir_all(&info.path)?;
         }
+
+        self.registry.delete_workspace(request.workspace_id).await?;
 
         Ok(())
     }
@@ -366,9 +356,7 @@ mod tests {
             .unwrap();
 
         let workspaces = manager
-            .list_workspaces(ListWorkspacesRequest {
-                include_deleted: false,
-            })
+            .list_workspaces(ListWorkspacesRequest {})
             .await
             .unwrap();
         assert_eq!(workspaces.len(), 1);

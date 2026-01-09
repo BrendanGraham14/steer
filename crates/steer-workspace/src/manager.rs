@@ -65,19 +65,11 @@ pub struct CreateWorkspaceRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListWorkspacesRequest {
-    pub include_deleted: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WorkspaceDeletePolicy {
-    Hard,
-    Soft,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteWorkspaceRequest {
     pub workspace_id: WorkspaceId,
-    pub policy: WorkspaceDeletePolicy,
 }
 
 #[async_trait]

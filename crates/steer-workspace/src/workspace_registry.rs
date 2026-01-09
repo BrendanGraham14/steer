@@ -1,7 +1,5 @@
 use crate::error::WorkspaceManagerError;
 use crate::{EnvironmentId, WorkspaceId, WorkspaceInfo, WorkspaceManagerResult, VcsKind};
-use chrono::{DateTime, Utc};
-use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 
@@ -38,8 +36,7 @@ impl WorkspaceRegistry {
                 parent_workspace_id TEXT NULL,
                 name TEXT NULL,
                 path TEXT NOT NULL,
-                vcs_kind TEXT NULL,
-                deleted_at TEXT NULL
+                vcs_kind TEXT NULL
             );
             "#,
         )
@@ -69,9 +66,8 @@ impl WorkspaceRegistry {
                 parent_workspace_id,
                 name,
                 path,
-                vcs_kind,
-                deleted_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL);
+                vcs_kind
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6);
             "#,
         )
         .bind(info.workspace_id.as_uuid().to_string())
@@ -80,27 +76,6 @@ impl WorkspaceRegistry {
         .bind(info.name.clone())
         .bind(info.path.to_string_lossy().to_string())
         .bind(info.vcs_kind.as_ref().map(VcsKind::as_str))
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
-
-        Ok(())
-    }
-
-    pub async fn mark_deleted(
-        &self,
-        workspace_id: WorkspaceId,
-        deleted_at: DateTime<Utc>,
-    ) -> WorkspaceManagerResult<()> {
-        sqlx::query(
-            r#"
-            UPDATE workspaces
-            SET deleted_at = ?1
-            WHERE workspace_id = ?2;
-            "#,
-        )
-        .bind(deleted_at.to_rfc3339())
-        .bind(workspace_id.as_uuid().to_string())
         .execute(&self.pool)
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
@@ -155,17 +130,10 @@ impl WorkspaceRegistry {
     pub async fn list_workspaces(
         &self,
         environment_id: EnvironmentId,
-        include_deleted: bool,
     ) -> WorkspaceManagerResult<Vec<WorkspaceInfo>> {
-        let mut query = String::from(
-            "SELECT workspace_id, environment_id, parent_workspace_id, name, path, vcs_kind FROM workspaces WHERE environment_id = ?1",
-        );
-        if !include_deleted {
-            query.push_str(" AND deleted_at IS NULL");
-        }
-        query.push_str(" ORDER BY name ASC");
+        let query = "SELECT workspace_id, environment_id, parent_workspace_id, name, path, vcs_kind FROM workspaces WHERE environment_id = ?1 ORDER BY name ASC";
 
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(query)
             .bind(environment_id.as_uuid().to_string())
             .fetch_all(&self.pool)
             .await
@@ -248,20 +216,7 @@ mod tests {
         assert_eq!(fetched.name.as_deref(), Some("alpha"));
 
         let list = registry
-            .list_workspaces(environment_id, false)
-            .await
-            .unwrap();
-        assert_eq!(list.len(), 1);
-
-        registry.mark_deleted(workspace_id, Utc::now()).await.unwrap();
-        let list = registry
-            .list_workspaces(environment_id, false)
-            .await
-            .unwrap();
-        assert!(list.is_empty());
-
-        let list = registry
-            .list_workspaces(environment_id, true)
+            .list_workspaces(environment_id)
             .await
             .unwrap();
         assert_eq!(list.len(), 1);

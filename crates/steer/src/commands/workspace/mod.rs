@@ -22,11 +22,9 @@ impl Command for WorkspaceCommand {
         match &self.command {
             WorkspaceCommands::List {
                 environment_id,
-                include_deleted,
             } => {
                 let cmd = ListWorkspaceCommand {
                     environment_id: environment_id.clone(),
-                    include_deleted: *include_deleted,
                     remote: self.remote.clone(),
                 };
                 cmd.execute().await

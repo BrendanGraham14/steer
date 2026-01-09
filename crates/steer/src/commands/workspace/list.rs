@@ -7,7 +7,6 @@ use steer_core::workspace::VcsKind;
 
 pub struct ListWorkspaceCommand {
     pub environment_id: Option<String>,
-    pub include_deleted: bool,
     pub remote: Option<String>,
 }
 
@@ -16,7 +15,7 @@ impl Command for ListWorkspaceCommand {
     async fn execute(&self) -> Result<()> {
         let client = connect_client(self.remote.as_deref()).await?;
         let workspaces = client
-            .list_workspaces(self.environment_id.clone(), self.include_deleted)
+            .list_workspaces(self.environment_id.clone())
             .await?;
 
         if workspaces.is_empty() {

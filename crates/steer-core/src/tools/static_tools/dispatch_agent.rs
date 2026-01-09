@@ -115,9 +115,7 @@ impl StaticTool for DispatchAgentTool {
 
         if let Some(manager) = ctx.services.workspace_manager() {
             if let Ok(workspaces) = manager
-                .list_workspaces(ListWorkspacesRequest {
-                    include_deleted: false,
-                })
+                .list_workspaces(ListWorkspacesRequest {})
                 .await
             {
                 if let Some(info) = workspaces.into_iter().find(|info| info.path == base_path) {
