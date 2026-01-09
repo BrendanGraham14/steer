@@ -27,6 +27,76 @@ pub enum WorkspaceError {
 
 pub type Result<T> = std::result::Result<T, WorkspaceError>;
 
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
+pub enum EnvironmentManagerError {
+    #[error("Environment not found: {0}")]
+    NotFound(String),
+
+    #[error("Environment operation not supported: {0}")]
+    NotSupported(String),
+
+    #[error("Invalid environment request: {0}")]
+    InvalidRequest(String),
+
+    #[error("I/O error: {0}")]
+    Io(String),
+
+    #[error("Environment manager error: {0}")]
+    Other(String),
+}
+
+pub type EnvironmentManagerResult<T> = std::result::Result<T, EnvironmentManagerError>;
+
+impl From<std::io::Error> for EnvironmentManagerError {
+    fn from(err: std::io::Error) -> Self {
+        EnvironmentManagerError::Io(err.to_string())
+    }
+}
+
+impl From<WorkspaceError> for EnvironmentManagerError {
+    fn from(err: WorkspaceError) -> Self {
+        match err {
+            WorkspaceError::Io(message) => EnvironmentManagerError::Io(message),
+            other => EnvironmentManagerError::Other(other.to_string()),
+        }
+    }
+}
+
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
+pub enum WorkspaceManagerError {
+    #[error("Workspace not found: {0}")]
+    NotFound(String),
+
+    #[error("Workspace operation not supported: {0}")]
+    NotSupported(String),
+
+    #[error("Invalid workspace request: {0}")]
+    InvalidRequest(String),
+
+    #[error("I/O error: {0}")]
+    Io(String),
+
+    #[error("Workspace manager error: {0}")]
+    Other(String),
+}
+
+pub type WorkspaceManagerResult<T> = std::result::Result<T, WorkspaceManagerError>;
+
+impl From<std::io::Error> for WorkspaceManagerError {
+    fn from(err: std::io::Error) -> Self {
+        WorkspaceManagerError::Io(err.to_string())
+    }
+}
+
+impl From<WorkspaceError> for WorkspaceManagerError {
+    fn from(err: WorkspaceError) -> Self {
+        match err {
+            WorkspaceError::Io(message) => WorkspaceManagerError::Io(message),
+            other => WorkspaceManagerError::Other(other.to_string()),
+        }
+    }
+}
+
 impl From<tonic::transport::Error> for WorkspaceError {
     fn from(err: tonic::transport::Error) -> Self {
         WorkspaceError::Transport(err.to_string())

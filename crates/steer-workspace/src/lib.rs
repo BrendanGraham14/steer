@@ -1,17 +1,29 @@
 pub mod config;
 pub mod error;
 pub mod local;
+pub mod manager;
 pub mod utils;
 
 // Re-export main types
 pub use config::{RemoteAuth, WorkspaceConfig};
-pub use error::{Result, WorkspaceError};
+pub use error::{
+    EnvironmentManagerError, EnvironmentManagerResult, Result, WorkspaceError,
+    WorkspaceManagerError, WorkspaceManagerResult,
+};
+pub use manager::{
+    CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
+    EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, WorkspaceCreateStrategy,
+    WorkspaceDeletePolicy, WorkspaceManager,
+};
 
 // Module with the trait and core types
 use async_trait::async_trait;
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tracing::debug;
+use uuid::Uuid;
 
 /// Core workspace abstraction for environment information and file operations
 #[async_trait]
@@ -74,6 +86,98 @@ impl WorkspaceType {
     }
 }
 
+/// Stable identifier for an execution environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(transparent)]
+pub struct EnvironmentId(#[cfg_attr(feature = "schema", schemars(with = "String"))] pub Uuid);
+
+impl Default for EnvironmentId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EnvironmentId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+
+    /// Identifier for the implicit local environment.
+    pub fn local() -> Self {
+        Self(Uuid::nil())
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.0.is_nil()
+    }
+}
+
+/// Stable identifier for a workspace within an environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(transparent)]
+pub struct WorkspaceId(#[cfg_attr(feature = "schema", schemars(with = "String"))] pub Uuid);
+
+impl Default for WorkspaceId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WorkspaceId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+/// Reference to a workspace inside a specific environment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct WorkspaceRef {
+    pub environment_id: EnvironmentId,
+    pub workspace_id: WorkspaceId,
+    pub path: std::path::PathBuf,
+    pub vcs_kind: Option<VcsKind>,
+}
+
+/// Workspace metadata for listing and UI grouping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct WorkspaceInfo {
+    pub workspace_id: WorkspaceId,
+    pub environment_id: EnvironmentId,
+    pub parent_workspace_id: Option<WorkspaceId>,
+    pub name: Option<String>,
+    pub path: std::path::PathBuf,
+    pub vcs_kind: Option<VcsKind>,
+}
+
+/// Workspace status for orchestration and UI display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceStatus {
+    pub workspace_id: WorkspaceId,
+    pub environment_id: EnvironmentId,
+    pub path: std::path::PathBuf,
+    pub vcs: Option<VcsInfo>,
+}
+
 /// Cached environment information with TTL
 #[derive(Debug, Clone)]
 pub(crate) struct CachedEnvironment {
@@ -98,6 +202,7 @@ impl CachedEnvironment {
 
 /// Supported version control systems
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub enum VcsKind {
     Git,
     Jj,

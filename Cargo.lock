@@ -6340,6 +6340,7 @@ dependencies = [
  "jj-lib",
  "prost 0.13.5",
  "prost-types",
+ "schemars",
  "serde",
  "serde_json",
  "steer-proto",
@@ -6350,6 +6351,7 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

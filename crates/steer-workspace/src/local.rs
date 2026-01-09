@@ -6,10 +6,15 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::error::{Result, WorkspaceError};
-use crate::{CachedEnvironment, EnvironmentInfo, Workspace, WorkspaceMetadata, WorkspaceType};
+use crate::error::{EnvironmentManagerResult, Result, WorkspaceError};
+use crate::manager::{
+    CreateEnvironmentRequest, EnvironmentDeletePolicy, EnvironmentDescriptor, EnvironmentManager,
+};
+use crate::{
+    CachedEnvironment, EnvironmentId, EnvironmentInfo, Workspace, WorkspaceMetadata, WorkspaceType,
+};
 use steer_tools::{
-    ExecutionContext as SteerExecutionContext, ToolCall, ToolSchema, result::ToolResult,
+    result::ToolResult, ExecutionContext as SteerExecutionContext, ToolCall, ToolSchema,
     traits::ExecutableTool,
 };
 
@@ -46,6 +51,79 @@ impl LocalWorkspace {
     /// Collect environment information for the local workspace
     async fn collect_environment(&self) -> Result<EnvironmentInfo> {
         EnvironmentInfo::collect_for_path(&self.path)
+    }
+}
+
+/// Local environment manager (single implicit environment).
+#[derive(Debug, Clone)]
+pub struct LocalEnvironmentManager {
+    root: PathBuf,
+    environment_id: EnvironmentId,
+}
+
+impl LocalEnvironmentManager {
+    pub fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            environment_id: EnvironmentId::local(),
+        }
+    }
+
+    pub fn environment_id(&self) -> EnvironmentId {
+        self.environment_id
+    }
+}
+
+#[async_trait]
+impl EnvironmentManager for LocalEnvironmentManager {
+    async fn create_environment(
+        &self,
+        _request: CreateEnvironmentRequest,
+    ) -> EnvironmentManagerResult<EnvironmentDescriptor> {
+        Ok(EnvironmentDescriptor {
+            environment_id: self.environment_id,
+            root: self.root.clone(),
+        })
+    }
+
+    async fn get_environment(
+        &self,
+        environment_id: EnvironmentId,
+    ) -> EnvironmentManagerResult<EnvironmentDescriptor> {
+        if environment_id != self.environment_id {
+            return Err(crate::error::EnvironmentManagerError::NotFound(
+                environment_id.as_uuid().to_string(),
+            ));
+        }
+
+        Ok(EnvironmentDescriptor {
+            environment_id: self.environment_id,
+            root: self.root.clone(),
+        })
+    }
+
+    async fn delete_environment(
+        &self,
+        _environment_id: EnvironmentId,
+        _policy: EnvironmentDeletePolicy,
+    ) -> EnvironmentManagerResult<()> {
+        // Local environments are implicit and not deletable.
+        Err(crate::error::EnvironmentManagerError::NotSupported(
+            "local environment cannot be deleted".to_string(),
+        ))
+    }
+
+    async fn environment_info(
+        &self,
+        environment_id: EnvironmentId,
+    ) -> EnvironmentManagerResult<EnvironmentInfo> {
+        if environment_id != self.environment_id {
+            return Err(crate::error::EnvironmentManagerError::NotFound(
+                environment_id.as_uuid().to_string(),
+            ));
+        }
+
+        Ok(EnvironmentInfo::collect_for_path(&self.root)?)
     }
 }
 

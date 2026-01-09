@@ -34,7 +34,13 @@ gethostname = "0.5"
 prost = "0.13"
 prost-types = "0.13"
 jj-lib = "0.35.0"
+uuid = { version = "1.17.0", features = ["serde", "v4"] }
+schemars = { version = "1.0", optional = true }
 
 [dev-dependencies]
 tempfile = "3.20.0"
 tokio = { version = "1.46.1", features = ["full"] }
+
+[features]
+default = []
+schema = ["dep:schemars"]
