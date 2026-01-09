@@ -1,8 +1,10 @@
 pub mod config;
 pub mod error;
 pub mod local;
+pub mod local_manager;
 pub mod manager;
 pub mod utils;
+mod workspace_registry;
 
 // Re-export main types
 pub use config::{RemoteAuth, WorkspaceConfig};
@@ -10,6 +12,7 @@ pub use error::{
     EnvironmentManagerError, EnvironmentManagerResult, Result, WorkspaceError,
     WorkspaceManagerError, WorkspaceManagerResult,
 };
+pub use local_manager::LocalWorkspaceManager;
 pub use manager::{
     CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
     EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, WorkspaceCreateStrategy,
