@@ -4,7 +4,8 @@ pub mod gemini;
 pub mod gpt5;
 pub mod o3;
 
-pub const MEMORY_FILE_NAME: &str = "CLAUDE.md";
+pub const PRIMARY_MEMORY_FILE_NAME: &str = "AGENTS.md";
+pub const FALLBACK_MEMORY_FILE_NAME: &str = "CLAUDE.md";
 
 // Re-export the prompt functions for convenience
 pub use claude::claude_system_prompt;

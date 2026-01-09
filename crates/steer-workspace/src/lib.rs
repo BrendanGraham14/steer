@@ -106,7 +106,8 @@ pub struct EnvironmentInfo {
     pub directory_structure: String,
     pub git_status: Option<String>,
     pub readme_content: Option<String>,
-    pub claude_md_content: Option<String>,
+    pub memory_file_name: Option<String>,
+    pub memory_file_content: Option<String>,
 }
 
 /// Default maximum depth for directory structure traversal
@@ -138,7 +139,11 @@ impl EnvironmentInfo {
         };
 
         let readme_content = EnvironmentUtils::read_readme(path);
-        let claude_md_content = EnvironmentUtils::read_claude_md(path);
+        let (memory_file_name, memory_file_content) =
+            match EnvironmentUtils::read_memory_file(path) {
+                Some((name, content)) => (Some(name), Some(content)),
+                None => (None, None),
+            };
 
         Ok(Self {
             working_directory: path.to_path_buf(),
@@ -148,7 +153,8 @@ impl EnvironmentInfo {
             directory_structure,
             git_status,
             readme_content,
-            claude_md_content,
+            memory_file_name,
+            memory_file_content,
         })
     }
 
@@ -174,8 +180,8 @@ impl EnvironmentInfo {
             context.push_str(&format!("\n<file name=\"README.md\">\nThis is the README.md file at the start of the conversation. Note that this README is a snapshot in time, and will not update during the conversation.\n\n{readme}\n</file>"));
         }
 
-        if let Some(ref claude_md) = self.claude_md_content {
-            context.push_str(&format!("\n<file name=\"CLAUDE.md\">\nThis is the CLAUDE.md file at the start of the conversation. Note that this CLAUDE is a snapshot in time, and will not update during the conversation.\n\n{claude_md}\n</file>"));
+        if let (Some(name), Some(content)) = (&self.memory_file_name, &self.memory_file_content) {
+            context.push_str(&format!("\n<file name=\"{name}\">\nThis is the {name} file at the start of the conversation. Note that this file is a snapshot in time, and will not update during the conversation.\n\n{content}\n</file>"));
         }
 
         context

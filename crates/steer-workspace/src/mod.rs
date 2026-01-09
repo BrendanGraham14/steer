@@ -98,7 +98,8 @@ pub struct EnvironmentInfo {
     pub directory_structure: String,
     pub git_status: Option<String>,
     pub readme_content: Option<String>,
-    pub claude_md_content: Option<String>,
+    pub memory_file_name: Option<String>,
+    pub memory_file_content: Option<String>,
 }
 
 impl EnvironmentInfo {
@@ -119,7 +120,11 @@ impl EnvironmentInfo {
         };
 
         let readme_content = EnvironmentUtils::read_readme(path);
-        let claude_md_content = EnvironmentUtils::read_claude_md(path);
+        let (memory_file_name, memory_file_content) =
+            match EnvironmentUtils::read_memory_file(path) {
+                Some((name, content)) => (Some(name), Some(content)),
+                None => (None, None),
+            };
 
         Ok(Self {
             working_directory: path.to_path_buf(),
@@ -129,7 +134,8 @@ impl EnvironmentInfo {
             directory_structure,
             git_status,
             readme_content,
-            claude_md_content,
+            memory_file_name,
+            memory_file_content,
         })
     }
 }
@@ -199,7 +205,8 @@ mod tests {
             directory_structure: "test/".to_string(),
             git_status: None,
             readme_content: None,
-            claude_md_content: None,
+            memory_file_name: None,
+            memory_file_content: None,
         };
 
         let cached = CachedEnvironment::new(env_info, Duration::from_millis(1));

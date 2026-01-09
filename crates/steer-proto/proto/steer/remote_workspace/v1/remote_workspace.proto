@@ -151,7 +151,8 @@ message GetEnvironmentInfoResponse {
   string directory_structure = 5;
   optional string git_status = 6;
   optional string readme_content = 7;
-  optional string claude_md_content = 8;
+  optional string memory_file_content = 8;
+  optional string memory_file_name = 9;
 }
 
 // File listing for fuzzy finder

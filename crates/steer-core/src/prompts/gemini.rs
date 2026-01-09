@@ -1,4 +1,4 @@
-use crate::prompts::MEMORY_FILE_NAME;
+use crate::prompts::{FALLBACK_MEMORY_FILE_NAME, PRIMARY_MEMORY_FILE_NAME};
 use crate::tools::DISPATCH_AGENT_TOOL_NAME;
 use steer_tools::tools::{
     AST_GREP_TOOL_NAME, BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME,
@@ -34,13 +34,15 @@ Additional commands exist. Run `steer -h` with {BASH_TOOL_NAME} if user asks abo
 4. **Report**: Concise status update
 
 # Operational Guidelines
-## Memory (CLAUDE.md)
-If working directory contains {MEMORY_FILE_NAME}, it's auto-loaded with:
+## Memory (AGENTS.md preferred)
+If working directory contains {PRIMARY_MEMORY_FILE_NAME}, it's auto-loaded with:
 - Build/test/lint commands
 - Code style preferences  
 - Codebase structure info
 
-When you discover useful commands or conventions, ask user if you should add them to {MEMORY_FILE_NAME}.
+If {PRIMARY_MEMORY_FILE_NAME} is not present but {FALLBACK_MEMORY_FILE_NAME} is, load that instead.
+
+When you discover useful commands or conventions, ask user if you should add them to {PRIMARY_MEMORY_FILE_NAME} (or {FALLBACK_MEMORY_FILE_NAME} if that's what's present).
 
 ## Output Format
 - CLI display with Github-flavored markdown

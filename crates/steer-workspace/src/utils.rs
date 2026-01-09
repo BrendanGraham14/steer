@@ -353,10 +353,25 @@ impl EnvironmentUtils {
         std::fs::read_to_string(readme_path).ok()
     }
 
-    /// Read CLAUDE.md if it exists
+    /// Read AGENTS.md if it exists, otherwise fall back to CLAUDE.md.
+    pub fn read_memory_file(path: &Path) -> Option<(String, String)> {
+        const PRIMARY_MEMORY_FILE_NAME: &str = "AGENTS.md";
+        const FALLBACK_MEMORY_FILE_NAME: &str = "CLAUDE.md";
+
+        let agents_path = path.join(PRIMARY_MEMORY_FILE_NAME);
+        if let Ok(content) = std::fs::read_to_string(agents_path) {
+            return Some((PRIMARY_MEMORY_FILE_NAME.to_string(), content));
+        }
+
+        let claude_path = path.join(FALLBACK_MEMORY_FILE_NAME);
+        std::fs::read_to_string(claude_path)
+            .ok()
+            .map(|content| (FALLBACK_MEMORY_FILE_NAME.to_string(), content))
+    }
+
+    /// Read AGENTS.md (preferred) or CLAUDE.md and return only the content.
     pub fn read_claude_md(path: &Path) -> Option<String> {
-        let claude_path = path.join("CLAUDE.md");
-        std::fs::read_to_string(claude_path).ok()
+        Self::read_memory_file(path).map(|(_, content)| content)
     }
 }
 

@@ -229,7 +229,8 @@ impl RemoteWorkspace {
             directory_structure: response.directory_structure,
             git_status: response.git_status,
             readme_content: response.readme_content,
-            claude_md_content: response.claude_md_content,
+            memory_file_name: response.memory_file_name,
+            memory_file_content: response.memory_file_content,
         })
     }
 }
@@ -510,7 +511,8 @@ mod tests {
             directory_structure: "project/\nsrc/\nmain.rs\n".to_string(),
             git_status: Some("Current branch: main\n\nStatus:\nWorking tree clean\n".to_string()),
             readme_content: Some("# My Project".to_string()),
-            claude_md_content: None,
+            memory_file_content: None,
+            memory_file_name: None,
         };
 
         // Test the static conversion function directly
@@ -529,7 +531,8 @@ mod tests {
             Some("Current branch: main\n\nStatus:\nWorking tree clean\n".to_string())
         );
         assert_eq!(env_info.readme_content, Some("# My Project".to_string()));
-        assert_eq!(env_info.claude_md_content, None);
+        assert_eq!(env_info.memory_file_content, None);
+        assert_eq!(env_info.memory_file_name, None);
     }
 
     #[test]

@@ -514,8 +514,12 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         // Read README.md if it exists
         let readme_content = EnvironmentUtils::read_readme(Path::new(&working_directory));
 
-        // Read CLAUDE.md if it exists
-        let claude_md_content = EnvironmentUtils::read_claude_md(Path::new(&working_directory));
+        // Read AGENTS.md if it exists, otherwise fall back to CLAUDE.md
+        let (memory_file_name, memory_file_content) =
+            match EnvironmentUtils::read_memory_file(Path::new(&working_directory)) {
+                Some((name, content)) => (Some(name), Some(content)),
+                None => (None, None),
+            };
 
         let response = crate::proto::GetEnvironmentInfoResponse {
             working_directory,
@@ -525,7 +529,8 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             directory_structure,
             git_status,
             readme_content,
-            claude_md_content,
+            memory_file_content,
+            memory_file_name,
         };
 
         Ok(Response::new(response))
