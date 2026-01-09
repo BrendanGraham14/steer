@@ -18,6 +18,7 @@ pub struct SessionCommand {
     pub command: SessionCommands,
     pub remote: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
+    pub catalogs: Vec<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -47,6 +48,7 @@ impl Command for SessionCommand {
                     system_prompt: system_prompt.clone(),
                     session_db: self.session_db.clone(),
                     model: model.clone(),
+                    catalogs: self.catalogs.clone(),
                 };
                 cmd.execute().await
             }

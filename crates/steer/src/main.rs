@@ -209,6 +209,7 @@ async fn main() -> Result<()> {
                 command: session_command,
                 remote: cli.remote.clone(),
                 session_db: cli.session_db.clone(),
+                catalogs: cli.catalogs.clone(),
             };
             command.execute().await
         }

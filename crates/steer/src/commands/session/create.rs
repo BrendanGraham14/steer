@@ -17,6 +17,7 @@ pub struct CreateSessionCommand {
     pub system_prompt: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
     pub model: Option<String>,
+    pub catalogs: Vec<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -27,8 +28,10 @@ impl Command for CreateSessionCommand {
             metadata: self.metadata.clone(),
         };
 
+        let catalog_paths = self.normalize_catalog_paths();
+
         let default_model = if let Some(model_str) = &self.model {
-            let registry = steer_core::model_registry::ModelRegistry::load(&[])
+            let registry = steer_core::model_registry::ModelRegistry::load(&catalog_paths)
                 .map_err(|e| eyre!("Failed to load model registry: {}", e))?;
             registry
                 .resolve(model_str)
@@ -112,5 +115,23 @@ impl Command for CreateSessionCommand {
 
         println!("Created session: {session_id}");
         Ok(())
+    }
+}
+
+impl CreateSessionCommand {
+    fn normalize_catalog_paths(&self) -> Vec<String> {
+        self.catalogs
+            .iter()
+            .map(|p| {
+                if !p.exists() {
+                    tracing::warn!("Catalog path does not exist: {}", p.display());
+                    p.to_string_lossy().to_string()
+                } else {
+                    p.canonicalize()
+                        .map(|c| c.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| p.to_string_lossy().to_string())
+                }
+            })
+            .collect()
     }
 }
