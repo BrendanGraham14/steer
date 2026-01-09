@@ -9,6 +9,7 @@ use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
 use steer_core::tools::ToolSystemBuilder;
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
+use steer_workspace::{LocalEnvironmentManager, LocalWorkspaceManager};
 use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 
@@ -21,12 +22,25 @@ pub async fn create_local_channel(
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     let (tx, rx) = oneshot::channel();
 
+    let workspace_root =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let workspace_manager = Arc::new(
+        LocalWorkspaceManager::new(workspace_root.clone())
+            .await
+            .map_err(|e| GrpcError::InvalidSessionState {
+                reason: format!("Failed to create workspace manager: {e}"),
+            })?,
+    );
+    let environment_manager = Arc::new(LocalEnvironmentManager::new(workspace_root));
+
     let service = RuntimeAgentService::new(
         runtime_service.handle(),
         catalog,
         llm_config_provider,
         model_registry,
         provider_registry,
+        environment_manager,
+        workspace_manager,
     );
     let svc = AgentServiceServer::new(service);
 

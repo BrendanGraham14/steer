@@ -13,6 +13,7 @@ pub use error::{
     WorkspaceManagerError, WorkspaceManagerResult,
 };
 pub use local_manager::LocalWorkspaceManager;
+pub use local::LocalEnvironmentManager;
 pub use manager::{
     CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
     EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, WorkspaceCreateStrategy,

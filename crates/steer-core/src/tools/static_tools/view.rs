@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::Tool;
-use super::workspace_op_error;
 use steer_tools::result::FileContentResult;
 use steer_tools::tools::view::ViewParams;
 

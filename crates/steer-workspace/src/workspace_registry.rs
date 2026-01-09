@@ -1,9 +1,11 @@
 use crate::error::WorkspaceManagerError;
 use crate::{EnvironmentId, WorkspaceId, WorkspaceInfo, WorkspaceManagerResult, VcsKind};
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqliteConnectOptions, SqlitePool};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
 pub struct WorkspaceRegistry {
     pool: SqlitePool,
 }
@@ -131,7 +133,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        row.map(self.row_to_workspace_info).transpose()
+        row.map(|row| self.row_to_workspace_info(row)).transpose()
     }
 
     pub async fn find_by_path(&self, path: &Path) -> WorkspaceManagerResult<Option<WorkspaceInfo>> {
@@ -147,7 +149,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        row.map(self.row_to_workspace_info).transpose()
+        row.map(|row| self.row_to_workspace_info(row)).transpose()
     }
 
     pub async fn list_workspaces(

@@ -3,6 +3,7 @@ package steer.agent.v1;
 
 import "google/protobuf/timestamp.proto";
 import "steer/common/v1/common.proto";
+import "steer/remote_workspace/v1/remote_workspace.proto";
 
 service AgentService {
   // Session management
@@ -30,6 +31,17 @@ service AgentService {
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc ResolveModel(ResolveModelRequest) returns (ResolveModelResponse);
   rpc GetProviderAuthStatus(GetProviderAuthStatusRequest) returns (GetProviderAuthStatusResponse);
+
+  // Workspace orchestration
+  rpc CreateWorkspace(CreateWorkspaceRequest) returns (CreateWorkspaceResponse);
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc GetWorkspaceStatus(GetWorkspaceStatusRequest) returns (GetWorkspaceStatusResponse);
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (DeleteWorkspaceResponse);
+
+  // Environment management
+  rpc CreateEnvironment(CreateEnvironmentRequest) returns (CreateEnvironmentResponse);
+  rpc GetEnvironment(GetEnvironmentRequest) returns (GetEnvironmentResponse);
+  rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (DeleteEnvironmentResponse);
 }
 
 // Event subscription
@@ -419,6 +431,112 @@ message SessionConfig {
   optional string system_prompt = 5;
   ModelSpec default_model = 6;
 }
+
+// Environment management
+message CreateEnvironmentRequest {
+  optional string root_path = 1;
+  optional string name = 2;
+}
+
+message EnvironmentDescriptor {
+  string environment_id = 1;
+  string root_path = 2;
+}
+
+message CreateEnvironmentResponse {
+  EnvironmentDescriptor environment = 1;
+}
+
+message GetEnvironmentRequest {
+  string environment_id = 1;
+}
+
+message GetEnvironmentResponse {
+  EnvironmentDescriptor environment = 1;
+}
+
+enum EnvironmentDeletePolicy {
+  ENVIRONMENT_DELETE_POLICY_UNSPECIFIED = 0;
+  ENVIRONMENT_DELETE_POLICY_HARD = 1;
+  ENVIRONMENT_DELETE_POLICY_SOFT = 2;
+}
+
+message DeleteEnvironmentRequest {
+  string environment_id = 1;
+  EnvironmentDeletePolicy policy = 2;
+}
+
+message DeleteEnvironmentResponse {}
+
+// Workspace orchestration
+message WorkspaceRef {
+  string environment_id = 1;
+  string workspace_id = 2;
+  string path = 3;
+  optional steer.remote_workspace.v1.VcsKind vcs_kind = 4;
+}
+
+message WorkspaceInfo {
+  string workspace_id = 1;
+  string environment_id = 2;
+  optional string parent_workspace_id = 3;
+  optional string name = 4;
+  string path = 5;
+  optional steer.remote_workspace.v1.VcsKind vcs_kind = 6;
+}
+
+message WorkspaceStatus {
+  string workspace_id = 1;
+  string environment_id = 2;
+  string path = 3;
+  optional steer.remote_workspace.v1.VcsInfo vcs = 4;
+}
+
+enum WorkspaceCreateStrategy {
+  WORKSPACE_CREATE_STRATEGY_UNSPECIFIED = 0;
+  WORKSPACE_CREATE_STRATEGY_JJ_WORKSPACE = 1;
+}
+
+message CreateWorkspaceRequest {
+  optional WorkspaceRef base = 1;
+  optional string name = 2;
+  optional string parent_workspace_id = 3;
+  WorkspaceCreateStrategy strategy = 4;
+}
+
+message CreateWorkspaceResponse {
+  WorkspaceInfo workspace = 1;
+}
+
+message ListWorkspacesRequest {
+  string environment_id = 1;
+  bool include_deleted = 2;
+}
+
+message ListWorkspacesResponse {
+  repeated WorkspaceInfo workspaces = 1;
+}
+
+message GetWorkspaceStatusRequest {
+  string workspace_id = 1;
+}
+
+message GetWorkspaceStatusResponse {
+  WorkspaceStatus status = 1;
+}
+
+enum WorkspaceDeletePolicy {
+  WORKSPACE_DELETE_POLICY_UNSPECIFIED = 0;
+  WORKSPACE_DELETE_POLICY_HARD = 1;
+  WORKSPACE_DELETE_POLICY_SOFT = 2;
+}
+
+message DeleteWorkspaceRequest {
+  string workspace_id = 1;
+  WorkspaceDeletePolicy policy = 2;
+}
+
+message DeleteWorkspaceResponse {}
 
 message SessionMetadata {
   map<string, string> labels = 1;

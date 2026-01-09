@@ -1,6 +1,7 @@
 use crate::grpc::conversions::{
-    message_to_proto, proto_to_model, proto_to_tool_config, proto_to_workspace_config,
-    session_event_to_proto, stream_delta_to_proto,
+    environment_descriptor_to_proto, message_to_proto, proto_to_model, proto_to_tool_config,
+    proto_to_workspace_config, session_event_to_proto, stream_delta_to_proto,
+    workspace_info_to_proto, workspace_status_to_proto,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,6 +10,7 @@ use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
+use steer_workspace::{EnvironmentManager, WorkspaceManager};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -21,6 +23,8 @@ pub struct RuntimeAgentService {
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
+    environment_manager: Arc<dyn EnvironmentManager>,
+    workspace_manager: Arc<dyn WorkspaceManager>,
 }
 
 impl RuntimeAgentService {
@@ -30,6 +34,8 @@ impl RuntimeAgentService {
         llm_config_provider: steer_core::config::LlmConfigProvider,
         model_registry: Arc<steer_core::model_registry::ModelRegistry>,
         provider_registry: Arc<steer_core::auth::ProviderRegistry>,
+        environment_manager: Arc<dyn EnvironmentManager>,
+        workspace_manager: Arc<dyn WorkspaceManager>,
     ) -> Self {
         Self {
             runtime,
@@ -37,6 +43,8 @@ impl RuntimeAgentService {
             llm_config_provider,
             model_registry,
             provider_registry,
+            environment_manager,
+            workspace_manager,
         }
     }
 
@@ -45,6 +53,77 @@ impl RuntimeAgentService {
         Uuid::parse_str(session_id)
             .map(SessionId::from)
             .map_err(|_| Status::invalid_argument(format!("Invalid session ID: {session_id}")))
+    }
+
+    fn parse_environment_id(environment_id: &str) -> Result<steer_workspace::EnvironmentId, Status> {
+        if environment_id.is_empty() {
+            return Ok(steer_workspace::EnvironmentId::local());
+        }
+        let id = Uuid::parse_str(environment_id).map_err(|_| {
+            Status::invalid_argument(format!("Invalid environment ID: {environment_id}"))
+        })?;
+        Ok(steer_workspace::EnvironmentId::from_uuid(id))
+    }
+
+    fn parse_workspace_id(workspace_id: &str) -> Result<steer_workspace::WorkspaceId, Status> {
+        let id = Uuid::parse_str(workspace_id).map_err(|_| {
+            Status::invalid_argument(format!("Invalid workspace ID: {workspace_id}"))
+        })?;
+        Ok(steer_workspace::WorkspaceId::from_uuid(id))
+    }
+
+    fn proto_to_workspace_ref(
+        reference: proto::WorkspaceRef,
+    ) -> Result<steer_workspace::WorkspaceRef, Status> {
+        let environment_id = Self::parse_environment_id(&reference.environment_id)?;
+        let workspace_id = Self::parse_workspace_id(&reference.workspace_id)?;
+        let vcs_kind = reference.vcs_kind.and_then(|value| {
+            match steer_proto::remote_workspace::v1::VcsKind::try_from(value) {
+                Ok(steer_proto::remote_workspace::v1::VcsKind::Git) => {
+                    Some(steer_workspace::VcsKind::Git)
+                }
+                Ok(steer_proto::remote_workspace::v1::VcsKind::Jj) => {
+                    Some(steer_workspace::VcsKind::Jj)
+                }
+                _ => None,
+            }
+        });
+        Ok(steer_workspace::WorkspaceRef {
+            environment_id,
+            workspace_id,
+            path: std::path::PathBuf::from(reference.path),
+            vcs_kind,
+        })
+    }
+
+    fn workspace_manager_error_to_status(err: steer_workspace::WorkspaceManagerError) -> Status {
+        match err {
+            steer_workspace::WorkspaceManagerError::NotFound(msg) => Status::not_found(msg),
+            steer_workspace::WorkspaceManagerError::NotSupported(msg) => {
+                Status::failed_precondition(msg)
+            }
+            steer_workspace::WorkspaceManagerError::InvalidRequest(msg) => {
+                Status::invalid_argument(msg)
+            }
+            steer_workspace::WorkspaceManagerError::Io(msg)
+            | steer_workspace::WorkspaceManagerError::Other(msg) => Status::internal(msg),
+        }
+    }
+
+    fn environment_manager_error_to_status(
+        err: steer_workspace::EnvironmentManagerError,
+    ) -> Status {
+        match err {
+            steer_workspace::EnvironmentManagerError::NotFound(msg) => Status::not_found(msg),
+            steer_workspace::EnvironmentManagerError::NotSupported(msg) => {
+                Status::failed_precondition(msg)
+            }
+            steer_workspace::EnvironmentManagerError::InvalidRequest(msg) => {
+                Status::invalid_argument(msg)
+            }
+            steer_workspace::EnvironmentManagerError::Io(msg)
+            | steer_workspace::EnvironmentManagerError::Other(msg) => Status::internal(msg),
+        }
     }
 }
 
@@ -930,5 +1009,181 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 req.input, e
             ))),
         }
+    }
+
+    async fn create_workspace(
+        &self,
+        request: Request<proto::CreateWorkspaceRequest>,
+    ) -> Result<Response<proto::CreateWorkspaceResponse>, Status> {
+        let req = request.into_inner();
+        let base = match req.base {
+            Some(reference) => Some(Self::proto_to_workspace_ref(reference)?),
+            None => None,
+        };
+        let parent_workspace_id = match req.parent_workspace_id {
+            Some(value) => Some(Self::parse_workspace_id(&value)?),
+            None => None,
+        };
+
+        let strategy = match proto::WorkspaceCreateStrategy::try_from(req.strategy) {
+            Ok(proto::WorkspaceCreateStrategy::JjWorkspace) => {
+                steer_workspace::WorkspaceCreateStrategy::JjWorkspace
+            }
+            _ => {
+                return Err(Status::invalid_argument(
+                    "Unsupported workspace create strategy",
+                ));
+            }
+        };
+
+        let request = steer_workspace::CreateWorkspaceRequest {
+            base,
+            name: req.name,
+            parent_workspace_id,
+            strategy,
+        };
+
+        let workspace = self
+            .workspace_manager
+            .create_workspace(request)
+            .await
+            .map_err(Self::workspace_manager_error_to_status)?;
+
+        Ok(Response::new(proto::CreateWorkspaceResponse {
+            workspace: Some(workspace_info_to_proto(&workspace)),
+        }))
+    }
+
+    async fn list_workspaces(
+        &self,
+        request: Request<proto::ListWorkspacesRequest>,
+    ) -> Result<Response<proto::ListWorkspacesResponse>, Status> {
+        let req = request.into_inner();
+        let environment_id = Self::parse_environment_id(&req.environment_id)?;
+
+        let workspaces = self
+            .workspace_manager
+            .list_workspaces(steer_workspace::ListWorkspacesRequest {
+                include_deleted: req.include_deleted,
+            })
+            .await
+            .map_err(Self::workspace_manager_error_to_status)?;
+
+        let filtered: Vec<_> = workspaces
+            .into_iter()
+            .filter(|workspace| workspace.environment_id == environment_id)
+            .collect();
+
+        Ok(Response::new(proto::ListWorkspacesResponse {
+            workspaces: filtered
+                .iter()
+                .map(workspace_info_to_proto)
+                .collect(),
+        }))
+    }
+
+    async fn get_workspace_status(
+        &self,
+        request: Request<proto::GetWorkspaceStatusRequest>,
+    ) -> Result<Response<proto::GetWorkspaceStatusResponse>, Status> {
+        let req = request.into_inner();
+        let workspace_id = Self::parse_workspace_id(&req.workspace_id)?;
+
+        let status = self
+            .workspace_manager
+            .get_workspace_status(workspace_id)
+            .await
+            .map_err(Self::workspace_manager_error_to_status)?;
+
+        Ok(Response::new(proto::GetWorkspaceStatusResponse {
+            status: Some(workspace_status_to_proto(&status)),
+        }))
+    }
+
+    async fn delete_workspace(
+        &self,
+        request: Request<proto::DeleteWorkspaceRequest>,
+    ) -> Result<Response<proto::DeleteWorkspaceResponse>, Status> {
+        let req = request.into_inner();
+        let workspace_id = Self::parse_workspace_id(&req.workspace_id)?;
+        let policy = match proto::WorkspaceDeletePolicy::try_from(req.policy) {
+            Ok(proto::WorkspaceDeletePolicy::Soft) => {
+                steer_workspace::WorkspaceDeletePolicy::Soft
+            }
+            Ok(proto::WorkspaceDeletePolicy::Hard) => {
+                steer_workspace::WorkspaceDeletePolicy::Hard
+            }
+            _ => steer_workspace::WorkspaceDeletePolicy::Hard,
+        };
+
+        self.workspace_manager
+            .delete_workspace(steer_workspace::DeleteWorkspaceRequest { workspace_id, policy })
+            .await
+            .map_err(Self::workspace_manager_error_to_status)?;
+
+        Ok(Response::new(proto::DeleteWorkspaceResponse {}))
+    }
+
+    async fn create_environment(
+        &self,
+        request: Request<proto::CreateEnvironmentRequest>,
+    ) -> Result<Response<proto::CreateEnvironmentResponse>, Status> {
+        let req = request.into_inner();
+        let request = steer_workspace::CreateEnvironmentRequest {
+            root: req.root_path.map(std::path::PathBuf::from),
+            name: req.name,
+        };
+
+        let env = self
+            .environment_manager
+            .create_environment(request)
+            .await
+            .map_err(Self::environment_manager_error_to_status)?;
+
+        Ok(Response::new(proto::CreateEnvironmentResponse {
+            environment: Some(environment_descriptor_to_proto(&env)),
+        }))
+    }
+
+    async fn get_environment(
+        &self,
+        request: Request<proto::GetEnvironmentRequest>,
+    ) -> Result<Response<proto::GetEnvironmentResponse>, Status> {
+        let req = request.into_inner();
+        let environment_id = Self::parse_environment_id(&req.environment_id)?;
+
+        let env = self
+            .environment_manager
+            .get_environment(environment_id)
+            .await
+            .map_err(Self::environment_manager_error_to_status)?;
+
+        Ok(Response::new(proto::GetEnvironmentResponse {
+            environment: Some(environment_descriptor_to_proto(&env)),
+        }))
+    }
+
+    async fn delete_environment(
+        &self,
+        request: Request<proto::DeleteEnvironmentRequest>,
+    ) -> Result<Response<proto::DeleteEnvironmentResponse>, Status> {
+        let req = request.into_inner();
+        let environment_id = Self::parse_environment_id(&req.environment_id)?;
+        let policy = match proto::EnvironmentDeletePolicy::try_from(req.policy) {
+            Ok(proto::EnvironmentDeletePolicy::Soft) => {
+                steer_workspace::EnvironmentDeletePolicy::Soft
+            }
+            Ok(proto::EnvironmentDeletePolicy::Hard) => {
+                steer_workspace::EnvironmentDeletePolicy::Hard
+            }
+            _ => steer_workspace::EnvironmentDeletePolicy::Hard,
+        };
+
+        self.environment_manager
+            .delete_environment(environment_id, policy)
+            .await
+            .map_err(Self::environment_manager_error_to_status)?;
+
+        Ok(Response::new(proto::DeleteEnvironmentResponse {}))
     }
 }

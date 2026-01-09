@@ -6186,6 +6186,7 @@ dependencies = [
  "steer-core",
  "steer-proto",
  "steer-tools",
+ "steer-workspace",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

@@ -15,6 +15,7 @@ use steer_core::auth::storage::AuthStorage;
 use steer_core::catalog::CatalogConfig;
 use steer_core::tools::ToolSystemBuilder;
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
+use steer_workspace::{LocalEnvironmentManager, LocalWorkspaceManager};
 
 #[derive(Clone)]
 pub struct ServiceHostConfig {
@@ -161,12 +162,25 @@ impl ServiceHost {
             });
         }
 
+        let workspace_root =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace_manager = Arc::new(
+            LocalWorkspaceManager::new(workspace_root.clone())
+                .await
+                .map_err(|e| GrpcError::InvalidSessionState {
+                    reason: format!("Failed to create workspace manager: {e}"),
+                })?,
+        );
+        let environment_manager = Arc::new(LocalEnvironmentManager::new(workspace_root));
+
         let service = RuntimeAgentService::new(
             self.runtime_handle.clone(),
             self.catalog.clone(),
             self.llm_config_provider.clone(),
             self.model_registry.clone(),
             self.provider_registry.clone(),
+            environment_manager,
+            workspace_manager,
         );
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();

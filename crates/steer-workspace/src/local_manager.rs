@@ -17,7 +17,6 @@ use crate::{
 use crate::workspace_registry::WorkspaceRegistry;
 
 use jj_lib::ref_name::WorkspaceNameBuf;
-use jj_lib::repo::Repo as _;
 use jj_lib::workspace::{Workspace as JjWorkspace, default_working_copy_factory};
 
 #[derive(Debug, Clone)]
@@ -214,26 +213,30 @@ impl WorkspaceManager for LocalWorkspaceManager {
             .map(|base| base.path.clone())
             .unwrap_or_else(|| self.root.clone());
         let jj_root = self.ensure_jj_repo(&base_path)?;
-        let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
-
         let workspace_id = WorkspaceId::new();
         let requested_name = request.name.unwrap_or_else(|| self.default_workspace_name(workspace_id));
         let jj_name = self.sanitize_name(&requested_name);
-        self.ensure_workspace_name_available(&repo, &jj_name)?;
 
         let parent_dir = self.workspace_parent_dir()?;
         std::fs::create_dir_all(&parent_dir)?;
         let workspace_path = self.ensure_unique_path(&parent_dir, &jj_name);
 
-        let working_copy_factory = default_working_copy_factory();
-        let _ = JjWorkspace::init_workspace_with_existing_repo(
-            &workspace_path,
-            workspace.repo_path(),
-            &repo,
-            &*working_copy_factory,
-            WorkspaceNameBuf::from(jj_name.as_str()),
-        )
-        .map_err(|e| WorkspaceManagerError::Other(format!("Failed to create jj workspace: {e}")))?;
+        {
+            let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
+            self.ensure_workspace_name_available(&repo, &jj_name)?;
+
+            let working_copy_factory = default_working_copy_factory();
+            let _ = JjWorkspace::init_workspace_with_existing_repo(
+                &workspace_path,
+                workspace.repo_path(),
+                &repo,
+                &*working_copy_factory,
+                WorkspaceNameBuf::from(jj_name.as_str()),
+            )
+            .map_err(|e| {
+                WorkspaceManagerError::Other(format!("Failed to create jj workspace: {e}"))
+            })?;
+        }
 
         let info = WorkspaceInfo {
             workspace_id,
@@ -315,26 +318,33 @@ impl WorkspaceManager for LocalWorkspaceManager {
                     .await?;
             }
             WorkspaceDeletePolicy::Hard => {
-                let jj_root = self.ensure_jj_repo(&info.path)?;
-                let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
-                let workspace_name = workspace.workspace_name().to_owned();
-                let mut tx = repo.start_transaction();
-                tx.repo_mut()
-                    .remove_wc_commit(&workspace_name)
+                {
+                    let jj_root = self.ensure_jj_repo(&info.path)?;
+                    let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
+                    let workspace_name = workspace.workspace_name().to_owned();
+                    let mut tx = repo.start_transaction();
+                    tx.repo_mut()
+                        .remove_wc_commit(&workspace_name)
+                        .map_err(|e| {
+                            WorkspaceManagerError::Other(format!(
+                                "Failed to remove jj workspace: {e}"
+                            ))
+                        })?;
+                    let workspace_name_ref: &jj_lib::ref_name::WorkspaceName =
+                        workspace_name.as_ref();
+                    tx.commit(format!(
+                        "forget workspace '{}'",
+                        workspace_name_ref.as_str()
+                    ))
                     .map_err(|e| {
                         WorkspaceManagerError::Other(format!(
-                            "Failed to remove jj workspace: {e}"
+                            "Failed to commit jj workspace removal: {e}"
                         ))
                     })?;
-                tx.commit(format!(
-                    "forget workspace '{}'",
-                    workspace_name.as_ref().as_str()
-                ))
-                .map_err(|e| {
-                    WorkspaceManagerError::Other(format!("Failed to commit jj workspace removal: {e}"))
-                })?;
 
-                std::fs::remove_dir_all(&info.path)?;
+                    std::fs::remove_dir_all(&info.path)?;
+                }
+
                 self.registry.delete_workspace(request.workspace_id).await?;
             }
         }

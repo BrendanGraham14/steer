@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use steer_core::app::conversation::{
     AssistantContent, Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
 };
-use steer_core::app::domain::SessionEvent;
+use steer_core::app::domain::{SessionEvent, StreamDelta, ToolCallDelta as CoreToolCallDelta};
 
 use steer_core::session::state::{
     ApprovalRules, BackendConfig, RemoteAuth, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
@@ -11,6 +11,7 @@ use steer_core::session::state::{
 };
 use steer_proto::agent::v1 as proto;
 use steer_proto::common::v1 as common;
+use steer_proto::remote_workspace::v1 as remote_proto;
 use steer_tools::ToolCall;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 
@@ -590,6 +591,169 @@ pub(crate) fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) ->
     }
 }
 
+pub(crate) fn environment_descriptor_to_proto(
+    descriptor: &steer_workspace::EnvironmentDescriptor,
+) -> proto::EnvironmentDescriptor {
+    proto::EnvironmentDescriptor {
+        environment_id: descriptor.environment_id.as_uuid().to_string(),
+        root_path: descriptor.root.to_string_lossy().to_string(),
+    }
+}
+
+pub(crate) fn workspace_info_to_proto(info: &steer_workspace::WorkspaceInfo) -> proto::WorkspaceInfo {
+    proto::WorkspaceInfo {
+        workspace_id: info.workspace_id.as_uuid().to_string(),
+        environment_id: info.environment_id.as_uuid().to_string(),
+        parent_workspace_id: info
+            .parent_workspace_id
+            .map(|id| id.as_uuid().to_string()),
+        name: info.name.clone(),
+        path: info.path.to_string_lossy().to_string(),
+        vcs_kind: info.vcs_kind.as_ref().map(|kind| match kind {
+            steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git as i32,
+            steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj as i32,
+        }),
+    }
+}
+
+pub(crate) fn workspace_status_to_proto(
+    status: &steer_workspace::WorkspaceStatus,
+) -> proto::WorkspaceStatus {
+    proto::WorkspaceStatus {
+        workspace_id: status.workspace_id.as_uuid().to_string(),
+        environment_id: status.environment_id.as_uuid().to_string(),
+        path: status.path.to_string_lossy().to_string(),
+        vcs: status.vcs.as_ref().map(vcs_info_to_proto),
+    }
+}
+
+fn vcs_info_to_proto(info: &steer_workspace::VcsInfo) -> remote_proto::VcsInfo {
+    let kind = match info.kind {
+        steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git,
+        steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj,
+    };
+
+    let status = match &info.status {
+        steer_workspace::VcsStatus::Git(status) => {
+            let head = status.head.as_ref().map(|head| {
+                let (kind, branch) = match head {
+                    steer_workspace::GitHead::Branch(branch) => {
+                        (remote_proto::GitHeadKind::Branch, Some(branch.clone()))
+                    }
+                    steer_workspace::GitHead::Detached => {
+                        (remote_proto::GitHeadKind::Detached, None)
+                    }
+                    steer_workspace::GitHead::Unborn => (remote_proto::GitHeadKind::Unborn, None),
+                };
+                remote_proto::GitHead {
+                    kind: kind as i32,
+                    branch,
+                }
+            });
+
+            let entries = status
+                .entries
+                .iter()
+                .map(|entry| remote_proto::GitStatusEntry {
+                    summary: match entry.summary {
+                        steer_workspace::GitStatusSummary::Added => {
+                            remote_proto::GitStatusSummary::Added as i32
+                        }
+                        steer_workspace::GitStatusSummary::Removed => {
+                            remote_proto::GitStatusSummary::Removed as i32
+                        }
+                        steer_workspace::GitStatusSummary::Modified => {
+                            remote_proto::GitStatusSummary::Modified as i32
+                        }
+                        steer_workspace::GitStatusSummary::TypeChange => {
+                            remote_proto::GitStatusSummary::TypeChange as i32
+                        }
+                        steer_workspace::GitStatusSummary::Renamed => {
+                            remote_proto::GitStatusSummary::Renamed as i32
+                        }
+                        steer_workspace::GitStatusSummary::Copied => {
+                            remote_proto::GitStatusSummary::Copied as i32
+                        }
+                        steer_workspace::GitStatusSummary::IntentToAdd => {
+                            remote_proto::GitStatusSummary::IntentToAdd as i32
+                        }
+                        steer_workspace::GitStatusSummary::Conflict => {
+                            remote_proto::GitStatusSummary::Conflict as i32
+                        }
+                    },
+                    path: entry.path.clone(),
+                })
+                .collect();
+
+            let recent_commits = status
+                .recent_commits
+                .iter()
+                .map(|commit| remote_proto::GitCommitSummary {
+                    id: commit.id.clone(),
+                    summary: commit.summary.clone(),
+                })
+                .collect();
+
+            let git_status = remote_proto::GitStatus {
+                head,
+                entries,
+                recent_commits,
+                error: status.error.clone(),
+            };
+            Some(remote_proto::vcs_info::Status::GitStatus(git_status))
+        }
+        steer_workspace::VcsStatus::Jj(status) => {
+            let changes = status
+                .changes
+                .iter()
+                .map(|change| remote_proto::JjChange {
+                    change_type: match change.change_type {
+                        steer_workspace::JjChangeType::Added => {
+                            remote_proto::JjChangeType::Added as i32
+                        }
+                        steer_workspace::JjChangeType::Removed => {
+                            remote_proto::JjChangeType::Removed as i32
+                        }
+                        steer_workspace::JjChangeType::Modified => {
+                            remote_proto::JjChangeType::Modified as i32
+                        }
+                    },
+                    path: change.path.clone(),
+                })
+                .collect();
+
+            let working_copy = status.working_copy.as_ref().map(|summary| remote_proto::JjCommitSummary {
+                change_id: summary.change_id.clone(),
+                commit_id: summary.commit_id.clone(),
+                description: summary.description.clone(),
+            });
+
+            let parents = status
+                .parents
+                .iter()
+                .map(|summary| remote_proto::JjCommitSummary {
+                    change_id: summary.change_id.clone(),
+                    commit_id: summary.commit_id.clone(),
+                    description: summary.description.clone(),
+                })
+                .collect();
+
+            let jj_status = remote_proto::JjStatus {
+                changes,
+                working_copy,
+                parents,
+                error: status.error.clone(),
+            };
+            Some(remote_proto::vcs_info::Status::JjStatus(jj_status))
+        }
+    };
+
+    remote_proto::VcsInfo {
+        kind: kind as i32,
+        root: info.root.to_string_lossy().to_string(),
+        status,
+    }
+}
 /// Convert from protobuf ToolFilter to internal ToolFilter
 pub(crate) fn proto_to_tool_filter(proto_filter: Option<proto::ToolFilter>) -> ToolFilter {
     match proto_filter {

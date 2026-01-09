@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app::{Message, MessageData};
-use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
 use crate::tools::{BackendRegistry, McpTransport, ToolBackend};
 use steer_tools::tools::read_only_workspace_tools;
 use steer_tools::{ToolCall, result::ToolResult};
