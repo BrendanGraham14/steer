@@ -96,15 +96,278 @@ impl CachedEnvironment {
     }
 }
 
+/// Supported version control systems
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VcsKind {
+    Git,
+    Jj,
+}
+
+impl VcsKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VcsKind::Git => "git",
+            VcsKind::Jj => "jj",
+        }
+    }
+}
+
+/// Trait for status types that can render LLM-readable summaries.
+pub trait LlmStatus {
+    fn as_llm_string(&self) -> String;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GitHead {
+    Branch(String),
+    Detached,
+    Unborn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GitStatusSummary {
+    Added,
+    Removed,
+    Modified,
+    TypeChange,
+    Renamed,
+    Copied,
+    IntentToAdd,
+    Conflict,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatusEntry {
+    pub summary: GitStatusSummary,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommitSummary {
+    pub id: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatus {
+    pub head: Option<GitHead>,
+    pub entries: Vec<GitStatusEntry>,
+    pub recent_commits: Vec<GitCommitSummary>,
+    pub error: Option<String>,
+}
+
+impl GitStatus {
+    pub fn new(
+        head: GitHead,
+        entries: Vec<GitStatusEntry>,
+        recent_commits: Vec<GitCommitSummary>,
+    ) -> Self {
+        Self {
+            head: Some(head),
+            entries,
+            recent_commits,
+            error: None,
+        }
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            head: None,
+            entries: Vec::new(),
+            recent_commits: Vec::new(),
+            error: Some(message.into()),
+        }
+    }
+}
+
+impl LlmStatus for GitStatus {
+    fn as_llm_string(&self) -> String {
+        if let Some(error) = &self.error {
+            return format!("Status unavailable: {error}");
+        }
+        let head = match &self.head {
+            Some(head) => head,
+            None => return "Status unavailable: missing git head".to_string(),
+        };
+
+        let mut result = String::new();
+        match head {
+            GitHead::Branch(branch) => {
+                result.push_str(&format!("Current branch: {branch}\n\n"));
+            }
+            GitHead::Detached => {
+                result.push_str("Current branch: HEAD (detached)\n\n");
+            }
+            GitHead::Unborn => {
+                result.push_str("Current branch: <unborn>\n\n");
+            }
+        }
+
+        result.push_str("Status:\n");
+        if self.entries.is_empty() {
+            result.push_str("Working tree clean\n");
+        } else {
+            for entry in &self.entries {
+                let (status_char, wt_char) = match entry.summary {
+                    GitStatusSummary::Added => (' ', '?'),
+                    GitStatusSummary::Removed => ('D', ' '),
+                    GitStatusSummary::Modified => ('M', ' '),
+                    GitStatusSummary::TypeChange => ('T', ' '),
+                    GitStatusSummary::Renamed => ('R', ' '),
+                    GitStatusSummary::Copied => ('C', ' '),
+                    GitStatusSummary::IntentToAdd => ('A', ' '),
+                    GitStatusSummary::Conflict => ('U', 'U'),
+                };
+                result.push_str(&format!("{status_char}{wt_char} {}\n", entry.path));
+            }
+        }
+
+        result.push_str("\nRecent commits:\n");
+        if self.recent_commits.is_empty() {
+            result.push_str("<no commits>\n");
+        } else {
+            for commit in &self.recent_commits {
+                result.push_str(&format!("{} {}\n", commit.id, commit.summary));
+            }
+        }
+
+        result
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum JjChangeType {
+    Added,
+    Removed,
+    Modified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JjChange {
+    pub change_type: JjChangeType,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JjCommitSummary {
+    pub change_id: String,
+    pub commit_id: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JjStatus {
+    pub changes: Vec<JjChange>,
+    pub working_copy: Option<JjCommitSummary>,
+    pub parents: Vec<JjCommitSummary>,
+    pub error: Option<String>,
+}
+
+impl JjStatus {
+    pub fn new(
+        changes: Vec<JjChange>,
+        working_copy: JjCommitSummary,
+        parents: Vec<JjCommitSummary>,
+    ) -> Self {
+        Self {
+            changes,
+            working_copy: Some(working_copy),
+            parents,
+            error: None,
+        }
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            changes: Vec::new(),
+            working_copy: None,
+            parents: Vec::new(),
+            error: Some(message.into()),
+        }
+    }
+}
+
+impl LlmStatus for JjStatus {
+    fn as_llm_string(&self) -> String {
+        if let Some(error) = &self.error {
+            return format!("Status unavailable: {error}");
+        }
+        let working_copy = match &self.working_copy {
+            Some(working_copy) => working_copy,
+            None => return "Status unavailable: missing jj working copy".to_string(),
+        };
+
+        let mut status = String::new();
+        status.push_str("Working copy changes:\n");
+        if self.changes.is_empty() {
+            status.push_str("<none>\n");
+        } else {
+            for change in &self.changes {
+                let status_char = match change.change_type {
+                    JjChangeType::Added => 'A',
+                    JjChangeType::Removed => 'D',
+                    JjChangeType::Modified => 'M',
+                };
+                status.push_str(&format!("{status_char} {}\n", change.path));
+            }
+        }
+        status.push_str(&format!(
+            "Working copy (@): {} {} {}\n",
+            working_copy.change_id, working_copy.commit_id, working_copy.description
+        ));
+
+        if self.parents.is_empty() {
+            status.push_str("Parent commit (@-): <none>\n");
+        } else {
+            for (index, parent) in self.parents.iter().enumerate() {
+                let marker = if index == 0 {
+                    "(@-)".to_string()
+                } else {
+                    format!("(@-{})", index + 1)
+                };
+                status.push_str(&format!(
+                    "Parent commit {marker}: {} {} {}\n",
+                    parent.change_id, parent.commit_id, parent.description
+                ));
+            }
+        }
+
+        status
+    }
+}
+
+/// VCS-specific status data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VcsStatus {
+    Git(GitStatus),
+    Jj(JjStatus),
+}
+
+impl LlmStatus for VcsStatus {
+    fn as_llm_string(&self) -> String {
+        match self {
+            VcsStatus::Git(status) => status.as_llm_string(),
+            VcsStatus::Jj(status) => status.as_llm_string(),
+        }
+    }
+}
+
+/// Version control information for a workspace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VcsInfo {
+    pub kind: VcsKind,
+    pub root: std::path::PathBuf,
+    pub status: VcsStatus,
+}
+
 /// Environment information for a workspace
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentInfo {
     pub working_directory: std::path::PathBuf,
-    pub is_git_repo: bool,
+    pub vcs: Option<VcsInfo>,
     pub platform: String,
     pub date: String,
     pub directory_structure: String,
-    pub git_status: Option<String>,
     pub readme_content: Option<String>,
     pub memory_file_name: Option<String>,
     pub memory_file_content: Option<String>,
@@ -119,9 +382,8 @@ pub const MAX_DIRECTORY_ITEMS: usize = 1000;
 impl EnvironmentInfo {
     /// Collect environment information for a given path
     pub fn collect_for_path(path: &std::path::Path) -> Result<Self> {
-        use crate::utils::{DirectoryStructureUtils, EnvironmentUtils, GitStatusUtils};
+        use crate::utils::{DirectoryStructureUtils, EnvironmentUtils, VcsUtils};
 
-        let is_git_repo = EnvironmentUtils::is_git_repo(path);
         let platform = EnvironmentUtils::get_platform().to_string();
         let date = EnvironmentUtils::get_current_date();
 
@@ -132,26 +394,19 @@ impl EnvironmentInfo {
         )?;
         debug!("directory_structure: {}", directory_structure);
 
-        let git_status = if is_git_repo {
-            GitStatusUtils::get_git_status(path).ok()
-        } else {
-            None
-        };
-
         let readme_content = EnvironmentUtils::read_readme(path);
-        let (memory_file_name, memory_file_content) =
-            match EnvironmentUtils::read_memory_file(path) {
-                Some((name, content)) => (Some(name), Some(content)),
-                None => (None, None),
-            };
+        let (memory_file_name, memory_file_content) = match EnvironmentUtils::read_memory_file(path)
+        {
+            Some((name, content)) => (Some(name), Some(content)),
+            None => (None, None),
+        };
 
         Ok(Self {
             working_directory: path.to_path_buf(),
-            is_git_repo,
+            vcs: VcsUtils::collect_vcs_info(path),
             platform,
             date,
             directory_structure,
-            git_status,
             readme_content,
             memory_file_name,
             memory_file_content,
@@ -160,10 +415,14 @@ impl EnvironmentInfo {
 
     /// Format environment info as context for system prompt
     pub fn as_context(&self) -> String {
+        let vcs_line = match &self.vcs {
+            Some(vcs) => format!("VCS: {} ({})", vcs.kind.as_str(), vcs.root.display()),
+            None => "VCS: none".to_string(),
+        };
         let mut context = format!(
-            "Here is useful information about the environment you are running in:\n<env>\nWorking directory: {}\nIs directory a git repo: {}\nPlatform: {}\nToday's date: {}\n</env>",
+            "Here is useful information about the environment you are running in:\n<env>\nWorking directory: {}\n{}\nPlatform: {}\nToday's date: {}\n</env>",
             self.working_directory.display(),
-            self.is_git_repo,
+            vcs_line,
             self.platform,
             self.date
         );
@@ -172,8 +431,13 @@ impl EnvironmentInfo {
             context.push_str(&format!("\n\n<file_structure>\nBelow is a snapshot of this project's file structure at the start of the conversation. The file structure may be filtered to omit `.gitignore`ed patterns. This snapshot will NOT update during the conversation.\n\n{}\n</file_structure>", self.directory_structure));
         }
 
-        if let Some(ref git_status) = self.git_status {
-            context.push_str(&format!("\n<git_status>\nThis is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.\n\n{git_status}\n</git_status>"));
+        if let Some(ref vcs) = self.vcs {
+            context.push_str(&format!(
+                "\n<vcs_status>\nThis is the VCS status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.\n\nVCS: {}\nRoot: {}\n\n{}\n</vcs_status>",
+                vcs.kind.as_str(),
+                vcs.root.display(),
+                vcs.status.as_llm_string()
+            ));
         }
 
         if let Some(ref readme) = self.readme_content {

@@ -8,10 +8,8 @@ use tonic::{Request, Response, Status};
 use steer_tools::tools::workspace_tools;
 use steer_tools::traits::ExecutableTool;
 use steer_tools::{ExecutionContext, ToolError};
-use steer_workspace::utils::{
-    DirectoryStructureUtils, EnvironmentUtils, FileListingUtils, GitStatusUtils,
-};
-use steer_workspace::{MAX_DIRECTORY_DEPTH, MAX_DIRECTORY_ITEMS};
+use steer_workspace::utils::FileListingUtils;
+use steer_workspace::{EnvironmentInfo, VcsInfo, VcsKind, VcsStatus};
 
 use crate::proto::{
     ExecuteToolRequest, ExecuteToolResponse, GetAgentInfoRequest, GetAgentInfoResponse,
@@ -115,6 +113,137 @@ impl RemoteWorkspaceService {
             kind: kind as i32,
             tool_name,
             message,
+        }
+    }
+
+    fn convert_vcs_to_proto(info: VcsInfo) -> crate::proto::VcsInfo {
+        let kind = match info.kind {
+            VcsKind::Git => crate::proto::VcsKind::Git,
+            VcsKind::Jj => crate::proto::VcsKind::Jj,
+        };
+
+        let status = match info.status {
+            VcsStatus::Git(status) => {
+                let head = status.head.map(|head| {
+                    let (kind, branch) = match head {
+                        steer_workspace::GitHead::Branch(branch) => {
+                            (crate::proto::GitHeadKind::Branch, Some(branch))
+                        }
+                        steer_workspace::GitHead::Detached => {
+                            (crate::proto::GitHeadKind::Detached, None)
+                        }
+                        steer_workspace::GitHead::Unborn => {
+                            (crate::proto::GitHeadKind::Unborn, None)
+                        }
+                    };
+                    crate::proto::GitHead {
+                        kind: kind as i32,
+                        branch,
+                    }
+                });
+
+                let entries = status
+                    .entries
+                    .into_iter()
+                    .map(|entry| crate::proto::GitStatusEntry {
+                        summary: match entry.summary {
+                            steer_workspace::GitStatusSummary::Added => {
+                                crate::proto::GitStatusSummary::Added as i32
+                            }
+                            steer_workspace::GitStatusSummary::Removed => {
+                                crate::proto::GitStatusSummary::Removed as i32
+                            }
+                            steer_workspace::GitStatusSummary::Modified => {
+                                crate::proto::GitStatusSummary::Modified as i32
+                            }
+                            steer_workspace::GitStatusSummary::TypeChange => {
+                                crate::proto::GitStatusSummary::TypeChange as i32
+                            }
+                            steer_workspace::GitStatusSummary::Renamed => {
+                                crate::proto::GitStatusSummary::Renamed as i32
+                            }
+                            steer_workspace::GitStatusSummary::Copied => {
+                                crate::proto::GitStatusSummary::Copied as i32
+                            }
+                            steer_workspace::GitStatusSummary::IntentToAdd => {
+                                crate::proto::GitStatusSummary::IntentToAdd as i32
+                            }
+                            steer_workspace::GitStatusSummary::Conflict => {
+                                crate::proto::GitStatusSummary::Conflict as i32
+                            }
+                        },
+                        path: entry.path,
+                    })
+                    .collect();
+
+                let recent_commits = status
+                    .recent_commits
+                    .into_iter()
+                    .map(|commit| crate::proto::GitCommitSummary {
+                        id: commit.id,
+                        summary: commit.summary,
+                    })
+                    .collect();
+
+                crate::proto::vcs_info::Status::GitStatus(crate::proto::GitStatus {
+                    head,
+                    entries,
+                    recent_commits,
+                    error: status.error,
+                })
+            }
+            VcsStatus::Jj(status) => {
+                let changes = status
+                    .changes
+                    .into_iter()
+                    .map(|change| crate::proto::JjChange {
+                        change_type: match change.change_type {
+                            steer_workspace::JjChangeType::Added => {
+                                crate::proto::JjChangeType::Added as i32
+                            }
+                            steer_workspace::JjChangeType::Removed => {
+                                crate::proto::JjChangeType::Removed as i32
+                            }
+                            steer_workspace::JjChangeType::Modified => {
+                                crate::proto::JjChangeType::Modified as i32
+                            }
+                        },
+                        path: change.path,
+                    })
+                    .collect();
+
+                let working_copy =
+                    status
+                        .working_copy
+                        .map(|commit| crate::proto::JjCommitSummary {
+                            change_id: commit.change_id,
+                            commit_id: commit.commit_id,
+                            description: commit.description,
+                        });
+
+                let parents = status
+                    .parents
+                    .into_iter()
+                    .map(|commit| crate::proto::JjCommitSummary {
+                        change_id: commit.change_id,
+                        commit_id: commit.commit_id,
+                        description: commit.description,
+                    })
+                    .collect();
+
+                crate::proto::vcs_info::Status::JjStatus(crate::proto::JjStatus {
+                    changes,
+                    working_copy,
+                    parents,
+                    error: status.error,
+                })
+            }
+        };
+
+        crate::proto::VcsInfo {
+            kind: kind as i32,
+            root: info.root.to_string_lossy().to_string(),
+            status: Some(status),
         }
     }
 
@@ -277,20 +406,6 @@ impl RemoteWorkspaceService {
                 None
             }
         }
-    }
-
-    /// Get directory structure for environment info
-    fn get_directory_structure(&self) -> Result<String, std::io::Error> {
-        DirectoryStructureUtils::get_directory_structure(
-            &self.working_dir,
-            MAX_DIRECTORY_DEPTH,
-            Some(MAX_DIRECTORY_ITEMS),
-        )
-    }
-
-    /// Get git status information
-    async fn get_git_status(&self) -> Result<String, std::io::Error> {
-        GitStatusUtils::get_git_status(&self.working_dir)
     }
 }
 
@@ -490,47 +605,20 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             self.working_dir.to_string_lossy().to_string()
         };
 
-        // Check if it's a git repo
-        let is_git_repo = EnvironmentUtils::is_git_repo(Path::new(&working_directory));
-
-        // Get platform information
-        let platform = EnvironmentUtils::get_platform().to_string();
-
-        // Get current date
-        let date = EnvironmentUtils::get_current_date();
-
-        // Get directory structure (simplified for now)
-        let directory_structure = self.get_directory_structure().unwrap_or_else(|_| {
-            format!("Failed to read directory structure from {working_directory}")
-        });
-
-        // Get git status if it's a git repo
-        let git_status = if is_git_repo {
-            self.get_git_status().await.ok()
-        } else {
-            None
-        };
-
-        // Read README.md if it exists
-        let readme_content = EnvironmentUtils::read_readme(Path::new(&working_directory));
-
-        // Read AGENTS.md if it exists, otherwise fall back to CLAUDE.md
-        let (memory_file_name, memory_file_content) =
-            match EnvironmentUtils::read_memory_file(Path::new(&working_directory)) {
-                Some((name, content)) => (Some(name), Some(content)),
-                None => (None, None),
-            };
+        let env_info = EnvironmentInfo::collect_for_path(Path::new(&working_directory))
+            .map_err(|e| Status::internal(format!("Failed to collect environment info: {e}")))?;
 
         let response = crate::proto::GetEnvironmentInfoResponse {
-            working_directory,
-            is_git_repo,
-            platform,
-            date,
-            directory_structure,
-            git_status,
-            readme_content,
-            memory_file_content,
-            memory_file_name,
+            working_directory: env_info.working_directory.to_string_lossy().to_string(),
+            vcs: env_info
+                .vcs
+                .map(RemoteWorkspaceService::convert_vcs_to_proto),
+            platform: env_info.platform,
+            date: env_info.date,
+            directory_structure: env_info.directory_structure,
+            readme_content: env_info.readme_content,
+            memory_file_content: env_info.memory_file_content,
+            memory_file_name: env_info.memory_file_name,
         };
 
         Ok(Response::new(response))

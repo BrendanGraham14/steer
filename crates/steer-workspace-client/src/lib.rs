@@ -16,8 +16,9 @@ use steer_tools::{
     tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation},
 };
 use steer_workspace::{
-    EnvironmentInfo, RemoteAuth, Result, Workspace, WorkspaceError, WorkspaceMetadata,
-    WorkspaceType,
+    EnvironmentInfo, GitCommitSummary, GitHead, GitStatus, GitStatusEntry, GitStatusSummary,
+    JjChange, JjChangeType, JjCommitSummary, JjStatus, RemoteAuth, Result, VcsInfo, VcsKind,
+    VcsStatus, Workspace, WorkspaceError, WorkspaceMetadata, WorkspaceType,
 };
 
 /// Serializable version of ExecutionContext for remote transmission
@@ -220,14 +221,137 @@ impl RemoteWorkspace {
         response: GetEnvironmentInfoResponse,
     ) -> Result<EnvironmentInfo> {
         use std::path::PathBuf;
+        use steer_proto::remote_workspace::v1::{
+            GitHeadKind as ProtoGitHeadKind, GitStatusSummary as ProtoGitStatusSummary,
+            JjChangeType as ProtoJjChangeType, VcsKind as ProtoVcsKind, vcs_info,
+        };
+
+        let vcs = response.vcs.and_then(|vcs| {
+            let kind = match ProtoVcsKind::try_from(vcs.kind).ok()? {
+                ProtoVcsKind::Git => VcsKind::Git,
+                ProtoVcsKind::Jj => VcsKind::Jj,
+                ProtoVcsKind::Unspecified => return None,
+            };
+
+            let status = match vcs.status {
+                Some(vcs_info::Status::GitStatus(status)) => {
+                    let head = status.head.and_then(|head| {
+                        let kind = ProtoGitHeadKind::try_from(head.kind).ok()?;
+                        match kind {
+                            ProtoGitHeadKind::Branch => {
+                                Some(GitHead::Branch(head.branch.unwrap_or_default()))
+                            }
+                            ProtoGitHeadKind::Detached => Some(GitHead::Detached),
+                            ProtoGitHeadKind::Unborn => Some(GitHead::Unborn),
+                            ProtoGitHeadKind::Unspecified => None,
+                        }
+                    });
+
+                    let entries = status
+                        .entries
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let summary = match ProtoGitStatusSummary::try_from(entry.summary)
+                                .ok()?
+                            {
+                                ProtoGitStatusSummary::Added => GitStatusSummary::Added,
+                                ProtoGitStatusSummary::Removed => GitStatusSummary::Removed,
+                                ProtoGitStatusSummary::Modified => GitStatusSummary::Modified,
+                                ProtoGitStatusSummary::TypeChange => GitStatusSummary::TypeChange,
+                                ProtoGitStatusSummary::Renamed => GitStatusSummary::Renamed,
+                                ProtoGitStatusSummary::Copied => GitStatusSummary::Copied,
+                                ProtoGitStatusSummary::IntentToAdd => GitStatusSummary::IntentToAdd,
+                                ProtoGitStatusSummary::Conflict => GitStatusSummary::Conflict,
+                                ProtoGitStatusSummary::Unspecified => return None,
+                            };
+                            Some(GitStatusEntry {
+                                summary,
+                                path: entry.path,
+                            })
+                        })
+                        .collect();
+
+                    let recent_commits = status
+                        .recent_commits
+                        .into_iter()
+                        .map(|commit| GitCommitSummary {
+                            id: commit.id,
+                            summary: commit.summary,
+                        })
+                        .collect();
+
+                    VcsStatus::Git(GitStatus {
+                        head,
+                        entries,
+                        recent_commits,
+                        error: status.error,
+                    })
+                }
+                Some(vcs_info::Status::JjStatus(status)) => {
+                    let changes = status
+                        .changes
+                        .into_iter()
+                        .filter_map(|change| {
+                            let change_type =
+                                match ProtoJjChangeType::try_from(change.change_type).ok()? {
+                                    ProtoJjChangeType::Added => JjChangeType::Added,
+                                    ProtoJjChangeType::Removed => JjChangeType::Removed,
+                                    ProtoJjChangeType::Modified => JjChangeType::Modified,
+                                    ProtoJjChangeType::Unspecified => return None,
+                                };
+                            Some(JjChange {
+                                change_type,
+                                path: change.path,
+                            })
+                        })
+                        .collect();
+
+                    let working_copy = status.working_copy.map(|commit| JjCommitSummary {
+                        change_id: commit.change_id,
+                        commit_id: commit.commit_id,
+                        description: commit.description,
+                    });
+
+                    let parents = status
+                        .parents
+                        .into_iter()
+                        .map(|commit| JjCommitSummary {
+                            change_id: commit.change_id,
+                            commit_id: commit.commit_id,
+                            description: commit.description,
+                        })
+                        .collect();
+
+                    VcsStatus::Jj(JjStatus {
+                        changes,
+                        working_copy,
+                        parents,
+                        error: status.error,
+                    })
+                }
+                None => match kind {
+                    VcsKind::Git => {
+                        VcsStatus::Git(GitStatus::unavailable("missing git status".to_string()))
+                    }
+                    VcsKind::Jj => {
+                        VcsStatus::Jj(JjStatus::unavailable("missing jj status".to_string()))
+                    }
+                },
+            };
+
+            Some(VcsInfo {
+                kind,
+                root: PathBuf::from(vcs.root),
+                status,
+            })
+        });
 
         Ok(EnvironmentInfo {
             working_directory: PathBuf::from(response.working_directory),
-            is_git_repo: response.is_git_repo,
+            vcs,
             platform: response.platform,
             date: response.date,
             directory_structure: response.directory_structure,
-            git_status: response.git_status,
             readme_content: response.readme_content,
             memory_file_name: response.memory_file_name,
             memory_file_content: response.memory_file_content,
@@ -483,6 +607,7 @@ fn convert_error_detail_to_tool_error(detail: ToolErrorDetail) -> steer_tools::T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use steer_workspace::LlmStatus;
 
     #[tokio::test]
     async fn test_remote_workspace_metadata() {
@@ -505,11 +630,26 @@ mod tests {
 
         let response = GetEnvironmentInfoResponse {
             working_directory: "/home/user/project".to_string(),
-            is_git_repo: true,
+            vcs: Some(steer_proto::remote_workspace::v1::VcsInfo {
+                kind: steer_proto::remote_workspace::v1::VcsKind::Git as i32,
+                root: "/home/user/project".to_string(),
+                status: Some(
+                    steer_proto::remote_workspace::v1::vcs_info::Status::GitStatus(
+                        steer_proto::remote_workspace::v1::GitStatus {
+                            head: Some(steer_proto::remote_workspace::v1::GitHead {
+                                kind: steer_proto::remote_workspace::v1::GitHeadKind::Branch as i32,
+                                branch: Some("main".to_string()),
+                            }),
+                            entries: Vec::new(),
+                            recent_commits: Vec::new(),
+                            error: None,
+                        },
+                    ),
+                ),
+            }),
             platform: "linux".to_string(),
             date: "2025-06-17".to_string(),
             directory_structure: "project/\nsrc/\nmain.rs\n".to_string(),
-            git_status: Some("Current branch: main\n\nStatus:\nWorking tree clean\n".to_string()),
             readme_content: Some("# My Project".to_string()),
             memory_file_content: None,
             memory_file_name: None,
@@ -522,13 +662,25 @@ mod tests {
             env_info.working_directory,
             PathBuf::from("/home/user/project")
         );
-        assert!(env_info.is_git_repo);
+        assert!(matches!(
+            env_info.vcs,
+            Some(VcsInfo {
+                kind: VcsKind::Git,
+                ..
+            })
+        ));
         assert_eq!(env_info.platform, "linux");
         assert_eq!(env_info.date, "2025-06-17");
         assert_eq!(env_info.directory_structure, "project/\nsrc/\nmain.rs\n");
         assert_eq!(
-            env_info.git_status,
-            Some("Current branch: main\n\nStatus:\nWorking tree clean\n".to_string())
+            env_info
+                .vcs
+                .as_ref()
+                .map(|vcs| vcs.status.as_llm_string()),
+            Some(
+                "Current branch: main\n\nStatus:\nWorking tree clean\n\nRecent commits:\n<no commits>\n"
+                    .to_string()
+            )
         );
         assert_eq!(env_info.readme_content, Some("# My Project".to_string()));
         assert_eq!(env_info.memory_file_content, None);

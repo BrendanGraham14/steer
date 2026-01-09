@@ -19,10 +19,12 @@ service RemoteWorkspaceService {
   rpc GetToolSchemas(GetToolSchemasRequest) returns (GetToolSchemasResponse);
 
   // Get tool approval requirements
-  rpc GetToolApprovalRequirements(GetToolApprovalRequirementsRequest) returns (GetToolApprovalRequirementsResponse);
+  rpc GetToolApprovalRequirements(GetToolApprovalRequirementsRequest)
+      returns (GetToolApprovalRequirementsResponse);
 
   // Get environment information for the remote workspace
-  rpc GetEnvironmentInfo(GetEnvironmentInfoRequest) returns (GetEnvironmentInfoResponse);
+  rpc GetEnvironmentInfo(GetEnvironmentInfoRequest)
+      returns (GetEnvironmentInfoResponse);
 
   // List files in the workspace for fuzzy finding
   rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
@@ -38,10 +40,10 @@ message ExecuteToolRequest {
 
 message ExecuteToolResponse {
   bool success = 1;
-  
+
   oneof result {
-    string string_result = 2;  // Legacy/simple tools
-    TypedToolResult typed_result = 3;  // External tools with JSON
+    string string_result = 2;         // Legacy/simple tools
+    TypedToolResult typed_result = 3; // External tools with JSON
     steer.common.v1.SearchResult search_result = 4;
     steer.common.v1.FileListResult file_list_result = 5;
     steer.common.v1.FileContentResult file_content_result = 6;
@@ -51,21 +53,21 @@ message ExecuteToolResponse {
     steer.common.v1.TodoListResult todo_list_result = 10;
     steer.common.v1.TodoWriteResult todo_write_result = 11;
   }
-  
+
   string error = 12;
   google.protobuf.Timestamp started_at = 13;
   google.protobuf.Timestamp completed_at = 14;
   map<string, string> metadata = 15;
-  
+
   // Typed tool error details for domain failures (success=false)
   optional ToolErrorDetail error_detail = 16;
 }
 
 // Generic typed result for external tools
 message TypedToolResult {
-  bytes json_data = 1;  // JSON-encoded result implementing ToolOutput
-  string type_name = 2;  // Type name (e.g., "CustomSearchResult")
-  optional string summary = 3;  // Optional brief summary for display
+  bytes json_data = 1;         // JSON-encoded result implementing ToolOutput
+  string type_name = 2;        // Type name (e.g., "CustomSearchResult")
+  optional string summary = 3; // Optional brief summary for display
 }
 
 // Typed error payload for tool failures
@@ -97,7 +99,6 @@ message GetAgentInfoResponse {
 
 message HealthRequest {}
 
-
 message HealthResponse {
   HealthStatus status = 1;
   string message = 2;
@@ -121,14 +122,10 @@ message ToolSchema {
 }
 
 // Response containing all tool schemas
-message GetToolSchemasResponse {
-  repeated ToolSchema tools = 1;
-}
+message GetToolSchemasResponse { repeated ToolSchema tools = 1; }
 
 // Request for tool approval requirements
-message GetToolApprovalRequirementsRequest {
-  repeated string tool_names = 1;
-}
+message GetToolApprovalRequirementsRequest { repeated string tool_names = 1; }
 
 // Response containing tool approval requirements
 message GetToolApprovalRequirementsResponse {
@@ -142,23 +139,105 @@ message GetEnvironmentInfoRequest {
   optional string working_directory = 1;
 }
 
+// Supported version control systems
+enum VcsKind {
+  VCS_KIND_UNSPECIFIED = 0;
+  VCS_KIND_GIT = 1;
+  VCS_KIND_JJ = 2;
+}
+
+enum GitHeadKind {
+  GIT_HEAD_KIND_UNSPECIFIED = 0;
+  GIT_HEAD_KIND_BRANCH = 1;
+  GIT_HEAD_KIND_DETACHED = 2;
+  GIT_HEAD_KIND_UNBORN = 3;
+}
+
+message GitHead {
+  GitHeadKind kind = 1;
+  optional string branch = 2;
+}
+
+enum GitStatusSummary {
+  GIT_STATUS_SUMMARY_UNSPECIFIED = 0;
+  GIT_STATUS_SUMMARY_ADDED = 1;
+  GIT_STATUS_SUMMARY_REMOVED = 2;
+  GIT_STATUS_SUMMARY_MODIFIED = 3;
+  GIT_STATUS_SUMMARY_TYPE_CHANGE = 4;
+  GIT_STATUS_SUMMARY_RENAMED = 5;
+  GIT_STATUS_SUMMARY_COPIED = 6;
+  GIT_STATUS_SUMMARY_INTENT_TO_ADD = 7;
+  GIT_STATUS_SUMMARY_CONFLICT = 8;
+}
+
+message GitStatusEntry {
+  GitStatusSummary summary = 1;
+  string path = 2;
+}
+
+message GitCommitSummary {
+  string id = 1;
+  string summary = 2;
+}
+
+message GitStatus {
+  GitHead head = 1;
+  repeated GitStatusEntry entries = 2;
+  repeated GitCommitSummary recent_commits = 3;
+  optional string error = 4;
+}
+
+enum JjChangeType {
+  JJ_CHANGE_TYPE_UNSPECIFIED = 0;
+  JJ_CHANGE_TYPE_ADDED = 1;
+  JJ_CHANGE_TYPE_REMOVED = 2;
+  JJ_CHANGE_TYPE_MODIFIED = 3;
+}
+
+message JjChange {
+  JjChangeType change_type = 1;
+  string path = 2;
+}
+
+message JjCommitSummary {
+  string change_id = 1;
+  string commit_id = 2;
+  string description = 3;
+}
+
+message JjStatus {
+  repeated JjChange changes = 1;
+  JjCommitSummary working_copy = 2;
+  repeated JjCommitSummary parents = 3;
+  optional string error = 4;
+}
+
+// Version control information
+message VcsInfo {
+  VcsKind kind = 1;
+  string root = 2;
+  oneof status {
+    GitStatus git_status = 3;
+    JjStatus jj_status = 4;
+  }
+}
+
 // Response containing environment information
 message GetEnvironmentInfoResponse {
   string working_directory = 1;
-  bool is_git_repo = 2;
+  VcsInfo vcs = 2;
   string platform = 3;
   string date = 4;
   string directory_structure = 5;
-  optional string git_status = 6;
-  optional string readme_content = 7;
-  optional string memory_file_content = 8;
-  optional string memory_file_name = 9;
+  optional string readme_content = 6;
+  optional string memory_file_content = 7;
+  optional string memory_file_name = 8;
 }
 
 // File listing for fuzzy finder
 message ListFilesRequest {
-  string query = 1;        // optional fuzzy query (empty = full list)
-  uint32 max_results = 2;  // 0 = unlimited
+  string query = 1;       // optional fuzzy query (empty = full list)
+  uint32 max_results = 2; // 0 = unlimited
 }
 
 message ListFilesResponse {

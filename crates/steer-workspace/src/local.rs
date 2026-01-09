@@ -198,7 +198,7 @@ mod tests {
 
         // Should be identical
         assert_eq!(env1.working_directory, env2.working_directory);
-        assert_eq!(env1.is_git_repo, env2.is_git_repo);
+        assert_eq!(env1.vcs.is_some(), env2.vcs.is_some());
         assert_eq!(env1.platform, env2.platform);
     }
 

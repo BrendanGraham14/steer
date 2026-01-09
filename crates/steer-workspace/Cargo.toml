@@ -33,6 +33,7 @@ tracing = "0.1"
 gethostname = "0.5"
 prost = "0.13"
 prost-types = "0.13"
+jj-lib = "0.35.0"
 
 [dev-dependencies]
 tempfile = "3.20.0"
