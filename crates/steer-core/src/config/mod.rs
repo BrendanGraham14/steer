@@ -112,6 +112,7 @@ pub enum ApiAuth {
 #[derive(Clone)]
 pub struct LlmConfigProvider {
     storage: Arc<dyn AuthStorage>,
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 impl std::fmt::Debug for LlmConfigProvider {
@@ -123,16 +124,32 @@ impl std::fmt::Debug for LlmConfigProvider {
 impl LlmConfigProvider {
     /// Create a new LlmConfigProvider with the given auth storage
     pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            env_provider: Arc::new(StdEnvProvider),
+        }
+    }
+
+    /// Create a new LlmConfigProvider with a custom env provider (useful for tests).
+    #[cfg(test)]
+    fn with_env_provider(
+        storage: Arc<dyn AuthStorage>,
+        env_provider: Arc<dyn EnvProvider>,
+    ) -> Self {
+        Self {
+            storage,
+            env_provider,
+        }
     }
 
     /// Get authentication for a specific provider ID
     pub async fn get_auth_for_provider(&self, provider_id: &ProviderId) -> Result<Option<ApiAuth>> {
         if provider_id.as_str() == self::provider::ANTHROPIC_ID {
             // API key via env var > OAuth > stored API key
-            let anthropic_key = std::env::var("CLAUDE_API_KEY")
-                .ok()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+            let anthropic_key = self
+                .env_provider
+                .var("CLAUDE_API_KEY")
+                .or_else(|| self.env_provider.var("ANTHROPIC_API_KEY"));
             if let Some(key) = anthropic_key {
                 Ok(Some(ApiAuth::Key(key)))
             } else if self
@@ -172,7 +189,7 @@ impl LlmConfigProvider {
                 .is_some()
             {
                 Ok(Some(ApiAuth::OAuth))
-            } else if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            } else if let Some(key) = self.env_provider.var("OPENAI_API_KEY") {
                 Ok(Some(ApiAuth::Key(key)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                 .storage
@@ -188,8 +205,10 @@ impl LlmConfigProvider {
             }
         } else if provider_id.as_str() == self::provider::GOOGLE_ID {
             // API key via env var > stored API key
-            if let Ok(key) =
-                std::env::var("GEMINI_API_KEY").or_else(|_| std::env::var("GOOGLE_API_KEY"))
+            if let Some(key) = self
+                .env_provider
+                .var("GEMINI_API_KEY")
+                .or_else(|| self.env_provider.var("GOOGLE_API_KEY"))
             {
                 Ok(Some(ApiAuth::Key(key)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
@@ -206,7 +225,10 @@ impl LlmConfigProvider {
             }
         } else if provider_id.as_str() == self::provider::XAI_ID {
             // API key via env var > stored API key
-            if let Ok(key) = std::env::var("XAI_API_KEY").or_else(|_| std::env::var("GROK_API_KEY"))
+            if let Some(key) = self
+                .env_provider
+                .var("XAI_API_KEY")
+                .or_else(|| self.env_provider.var("GROK_API_KEY"))
             {
                 Ok(Some(ApiAuth::Key(key)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
@@ -248,21 +270,36 @@ pub mod model;
 pub mod provider;
 pub mod toml_types;
 
+trait EnvProvider: Send + Sync {
+    fn var(&self, key: &str) -> Option<String>;
+}
+
+#[derive(Clone)]
+struct StdEnvProvider;
+
+impl EnvProvider for StdEnvProvider {
+    fn var(&self, key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::auth::AuthTokens;
     use crate::test_utils::InMemoryAuthStorage;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{Duration, SystemTime};
 
-    struct EnvGuard {
-        key: &'static str,
+    #[derive(Clone, Default)]
+    struct TestEnvProvider {
+        vars: HashMap<String, String>,
     }
 
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            std::env::remove_var(self.key);
+    impl EnvProvider for TestEnvProvider {
+        fn var(&self, key: &str) -> Option<String> {
+            self.vars.get(key).cloned()
         }
     }
 
@@ -291,12 +328,10 @@ mod tests {
             .await
             .unwrap();
 
-        std::env::set_var("OPENAI_API_KEY", "env-key");
-        let _guard = EnvGuard {
-            key: "OPENAI_API_KEY",
-        };
-
-        let provider = LlmConfigProvider::new(storage);
+        let mut env = TestEnvProvider::default();
+        env.vars
+            .insert("OPENAI_API_KEY".to_string(), "env-key".to_string());
+        let provider = LlmConfigProvider::with_env_provider(storage, Arc::new(env));
         let auth = provider
             .get_auth_for_provider(&provider::openai())
             .await
@@ -318,12 +353,10 @@ mod tests {
             .await
             .unwrap();
 
-        std::env::set_var("OPENAI_API_KEY", "env-key");
-        let _guard = EnvGuard {
-            key: "OPENAI_API_KEY",
-        };
-
-        let provider = LlmConfigProvider::new(storage);
+        let mut env = TestEnvProvider::default();
+        env.vars
+            .insert("OPENAI_API_KEY".to_string(), "env-key".to_string());
+        let provider = LlmConfigProvider::with_env_provider(storage, Arc::new(env));
         let auth = provider
             .get_auth_for_provider(&provider::openai())
             .await
