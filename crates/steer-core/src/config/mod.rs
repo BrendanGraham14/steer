@@ -161,8 +161,18 @@ impl LlmConfigProvider {
                 }
             }
         } else if provider_id.as_str() == self::provider::OPENAI_ID {
-            // API key via env var > stored API key
-            if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            // OAuth > env API key > stored API key
+            if self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::OAuth2,
+                )
+                .await?
+                .is_some()
+            {
+                Ok(Some(ApiAuth::OAuth))
+            } else if let Ok(key) = std::env::var("OPENAI_API_KEY") {
                 Ok(Some(ApiAuth::Key(key)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                 .storage
@@ -237,3 +247,90 @@ impl LlmConfigProvider {
 pub mod model;
 pub mod provider;
 pub mod toml_types;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthTokens;
+    use crate::test_utils::InMemoryAuthStorage;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    struct EnvGuard {
+        key: &'static str,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            std::env::remove_var(self.key);
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_oauth_takes_precedence() {
+        let storage = Arc::new(InMemoryAuthStorage::new());
+        storage
+            .set_credential(
+                "openai",
+                crate::auth::Credential::ApiKey {
+                    value: "stored-key".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        storage
+            .set_credential(
+                "openai",
+                crate::auth::Credential::OAuth2(AuthTokens {
+                    access_token: "token".to_string(),
+                    refresh_token: "refresh".to_string(),
+                    expires_at: SystemTime::now() + Duration::from_secs(3600),
+                }),
+            )
+            .await
+            .unwrap();
+
+        std::env::set_var("OPENAI_API_KEY", "env-key");
+        let _guard = EnvGuard {
+            key: "OPENAI_API_KEY",
+        };
+
+        let provider = LlmConfigProvider::new(storage);
+        let auth = provider
+            .get_auth_for_provider(&provider::openai())
+            .await
+            .unwrap();
+
+        assert!(matches!(auth, Some(ApiAuth::OAuth)));
+    }
+
+    #[tokio::test]
+    async fn openai_env_takes_precedence_over_stored_key() {
+        let storage = Arc::new(InMemoryAuthStorage::new());
+        storage
+            .set_credential(
+                "openai",
+                crate::auth::Credential::ApiKey {
+                    value: "stored-key".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        std::env::set_var("OPENAI_API_KEY", "env-key");
+        let _guard = EnvGuard {
+            key: "OPENAI_API_KEY",
+        };
+
+        let provider = LlmConfigProvider::new(storage);
+        let auth = provider
+            .get_auth_for_provider(&provider::openai())
+            .await
+            .unwrap();
+
+        match auth {
+            Some(ApiAuth::Key(key)) => assert_eq!(key, "env-key"),
+            _ => panic!("Expected env API key"),
+        }
+    }
+}

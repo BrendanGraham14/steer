@@ -55,7 +55,7 @@ impl Client {
     }
 
     /// Build a request with proper message structure and tool support
-    fn build_request(
+    pub(crate) fn build_request(
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
@@ -530,7 +530,7 @@ impl Client {
         Ok(Box::pin(Self::convert_responses_stream(sse_stream, token)))
     }
 
-    fn convert_responses_stream(
+    pub(crate) fn convert_responses_stream(
         mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
         + Unpin
         + Send

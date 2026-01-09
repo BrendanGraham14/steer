@@ -602,6 +602,13 @@ impl Tui {
                             needs_redraw = true;
                         }
                     }
+
+                    if self.input_mode == InputMode::Setup
+                        && crate::tui::handlers::setup::SetupHandler::poll_oauth_callback(self)
+                            .await?
+                        {
+                            needs_redraw = true;
+                        }
                 }
             }
         }

@@ -811,12 +811,45 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<ListModelsResponse>, Status> {
         let req = request.into_inner();
 
+        let openai_oauth_configured = if req
+            .provider_id
+            .as_deref()
+            .map(|id| id == steer_core::config::provider::OPENAI_ID)
+            .unwrap_or(true)
+        {
+            match self
+                .llm_config_provider
+                .get_auth_for_provider(&steer_core::config::provider::openai())
+                .await
+            {
+                Ok(Some(steer_core::config::ApiAuth::OAuth)) => true,
+                Ok(_) => false,
+                Err(err) => {
+                    warn!(
+                        "Failed to determine OpenAI auth status for model listing: {err}"
+                    );
+                    false
+                }
+            }
+        } else {
+            true
+        };
+
         let all_models: Vec<proto::ProviderModel> = self
             .model_registry
             .recommended()
             .filter(|m| {
                 if let Some(ref provider_id) = req.provider_id {
                     m.provider.storage_key() == *provider_id
+                } else {
+                    true
+                }
+            })
+            .filter(|m| {
+                if m.provider == steer_core::config::provider::openai()
+                    && m.id == "gpt-5.2-codex"
+                {
+                    openai_oauth_configured
                 } else {
                     true
                 }

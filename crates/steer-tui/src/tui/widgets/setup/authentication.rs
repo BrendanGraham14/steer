@@ -39,6 +39,13 @@ impl AuthenticationWidget {
                     .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2)
             })
             .unwrap_or(false);
+        let supports_api_key = provider_config
+            .map(|c| {
+                c.auth_schemes
+                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeApiKey)
+            })
+            .unwrap_or(false);
+        let is_openai = provider_id == provider::openai();
 
         let header = vec![
             Line::from(""),
@@ -77,16 +84,26 @@ impl AuthenticationWidget {
                     theme.style(Component::SetupUrl),
                 )));
                 content.push(Line::from(""));
-                content.push(Line::from(
-                    "After authorizing, you'll be redirected to a page showing a code.",
-                ));
-                content.push(Line::from(
-                    "Copy the ENTIRE code (including the part after the #)",
-                ));
-                content.push(Line::from("and paste it below:"));
+                if is_openai {
+                    content.push(Line::from(
+                        "After authorizing, you'll be redirected to http://localhost:1455/auth/callback.",
+                    ));
+                    content.push(Line::from(
+                        "If nothing happens, copy the full URL from your browser",
+                    ));
+                    content.push(Line::from("and paste it below:"));
+                } else {
+                    content.push(Line::from(
+                        "After authorizing, you'll be redirected to a page showing a code.",
+                    ));
+                    content.push(Line::from(
+                        "Copy the full URL or the code (including the part after the #)",
+                    ));
+                    content.push(Line::from("and paste it below:"));
+                }
                 content.push(Line::from(""));
                 content.push(Line::from(vec![
-                    Span::styled("Code: ", theme.style(Component::SetupInputLabel)),
+                    Span::styled("Callback: ", theme.style(Component::SetupInputLabel)),
                     Span::styled(
                         if state.oauth_callback_input.is_empty() {
                             "_"
@@ -100,7 +117,7 @@ impl AuthenticationWidget {
                 content.push(Line::from("Processing authorization code..."));
                 content.push(Line::from(""));
                 content.push(Line::from(vec![
-                    Span::styled("Code: ", theme.style(Component::SetupInputLabel)),
+                    Span::styled("Callback: ", theme.style(Component::SetupInputLabel)),
                     Span::styled(
                         &state.oauth_callback_input,
                         theme.style(Component::SetupInputValue),
@@ -108,23 +125,19 @@ impl AuthenticationWidget {
                 ]));
             }
         } else if supports_oauth
-            && provider_id == provider::anthropic()
+            && supports_api_key
             && state.api_key_input.is_empty()
             && state.oauth_state.is_none()
             && state.auth_providers.get(&provider_id)
                 != Some(&crate::tui::state::AuthStatus::InProgress)
         {
-            // Anthropic - show auth options
+            // Show auth options
             content.push(Line::from(""));
             content.push(Line::from("Choose authentication method:"));
             content.push(Line::from(""));
             content.push(Line::from(vec![
                 Span::styled("1. ", theme.style(Component::SetupKeyBinding)),
-                Span::raw("OAuth Login "),
-                Span::styled(
-                    "(Recommended for Claude Pro users)",
-                    theme.style(Component::SetupHint),
-                ),
+                Span::raw("OAuth Login"),
             ]));
             content.push(Line::from(vec![
                 Span::styled("2. ", theme.style(Component::SetupKeyBinding)),
@@ -186,13 +199,13 @@ impl AuthenticationWidget {
         // Instructions
         let instructions = if state.oauth_state.is_some() {
             vec![Line::from(vec![
+                Span::raw("Paste the callback, "),
+                Span::styled("Enter", theme.style(Component::SetupKeyBinding)),
+                Span::raw(" to submit, "),
                 Span::styled("Esc", theme.style(Component::SetupKeyBinding)),
                 Span::raw(" to cancel"),
             ])]
-        } else if supports_oauth
-            && provider_id == provider::anthropic()
-            && state.api_key_input.is_empty()
-        {
+        } else if supports_oauth && supports_api_key && state.api_key_input.is_empty() {
             vec![Line::from(vec![
                 Span::raw("Press "),
                 Span::styled("1", theme.style(Component::SetupKeyBinding)),

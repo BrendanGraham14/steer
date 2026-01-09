@@ -1,6 +1,8 @@
 pub mod anthropic;
 pub mod api_key;
+pub mod callback_server;
 pub mod error;
+pub mod openai;
 pub mod registry;
 pub mod storage;
 

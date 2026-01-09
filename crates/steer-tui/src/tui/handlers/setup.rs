@@ -48,9 +48,12 @@ impl SetupHandler {
         // Create appropriate auth flow based on provider and method
         let auth_flow: Box<dyn DynAuthenticationFlow> = match (&provider_id, method) {
             (id, AuthMethod::OAuth) if *id == provider::anthropic() && supports_oauth => {
-                // Only Anthropic supports OAuth currently
                 use steer_core::auth::anthropic::AnthropicOAuthFlow;
                 Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage)))
+            }
+            (id, AuthMethod::OAuth) if *id == provider::openai() && supports_oauth => {
+                use steer_core::auth::openai::OpenAIOAuthFlow;
+                Box::new(AuthFlowWrapper::new(OpenAIOAuthFlow::new(auth_storage)))
             }
             (_, AuthMethod::ApiKey) => {
                 // All providers support API key
@@ -235,7 +238,7 @@ impl SetupHandler {
         }
 
         match key.code {
-            KeyCode::Char('1') if supports_oauth && provider_id == provider::anthropic() => {
+            KeyCode::Char('1') if supports_oauth => {
                 // Start OAuth flow
                 if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::OAuth)
                     .await
@@ -273,7 +276,7 @@ impl SetupHandler {
                 }
                 Ok(None)
             }
-            KeyCode::Char('2') if supports_oauth && provider_id == provider::anthropic() => {
+            KeyCode::Char('2') if supports_api_key => {
                 // Check conditions before calling ensure_controller
                 let should_proceed = {
                     let state = tui.setup_state.as_ref().unwrap();
@@ -405,11 +408,7 @@ impl SetupHandler {
                     // Typing OAuth callback
                     state.oauth_callback_input.push(c);
                     Ok(None)
-                } else if tui.auth_controller.is_some()
-                    && (!supports_oauth
-                        || provider_id != provider::anthropic()
-                        || (provider_id == provider::anthropic() && state.oauth_state.is_none()))
-                {
+                } else if tui.auth_controller.is_some() {
                     // Typing API key
                     state.api_key_input.push(c);
                     Ok(None)
@@ -422,11 +421,7 @@ impl SetupHandler {
                 if state.oauth_state.is_some() {
                     state.oauth_callback_input.pop();
                     Ok(None)
-                } else if tui.auth_controller.is_some()
-                    && (!supports_oauth
-                        || provider_id != provider::anthropic()
-                        || (provider_id == provider::anthropic() && state.oauth_state.is_none()))
-                {
+                } else if tui.auth_controller.is_some() {
                     state.api_key_input.pop();
                     Ok(None)
                 } else {
@@ -477,6 +472,63 @@ impl SetupHandler {
                 Ok(Some(InputMode::Simple))
             }
             _ => Ok(None),
+        }
+    }
+}
+
+impl SetupHandler {
+    pub async fn poll_oauth_callback(tui: &mut Tui) -> Result<bool> {
+        let Some(setup_state) = tui.setup_state.as_mut() else {
+            return Ok(false);
+        };
+
+        let provider_id = match &setup_state.current_step {
+            SetupStep::Authentication(provider_id) => provider_id.clone(),
+            _ => return Ok(false),
+        };
+
+        if provider_id != provider::openai() {
+            return Ok(false);
+        }
+
+        let has_oauth_state = setup_state.oauth_state.is_some();
+        if !has_oauth_state || !setup_state.oauth_callback_input.is_empty() {
+            return Ok(false);
+        }
+
+        let Some(auth_controller) = tui.auth_controller.as_mut() else {
+            return Ok(false);
+        };
+
+        match auth_controller
+            .flow
+            .handle_input(&mut auth_controller.state, "")
+            .await
+        {
+            Ok(AuthProgress::Complete) => {
+                setup_state.oauth_state = None;
+                setup_state.oauth_callback_input.clear();
+                setup_state
+                    .auth_providers
+                    .insert(provider_id.clone(), AuthStatus::OAuthConfigured);
+                setup_state.error_message =
+                    Some("OAuth authentication successful!".to_string());
+                tui.auth_controller = None;
+                setup_state.current_step = SetupStep::ProviderSelection;
+                setup_state.selected_provider = None;
+                Ok(true)
+            }
+            Ok(AuthProgress::InProgress(_)) => Ok(false),
+            Ok(AuthProgress::NeedInput(_)) => Ok(false),
+            Ok(AuthProgress::Error(err)) => {
+                setup_state.error_message = Some(err);
+                Ok(true)
+            }
+            Ok(AuthProgress::OAuthStarted { .. }) => Ok(false),
+            Err(e) => {
+                setup_state.error_message = Some(format!("OAuth authentication failed: {e}"));
+                Ok(true)
+            }
         }
     }
 }

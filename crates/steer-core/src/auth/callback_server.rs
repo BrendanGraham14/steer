@@ -18,6 +18,89 @@ pub struct CallbackResponse {
     pub state: String,
 }
 
+/// Handle for a spawned callback server.
+#[derive(Debug)]
+pub struct CallbackServerHandle {
+    receiver: mpsc::Receiver<Result<CallbackResponse>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl CallbackServerHandle {
+    pub fn try_recv(&mut self) -> Option<Result<CallbackResponse>> {
+        match self.receiver.try_recv() {
+            Ok(value) => Some(value),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Some(Err(
+                AuthError::CallbackServer("Callback server channel closed".to_string()),
+            )),
+        }
+    }
+}
+
+impl Drop for CallbackServerHandle {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Spawn a callback server on a fixed address/path and return a handle.
+pub async fn spawn_callback_server(
+    expected_state: String,
+    bind_addr: SocketAddr,
+    expected_path: &str,
+) -> Result<CallbackServerHandle> {
+    let (tx, rx) = mpsc::channel::<Result<CallbackResponse>>(1);
+    let tx = Arc::new(tx);
+
+    let listener = TcpListener::bind(bind_addr)
+        .await
+        .map_err(|e| AuthError::CallbackServer(format!("Failed to bind {bind_addr}: {e}")))?;
+
+    let expected_path = expected_path.to_string();
+    let task = tokio::spawn(async move {
+        let expected_state = Arc::new(expected_state);
+        let expected_path = Arc::new(expected_path);
+
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    tracing::error!("Failed to accept connection: {}", e);
+                    continue;
+                }
+            };
+
+            let io = TokioIo::new(stream);
+            let tx = tx.clone();
+            let expected_state = expected_state.clone();
+            let expected_path = expected_path.clone();
+
+            tokio::spawn(async move {
+                let service = service_fn(move |req: Request<Incoming>| {
+                    let tx = tx.clone();
+                    let expected_state = expected_state.clone();
+                    let expected_path = expected_path.clone();
+                    async move {
+                        handle_request(req, tx, &expected_state, &expected_path).await
+                    }
+                });
+
+                if let Err(e) = http1::Builder::new()
+                    .serve_connection(io, service)
+                    .await
+                {
+                    tracing::error!("Failed to serve connection: {}", e);
+                }
+            });
+        }
+    });
+
+    Ok(CallbackServerHandle {
+        receiver: rx,
+        task,
+    })
+}
+
 /// Start a local HTTP server to receive OAuth callback
 pub async fn start_callback_server(
     expected_state: String,
@@ -35,7 +118,7 @@ pub async fn start_callback_server(
     // Spawn server task
     let server_task = tokio::spawn(async move {
         let expected_state = Arc::new(expected_state);
-        
+
         loop {
             let (stream, _) = match listener.accept().await {
                 Ok(conn) => conn,
@@ -44,20 +127,18 @@ pub async fn start_callback_server(
                     continue;
                 }
             };
-            
+
             let io = TokioIo::new(stream);
             let tx = tx.clone();
             let expected_state = expected_state.clone();
-            
+
             tokio::spawn(async move {
                 let service = service_fn(move |req: Request<Incoming>| {
                     let tx = tx.clone();
                     let expected_state = expected_state.clone();
-                    async move {
-                        handle_request(req, tx, &expected_state).await
-                    }
+                    async move { handle_request(req, tx, &expected_state, "/callback").await }
                 });
-                
+
                 if let Err(e) = http1::Builder::new()
                     .serve_connection(io, service)
                     .await
@@ -69,7 +150,8 @@ pub async fn start_callback_server(
     });
     
     // Wait for callback with timeout
-    let result = timeout(timeout_duration, rx.recv()).await
+    let result = timeout(timeout_duration, rx.recv())
+        .await
         .map_err(|_| AuthError::CallbackServer("Timeout waiting for OAuth callback".to_string()))?
         .ok_or_else(|| AuthError::CallbackServer("Callback server channel closed".to_string()))??;
     
@@ -102,6 +184,7 @@ async fn handle_request(
     req: Request<Incoming>,
     tx: Arc<mpsc::Sender<Result<CallbackResponse>>>,
     expected_state: &str,
+    expected_path: &str,
 ) -> std::result::Result<Response<String>, hyper::Error> {
     if req.method() != Method::GET {
         return Ok(Response::builder()
@@ -111,7 +194,7 @@ async fn handle_request(
     }
     
     let path = req.uri().path();
-    if !path.starts_with("/callback") {
+    if path != expected_path {
         return Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body("Not found".to_string())
@@ -120,16 +203,10 @@ async fn handle_request(
     
     // Parse query parameters
     let query = req.uri().query().unwrap_or("");
-    let params: std::collections::HashMap<&str, &str> = query
-        .split('&')
-        .filter_map(|pair| {
-            let mut parts = pair.split('=');
-            match (parts.next(), parts.next()) {
-                (Some(key), Some(value)) => Some((key, value)),
-                _ => None,
-            }
-        })
-        .collect();
+    let params: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
     
     // Check for error parameter
     if let Some(error) = params.get("error") {

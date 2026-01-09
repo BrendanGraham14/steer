@@ -10,7 +10,7 @@ auth_schemes = ["api-key", "oauth2"]
 id = "openai"
 name = "OpenAI"
 api_format = "openai-responses"
-auth_schemes = ["api-key"]
+auth_schemes = ["api-key", "oauth2"]
 
 [[providers]]
 id = "google"
@@ -76,6 +76,15 @@ provider = "openai"
 id = "gpt-5.2-2025-12-11"
 aliases = ["gpt-5.2", "gpt5.2", "gpt52", "gpt-5.2-xhigh"]
 recommended = false
+[models.parameters]
+thinking_config.enabled = true
+thinking_config.effort = "x-high"
+
+[[models]]
+provider = "openai"
+id = "gpt-5.2-codex"
+aliases = ["gpt5.2-codex", "gpt52-codex", "codex"]
+recommended = true
 [models.parameters]
 thinking_config.enabled = true
 thinking_config.effort = "x-high"

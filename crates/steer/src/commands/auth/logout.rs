@@ -13,8 +13,9 @@ impl Logout {
     pub async fn handle(&self) -> Result<()> {
         match self.provider.as_str() {
             "anthropic" | "claude" => logout_anthropic().await,
+            "openai" | "codex" => logout_openai().await,
             _ => bail!(
-                "Unsupported provider: {}. Currently only 'anthropic' is supported.",
+                "Unsupported provider: {}. Currently only 'anthropic' and 'openai' are supported.",
                 self.provider
             ),
         }
@@ -65,6 +66,50 @@ async fn logout_anthropic() -> Result<()> {
 
     println!("✅ Successfully logged out from Anthropic.");
     println!("You will need to use an API key or login again to use Claude models.");
+
+    Ok(())
+}
+
+async fn logout_openai() -> Result<()> {
+    println!("Logging out from OpenAI...");
+
+    let storage = Arc::new(
+        DefaultAuthStorage::new().map_err(|e| eyre!("Failed to create auth storage: {}", e))?,
+    ) as Arc<dyn steer_core::auth::AuthStorage>;
+
+    let has_auth_tokens = storage
+        .get_credential("openai", CredentialType::OAuth2)
+        .await
+        .map_err(|e| eyre!("Failed to check auth tokens: {}", e))?
+        .is_some();
+
+    let has_api_key = storage
+        .get_credential("openai", CredentialType::ApiKey)
+        .await
+        .map_err(|e| eyre!("Failed to check API key: {}", e))?
+        .is_some();
+
+    if !has_auth_tokens && !has_api_key {
+        println!("No stored authentication found for OpenAI.");
+        return Ok(());
+    }
+
+    if has_auth_tokens {
+        storage
+            .remove_credential("openai", CredentialType::OAuth2)
+            .await
+            .map_err(|e| eyre!("Failed to remove auth tokens: {}", e))?;
+    }
+
+    if has_api_key {
+        storage
+            .remove_credential("openai", CredentialType::ApiKey)
+            .await
+            .map_err(|e| eyre!("Failed to remove API key: {}", e))?;
+    }
+
+    println!("✅ Successfully logged out from OpenAI.");
+    println!("You will need to use an API key or login again to use OpenAI models.");
 
     Ok(())
 }
