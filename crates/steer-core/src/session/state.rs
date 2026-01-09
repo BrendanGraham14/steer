@@ -140,6 +140,8 @@ pub struct SessionConfig {
     #[serde(default)]
     pub workspace_id: Option<crate::workspace::WorkspaceId>,
     #[serde(default)]
+    pub repo_ref: Option<crate::workspace::RepoRef>,
+    #[serde(default)]
     pub parent_session_id: Option<crate::app::domain::types::SessionId>,
     #[serde(default)]
     pub workspace_name: Option<String>,
@@ -253,6 +255,7 @@ impl SessionConfig {
             },
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: SessionToolConfig::read_only(),
@@ -736,6 +739,7 @@ mod tests {
             },
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: SessionToolConfig::default(),
@@ -926,6 +930,7 @@ mod tests {
             },
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: SessionToolConfig::default(), // No backends configured

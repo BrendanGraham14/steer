@@ -389,6 +389,7 @@ impl Tui {
             "Environment: {}\n",
             status.environment_id.as_uuid()
         ));
+        output.push_str(&format!("Repo: {}\n", status.repo_id.as_uuid()));
         output.push_str(&format!("Path: {}\n", status.path.display()));
 
         match &status.vcs {
@@ -416,6 +417,7 @@ impl Tui {
             workspace: WorkspaceConfig::default(),
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: SessionToolConfig::default(),
@@ -1541,6 +1543,7 @@ pub async fn run_tui(
             },
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: SessionToolConfig::default(),

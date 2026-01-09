@@ -7,8 +7,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::services::SubAgentConfig;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use crate::workspace::{
-    CreateWorkspaceRequest, EnvironmentId, ListWorkspacesRequest, WorkspaceCreateStrategy,
-    WorkspaceId, WorkspaceRef,
+    CreateWorkspaceRequest, EnvironmentId, RepoRef, WorkspaceCreateStrategy, WorkspaceRef,
 };
 use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 
@@ -112,22 +111,37 @@ impl StaticTool for DispatchAgentTool {
         let mut workspace_ref = None;
         let mut workspace_id = None;
         let mut workspace_name = None;
+        let mut repo_id = None;
+        let mut repo_ref = None;
 
         if let Some(manager) = ctx.services.workspace_manager() {
-            if let Ok(workspaces) = manager
-                .list_workspaces(ListWorkspacesRequest {})
-                .await
-            {
-                if let Some(info) = workspaces.into_iter().find(|info| info.path == base_path) {
-                    workspace_id = Some(info.workspace_id);
-                    workspace_name = info.name.clone();
-                    workspace_ref = Some(WorkspaceRef {
-                        environment_id: info.environment_id,
-                        workspace_id: info.workspace_id,
-                        path: info.path.clone(),
-                        vcs_kind: info.vcs_kind,
-                    });
+            if let Ok(info) = manager.resolve_workspace(&base_path).await {
+                workspace_id = Some(info.workspace_id);
+                workspace_name = info.name.clone();
+                repo_id = Some(info.repo_id);
+                workspace_ref = Some(WorkspaceRef {
+                    environment_id: info.environment_id,
+                    workspace_id: info.workspace_id,
+                    repo_id: info.repo_id,
+                });
+            }
+        }
+
+        if let Some(manager) = ctx.services.repo_manager() {
+            let repo_env_id = workspace_ref
+                .as_ref()
+                .map(|reference| reference.environment_id)
+                .unwrap_or_else(EnvironmentId::local);
+            if let Ok(info) = manager.resolve_repo(repo_env_id, &base_path).await {
+                if repo_id.is_none() {
+                    repo_id = Some(info.repo_id);
                 }
+                repo_ref = Some(RepoRef {
+                    environment_id: info.environment_id,
+                    repo_id: info.repo_id,
+                    root_path: info.root_path,
+                    vcs_kind: info.vcs_kind,
+                });
             }
         }
 
@@ -137,15 +151,14 @@ impl StaticTool for DispatchAgentTool {
                 .workspace_manager()
                 .ok_or_else(|| StaticToolError::missing_capability("workspace_manager"))?;
 
-            let base_ref = workspace_ref.clone().unwrap_or_else(|| WorkspaceRef {
-                environment_id: EnvironmentId::local(),
-                workspace_id: WorkspaceId::new(),
-                path: base_path.clone(),
-                vcs_kind: None,
-            });
+            let base_repo_id = repo_id.ok_or_else(|| {
+                StaticToolError::execution(
+                    "Current path is not a jj workspace; cannot create new workspace".to_string(),
+                )
+            })?;
 
             let create_request = CreateWorkspaceRequest {
-                base: Some(base_ref),
+                repo_id: base_repo_id,
                 name: params.workspace_name.clone(),
                 parent_workspace_id: workspace_id,
                 strategy: WorkspaceCreateStrategy::JjWorkspace,
@@ -170,9 +183,21 @@ impl StaticTool for DispatchAgentTool {
             workspace_ref = Some(WorkspaceRef {
                 environment_id: info.environment_id,
                 workspace_id: info.workspace_id,
-                path: info.path.clone(),
-                vcs_kind: info.vcs_kind,
+                repo_id: info.repo_id,
             });
+
+            if let Some(repo_manager) = ctx.services.repo_manager()
+                && let Ok(info) = repo_manager
+                    .resolve_repo(info.environment_id, workspace.working_directory())
+                    .await
+            {
+                repo_ref = Some(RepoRef {
+                    environment_id: info.environment_id,
+                    repo_id: info.repo_id,
+                    root_path: info.root_path,
+                    vcs_kind: info.vcs_kind,
+                });
+            }
         }
 
         let env_info = workspace.environment().await.map_err(|e| {
@@ -201,6 +226,7 @@ Notes:
             workspace: Some(workspace),
             workspace_ref,
             workspace_id,
+            repo_ref,
             workspace_name,
         };
 

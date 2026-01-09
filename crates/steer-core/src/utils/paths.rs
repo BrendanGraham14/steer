@@ -28,6 +28,21 @@ impl AppPaths {
         directories::ProjectDirs::from("", "", "steer").map(|d| d.data_dir().to_path_buf())
     }
 
+    /// Return the local environment root for storing workspace registry and managed workspaces.
+    /// Can be overridden with STEER_ENV_ROOT.
+    pub fn local_environment_root() -> PathBuf {
+        if let Ok(root) = std::env::var("STEER_ENV_ROOT") {
+            return PathBuf::from(root);
+        }
+        if let Some(data_dir) = Self::user_data_dir() {
+            return data_dir.join("envs").join("local");
+        }
+        if let Some(home_dir) = dirs::home_dir() {
+            return home_dir.join(".steer").join("envs").join("local");
+        }
+        PathBuf::from(".steer/envs/local")
+    }
+
     /// Return the user-level catalog path (platform-specific)
     pub fn user_catalog() -> Option<PathBuf> {
         Self::user_config_dir().map(|d| d.join("catalog.toml"))

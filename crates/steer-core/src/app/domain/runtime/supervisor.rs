@@ -758,6 +758,7 @@ mod tests {
             },
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: crate::session::state::SessionToolConfig::default(),

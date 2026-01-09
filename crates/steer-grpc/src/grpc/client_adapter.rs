@@ -7,8 +7,8 @@ use tracing::{debug, error, info, warn};
 use crate::client_api::ClientEvent;
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
-    proto_to_workspace_info, proto_to_workspace_status, session_tool_config_to_proto,
-    workspace_config_to_proto,
+    proto_to_repo_info, proto_to_workspace_info, proto_to_workspace_status,
+    session_tool_config_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 
@@ -19,7 +19,8 @@ use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
     GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest, ListSessionsRequest,
-    ListWorkspacesRequest, SessionInfo, SessionState, agent_service_client::AgentServiceClient,
+    ListReposRequest, ListWorkspacesRequest, ResolveRepoRequest, SessionInfo, SessionState,
+    agent_service_client::AgentServiceClient,
 };
 
 pub struct AgentClient {
@@ -80,18 +81,14 @@ impl AgentClient {
             workspace_ref: config.workspace_ref.as_ref().map(|reference| proto::WorkspaceRef {
                 environment_id: reference.environment_id.as_uuid().to_string(),
                 workspace_id: reference.workspace_id.as_uuid().to_string(),
-                path: reference.path.to_string_lossy().to_string(),
-                vcs_kind: reference.vcs_kind.as_ref().map(|kind| match kind {
-                    steer_workspace::VcsKind::Git => {
-                        steer_proto::remote_workspace::v1::VcsKind::Git as i32
-                    }
-                    steer_workspace::VcsKind::Jj => {
-                        steer_proto::remote_workspace::v1::VcsKind::Jj as i32
-                    }
-                }),
+                repo_id: reference.repo_id.as_uuid().to_string(),
             }),
             parent_session_id: config.parent_session_id.as_ref().map(|id| id.to_string()),
             workspace_name: config.workspace_name.clone(),
+            repo_ref: config
+                .repo_ref
+                .as_ref()
+                .map(crate::grpc::conversions::repo_ref_to_proto),
         });
 
         let response = self
@@ -715,6 +712,58 @@ impl AgentClient {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(workspaces)
+    }
+
+    pub async fn list_repos(
+        &self,
+        environment_id: Option<String>,
+    ) -> GrpcResult<Vec<steer_workspace::RepoInfo>> {
+        let request = Request::new(ListReposRequest {
+            environment_id: environment_id.unwrap_or_default(),
+        });
+        let response = self
+            .client
+            .lock()
+            .await
+            .list_repos(request)
+            .await
+            .map_err(Box::new)?;
+
+        let repos = response
+            .into_inner()
+            .repos
+            .into_iter()
+            .map(proto_to_repo_info)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(repos)
+    }
+
+    pub async fn resolve_repo(
+        &self,
+        environment_id: Option<String>,
+        path: String,
+    ) -> GrpcResult<steer_workspace::RepoInfo> {
+        let request = Request::new(ResolveRepoRequest {
+            environment_id: environment_id.unwrap_or_default(),
+            path,
+        });
+        let response = self
+            .client
+            .lock()
+            .await
+            .resolve_repo(request)
+            .await
+            .map_err(Box::new)?;
+
+        let repo = response
+            .into_inner()
+            .repo
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "Repo missing from response".to_string(),
+            })?;
+
+        Ok(proto_to_repo_info(repo)?)
     }
 
     pub async fn get_workspace_status(

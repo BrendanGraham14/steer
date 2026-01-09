@@ -9,7 +9,7 @@ use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
 use steer_core::tools::ToolSystemBuilder;
 use steer_proto::agent::v1::agent_service_server::AgentServiceServer;
-use steer_workspace::{LocalEnvironmentManager, LocalWorkspaceManager};
+use steer_workspace::{LocalEnvironmentManager, LocalWorkspaceManager, RepoManager};
 use tokio::sync::oneshot;
 use tonic::transport::{Channel, Server};
 
@@ -19,18 +19,19 @@ pub async fn create_local_channel(
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
-    workspace_root: std::path::PathBuf,
+    environment_root: std::path::PathBuf,
 ) -> Result<(Channel, tokio::task::JoinHandle<()>)> {
     let (tx, rx) = oneshot::channel();
 
     let workspace_manager = Arc::new(
-        LocalWorkspaceManager::new(workspace_root.clone())
+        LocalWorkspaceManager::new(environment_root.clone())
             .await
             .map_err(|e| GrpcError::InvalidSessionState {
                 reason: format!("Failed to create workspace manager: {e}"),
             })?,
     );
-    let environment_manager = Arc::new(LocalEnvironmentManager::new(workspace_root));
+    let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
+    let environment_manager = Arc::new(LocalEnvironmentManager::new(environment_root));
 
     let service = RuntimeAgentService::new(
         runtime_service.handle(),
@@ -40,6 +41,7 @@ pub async fn create_local_channel(
         provider_registry,
         environment_manager,
         workspace_manager,
+        repo_manager,
     );
     let svc = AgentServiceServer::new(service);
 
@@ -123,23 +125,25 @@ pub async fn setup_local_grpc_with_catalog(
         model_registry.clone(),
     ));
 
-    let workspace_root = workspace_root
+    let workspace_path = workspace_root
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let environment_root = steer_core::utils::paths::AppPaths::local_environment_root();
     let workspace =
         steer_core::workspace::create_workspace(&steer_core::workspace::WorkspaceConfig::Local {
-            path: workspace_root.clone(),
+            path: workspace_path.clone(),
         })
         .await
         .map_err(|e| GrpcError::InvalidSessionState {
             reason: format!("Failed to create workspace: {e}"),
         })?;
     let workspace_manager = Arc::new(
-        LocalWorkspaceManager::new(workspace_root.clone())
+        LocalWorkspaceManager::new(environment_root.clone())
             .await
             .map_err(|e| GrpcError::InvalidSessionState {
                 reason: format!("Failed to create workspace manager: {e}"),
             })?,
     );
+    let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
 
     let tool_executor = ToolSystemBuilder::new(
         workspace,
@@ -148,6 +152,7 @@ pub async fn setup_local_grpc_with_catalog(
         model_registry.clone(),
     )
     .with_workspace_manager(workspace_manager)
+    .with_repo_manager(repo_manager)
     .build();
 
     let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
@@ -158,7 +163,7 @@ pub async fn setup_local_grpc_with_catalog(
         model_registry,
         provider_registry,
         llm_config_provider,
-        workspace_root.clone(),
+        environment_root.clone(),
     )
     .await?;
 
@@ -269,19 +274,24 @@ mod tests {
             reason: format!("Failed to create workspace: {e}"),
         })?;
 
+        let environment_root = workspace_root.join(".steer-env");
+        let workspace_manager = Arc::new(
+            LocalWorkspaceManager::new(environment_root.clone())
+                .await
+                .map_err(|e| GrpcError::InvalidSessionState {
+                    reason: format!("Failed to create workspace manager: {e}"),
+                })?,
+        );
+        let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
+
         let tool_executor = ToolSystemBuilder::new(
             workspace,
             event_store.clone(),
             api_client.clone(),
             model_registry.clone(),
         )
-        .with_workspace_manager(Arc::new(
-            LocalWorkspaceManager::new(workspace_root.clone())
-                .await
-                .map_err(|e| GrpcError::InvalidSessionState {
-                    reason: format!("Failed to create workspace manager: {e}"),
-                })?,
-        ))
+        .with_workspace_manager(workspace_manager)
+        .with_repo_manager(repo_manager)
         .build();
 
         let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
@@ -292,7 +302,7 @@ mod tests {
             model_registry,
             provider_registry,
             llm_config_provider,
-            workspace_root,
+            environment_root,
         )
         .await?;
 

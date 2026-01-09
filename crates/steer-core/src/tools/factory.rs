@@ -4,7 +4,7 @@ use crate::api::Client as ApiClient;
 use crate::app::domain::session::EventStore;
 use crate::app::validation::ValidatorRegistry;
 use crate::model_registry::ModelRegistry;
-use crate::workspace::{Workspace, WorkspaceManager};
+use crate::workspace::{RepoManager, Workspace, WorkspaceManager};
 
 use super::BackendRegistry;
 use super::agent_spawner_impl::DefaultAgentSpawner;
@@ -25,6 +25,7 @@ pub struct ToolSystemBuilder {
     backend_registry: Arc<BackendRegistry>,
     validators: Arc<ValidatorRegistry>,
     workspace_manager: Option<Arc<dyn WorkspaceManager>>,
+    repo_manager: Option<Arc<dyn RepoManager>>,
 }
 
 impl ToolSystemBuilder {
@@ -42,6 +43,7 @@ impl ToolSystemBuilder {
             backend_registry: Arc::new(BackendRegistry::new()),
             validators: Arc::new(ValidatorRegistry::new()),
             workspace_manager: None,
+            repo_manager: None,
         }
     }
 
@@ -57,6 +59,11 @@ impl ToolSystemBuilder {
 
     pub fn with_workspace_manager(mut self, manager: Arc<dyn WorkspaceManager>) -> Self {
         self.workspace_manager = Some(manager);
+        self
+    }
+
+    pub fn with_repo_manager(mut self, manager: Arc<dyn RepoManager>) -> Self {
+        self.repo_manager = Some(manager);
         self
     }
 
@@ -83,6 +90,9 @@ impl ToolSystemBuilder {
                 .with_network();
         if let Some(manager) = self.workspace_manager {
             services = services.with_workspace_manager(manager);
+        }
+        if let Some(manager) = self.repo_manager {
+            services = services.with_repo_manager(manager);
         }
         let services = Arc::new(services);
 

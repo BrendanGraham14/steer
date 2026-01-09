@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::error::{EnvironmentManagerResult, WorkspaceManagerResult};
 use crate::{
-    EnvironmentId, EnvironmentInfo, Workspace, WorkspaceId, WorkspaceInfo, WorkspaceRef,
+    EnvironmentId, EnvironmentInfo, RepoId, RepoInfo, Workspace, WorkspaceId, WorkspaceInfo,
     WorkspaceStatus,
 };
 
@@ -57,7 +57,7 @@ pub enum WorkspaceCreateStrategy {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkspaceRequest {
-    pub base: Option<WorkspaceRef>,
+    pub repo_id: RepoId,
     pub name: Option<String>,
     pub parent_workspace_id: Option<WorkspaceId>,
     pub strategy: WorkspaceCreateStrategy,
@@ -74,6 +74,11 @@ pub struct DeleteWorkspaceRequest {
 
 #[async_trait]
 pub trait WorkspaceManager: Send + Sync + std::fmt::Debug {
+    async fn resolve_workspace(
+        &self,
+        path: &std::path::Path,
+    ) -> WorkspaceManagerResult<WorkspaceInfo>;
+
     async fn create_workspace(
         &self,
         request: CreateWorkspaceRequest,
@@ -96,4 +101,18 @@ pub trait WorkspaceManager: Send + Sync + std::fmt::Debug {
 
     async fn delete_workspace(&self, request: DeleteWorkspaceRequest)
     -> WorkspaceManagerResult<()>;
+}
+
+#[async_trait]
+pub trait RepoManager: Send + Sync + std::fmt::Debug {
+    async fn resolve_repo(
+        &self,
+        environment_id: EnvironmentId,
+        path: &std::path::Path,
+    ) -> WorkspaceManagerResult<RepoInfo>;
+
+    async fn list_repos(
+        &self,
+        environment_id: EnvironmentId,
+    ) -> WorkspaceManagerResult<Vec<RepoInfo>>;
 }

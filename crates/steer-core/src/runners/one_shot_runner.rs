@@ -235,6 +235,7 @@ mod tests {
             workspace: WorkspaceConfig::default(),
             workspace_ref: None,
             workspace_id: None,
+            repo_ref: None,
             parent_session_id: None,
             workspace_name: None,
             tool_config: SessionToolConfig::default(),

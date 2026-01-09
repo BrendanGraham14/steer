@@ -17,6 +17,7 @@ use steer_core::utils::paths::AppPaths;
 use steer_core::session::state::SessionConfig;
 use steer_core::tools::ToolSystemBuilder;
 use steer_core::workspace::LocalWorkspaceManager;
+use steer_core::workspace::RepoManager;
 
 pub async fn run_once_in_session(
     runtime: &RuntimeHandle,
@@ -85,6 +86,7 @@ impl RuntimeBuilder {
 
         let workspace_root = std::env::current_dir()
             .map_err(|e| eyre::eyre!("Failed to get current directory: {}", e))?;
+        let environment_root = AppPaths::local_environment_root();
         let workspace_config = steer_core::session::state::WorkspaceConfig::Local {
             path: workspace_root.clone(),
         };
@@ -94,10 +96,11 @@ impl RuntimeBuilder {
                 .await
                 .map_err(|e| eyre::eyre!("Failed to create workspace: {}", e))?;
         let workspace_manager = Arc::new(
-            LocalWorkspaceManager::new(workspace_root)
+            LocalWorkspaceManager::new(environment_root)
                 .await
                 .map_err(|e| eyre::eyre!("Failed to create workspace manager: {}", e))?,
         );
+        let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
 
         let tool_executor = ToolSystemBuilder::new(
             workspace,
@@ -106,6 +109,7 @@ impl RuntimeBuilder {
             app_config.model_registry.clone(),
         )
         .with_workspace_manager(workspace_manager)
+        .with_repo_manager(repo_manager)
         .build();
 
         let service = RuntimeService::spawn(event_store, api_client, tool_executor);

@@ -1,7 +1,7 @@
 use crate::grpc::conversions::{
     environment_descriptor_to_proto, message_to_proto, proto_to_model, proto_to_tool_config,
     proto_to_workspace_config, session_event_to_proto, stream_delta_to_proto,
-    workspace_info_to_proto, workspace_status_to_proto,
+    repo_info_to_proto, workspace_info_to_proto, workspace_status_to_proto,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,7 +10,7 @@ use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
-use steer_workspace::{EnvironmentManager, WorkspaceManager};
+use steer_workspace::{EnvironmentManager, RepoManager, WorkspaceManager};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -25,6 +25,7 @@ pub struct RuntimeAgentService {
     llm_config_provider: steer_core::config::LlmConfigProvider,
     environment_manager: Arc<dyn EnvironmentManager>,
     workspace_manager: Arc<dyn WorkspaceManager>,
+    repo_manager: Arc<dyn RepoManager>,
 }
 
 impl RuntimeAgentService {
@@ -36,6 +37,7 @@ impl RuntimeAgentService {
         provider_registry: Arc<steer_core::auth::ProviderRegistry>,
         environment_manager: Arc<dyn EnvironmentManager>,
         workspace_manager: Arc<dyn WorkspaceManager>,
+        repo_manager: Arc<dyn RepoManager>,
     ) -> Self {
         Self {
             runtime,
@@ -45,6 +47,7 @@ impl RuntimeAgentService {
             provider_registry,
             environment_manager,
             workspace_manager,
+            repo_manager,
         }
     }
 
@@ -72,11 +75,28 @@ impl RuntimeAgentService {
         Ok(steer_workspace::WorkspaceId::from_uuid(id))
     }
 
+    fn parse_repo_id(repo_id: &str) -> Result<steer_workspace::RepoId, Status> {
+        let id = Uuid::parse_str(repo_id)
+            .map_err(|_| Status::invalid_argument(format!("Invalid repo ID: {repo_id}")))?;
+        Ok(steer_workspace::RepoId::from_uuid(id))
+    }
+
     fn proto_to_workspace_ref(
         reference: proto::WorkspaceRef,
     ) -> Result<steer_workspace::WorkspaceRef, Status> {
         let environment_id = Self::parse_environment_id(&reference.environment_id)?;
         let workspace_id = Self::parse_workspace_id(&reference.workspace_id)?;
+        let repo_id = Self::parse_repo_id(&reference.repo_id)?;
+        Ok(steer_workspace::WorkspaceRef {
+            environment_id,
+            workspace_id,
+            repo_id,
+        })
+    }
+
+    fn proto_to_repo_ref(reference: proto::RepoRef) -> Result<steer_workspace::RepoRef, Status> {
+        let environment_id = Self::parse_environment_id(&reference.environment_id)?;
+        let repo_id = Self::parse_repo_id(&reference.repo_id)?;
         let vcs_kind = reference.vcs_kind.and_then(|value| {
             match steer_proto::remote_workspace::v1::VcsKind::try_from(value) {
                 Ok(steer_proto::remote_workspace::v1::VcsKind::Git) => {
@@ -88,10 +108,10 @@ impl RuntimeAgentService {
                 _ => None,
             }
         });
-        Ok(steer_workspace::WorkspaceRef {
+        Ok(steer_workspace::RepoRef {
             environment_id,
-            workspace_id,
-            path: std::path::PathBuf::from(reference.path),
+            repo_id,
+            root_path: std::path::PathBuf::from(reference.root_path),
             vcs_kind,
         })
     }
@@ -361,15 +381,41 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             None => None,
         };
 
+        let mut repo_ref = match req.repo_ref {
+            Some(reference) => Some(Self::proto_to_repo_ref(reference)?),
+            None => None,
+        };
+
         let parent_session_id = match req.parent_session_id {
             Some(value) => Some(Self::parse_session_id(&value)?),
             None => None,
         };
 
+        if repo_ref.is_none()
+            && let steer_core::session::state::WorkspaceConfig::Local { path } = &workspace_config
+        {
+            match self
+                .repo_manager
+                .resolve_repo(steer_workspace::EnvironmentId::local(), path)
+                .await
+            {
+                Ok(repo_info) => {
+                    repo_ref = Some(steer_workspace::RepoRef {
+                        environment_id: repo_info.environment_id,
+                        repo_id: repo_info.repo_id,
+                        root_path: repo_info.root_path.clone(),
+                        vcs_kind: repo_info.vcs_kind,
+                    });
+                }
+                Err(_) => {}
+            }
+        }
+
         let session_config = SessionConfig {
             workspace: workspace_config,
             workspace_ref,
             workspace_id,
+            repo_ref,
             parent_session_id,
             workspace_name: req.workspace_name,
             tool_config,
@@ -1035,10 +1081,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         request: Request<proto::CreateWorkspaceRequest>,
     ) -> Result<Response<proto::CreateWorkspaceResponse>, Status> {
         let req = request.into_inner();
-        let base = match req.base {
-            Some(reference) => Some(Self::proto_to_workspace_ref(reference)?),
-            None => None,
-        };
+        let repo_id = Self::parse_repo_id(&req.repo_id)?;
         let parent_workspace_id = match req.parent_workspace_id {
             Some(value) => Some(Self::parse_workspace_id(&value)?),
             None => None,
@@ -1056,7 +1099,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         };
 
         let request = steer_workspace::CreateWorkspaceRequest {
-            base,
+            repo_id,
             name: req.name,
             parent_workspace_id,
             strategy,
@@ -1070,6 +1113,40 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         Ok(Response::new(proto::CreateWorkspaceResponse {
             workspace: Some(workspace_info_to_proto(&workspace)),
+        }))
+    }
+
+    async fn resolve_repo(
+        &self,
+        request: Request<proto::ResolveRepoRequest>,
+    ) -> Result<Response<proto::ResolveRepoResponse>, Status> {
+        let req = request.into_inner();
+        let environment_id = Self::parse_environment_id(&req.environment_id)?;
+        let repo = self
+            .repo_manager
+            .resolve_repo(environment_id, std::path::Path::new(&req.path))
+            .await
+            .map_err(Self::workspace_manager_error_to_status)?;
+
+        Ok(Response::new(proto::ResolveRepoResponse {
+            repo: Some(repo_info_to_proto(&repo)),
+        }))
+    }
+
+    async fn list_repos(
+        &self,
+        request: Request<proto::ListReposRequest>,
+    ) -> Result<Response<proto::ListReposResponse>, Status> {
+        let req = request.into_inner();
+        let environment_id = Self::parse_environment_id(&req.environment_id)?;
+        let repos = self
+            .repo_manager
+            .list_repos(environment_id)
+            .await
+            .map_err(Self::workspace_manager_error_to_status)?;
+
+        Ok(Response::new(proto::ListReposResponse {
+            repos: repos.iter().map(repo_info_to_proto).collect(),
         }))
     }
 

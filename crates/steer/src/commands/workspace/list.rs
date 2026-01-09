@@ -3,7 +3,6 @@ use eyre::Result;
 
 use super::super::Command;
 use super::connect_client;
-use steer_core::workspace::VcsKind;
 
 pub struct ListWorkspaceCommand {
     pub environment_id: Option<String>,
@@ -23,21 +22,16 @@ impl Command for ListWorkspaceCommand {
             return Ok(());
         }
 
-        println!("{:<36} {:<16} {:<6} {}", "ID", "Name", "VCS", "Path");
-        println!("{}", "-".repeat(96));
+        println!("{:<36} {:<16} {:<36} Path", "Workspace", "Name", "Repo");
+        println!("{}", "-".repeat(128));
 
         for workspace in workspaces {
             let name = workspace.name.unwrap_or_else(|| "-".to_string());
-            let vcs = workspace
-                .vcs_kind
-                .as_ref()
-                .map(VcsKind::as_str)
-                .unwrap_or("-");
             println!(
-                "{:<36} {:<16} {:<6} {}",
+                "{:<36} {:<16} {:<36} {}",
                 workspace.workspace_id.as_uuid(),
                 name,
-                vcs,
+                workspace.repo_id.as_uuid(),
                 workspace.path.display()
             );
         }

@@ -16,8 +16,8 @@ pub use local_manager::LocalWorkspaceManager;
 pub use local::LocalEnvironmentManager;
 pub use manager::{
     CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
-    EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, WorkspaceCreateStrategy,
-    WorkspaceManager,
+    EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, RepoManager,
+    WorkspaceCreateStrategy, WorkspaceManager,
 };
 
 // Module with the trait and core types
@@ -151,14 +151,59 @@ impl WorkspaceId {
     }
 }
 
+/// Stable identifier for a repository within an environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(transparent)]
+pub struct RepoId(#[cfg_attr(feature = "schema", schemars(with = "String"))] pub Uuid);
+
+impl Default for RepoId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RepoId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+/// Reference to a repository inside a specific environment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RepoRef {
+    pub environment_id: EnvironmentId,
+    pub repo_id: RepoId,
+    pub root_path: std::path::PathBuf,
+    pub vcs_kind: Option<VcsKind>,
+}
+
+/// Repository metadata for listing and workspace grouping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct RepoInfo {
+    pub repo_id: RepoId,
+    pub environment_id: EnvironmentId,
+    pub root_path: std::path::PathBuf,
+    pub vcs_kind: Option<VcsKind>,
+}
+
 /// Reference to a workspace inside a specific environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct WorkspaceRef {
     pub environment_id: EnvironmentId,
     pub workspace_id: WorkspaceId,
-    pub path: std::path::PathBuf,
-    pub vcs_kind: Option<VcsKind>,
+    pub repo_id: RepoId,
 }
 
 /// Workspace metadata for listing and UI grouping.
@@ -167,10 +212,10 @@ pub struct WorkspaceRef {
 pub struct WorkspaceInfo {
     pub workspace_id: WorkspaceId,
     pub environment_id: EnvironmentId,
+    pub repo_id: RepoId,
     pub parent_workspace_id: Option<WorkspaceId>,
     pub name: Option<String>,
     pub path: std::path::PathBuf,
-    pub vcs_kind: Option<VcsKind>,
 }
 
 /// Workspace status for orchestration and UI display.
@@ -178,6 +223,7 @@ pub struct WorkspaceInfo {
 pub struct WorkspaceStatus {
     pub workspace_id: WorkspaceId,
     pub environment_id: EnvironmentId,
+    pub repo_id: RepoId,
     pub path: std::path::PathBuf,
     pub vcs: Option<VcsInfo>,
 }
@@ -205,7 +251,7 @@ impl CachedEnvironment {
 }
 
 /// Supported version control systems
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub enum VcsKind {
     Git,

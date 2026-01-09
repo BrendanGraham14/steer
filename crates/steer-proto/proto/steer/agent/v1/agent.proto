@@ -33,6 +33,8 @@ service AgentService {
   rpc GetProviderAuthStatus(GetProviderAuthStatusRequest) returns (GetProviderAuthStatusResponse);
 
   // Workspace orchestration
+  rpc ResolveRepo(ResolveRepoRequest) returns (ResolveRepoResponse);
+  rpc ListRepos(ListReposRequest) returns (ListReposResponse);
   rpc CreateWorkspace(CreateWorkspaceRequest) returns (CreateWorkspaceResponse);
   rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
   rpc GetWorkspaceStatus(GetWorkspaceStatusRequest) returns (GetWorkspaceStatusResponse);
@@ -228,6 +230,7 @@ message CreateSessionRequest {
   optional WorkspaceRef workspace_ref = 8;
   optional string parent_session_id = 9;
   optional string workspace_name = 10;
+  optional RepoRef repo_ref = 11;
 }
 
 message CreateSessionResponse {
@@ -438,6 +441,7 @@ message SessionConfig {
   optional WorkspaceRef workspace_ref = 8;
   optional string parent_session_id = 9;
   optional string workspace_name = 10;
+  optional RepoRef repo_ref = 11;
 }
 
 // Environment management
@@ -476,12 +480,45 @@ message DeleteEnvironmentRequest {
 
 message DeleteEnvironmentResponse {}
 
+// Repo management
+message RepoRef {
+  string environment_id = 1;
+  string repo_id = 2;
+  string root_path = 3;
+  optional steer.remote_workspace.v1.VcsKind vcs_kind = 4;
+}
+
+message RepoInfo {
+  string repo_id = 1;
+  string environment_id = 2;
+  string root_path = 3;
+  optional steer.remote_workspace.v1.VcsKind vcs_kind = 4;
+}
+
+message ResolveRepoRequest {
+  string environment_id = 1;
+  string path = 2;
+}
+
+message ResolveRepoResponse {
+  RepoInfo repo = 1;
+}
+
+message ListReposRequest {
+  string environment_id = 1;
+}
+
+message ListReposResponse {
+  repeated RepoInfo repos = 1;
+}
+
 // Workspace orchestration
 message WorkspaceRef {
   string environment_id = 1;
   string workspace_id = 2;
-  string path = 3;
-  optional steer.remote_workspace.v1.VcsKind vcs_kind = 4;
+  string repo_id = 3;
+  reserved 4;
+  reserved "path", "vcs_kind";
 }
 
 message WorkspaceInfo {
@@ -490,7 +527,9 @@ message WorkspaceInfo {
   optional string parent_workspace_id = 3;
   optional string name = 4;
   string path = 5;
-  optional steer.remote_workspace.v1.VcsKind vcs_kind = 6;
+  string repo_id = 6;
+  reserved 7;
+  reserved "vcs_kind";
 }
 
 message WorkspaceStatus {
@@ -498,6 +537,7 @@ message WorkspaceStatus {
   string environment_id = 2;
   string path = 3;
   optional steer.remote_workspace.v1.VcsInfo vcs = 4;
+  string repo_id = 5;
 }
 
 enum WorkspaceCreateStrategy {
@@ -506,10 +546,12 @@ enum WorkspaceCreateStrategy {
 }
 
 message CreateWorkspaceRequest {
-  optional WorkspaceRef base = 1;
+  string repo_id = 1;
   optional string name = 2;
   optional string parent_workspace_id = 3;
   WorkspaceCreateStrategy strategy = 4;
+  reserved 5;
+  reserved "base";
 }
 
 message CreateWorkspaceResponse {

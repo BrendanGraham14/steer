@@ -56,6 +56,7 @@ impl AgentSpawner for DefaultAgentSpawner {
         session_config.workspace = WorkspaceConfig::Local { path: workspace_path };
         session_config.workspace_ref = config.workspace_ref.clone();
         session_config.workspace_id = config.workspace_id;
+        session_config.repo_ref = config.repo_ref.clone();
         session_config.workspace_name = config.workspace_name.clone();
         session_config.parent_session_id = Some(config.parent_session_id);
         session_config.tool_config = SessionToolConfig::read_only();

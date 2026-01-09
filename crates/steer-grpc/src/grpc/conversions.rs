@@ -568,14 +568,11 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
         workspace_ref: config.workspace_ref.as_ref().map(|reference| proto::WorkspaceRef {
             environment_id: reference.environment_id.as_uuid().to_string(),
             workspace_id: reference.workspace_id.as_uuid().to_string(),
-            path: reference.path.to_string_lossy().to_string(),
-            vcs_kind: reference.vcs_kind.as_ref().map(|kind| match kind {
-                steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git as i32,
-                steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj as i32,
-            }),
+            repo_id: reference.repo_id.as_uuid().to_string(),
         }),
         parent_session_id: config.parent_session_id.as_ref().map(SessionId::to_string),
         workspace_name: config.workspace_name.clone(),
+        repo_ref: config.repo_ref.as_ref().map(repo_ref_to_proto),
     }
 }
 
@@ -615,6 +612,30 @@ pub(crate) fn environment_descriptor_to_proto(
     }
 }
 
+pub(crate) fn repo_ref_to_proto(reference: &steer_workspace::RepoRef) -> proto::RepoRef {
+    proto::RepoRef {
+        environment_id: reference.environment_id.as_uuid().to_string(),
+        repo_id: reference.repo_id.as_uuid().to_string(),
+        root_path: reference.root_path.to_string_lossy().to_string(),
+        vcs_kind: reference.vcs_kind.as_ref().map(|kind| match kind {
+            steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git as i32,
+            steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj as i32,
+        }),
+    }
+}
+
+pub(crate) fn repo_info_to_proto(info: &steer_workspace::RepoInfo) -> proto::RepoInfo {
+    proto::RepoInfo {
+        repo_id: info.repo_id.as_uuid().to_string(),
+        environment_id: info.environment_id.as_uuid().to_string(),
+        root_path: info.root_path.to_string_lossy().to_string(),
+        vcs_kind: info.vcs_kind.as_ref().map(|kind| match kind {
+            steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git as i32,
+            steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj as i32,
+        }),
+    }
+}
+
 pub(crate) fn workspace_info_to_proto(info: &steer_workspace::WorkspaceInfo) -> proto::WorkspaceInfo {
     proto::WorkspaceInfo {
         workspace_id: info.workspace_id.as_uuid().to_string(),
@@ -624,10 +645,7 @@ pub(crate) fn workspace_info_to_proto(info: &steer_workspace::WorkspaceInfo) -> 
             .map(|id| id.as_uuid().to_string()),
         name: info.name.clone(),
         path: info.path.to_string_lossy().to_string(),
-        vcs_kind: info.vcs_kind.as_ref().map(|kind| match kind {
-            steer_workspace::VcsKind::Git => remote_proto::VcsKind::Git as i32,
-            steer_workspace::VcsKind::Jj => remote_proto::VcsKind::Jj as i32,
-        }),
+        repo_id: info.repo_id.as_uuid().to_string(),
     }
 }
 
@@ -639,6 +657,7 @@ pub(crate) fn workspace_status_to_proto(
         environment_id: status.environment_id.as_uuid().to_string(),
         path: status.path.to_string_lossy().to_string(),
         vcs: status.vcs.as_ref().map(vcs_info_to_proto),
+        repo_id: status.repo_id.as_uuid().to_string(),
     }
 }
 
@@ -647,23 +666,19 @@ pub(crate) fn proto_to_workspace_info(
 ) -> Result<steer_workspace::WorkspaceInfo, ConversionError> {
     let workspace_id = parse_workspace_id(&info.workspace_id)?;
     let environment_id = parse_environment_id(&info.environment_id)?;
+    let repo_id = parse_repo_id(&info.repo_id)?;
     let parent_workspace_id = match info.parent_workspace_id {
         Some(value) if !value.is_empty() => Some(parse_workspace_id(&value)?),
         _ => None,
     };
-    let vcs_kind = info.vcs_kind.and_then(|value| match remote_proto::VcsKind::try_from(value) {
-        Ok(remote_proto::VcsKind::Git) => Some(steer_workspace::VcsKind::Git),
-        Ok(remote_proto::VcsKind::Jj) => Some(steer_workspace::VcsKind::Jj),
-        _ => None,
-    });
 
     Ok(steer_workspace::WorkspaceInfo {
         workspace_id,
         environment_id,
+        repo_id,
         parent_workspace_id,
         name: info.name,
         path: PathBuf::from(info.path),
-        vcs_kind,
     })
 }
 
@@ -672,6 +687,7 @@ pub(crate) fn proto_to_workspace_status(
 ) -> Result<steer_workspace::WorkspaceStatus, ConversionError> {
     let workspace_id = parse_workspace_id(&status.workspace_id)?;
     let environment_id = parse_environment_id(&status.environment_id)?;
+    let repo_id = parse_repo_id(&status.repo_id)?;
     let vcs = match status.vcs {
         Some(info) => Some(proto_to_vcs_info(info)?),
         None => None,
@@ -680,8 +696,30 @@ pub(crate) fn proto_to_workspace_status(
     Ok(steer_workspace::WorkspaceStatus {
         workspace_id,
         environment_id,
+        repo_id,
         path: PathBuf::from(status.path),
         vcs,
+    })
+}
+
+pub(crate) fn proto_to_repo_info(
+    info: proto::RepoInfo,
+) -> Result<steer_workspace::RepoInfo, ConversionError> {
+    let repo_id = parse_repo_id(&info.repo_id)?;
+    let environment_id = parse_environment_id(&info.environment_id)?;
+    let vcs_kind = info
+        .vcs_kind
+        .and_then(|value| match remote_proto::VcsKind::try_from(value) {
+            Ok(remote_proto::VcsKind::Git) => Some(steer_workspace::VcsKind::Git),
+            Ok(remote_proto::VcsKind::Jj) => Some(steer_workspace::VcsKind::Jj),
+            _ => None,
+        });
+
+    Ok(steer_workspace::RepoInfo {
+        repo_id,
+        environment_id,
+        root_path: PathBuf::from(info.root_path),
+        vcs_kind,
     })
 }
 
@@ -705,6 +743,18 @@ fn parse_workspace_id(value: &str) -> Result<steer_workspace::WorkspaceId, Conve
         message: format!("Invalid workspace_id '{value}': {e}"),
     })?;
     Ok(steer_workspace::WorkspaceId::from_uuid(uuid))
+}
+
+fn parse_repo_id(value: &str) -> Result<steer_workspace::RepoId, ConversionError> {
+    if value.is_empty() {
+        return Err(ConversionError::InvalidData {
+            message: "repo_id is empty".to_string(),
+        });
+    }
+    let uuid = Uuid::parse_str(value).map_err(|e| ConversionError::InvalidData {
+        message: format!("Invalid repo_id '{value}': {e}"),
+    })?;
+    Ok(steer_workspace::RepoId::from_uuid(uuid))
 }
 
 fn proto_to_vcs_info(

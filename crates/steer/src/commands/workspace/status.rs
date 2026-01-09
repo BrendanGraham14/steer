@@ -62,6 +62,7 @@ fn format_workspace_status(status: &steer_core::workspace::WorkspaceStatus) -> S
         "Environment: {}\n",
         status.environment_id.as_uuid()
     ));
+    output.push_str(&format!("Repo: {}\n", status.repo_id.as_uuid()));
     output.push_str(&format!("Path: {}\n", status.path.display()));
 
     match &status.vcs {
