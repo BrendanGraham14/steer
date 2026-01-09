@@ -285,6 +285,7 @@ mod tests {
                     access_token: "token".to_string(),
                     refresh_token: "refresh".to_string(),
                     expires_at: SystemTime::now() + Duration::from_secs(3600),
+                    id_token: None,
                 }),
             )
             .await

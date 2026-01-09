@@ -143,6 +143,7 @@ impl AnthropicOAuth {
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_at,
+            id_token: None,
         })
     }
 
@@ -200,6 +201,7 @@ impl AnthropicOAuth {
             access_token: token_response.access_token,
             refresh_token: token_response.refresh_token,
             expires_at,
+            id_token: None,
         })
     }
 }

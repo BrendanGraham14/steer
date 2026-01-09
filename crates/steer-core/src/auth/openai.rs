@@ -21,9 +21,7 @@ const ORIGINATOR: &str = "codex_cli_rs";
 const CALLBACK_PATH: &str = "/auth/callback";
 const CALLBACK_PORT: u16 = 1455;
 
-const CHATGPT_ACCOUNT_ID_CLAIM: &str = "https://api.openai.com/auth.chatgpt_account_id";
 const CHATGPT_ACCOUNT_ID_NESTED_CLAIM: &str = "https://api.openai.com/auth";
-const CHATGPT_ACCOUNT_ID_URL: &str = "https://api.openai.com/auth/chatgpt_account_id";
 
 #[derive(Debug)]
 pub struct PkceChallenge {
@@ -86,7 +84,11 @@ impl OpenAIOAuth {
         format!("{AUTHORIZE_URL}?{query}")
     }
 
-    pub async fn exchange_code_for_tokens(&self, code: &str, pkce_verifier: &str) -> Result<AuthTokens> {
+    pub async fn exchange_code_for_tokens(
+        &self,
+        code: &str,
+        pkce_verifier: &str,
+    ) -> Result<AuthTokens> {
         #[derive(Serialize)]
         struct TokenRequest {
             grant_type: String,
@@ -98,6 +100,7 @@ impl OpenAIOAuth {
 
         #[derive(Deserialize)]
         struct TokenResponse {
+            id_token: Option<String>,
             access_token: String,
             refresh_token: Option<String>,
             expires_in: Option<u64>,
@@ -139,6 +142,10 @@ impl OpenAIOAuth {
             ));
         }
 
+        let id_token = token_response.id_token.ok_or_else(|| {
+            AuthError::InvalidResponse("Missing id_token in token response".to_string())
+        })?;
+
         let refresh_token = token_response.refresh_token.ok_or_else(|| {
             AuthError::InvalidResponse("Missing refresh_token in token response".to_string())
         })?;
@@ -150,6 +157,7 @@ impl OpenAIOAuth {
             access_token: token_response.access_token,
             refresh_token,
             expires_at,
+            id_token: Some(id_token),
         })
     }
 
@@ -163,6 +171,7 @@ impl OpenAIOAuth {
 
         #[derive(Deserialize)]
         struct TokenResponse {
+            id_token: Option<String>,
             access_token: String,
             refresh_token: Option<String>,
             expires_in: Option<u64>,
@@ -220,46 +229,8 @@ impl OpenAIOAuth {
             access_token: token_response.access_token,
             refresh_token,
             expires_at,
+            id_token: token_response.id_token,
         })
-    }
-
-    pub async fn fetch_chatgpt_account_id(
-        &self,
-        access_token: &str,
-    ) -> Result<ChatGptAccountId> {
-        if access_token.trim().is_empty() {
-            return Err(AuthError::InvalidResponse(
-                "Empty access token".to_string(),
-            ));
-        }
-
-        let response = self
-            .http_client
-            .get(CHATGPT_ACCOUNT_ID_URL)
-            .bearer_auth(access_token)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            if matches!(
-                response.status(),
-                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
-            ) {
-                return Err(AuthError::ReauthRequired);
-            }
-
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AuthError::InvalidResponse(format!(
-                "Account ID lookup failed with status {status}: {body}"
-            )));
-        }
-
-        let body_text = response.text().await.map_err(|e| {
-            AuthError::InvalidResponse(format!("Failed to read account id response: {e}"))
-        })?;
-
-        parse_chatgpt_account_id_body(&body_text)
     }
 }
 
@@ -286,13 +257,17 @@ pub async fn refresh_if_needed(
         _ => return Err(AuthError::ReauthRequired),
     };
 
-    if tokens_need_refresh(&tokens) {
+    if tokens.id_token.is_none() || tokens_need_refresh(&tokens) {
         match oauth_client.refresh_tokens(&tokens.refresh_token).await {
             Ok(new_tokens) => {
+                let merged_tokens = AuthTokens {
+                    id_token: new_tokens.id_token.or(tokens.id_token),
+                    ..new_tokens
+                };
                 storage
-                    .set_credential("openai", Credential::OAuth2(new_tokens.clone()))
+                    .set_credential("openai", Credential::OAuth2(merged_tokens.clone()))
                     .await?;
-                tokens = new_tokens;
+                tokens = merged_tokens;
             }
             Err(AuthError::ReauthRequired) => {
                 storage
@@ -304,49 +279,15 @@ pub async fn refresh_if_needed(
         }
     }
 
+    if tokens.id_token.is_none() {
+        return Err(AuthError::ReauthRequired);
+    }
+
     Ok(tokens)
 }
 
-pub fn extract_chatgpt_account_id(access_token: &str) -> Result<ChatGptAccountId> {
-    let payload = decode_jwt_payload(access_token)?;
-    if let Some(account_id) = payload
-        .get(CHATGPT_ACCOUNT_ID_CLAIM)
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return Ok(ChatGptAccountId(account_id.to_string()));
-    }
-
-    if let Some(account_id) = payload
-        .get(CHATGPT_ACCOUNT_ID_NESTED_CLAIM)
-        .and_then(|v| v.get("chatgpt_account_id"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return Ok(ChatGptAccountId(account_id.to_string()));
-    }
-
-    if let Some(account_id) = payload
-        .get("chatgpt_account_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        return Ok(ChatGptAccountId(account_id.to_string()));
-    }
-
-    Err(AuthError::InvalidResponse(
-        "Missing chatgpt account id in token".to_string(),
-    ))
-}
-
-pub async fn resolve_chatgpt_account_id(
-    oauth_client: &OpenAIOAuth,
-    access_token: &str,
-) -> Result<ChatGptAccountId> {
-    match extract_chatgpt_account_id(access_token) {
-        Ok(account_id) => Ok(account_id),
-        Err(_) => oauth_client.fetch_chatgpt_account_id(access_token).await,
-    }
+pub fn extract_chatgpt_account_id(id_token: &str) -> Result<ChatGptAccountId> {
+    extract_chatgpt_account_id_from_id_token(id_token)
 }
 
 fn resolve_expires_at(expires_in: Option<u64>, access_token: &str) -> Result<SystemTime> {
@@ -380,52 +321,28 @@ fn decode_jwt_payload(access_token: &str) -> Result<serde_json::Value> {
     serde_json::from_slice(&payload_bytes)
         .map_err(|e| AuthError::InvalidResponse(format!("Invalid token payload JSON: {e}")))
 }
+fn extract_chatgpt_account_id_from_id_token(id_token: &str) -> Result<ChatGptAccountId> {
+    let payload = decode_jwt_payload(id_token)?;
 
-fn parse_chatgpt_account_id_body(body_text: &str) -> Result<ChatGptAccountId> {
-    let trimmed = body_text.trim();
-    if trimmed.is_empty() {
-        return Err(AuthError::InvalidResponse(
-            "Empty account id response".to_string(),
-        ));
+    if let Some(account_id) = payload
+        .get(CHATGPT_ACCOUNT_ID_NESTED_CLAIM)
+        .and_then(|v| v.get("chatgpt_account_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(ChatGptAccountId(account_id.to_string()));
     }
 
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        if let Some(id) = value
-            .get("chatgpt_account_id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(ChatGptAccountId(id.to_string()));
-        }
-        if let Some(id) = value
-            .get("account_id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(ChatGptAccountId(id.to_string()));
-        }
-        if let Some(id) = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(ChatGptAccountId(id.to_string()));
-        }
-    }
-
-    if trimmed.starts_with('"') && trimmed.ends_with('"') {
-        let unquoted = trimmed.trim_matches('"');
-        if !unquoted.is_empty() {
-            return Ok(ChatGptAccountId(unquoted.to_string()));
-        }
-    }
-
-    if !trimmed.contains('{') && !trimmed.contains('}') {
-        return Ok(ChatGptAccountId(trimmed.to_string()));
+    if let Some(account_id) = payload
+        .get("chatgpt_account_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(ChatGptAccountId(account_id.to_string()));
     }
 
     Err(AuthError::InvalidResponse(
-        "Missing chatgpt account id in response".to_string(),
+        "Missing chatgpt account id in token".to_string(),
     ))
 }
 
@@ -659,7 +576,7 @@ impl AuthenticationFlow for OpenAIOAuthFlow {
             .get_credential(&provider::openai().storage_key(), CredentialType::OAuth2)
             .await?
         {
-            return Ok(!tokens_need_refresh(&tokens));
+            return Ok(tokens.id_token.is_some() && !tokens_need_refresh(&tokens));
         }
 
         Ok(false)
@@ -705,7 +622,9 @@ mod tests {
     #[test]
     fn test_extract_chatgpt_account_id() {
         let payload = serde_json::json!({
-            CHATGPT_ACCOUNT_ID_CLAIM: "acct_123",
+            CHATGPT_ACCOUNT_ID_NESTED_CLAIM: {
+                "chatgpt_account_id": "acct_123"
+            },
             "exp": 1_700_000_000u64
         });
         let token = make_jwt(payload);

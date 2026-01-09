@@ -10,6 +10,8 @@ pub struct OAuth2Token {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: SystemTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token: Option<String>,
 }
 
 // Alias for backwards compatibility

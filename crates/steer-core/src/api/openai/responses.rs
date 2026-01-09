@@ -125,10 +125,7 @@ impl Client {
             input,
             instructions: system,
             previous_response_id: None,
-            temperature: call_options
-                .as_ref()
-                .and_then(|o| o.temperature)
-                .or(Some(1.0)),
+            temperature: call_options.as_ref().and_then(|o| o.temperature).or(None),
             max_output_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
             max_tool_calls: None,
             parallel_tool_calls: Some(true),
@@ -500,34 +497,8 @@ impl Client {
         let mut request = self.build_request(model_id, messages, system, tools, call_options);
         request.stream = Some(true);
 
-        let response = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                return Err(ApiError::Cancelled{ provider: "openai".to_string()});
-            }
-            res = self.http_client.post(&self.base_url).json(&request).send() => {
-                res.map_err(ApiError::Network)?
-            }
-        };
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            error!(
-                target: "openai::responses::stream",
-                "Request failed with status {}: {}", status, body
-            );
-            return Err(ApiError::ServerError {
-                provider: "openai".to_string(),
-                status_code: status.as_u16(),
-                details: body,
-            });
-        }
-
-        let byte_stream = response.bytes_stream();
-        let sse_stream = parse_sse_stream(byte_stream);
-
-        Ok(Box::pin(Self::convert_responses_stream(sse_stream, token)))
+        let request_builder = self.http_client.post(&self.base_url).json(&request);
+        stream_responses_request(request_builder, token).await
     }
 
     pub(crate) fn convert_responses_stream(
@@ -794,6 +765,53 @@ impl Client {
             }
         }
     }
+}
+
+pub(crate) async fn stream_responses_request(
+    request_builder: reqwest::RequestBuilder,
+    token: CancellationToken,
+) -> Result<CompletionStream, ApiError> {
+    let response = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            debug!(target: "openai::responses::stream", "Cancellation token triggered before sending request.");
+            return Err(ApiError::Cancelled{ provider: "openai".to_string()});
+        }
+        res = request_builder.send() => {
+            res.map_err(|e| {
+                error!(target: "openai::responses::stream", "Request send failed: {}", e);
+                ApiError::Network(e)
+            })?
+        }
+    };
+
+    if token.is_cancelled() {
+        debug!(target: "openai::responses::stream", "Cancellation token triggered after sending request.");
+        return Err(ApiError::Cancelled {
+            provider: "openai".to_string(),
+        });
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        error!(
+            target: "openai::responses::stream",
+            "Request failed with status {}: {}", status, body
+        );
+        return Err(ApiError::ServerError {
+            provider: "openai".to_string(),
+            status_code: status.as_u16(),
+            details: body,
+        });
+    }
+
+    let byte_stream = response.bytes_stream();
+    let sse_stream = parse_sse_stream(byte_stream);
+
+    Ok(Box::pin(Client::convert_responses_stream(
+        sse_stream, token,
+    )))
 }
 
 fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String> {

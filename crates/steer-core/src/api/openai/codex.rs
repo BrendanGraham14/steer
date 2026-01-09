@@ -2,19 +2,19 @@ use crate::api::error::ApiError;
 use crate::api::openai::responses;
 use crate::api::openai::responses_types::{ExtraValue, ResponsesRequest};
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider};
-use crate::api::sse::parse_sse_stream;
-use crate::auth::openai::{refresh_if_needed, resolve_chatgpt_account_id, OpenAIOAuth};
+use crate::auth::openai::{extract_chatgpt_account_id, refresh_if_needed, OpenAIOAuth};
 use crate::auth::AuthStorage;
 use crate::config::model::{ModelId, ModelParameters};
 use async_trait::async_trait;
 use reqwest::header;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error};
 
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_BETA: &str = "responses=experimental";
 const ORIGINATOR: &str = "codex_cli_rs";
+const CODEX_BASE_INSTRUCTIONS: &str =
+    include_str!("../../../assets/codex/gpt-5.2-codex_prompt.md");
 
 pub struct CodexClient {
     http_client: reqwest::Client,
@@ -63,6 +63,11 @@ impl CodexClient {
         tools: Option<Vec<steer_tools::ToolSchema>>,
         call_options: Option<ModelParameters>,
     ) -> ResponsesRequest {
+        let system_prompt = system
+            .as_deref()
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty())
+            .map(str::to_owned);
         let mut request = self
             .responses_client
             .build_request(model_id, messages, system, tools, call_options);
@@ -72,6 +77,9 @@ impl CodexClient {
             ExtraValue::Array(vec![ExtraValue::String(
                 "reasoning.encrypted_content".to_string(),
             )]),
+        );
+        request.instructions = Some(
+            system_prompt.unwrap_or_else(|| CODEX_BASE_INSTRUCTIONS.to_string()),
         );
         request
     }
@@ -84,8 +92,14 @@ impl CodexClient {
                 details: e.to_string(),
             })?;
 
-        let account_id = resolve_chatgpt_account_id(&self.oauth_client, &tokens.access_token)
-            .await
+        let id_token = tokens.id_token.as_deref().ok_or_else(|| {
+            ApiError::AuthenticationFailed {
+                provider: "openai".to_string(),
+                details: "Missing id_token in OAuth credentials".to_string(),
+            }
+        })?;
+
+        let account_id = extract_chatgpt_account_id(id_token)
             .map_err(|e| ApiError::AuthenticationFailed {
                 provider: "openai".to_string(),
                 details: e.to_string(),
@@ -154,46 +168,6 @@ impl Provider for CodexClient {
             .headers(auth_headers)
             .json(&request);
 
-        let response = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                debug!(target: "openai::codex", "Cancellation token triggered before sending request.");
-                return Err(ApiError::Cancelled{ provider: "openai".to_string()});
-            }
-            res = request_builder.send() => {
-                res.map_err(|e| {
-                    error!(target: "openai::codex", "Request send failed: {}", e);
-                    ApiError::Network(e)
-                })?
-            }
-        };
-
-        if token.is_cancelled() {
-            debug!(target: "openai::codex", "Cancellation token triggered after sending request.");
-            return Err(ApiError::Cancelled {
-                provider: "openai".to_string(),
-            });
-        }
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            error!(
-                target: "openai::codex",
-                "Request failed with status {}: {}", status, body
-            );
-            return Err(ApiError::ServerError {
-                provider: "openai".to_string(),
-                status_code: status.as_u16(),
-                details: body,
-            });
-        }
-
-        let byte_stream = response.bytes_stream();
-        let sse_stream = parse_sse_stream(byte_stream);
-
-        Ok(Box::pin(responses::Client::convert_responses_stream(
-            sse_stream, token,
-        )))
+        responses::stream_responses_request(request_builder, token).await
     }
 }

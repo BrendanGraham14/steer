@@ -190,6 +190,7 @@ mod tests {
             access_token: "test-token".to_string(),
             refresh_token: "test-refresh".to_string(),
             expires_at: std::time::SystemTime::now(),
+            id_token: None,
         });
 
         let result = create_provider(&config, &credential);
