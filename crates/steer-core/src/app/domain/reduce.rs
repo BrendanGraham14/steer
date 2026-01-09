@@ -1585,6 +1585,7 @@ mod tests {
             kind: OperationKind::AgentLoop,
             pending_tool_calls: HashSet::new(),
         });
+
         state
             .operation_models
             .insert(op_id, builtin::claude_sonnet_4_5());
@@ -1611,18 +1612,30 @@ mod tests {
             },
         );
 
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolCallFailed { .. },
+                ..
+            }
+        )));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolMessageAdded { .. },
+                ..
+            }
+        )));
         assert!(
-            effects
+            !effects
                 .iter()
-                .any(|e| matches!(e, Effect::EmitEvent { event: SessionEvent::ToolCallFailed { .. }, .. }))
+                .any(|e| matches!(e, Effect::ExecuteTool { .. }))
         );
         assert!(
-            effects
+            !effects
                 .iter()
-                .any(|e| matches!(e, Effect::EmitEvent { event: SessionEvent::ToolMessageAdded { .. }, .. }))
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
         );
-        assert!(!effects.iter().any(|e| matches!(e, Effect::ExecuteTool { .. })));
-        assert!(!effects.iter().any(|e| matches!(e, Effect::RequestUserApproval { .. })));
         assert!(state.pending_approval.is_none());
         assert!(state.approval_queue.is_empty());
         assert_eq!(state.message_graph.messages.len(), 1);
