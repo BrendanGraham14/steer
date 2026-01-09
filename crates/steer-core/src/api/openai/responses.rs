@@ -520,6 +520,7 @@ impl Client {
         }
 
         let request = self.build_request(model_id, messages, system, tools, call_options);
+        log_request_payload(&request, false);
         let headers = self.auth_headers().await?;
         let request_builder = self
             .http_client
@@ -660,6 +661,7 @@ impl Client {
 
         let mut request = self.build_request(model_id, messages, system, tools, call_options);
         request.stream = Some(true);
+        log_request_payload(&request, true);
 
         let headers = self.auth_headers().await?;
         let request_builder = self
@@ -989,6 +991,33 @@ fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String>
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn log_request_payload(request: &ResponsesRequest, is_stream: bool) {
+    match serde_json::to_string(request) {
+        Ok(payload) => {
+            if is_stream {
+                debug!(target: "openai::responses::stream", "Request payload: {}", payload);
+            } else {
+                debug!(target: "openai::responses", "Request payload: {}", payload);
+            }
+        }
+        Err(err) => {
+            if is_stream {
+                debug!(
+                    target: "openai::responses::stream",
+                    "Failed to serialize request payload: {}",
+                    err
+                );
+            } else {
+                debug!(
+                    target: "openai::responses",
+                    "Failed to serialize request payload: {}",
+                    err
+                );
+            }
+        }
+    }
 }
 
 fn resolve_call_id(
