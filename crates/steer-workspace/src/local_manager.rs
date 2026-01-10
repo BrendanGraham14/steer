@@ -16,6 +16,7 @@ use crate::{
 use crate::workspace_registry::WorkspaceRegistry;
 
 use jj_lib::config::ConfigGetError;
+use jj_lib::file_util;
 use jj_lib::fileset::{self, FilesetDiagnostics};
 use jj_lib::gitignore::GitIgnoreFile;
 use jj_lib::matchers::Matcher;
@@ -113,7 +114,29 @@ impl LocalWorkspaceManager {
 
         let mut config = StackedConfig::with_defaults();
         let jj_dir = workspace_root.join(".jj");
-        let repo_config = jj_dir.join("repo").join("config.toml");
+        let repo_config = {
+            let repo_dir = jj_dir.join("repo");
+            if repo_dir.is_file() {
+                let buf = std::fs::read(&repo_dir).map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to read jj repo path file: {e}"
+                    ))
+                })?;
+                let repo_path = file_util::path_from_bytes(&buf).map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to decode jj repo path: {e}"
+                    ))
+                })?;
+                let repo_dir = std::fs::canonicalize(jj_dir.join(repo_path)).map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to resolve jj repo path: {e}"
+                    ))
+                })?;
+                repo_dir.join("config.toml")
+            } else {
+                repo_dir.join("config.toml")
+            }
+        };
         if repo_config.is_file() {
             config
                 .load_file(ConfigSource::Repo, repo_config)
@@ -501,7 +524,11 @@ impl WorkspaceManager for LocalWorkspaceManager {
 
         {
             let managed_root = self.workspace_parent_dir(info.repo_id);
-            if !info.path.starts_with(&managed_root) {
+            let managed_root =
+                std::fs::canonicalize(&managed_root).unwrap_or_else(|_| managed_root.clone());
+            let info_path =
+                std::fs::canonicalize(&info.path).unwrap_or_else(|_| info.path.clone());
+            if !info_path.starts_with(&managed_root) {
                 return Err(WorkspaceManagerError::InvalidRequest(
                     "Only managed jj workspaces can be deleted".to_string(),
                 ));
@@ -747,6 +774,70 @@ snapshot.max-new-file-size = "1B"
         assert!(
             !wc_tree_has_path(&updated_repo, workspace.workspace_name(), "large.txt"),
             "large file should remain untracked when it exceeds snapshot.max-new-file-size"
+        );
+    }
+
+    #[test]
+    fn test_delete_workspace_snapshots_and_preserves_revision() {
+        let (temp_dir, workspace, _repo) = init_jj_workspace();
+        write_repo_config(&workspace, r#"snapshot.auto-track = "all()""#);
+        drop(workspace);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let manager_root = tempfile::tempdir().unwrap();
+        let manager = runtime
+            .block_on(LocalWorkspaceManager::new(manager_root.path().to_path_buf()))
+            .unwrap();
+
+        let base_info = runtime
+            .block_on(manager.resolve_workspace(temp_dir.path()))
+            .unwrap();
+        let child_info = runtime
+            .block_on(manager.create_workspace(CreateWorkspaceRequest {
+                repo_id: base_info.repo_id,
+                name: Some("subagent-test".to_string()),
+                parent_workspace_id: Some(base_info.workspace_id),
+                strategy: WorkspaceCreateStrategy::JjWorkspace,
+            }))
+            .unwrap();
+
+        assert!(child_info.path.exists());
+        let managed_root =
+            std::fs::canonicalize(manager.workspace_parent_dir(child_info.repo_id))
+                .unwrap_or_else(|_| manager.workspace_parent_dir(child_info.repo_id));
+        let child_path =
+            std::fs::canonicalize(&child_info.path).unwrap_or_else(|_| child_info.path.clone());
+        assert!(
+            child_path.starts_with(&managed_root),
+            "workspace path should be managed (path: {:?}, managed_root: {:?})",
+            child_path,
+            managed_root
+        );
+        std::fs::write(child_info.path.join("subagent.txt"), "content").unwrap();
+
+        runtime
+            .block_on(manager.delete_workspace(DeleteWorkspaceRequest {
+                workspace_id: child_info.workspace_id,
+            }))
+            .unwrap();
+
+        assert!(!child_info.path.exists());
+
+        let (_workspace, repo) = manager.load_jj_workspace(temp_dir.path()).unwrap();
+        let repo_path = RepoPathBuf::from_internal_string("subagent.txt").unwrap();
+        let found = repo.view().heads().iter().any(|commit_id| {
+            let commit = repo.store().get_commit(commit_id).unwrap();
+            commit
+                .tree()
+                .unwrap()
+                .path_value(repo_path.as_ref())
+                .unwrap()
+                .is_present()
+        });
+
+        assert!(
+            found,
+            "snapshot commit should remain after workspace cleanup"
         );
     }
 }
