@@ -11,8 +11,10 @@ use crate::tools::resolver::BackendResolver;
 use crate::tools::services::ToolServices;
 use crate::tools::static_tool::{StaticToolContext, StaticToolError};
 use crate::tools::{BackendRegistry, ExecutionContext};
+use crate::tools::{DISPATCH_AGENT_TOOL_NAME, FETCH_TOOL_NAME};
 use crate::workspace::Workspace;
 use steer_tools::{ToolCall, ToolSchema, result::ToolResult};
+use steer_tools::result::{AgentResult, ExternalResult, FetchResult};
 
 #[derive(Clone)]
 pub struct ToolExecutor {
@@ -336,10 +338,28 @@ impl ToolExecutor {
                 },
             })?;
 
-        Ok(ToolResult::External(steer_tools::result::ExternalResult {
-            tool_name: tool_call.name.clone(),
-            payload: output.to_string(),
-        }))
+        match tool_call.name.as_str() {
+            DISPATCH_AGENT_TOOL_NAME => {
+                let result: AgentResult = serde_json::from_value(output).map_err(|e| {
+                    steer_tools::ToolError::InternalError(format!(
+                        "Failed to decode dispatch_agent result: {e}"
+                    ))
+                })?;
+                Ok(ToolResult::Agent(result))
+            }
+            FETCH_TOOL_NAME => {
+                let result: FetchResult = serde_json::from_value(output).map_err(|e| {
+                    steer_tools::ToolError::InternalError(format!(
+                        "Failed to decode web_fetch result: {e}"
+                    ))
+                })?;
+                Ok(ToolResult::Fetch(result))
+            }
+            _ => Ok(ToolResult::External(ExternalResult {
+                tool_name: tool_call.name.clone(),
+                payload: output.to_string(),
+            })),
+        }
     }
 
     /// Execute a tool directly without validation - for user-initiated bash commands

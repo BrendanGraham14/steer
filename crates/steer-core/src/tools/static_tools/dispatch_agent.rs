@@ -7,9 +7,10 @@ use crate::tools::capability::Capabilities;
 use crate::tools::services::SubAgentConfig;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use crate::workspace::{
-    CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentId, RepoRef,
+    CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentId, RepoRef, VcsStatus,
     WorkspaceCreateStrategy, WorkspaceRef,
 };
+use steer_tools::result::{AgentResult, AgentWorkspaceCommit, AgentWorkspaceInfo};
 use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
 
@@ -69,17 +70,12 @@ pub struct DispatchAgentParams {
     pub workspace: WorkspaceTarget,
 }
 
-#[derive(Debug, Serialize)]
-pub struct DispatchAgentOutput {
-    pub content: String,
-}
-
 pub struct DispatchAgentTool;
 
 #[async_trait]
 impl StaticTool for DispatchAgentTool {
     type Params = DispatchAgentParams;
-    type Output = DispatchAgentOutput;
+    type Output = AgentResult;
 
     const NAME: &'static str = DISPATCH_AGENT_TOOL_NAME;
     const DESCRIPTION: &'static str = "Launch a sub-agent to search for files or code";
@@ -256,7 +252,39 @@ Notes:
             .spawn(config, ctx.cancellation_token.clone())
             .await;
 
-        if let (Some(manager), Some(workspace_id)) = (cleanup_manager, created_workspace_id) {
+        let mut workspace_info = None;
+
+        if let (Some(manager), Some(workspace_id)) =
+            (cleanup_manager.clone(), created_workspace_id)
+        {
+            let commit = match manager.get_workspace_status(workspace_id).await {
+                Ok(status) => match status.vcs {
+                    Some(vcs) => match vcs.status {
+                        VcsStatus::Jj(jj_status) => jj_status.working_copy.map(|wc| {
+                            AgentWorkspaceCommit {
+                                change_id: wc.change_id,
+                                commit_id: wc.commit_id,
+                                description: wc.description,
+                            }
+                        }),
+                        _ => None,
+                    },
+                    None => None,
+                },
+                Err(err) => {
+                    warn!(
+                        workspace_id = %workspace_id.as_uuid(),
+                        "Failed to get workspace status for sub-agent: {err}"
+                    );
+                    None
+                }
+            };
+
+            workspace_info = Some(AgentWorkspaceInfo {
+                workspace_id: Some(workspace_id.as_uuid().to_string()),
+                commit,
+            });
+
             if let Err(err) = manager
                 .delete_workspace(DeleteWorkspaceRequest { workspace_id })
                 .await
@@ -268,11 +296,11 @@ Notes:
             }
         }
 
-        let result = spawn_result
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
+        let result = spawn_result.map_err(|e| StaticToolError::execution(e.to_string()))?;
 
-        Ok(DispatchAgentOutput {
+        Ok(AgentResult {
             content: result.final_message.extract_text(),
+            workspace: workspace_info,
         })
     }
 }

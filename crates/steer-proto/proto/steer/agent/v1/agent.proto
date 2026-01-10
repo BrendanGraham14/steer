@@ -708,8 +708,20 @@ message FetchResult {
   string content = 2;
 }
 
+message AgentWorkspaceCommit {
+  string change_id = 1;
+  string commit_id = 2;
+  string description = 3;
+}
+
+message AgentWorkspaceInfo {
+  string workspace_id = 1;
+  AgentWorkspaceCommit commit = 2;
+}
+
 message AgentResult {
   string content = 1;
+  AgentWorkspaceInfo workspace = 2;
 }
 
 message ExternalResult {

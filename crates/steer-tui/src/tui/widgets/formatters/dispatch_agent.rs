@@ -97,6 +97,35 @@ impl ToolFormatter for DispatchAgentFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::Agent(agent_result) => {
+                    if let Some(workspace) = agent_result.workspace.as_ref() {
+                        lines.push(separator_line(wrap_width, theme.dim_text()));
+                        lines.push(Line::from(Span::styled(
+                            "Workspace Commit:",
+                            theme.subtle_text(),
+                        )));
+                        if let Some(workspace_id) = workspace.workspace_id.as_ref() {
+                            lines.push(Line::from(Span::styled(
+                                format!("  id: {workspace_id}"),
+                                Style::default(),
+                            )));
+                        }
+                        if let Some(commit) = workspace.commit.as_ref() {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "  change: {}  commit: {}",
+                                    commit.change_id, commit.commit_id
+                                ),
+                                Style::default(),
+                            )));
+                            if !commit.description.trim().is_empty() {
+                                lines.push(Line::from(Span::styled(
+                                    format!("  message: {}", commit.description),
+                                    Style::default(),
+                                )));
+                            }
+                        }
+                    }
+
                     if !agent_result.content.trim().is_empty() {
                         lines.push(separator_line(wrap_width, theme.dim_text()));
 

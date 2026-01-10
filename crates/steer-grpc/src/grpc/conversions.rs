@@ -40,6 +40,25 @@ pub fn proto_to_model(
 
     Ok((provider_id, spec.model_id.clone()))
 }
+
+fn agent_workspace_commit_to_proto(
+    commit: &steer_tools::result::AgentWorkspaceCommit,
+) -> proto::AgentWorkspaceCommit {
+    proto::AgentWorkspaceCommit {
+        change_id: commit.change_id.clone(),
+        commit_id: commit.commit_id.clone(),
+        description: commit.description.clone(),
+    }
+}
+
+fn agent_workspace_info_to_proto(
+    info: &steer_tools::result::AgentWorkspaceInfo,
+) -> proto::AgentWorkspaceInfo {
+    proto::AgentWorkspaceInfo {
+        workspace_id: info.workspace_id.clone().unwrap_or_default(),
+        commit: info.commit.as_ref().map(agent_workspace_commit_to_proto),
+    }
+}
 /// Convert steer_tools ToolResult to protobuf
 fn steer_tools_result_to_proto(
     result: &steer_tools::result::ToolResult,
@@ -114,6 +133,7 @@ fn steer_tools_result_to_proto(
         }),
         CoreResult::Agent(r) => ProtoResult::Agent(proto::AgentResult {
             content: r.content.clone(),
+            workspace: r.workspace.as_ref().map(agent_workspace_info_to_proto),
         }),
         CoreResult::External(r) => ProtoResult::External(proto::ExternalResult {
             tool_name: r.tool_name.clone(),
@@ -125,6 +145,29 @@ fn steer_tools_result_to_proto(
     Ok(proto::ToolResult {
         result: Some(proto_result),
     })
+}
+
+fn proto_to_agent_workspace_commit(
+    commit: proto::AgentWorkspaceCommit,
+) -> steer_tools::result::AgentWorkspaceCommit {
+    steer_tools::result::AgentWorkspaceCommit {
+        change_id: commit.change_id,
+        commit_id: commit.commit_id,
+        description: commit.description,
+    }
+}
+
+fn proto_to_agent_workspace_info(
+    info: proto::AgentWorkspaceInfo,
+) -> steer_tools::result::AgentWorkspaceInfo {
+    steer_tools::result::AgentWorkspaceInfo {
+        workspace_id: if info.workspace_id.is_empty() {
+            None
+        } else {
+            Some(info.workspace_id)
+        },
+        commit: info.commit.map(proto_to_agent_workspace_commit),
+    }
 }
 
 /// Convert ToolError to protobuf
@@ -250,7 +293,10 @@ fn proto_to_steer_tools_result(
             url: r.url,
             content: r.content,
         }),
-        ProtoResult::Agent(r) => ToolResult::Agent(AgentResult { content: r.content }),
+        ProtoResult::Agent(r) => ToolResult::Agent(AgentResult {
+            content: r.content,
+            workspace: r.workspace.map(proto_to_agent_workspace_info),
+        }),
         ProtoResult::External(r) => ToolResult::External(ExternalResult {
             tool_name: r.tool_name,
             payload: r.payload,
