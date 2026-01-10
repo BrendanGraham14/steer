@@ -613,6 +613,145 @@ impl crate::manager::RepoManager for LocalWorkspaceManager {
 }
 
 #[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use jj_lib::repo::Repo;
+    use jj_lib::repo_path::RepoPathBuf;
+    use tempfile::TempDir;
+
+    fn jj_settings() -> jj_lib::settings::UserSettings {
+        let mut config = jj_lib::config::StackedConfig::with_defaults();
+        let overrides = jj_lib::config::ConfigLayer::parse(
+            jj_lib::config::ConfigSource::CommandArg,
+            r#"
+user.name = "Test User"
+user.email = "test@example.com"
+operation.hostname = "test-host"
+operation.username = "test-user"
+signing.behavior = "drop"
+debug.randomness-seed = 0
+debug.commit-timestamp = "2001-01-01T00:00:00Z"
+debug.operation-timestamp = "2001-01-01T00:00:00Z"
+"#,
+        )
+        .unwrap();
+        config.add_layer(overrides);
+        jj_lib::settings::UserSettings::from_config(config).unwrap()
+    }
+
+    fn init_jj_workspace() -> (
+        TempDir,
+        jj_lib::workspace::Workspace,
+        Arc<jj_lib::repo::ReadonlyRepo>,
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let settings = jj_settings();
+        let (workspace, repo) =
+            jj_lib::workspace::Workspace::init_simple(&settings, temp_dir.path()).unwrap();
+        (temp_dir, workspace, repo)
+    }
+
+    fn write_repo_config(workspace: &jj_lib::workspace::Workspace, contents: &str) {
+        let repo_path = workspace.repo_path();
+        let config_path = repo_path.join("config.toml");
+        std::fs::write(config_path, contents).unwrap();
+    }
+
+    fn wc_tree_has_path(
+        repo: &Arc<jj_lib::repo::ReadonlyRepo>,
+        workspace_name: &jj_lib::ref_name::WorkspaceName,
+        path: &str,
+    ) -> bool {
+        let wc_commit_id = repo.view().get_wc_commit_id(workspace_name).unwrap();
+        let wc_commit = repo.store().get_commit(wc_commit_id).unwrap();
+        let tree = wc_commit.tree().unwrap();
+        let repo_path = RepoPathBuf::from_internal_string(path).unwrap();
+        tree.path_value(repo_path.as_ref()).unwrap().is_present()
+    }
+
+    #[test]
+    fn test_snapshot_auto_track_none_does_not_track_new_files() {
+        let (temp_dir, workspace, _repo) = init_jj_workspace();
+        write_repo_config(
+            &workspace,
+            r#"snapshot.auto-track = "none()""#,
+        );
+        drop(workspace);
+
+        std::fs::write(temp_dir.path().join("new.txt"), "content").unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let manager_root = tempfile::tempdir().unwrap();
+        let manager = runtime
+            .block_on(LocalWorkspaceManager::new(manager_root.path().to_path_buf()))
+            .unwrap();
+        let (mut workspace, repo) = manager.load_jj_workspace(temp_dir.path()).unwrap();
+        let updated_repo = runtime
+            .block_on(manager.snapshot_working_copy(&mut workspace, repo))
+            .unwrap();
+
+        assert!(
+            !wc_tree_has_path(&updated_repo, workspace.workspace_name(), "new.txt"),
+            "new file should remain untracked when snapshot.auto-track is none()"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_auto_track_all_tracks_new_files() {
+        let (temp_dir, workspace, _repo) = init_jj_workspace();
+        write_repo_config(&workspace, r#"snapshot.auto-track = "all()""#);
+        drop(workspace);
+
+        std::fs::write(temp_dir.path().join("tracked.txt"), "content").unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let manager_root = tempfile::tempdir().unwrap();
+        let manager = runtime
+            .block_on(LocalWorkspaceManager::new(manager_root.path().to_path_buf()))
+            .unwrap();
+        let (mut workspace, repo) = manager.load_jj_workspace(temp_dir.path()).unwrap();
+        let updated_repo = runtime
+            .block_on(manager.snapshot_working_copy(&mut workspace, repo))
+            .unwrap();
+
+        assert!(
+            wc_tree_has_path(&updated_repo, workspace.workspace_name(), "tracked.txt"),
+            "new file should be tracked when snapshot.auto-track is all()"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_max_new_file_size_blocks_large_file() {
+        let (temp_dir, workspace, _repo) = init_jj_workspace();
+        write_repo_config(
+            &workspace,
+            r#"
+snapshot.auto-track = "all()"
+snapshot.max-new-file-size = "1B"
+"#,
+        );
+        drop(workspace);
+
+        std::fs::write(temp_dir.path().join("large.txt"), "ab").unwrap();
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let manager_root = tempfile::tempdir().unwrap();
+        let manager = runtime
+            .block_on(LocalWorkspaceManager::new(manager_root.path().to_path_buf()))
+            .unwrap();
+        let (mut workspace, repo) = manager.load_jj_workspace(temp_dir.path()).unwrap();
+        let updated_repo = runtime
+            .block_on(manager.snapshot_working_copy(&mut workspace, repo))
+            .unwrap();
+
+        assert!(
+            !wc_tree_has_path(&updated_repo, workspace.workspace_name(), "large.txt"),
+            "large file should remain untracked when it exceeds snapshot.max-new-file-size"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
