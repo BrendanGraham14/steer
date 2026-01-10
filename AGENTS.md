@@ -94,6 +94,25 @@ Each module typically defines its own error type (e.g., `ApiError`, `SessionErro
 
 **Note**: If you need to present errors to users in a more readable format, use `eyre` for error reporting at the UI boundary, but NEVER use `anyhow`. The core logic should always use typed errors.
 
+# Tool Contract (steer-tools ↔ steer-core)
+
+**steer-tools is the contract.** It owns tool names, param/result types, and tool-specific execution errors. steer-core implements behavior without redefining the contract.
+
+**Rules**
+- Tool names and schemas live in `crates/steer-tools/src/tools/*`. steer-core must import constants/types from `steer_tools::tools::*` (no duplicate name definitions or param structs in core).
+- Tool-specific execution errors live in `crates/steer-tools/src/error.rs` as `ToolExecutionError` variants, with per-tool enums in each tool module. These are the only details allowed for execution failures.
+- steer-core static tools return `ToolError::Execution(ToolExecutionError::<Tool>(...))` for execution failures, and must not invent new error kinds.
+- `ToolError::InvalidParams` always includes `{ tool_name, message }`. There is no `ToolError::Io`; map raw I/O failures to `ToolExecutionError::External` (or a tool-specific `...Error::Workspace(...)` where applicable).
+- Validation/approval/cancellation/timeouts are separate top-level `ToolError` variants; execution details belong under `ToolExecutionError` only.
+- Workspace failures should be mapped to `WorkspaceOpError` and wrapped in the appropriate tool-specific error enum.
+
+**Adding a new tool**
+1. Define the contract in `crates/steer-tools/src/tools/<tool>.rs`: `*_TOOL_NAME`, params/result types, and a tool-specific error enum.
+2. Export it from `crates/steer-tools/src/tools/mod.rs`.
+3. Implement the tool in `crates/steer-core/src/tools/static_tools/<tool>.rs` using the contract types.
+4. Register the tool in `crates/steer-core/src/tools/factory.rs`.
+5. If it is read-only, include it in `crates/steer-core/src/tools/static_tools/mod.rs` `READ_ONLY_TOOL_NAMES`.
+
 
 # Crate Architecture (Polylith-style)
 
@@ -187,4 +206,3 @@ Key principles:
 5. **Path references**: When referencing files outside crates (e.g., `include_str!`), remember to account for the extra directory level: `../../` becomes `../../../` or `../../../../`
 6. **Workspace vs Tools**: Workspace handles environment/filesystem, backends handle tool execution - never mix these concerns
 7. **Provider/Consumer split**: Workspace trait provider (steer-workspace) is separate from remote consumer (steer-workspace-client)
-
