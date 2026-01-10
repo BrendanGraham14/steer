@@ -2,9 +2,12 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::FileContentResult;
 use steer_tools::tools::VIEW_TOOL_NAME;
+use steer_tools::tools::view::ViewError;
 use steer_tools::tools::view::ViewParams;
+use super::workspace_op_error;
 use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
 
 pub struct ViewTool;
@@ -40,6 +43,10 @@ impl StaticTool for ViewTool {
             .workspace
             .read_file(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::View(ViewError::Workspace(
+                    workspace_op_error(e),
+                )))
+            })
     }
 }

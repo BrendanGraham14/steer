@@ -40,8 +40,16 @@ pub type TodoList = Vec<TodoItem>;
 
 pub mod read {
     use super::*;
+    use thiserror::Error;
 
     pub const TODO_READ_TOOL_NAME: &str = "TodoRead";
+
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
+    #[serde(tag = "code", rename_all = "snake_case")]
+    pub enum TodoReadError {
+        #[error("io error: {message}")]
+        Io { message: String },
+    }
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
     /// This tool takes in no parameters. Leave the input blank.
@@ -50,8 +58,16 @@ pub mod read {
 
 pub mod write {
     use super::*;
+    use thiserror::Error;
 
     pub const TODO_WRITE_TOOL_NAME: &str = "TodoWrite";
+
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
+    #[serde(tag = "code", rename_all = "snake_case")]
+    pub enum TodoWriteError {
+        #[error("io error: {message}")]
+        Io { message: String },
+    }
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
     pub struct TodoWriteParams {

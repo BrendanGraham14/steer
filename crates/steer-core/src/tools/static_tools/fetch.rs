@@ -1,15 +1,13 @@
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 use crate::app::conversation::{Message, MessageData, UserContent};
 use crate::config::model::builtin::claude_haiku_4_5 as summarization_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{FetchResult, ToolResult};
-
-pub const FETCH_TOOL_NAME: &str = "web_fetch";
+use steer_tools::tools::fetch::{FETCH_TOOL_NAME, FetchError, FetchParams};
 
 const DESCRIPTION: &str = r#"- Fetches content from a specified URL and processes it using an AI model
 - Takes a URL and a prompt as input
@@ -25,14 +23,6 @@ Usage notes:
   - The prompt should describe what information you want to extract from the page
   - This tool is read-only and does not modify any files
   - Results may be summarized if the content is very large"#;
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct FetchParams {
-    /// The URL to fetch content from
-    pub url: String,
-    /// The prompt to process the content with
-    pub prompt: String,
-}
 
 #[derive(Debug)]
 pub struct FetchOutput {
@@ -106,9 +96,9 @@ Provide a concise response based only on the content above.
             )
             .await
             .map_err(|e| match e {
-                ModelCallError::Api(msg) => {
-                    StaticToolError::execution(format!("LLM call failed: {msg}"))
-                }
+                ModelCallError::Api(msg) => StaticToolError::execution(ToolExecutionError::Fetch(
+                    FetchError::ModelCallFailed { message: msg },
+                )),
                 ModelCallError::Cancelled => StaticToolError::Cancelled,
             })?;
 
@@ -139,8 +129,11 @@ async fn fetch_url(
             let url = response.url().to_string();
 
             if !status.is_success() {
-                return Err(StaticToolError::execution(format!(
-                    "HTTP error: {status} when fetching URL: {url}"
+                return Err(StaticToolError::execution(ToolExecutionError::Fetch(
+                    FetchError::Http {
+                        status: status.as_u16(),
+                        url,
+                    },
                 )));
             }
 
@@ -151,13 +144,18 @@ async fn fetch_url(
 
             match text {
                 Ok(content) => Ok(content),
-                Err(e) => Err(StaticToolError::execution(format!(
-                    "Failed to read response body from {url}: {e}"
+                Err(e) => Err(StaticToolError::execution(ToolExecutionError::Fetch(
+                    FetchError::ReadFailed {
+                        url,
+                        message: e.to_string(),
+                    },
                 ))),
             }
         }
-        Err(e) => Err(StaticToolError::execution(format!(
-            "Request to URL {url} failed: {e}"
+        Err(e) => Err(StaticToolError::execution(ToolExecutionError::Fetch(
+            FetchError::RequestFailed {
+                message: format!("Request to URL {url} failed: {e}"),
+            },
         ))),
     }
 }

@@ -22,6 +22,39 @@ pub use replace::ReplaceTool;
 pub use todo::{TodoReadTool, TodoWriteTool};
 pub use view::ViewTool;
 
+pub(crate) fn workspace_op_error(
+    err: steer_workspace::WorkspaceError,
+) -> steer_tools::error::WorkspaceOpError {
+    use steer_tools::error::WorkspaceOpError;
+
+    match err {
+        steer_workspace::WorkspaceError::Io(message) => WorkspaceOpError::Io { message },
+        steer_workspace::WorkspaceError::NotSupported(message) => {
+            WorkspaceOpError::NotSupported { message }
+        }
+        other => WorkspaceOpError::Other {
+            message: other.to_string(),
+        },
+    }
+}
+
+pub(crate) fn workspace_manager_op_error(
+    err: steer_workspace::WorkspaceManagerError,
+) -> steer_tools::error::WorkspaceOpError {
+    use steer_tools::error::WorkspaceOpError;
+
+    match err {
+        steer_workspace::WorkspaceManagerError::NotFound(_) => WorkspaceOpError::NotFound,
+        steer_workspace::WorkspaceManagerError::NotSupported(message) => {
+            WorkspaceOpError::NotSupported { message }
+        }
+        steer_workspace::WorkspaceManagerError::Io(message) => WorkspaceOpError::Io { message },
+        other => WorkspaceOpError::Other {
+            message: other.to_string(),
+        },
+    }
+}
+
 pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
     steer_tools::tools::GREP_TOOL_NAME,
     steer_tools::tools::AST_GREP_TOOL_NAME,

@@ -2,9 +2,12 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::GlobResult;
 use steer_tools::tools::GLOB_TOOL_NAME;
+use steer_tools::tools::glob::GlobError;
 use steer_tools::tools::glob::GlobParams;
+use super::workspace_op_error;
 use steer_workspace::{GlobRequest, WorkspaceOpContext};
 
 pub struct GlobTool;
@@ -37,6 +40,10 @@ impl StaticTool for GlobTool {
             .workspace
             .glob(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::Glob(GlobError::Workspace(
+                    workspace_op_error(e),
+                )))
+            })
     }
 }

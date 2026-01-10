@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::domain::types::{SessionId, ToolCallId};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::ToolResult;
 use steer_tools::ToolSchema;
 
@@ -31,8 +32,8 @@ pub enum StaticToolError {
     #[error("Invalid parameters: {0}")]
     InvalidParams(String),
 
-    #[error("Execution failed: {0}")]
-    Execution(String),
+    #[error("{0}")]
+    Execution(ToolExecutionError),
 
     #[error("Missing capability: {0}")]
     MissingCapability(String),
@@ -40,8 +41,8 @@ pub enum StaticToolError {
     #[error("Cancelled")]
     Cancelled,
 
-    #[error("IO error: {0}")]
-    Io(String),
+    #[error("Timed out")]
+    Timeout,
 }
 
 impl StaticToolError {
@@ -49,8 +50,8 @@ impl StaticToolError {
         Self::InvalidParams(msg.into())
     }
 
-    pub fn execution(msg: impl Into<String>) -> Self {
-        Self::Execution(msg.into())
+    pub fn execution(error: ToolExecutionError) -> Self {
+        Self::Execution(error)
     }
 
     pub fn missing_capability(cap: &str) -> Self {

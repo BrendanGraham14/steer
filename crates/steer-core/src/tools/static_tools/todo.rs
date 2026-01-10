@@ -4,11 +4,14 @@ use std::path::PathBuf;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{TodoListResult, TodoWriteResult};
 use steer_tools::tools::TODO_READ_TOOL_NAME;
 use steer_tools::tools::TODO_WRITE_TOOL_NAME;
 use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
+use steer_tools::tools::todo::read::TodoReadError;
 use steer_tools::tools::todo::read::TodoReadParams;
+use steer_tools::tools::todo::write::TodoWriteError;
 use steer_tools::tools::todo::write::TodoWriteParams;
 
 pub struct TodoReadTool;
@@ -45,7 +48,11 @@ Usage:
             return Err(StaticToolError::Cancelled);
         }
 
-        let todos = read_todos().map_err(|e| StaticToolError::Io(e.to_string()))?;
+        let todos = read_todos().map_err(|e| {
+            StaticToolError::execution(ToolExecutionError::TodoRead(TodoReadError::Io {
+                message: e.to_string(),
+            }))
+        })?;
         Ok(TodoListResult { todos })
     }
 }
@@ -95,8 +102,11 @@ Task Management:
             return Err(StaticToolError::Cancelled);
         }
 
-        let operation =
-            write_todos(&params.todos).map_err(|e| StaticToolError::Io(e.to_string()))?;
+        let operation = write_todos(&params.todos).map_err(|e| {
+            StaticToolError::execution(ToolExecutionError::TodoWrite(TodoWriteError::Io {
+                message: e.to_string(),
+            }))
+        })?;
 
         Ok(TodoWriteResult {
             todos: params.todos,

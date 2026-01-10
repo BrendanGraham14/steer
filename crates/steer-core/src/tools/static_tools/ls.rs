@@ -2,9 +2,12 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::FileListResult;
 use steer_tools::tools::LS_TOOL_NAME;
+use steer_tools::tools::ls::LsError;
 use steer_tools::tools::ls::LsParams;
+use super::workspace_op_error;
 use steer_workspace::{ListDirectoryRequest, WorkspaceOpContext};
 
 pub struct LsTool;
@@ -34,6 +37,10 @@ impl StaticTool for LsTool {
             .workspace
             .list_directory(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::Ls(LsError::Workspace(
+                    workspace_op_error(e),
+                )))
+            })
     }
 }

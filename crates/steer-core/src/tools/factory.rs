@@ -68,11 +68,7 @@ impl ToolSystemBuilder {
     }
 
     pub fn build(self) -> Arc<ToolExecutor> {
-        let base_executor = ToolExecutor::with_components(
-            self.workspace.clone(),
-            self.backend_registry,
-            self.validators,
-        );
+        let base_executor = ToolExecutor::with_components(self.backend_registry, self.validators);
 
         let agent_spawner = Arc::new(DefaultAgentSpawner::new(
             self.event_store.clone(),

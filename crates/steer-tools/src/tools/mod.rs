@@ -1,6 +1,8 @@
 pub mod astgrep;
 pub mod bash;
+pub mod dispatch_agent;
 pub mod edit;
+pub mod fetch;
 pub mod glob;
 pub mod grep;
 pub mod ls;
@@ -10,7 +12,9 @@ pub mod view;
 
 pub use astgrep::AST_GREP_TOOL_NAME;
 pub use bash::BASH_TOOL_NAME;
+pub use dispatch_agent::DISPATCH_AGENT_TOOL_NAME;
 pub use edit::{EDIT_TOOL_NAME, multi_edit::MULTI_EDIT_TOOL_NAME};
+pub use fetch::FETCH_TOOL_NAME;
 pub use glob::GLOB_TOOL_NAME;
 pub use grep::GREP_TOOL_NAME;
 pub use ls::LS_TOOL_NAME;

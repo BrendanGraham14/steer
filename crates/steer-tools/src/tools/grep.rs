@@ -1,7 +1,17 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::error::WorkspaceOpError;
 
 pub const GREP_TOOL_NAME: &str = "grep";
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum GrepError {
+    #[error("{0}")]
+    Workspace(WorkspaceOpError),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GrepParams {

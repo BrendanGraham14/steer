@@ -2,9 +2,12 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::AstGrepResult;
 use steer_tools::tools::AST_GREP_TOOL_NAME;
+use steer_tools::tools::astgrep::AstGrepError;
 use steer_tools::tools::astgrep::AstGrepParams;
+use super::workspace_op_error;
 use steer_workspace::{AstGrepRequest, WorkspaceOpContext};
 
 pub struct AstGrepTool;
@@ -52,7 +55,11 @@ Automatically respects .gitignore files"#;
             .workspace
             .astgrep(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::AstGrep(
+                    AstGrepError::Workspace(workspace_op_error(e)),
+                ))
+            })?;
         Ok(AstGrepResult(result))
     }
 }

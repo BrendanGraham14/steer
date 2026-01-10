@@ -166,10 +166,12 @@ impl ToolEventProcessor {
         let tool_msg = Message {
             data: MessageData::Tool {
                 tool_use_id: id.to_string(),
-                result: ToolResult::Error(ToolError::Execution {
-                    tool_name: name.clone(),
-                    message: error.clone(),
-                }),
+                result: ToolResult::Error(ToolError::Execution(
+                    steer_tools::error::ToolExecutionError::External {
+                        tool_name: name.clone(),
+                        message: error.clone(),
+                    },
+                )),
             },
             id: crate::tui::model::generate_row_id(),
             timestamp: chrono::Utc::now().timestamp() as u64,

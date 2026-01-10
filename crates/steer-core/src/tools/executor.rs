@@ -23,18 +23,7 @@ pub struct ToolExecutor {
 }
 
 impl ToolExecutor {
-    pub fn with_workspace(_workspace: Arc<dyn crate::workspace::Workspace>) -> Self {
-        Self {
-            backend_registry: Arc::new(BackendRegistry::new()),
-            validators: Arc::new(ValidatorRegistry::new()),
-            llm_config_provider: None,
-            tool_registry: None,
-            tool_services: None,
-        }
-    }
-
     pub fn with_components(
-        _workspace: Arc<dyn crate::workspace::Workspace>,
         backend_registry: Arc<BackendRegistry>,
         validators: Arc<ValidatorRegistry>,
     ) -> Self {
@@ -48,7 +37,6 @@ impl ToolExecutor {
     }
 
     pub fn with_all_components(
-        _workspace: Arc<dyn crate::workspace::Workspace>,
         backend_registry: Arc<BackendRegistry>,
         validators: Arc<ValidatorRegistry>,
         llm_config_provider: LlmConfigProvider,
@@ -293,23 +281,18 @@ impl ToolExecutor {
             .execute_erased(tool_call.parameters.clone(), &ctx)
             .await
             .map_err(|e| match e {
-                StaticToolError::InvalidParams(msg) => {
-                    steer_tools::ToolError::InvalidParams(tool_call.name.clone(), msg)
-                }
-                StaticToolError::Execution(msg) => steer_tools::ToolError::Execution {
+                StaticToolError::InvalidParams(msg) => steer_tools::ToolError::InvalidParams {
                     tool_name: tool_call.name.clone(),
                     message: msg,
                 },
+                StaticToolError::Execution(err) => steer_tools::ToolError::Execution(err),
                 StaticToolError::MissingCapability(cap) => {
                     steer_tools::ToolError::InternalError(format!("Missing capability: {cap}"))
                 }
                 StaticToolError::Cancelled => {
                     steer_tools::ToolError::Cancelled(tool_call.name.clone())
                 }
-                StaticToolError::Io(msg) => steer_tools::ToolError::Io {
-                    tool_name: tool_call.name.clone(),
-                    message: msg,
-                },
+                StaticToolError::Timeout => steer_tools::ToolError::Timeout(tool_call.name.clone()),
             })?;
 
         Ok(output)

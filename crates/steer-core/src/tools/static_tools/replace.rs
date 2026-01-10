@@ -2,10 +2,13 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::ReplaceResult;
 use steer_tools::tools::REPLACE_TOOL_NAME;
+use steer_tools::tools::replace::ReplaceError;
 use steer_tools::tools::replace::ReplaceParams;
 use steer_workspace::{WriteFileRequest, WorkspaceOpContext};
+use super::workspace_op_error;
 
 pub struct ReplaceTool;
 
@@ -42,7 +45,11 @@ Before using this tool:
             .workspace
             .write_file(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::Replace(
+                    ReplaceError::Workspace(workspace_op_error(e)),
+                ))
+            })?;
         Ok(ReplaceResult(result))
     }
 }

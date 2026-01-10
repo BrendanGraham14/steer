@@ -9,9 +9,8 @@ use unicode_width::UnicodeWidthStr;
 /// Extract concise user-facing message from a ToolError
 pub fn tool_error_user_message(e: &steer_tools::error::ToolError) -> Cow<'_, str> {
     match e {
-        steer_tools::error::ToolError::Execution { message, .. } => Cow::Borrowed(message),
-        steer_tools::error::ToolError::Io { message, .. } => Cow::Borrowed(message),
-        steer_tools::error::ToolError::InvalidParams(_, msg) => Cow::Borrowed(msg),
+        steer_tools::error::ToolError::Execution(err) => Cow::Owned(err.to_string()),
+        steer_tools::error::ToolError::InvalidParams { message, .. } => Cow::Borrowed(message),
         _ => Cow::Owned(e.to_string()),
     }
 }

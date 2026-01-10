@@ -25,10 +25,10 @@ impl Tui {
                         let bash_params: BashParams =
                             serde_json::from_value(tool_call.parameters.clone()).map_err(|e| {
                                 Error::Core(CoreError::Tool(
-                                    steer_tools::ToolError::InvalidParams(
-                                        "bash".to_string(),
-                                        e.to_string(),
-                                    )
+                                    steer_tools::ToolError::InvalidParams {
+                                        tool_name: "bash".to_string(),
+                                        message: e.to_string(),
+                                    }
                                     .into(),
                                 ))
                             })?;

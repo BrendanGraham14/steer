@@ -1,7 +1,17 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::error::WorkspaceOpError;
 
 pub const EDIT_TOOL_NAME: &str = "edit_file";
+
+#[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum EditError {
+    #[error("{0}")]
+    Workspace(WorkspaceOpError),
+}
 
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone)]
 pub struct SingleEditOperation {
@@ -25,6 +35,13 @@ pub mod multi_edit {
     use super::*;
 
     pub const MULTI_EDIT_TOOL_NAME: &str = "multi_edit";
+
+    #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
+    #[serde(tag = "code", rename_all = "snake_case")]
+    pub enum MultiEditError {
+        #[error("{0}")]
+        Workspace(WorkspaceOpError),
+    }
 
     #[derive(Deserialize, Serialize, Debug, JsonSchema)]
     pub struct MultiEditParams {

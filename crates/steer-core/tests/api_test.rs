@@ -642,10 +642,12 @@ async fn test_gemini_api_tool_result_error() {
         Message {
             data: MessageData::Tool {
                 tool_use_id: "tool-use-id-error".to_string(),
-                result: ToolResult::Error(steer_tools::ToolError::Execution {
-                    tool_name: "ls".to_string(),
-                    message: "Error executing command".to_string(),
-                }),
+                result: ToolResult::Error(steer_tools::ToolError::Execution(
+                    steer_tools::error::ToolExecutionError::External {
+                        tool_name: "ls".to_string(),
+                        message: "Error executing command".to_string(),
+                    },
+                )),
             },
             timestamp: ts3,
             id: Message::generate_id("tool", ts3),

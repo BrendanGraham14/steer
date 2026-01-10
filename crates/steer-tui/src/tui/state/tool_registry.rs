@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use steer_core::app::conversation::ToolResult;
-use steer_tools::error::ToolError;
+use steer_tools::error::{ToolError, ToolExecutionError};
 use steer_tools::schema::ToolCall;
 
 /// Status of a tool call in its lifecycle
@@ -185,10 +185,10 @@ impl ToolCallRegistry {
 
             let completed = CompletedToolCall {
                 call: state.call.clone(),
-                result: ToolResult::Error(ToolError::Execution {
+                result: ToolResult::Error(ToolError::Execution(ToolExecutionError::External {
                     tool_name: state.call.name.clone(),
                     message: error,
-                }),
+                })),
                 message_index: state.message_index,
                 started_at: state.started_at,
                 completed_at,

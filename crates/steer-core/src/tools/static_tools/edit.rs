@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::EDIT_TOOL_NAME;
 use steer_tools::tools::edit::EditParams;
+use steer_tools::tools::edit::EditError;
 use steer_tools::tools::edit::multi_edit::{MULTI_EDIT_TOOL_NAME, MultiEditParams};
+use steer_tools::tools::edit::multi_edit::MultiEditError;
+use super::workspace_op_error;
 use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
 
 pub struct EditTool;
@@ -86,7 +90,11 @@ impl StaticTool for EditTool {
             .workspace
             .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::Edit(EditError::Workspace(
+                    workspace_op_error(e),
+                )))
+            })
     }
 }
 
@@ -125,7 +133,11 @@ impl StaticTool for MultiEditTool {
             .workspace
             .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(e.to_string()))?;
+            .map_err(|e| {
+                StaticToolError::execution(ToolExecutionError::MultiEdit(
+                    MultiEditError::Workspace(workspace_op_error(e)),
+                ))
+            })?;
         Ok(MultiEditResult(result))
     }
 }

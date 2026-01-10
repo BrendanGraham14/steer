@@ -257,14 +257,6 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
-    async fn create_test_workspace() -> Arc<dyn crate::workspace::Workspace> {
-        crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
-            path: std::env::current_dir().unwrap(),
-        })
-        .await
-        .unwrap()
-    }
-
     async fn create_test_runtime() -> RuntimeService {
         let event_store = Arc::new(InMemoryEventStore::new());
         let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
@@ -275,9 +267,7 @@ mod tests {
             model_registry,
         ));
 
-        let workspace = create_test_workspace().await;
         let tool_executor = Arc::new(ToolExecutor::with_components(
-            workspace,
             Arc::new(BackendRegistry::new()),
             Arc::new(ValidatorRegistry::new()),
         ));

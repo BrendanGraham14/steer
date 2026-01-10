@@ -1,30 +1,39 @@
-use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use async_trait::async_trait;
 
 use crate::agents::{
     McpAccessPolicy, agent_spec, agent_specs, agent_specs_prompt, default_agent_spec_id,
 };
+use crate::app::domain::event::SessionEvent;
 use crate::app::domain::runtime::RuntimeService;
+use crate::app::domain::types::SessionId;
+use crate::app::validation::ValidatorRegistry;
 use crate::config::model::builtin::claude_sonnet_4_5 as default_model;
 use crate::runners::OneShotRunner;
-use crate::tools::capability::Capabilities;
-use crate::tools::services::{SubAgentConfig, SubAgentError};
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use crate::app::domain::event::SessionEvent;
-use crate::app::domain::types::SessionId;
 use crate::session::state::BackendConfig;
+use crate::tools::capability::Capabilities;
+use crate::tools::services::{SubAgentConfig, SubAgentError, ToolServices};
+use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use crate::tools::{BackendRegistry, ToolExecutor, ToolRegistry};
 use crate::workspace::{
-    create_workspace_from_session_config, CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsStatus,
-    WorkspaceCreateStrategy, WorkspaceRef,
+    create_workspace_from_session_config, CreateWorkspaceRequest, EnvironmentId, RepoRef,
+    VcsStatus, Workspace, WorkspaceCreateStrategy, WorkspaceRef,
 };
+use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
-use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, VIEW_TOOL_NAME};
+use steer_tools::tools::dispatch_agent::{
+    DISPATCH_AGENT_TOOL_NAME, DispatchAgentError, DispatchAgentParams, DispatchAgentTarget,
+    WorkspaceTarget,
+};
+use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
-use crate::tools::ToolExecutor;
 
-pub const DISPATCH_AGENT_TOOL_NAME: &str = "dispatch_agent";
+use super::{
+    AstGrepTool, BashTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool, MultiEditTool,
+    ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool, workspace_manager_op_error,
+    workspace_op_error,
+};
 
 fn dispatch_agent_description() -> String {
     let agent_specs = agent_specs_prompt();
@@ -48,59 +57,33 @@ When NOT to use the Agent tool:
 Usage notes:
 1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-3. Each invocation returns a session_id. Pass it back via `mode: "resume"` to continue the conversation with the same agent.
-4. When `mode` is `resume`, the session_id must refer to a child of the current session. The `agent` and `workspace` options are ignored and the existing session config is used.
+3. Each invocation returns a session_id. Pass it back via `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue the conversation with the same agent.
+4. When `target.session` is `resume`, the session_id must refer to a child of the current session. The `agent` and `workspace` options are ignored and the existing session config is used.
 5. The agent's outputs should generally be trusted
 6. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
 7. IMPORTANT: New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
 8. If the agent spec omits a model, the parent session's default model is used.
 
 Workspace options:
-- `workspace: "current"` to run in the current workspace
-- `workspace: {{ "new": {{ "name": "..." }} }}` to run in a fresh workspace (jj only)
+- `workspace: {{ "location": "current" }}` to run in the current workspace
+- `workspace: {{ "location": "new", "name": "..." }}` to run in a fresh workspace (jj workspace or git worktree)
 
 Session options:
-- `mode: "resume"` with `session_id: "<uuid>"` to continue a prior dispatch_agent session
+- `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue a prior dispatch_agent session
 
 New session options:
-- `mode: "new"` with `workspace: "current"` or `workspace: {{ "new": {{ "name": "..." }} }}`
-- `agent: "<id>"` selects an agent spec (defaults to "{default_agent}")
+- `target: {{ "session": "new", "workspace": {{ "location": "current" }} }}` to run in the current workspace
+- `target: {{ "session": "new", "workspace": {{ "location": "new", "name": "..." }} }}` to run in a new workspace
+- `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
 
 {agent_specs_block}"#,
         VIEW_TOOL_NAME,
-        GLOB_TOOL_NAME,
+        LS_TOOL_NAME,
         GREP_TOOL_NAME,
         GREP_TOOL_NAME,
         default_agent = default_agent_spec_id(),
         agent_specs_block = agent_specs_block
     )
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceTarget {
-    Current,
-    New { name: String },
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum DispatchAgentTarget {
-    New {
-        workspace: WorkspaceTarget,
-        #[serde(default)]
-        agent: Option<String>,
-    },
-    Resume {
-        session_id: SessionId,
-    },
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct DispatchAgentParams {
-    pub prompt: String,
-    #[serde(flatten)]
-    pub target: DispatchAgentTarget,
 }
 
 pub struct DispatchAgentTool;
@@ -138,6 +121,9 @@ impl StaticTool for DispatchAgentTool {
 
         let (workspace_target, agent) = match target {
             DispatchAgentTarget::Resume { session_id } => {
+                let session_id = SessionId::parse(&session_id).ok_or_else(|| {
+                    StaticToolError::invalid_params(format!("Invalid session_id '{session_id}'"))
+                })?;
                 return resume_agent_session(session_id, prompt, ctx).await;
             }
             DispatchAgentTarget::New { workspace, agent } => (workspace, agent),
@@ -211,9 +197,13 @@ impl StaticTool for DispatchAgentTool {
             status_manager = Some(manager.clone());
 
             let base_repo_id = repo_id.ok_or_else(|| {
-                StaticToolError::execution(
-                    "Current path is not a jj workspace; cannot create new workspace".to_string(),
-                )
+                StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                    DispatchAgentError::WorkspaceUnavailable {
+                        message:
+                            "Current path is not a jj workspace; cannot create new workspace"
+                                .to_string(),
+                    },
+                ))
             })?;
 
             let create_request = CreateWorkspaceRequest {
@@ -227,14 +217,18 @@ impl StaticTool for DispatchAgentTool {
                 .create_workspace(create_request)
                 .await
                 .map_err(|e| {
-                    StaticToolError::execution(format!("Failed to create workspace: {e}"))
+                    StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                        DispatchAgentError::Workspace(workspace_manager_op_error(e)),
+                    ))
                 })?;
 
             workspace = manager
                 .open_workspace(info.workspace_id)
                 .await
                 .map_err(|e| {
-                    StaticToolError::execution(format!("Failed to open workspace: {e}"))
+                    StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                        DispatchAgentError::Workspace(workspace_manager_op_error(e)),
+                    ))
                 })?;
 
             workspace_id = Some(info.workspace_id);
@@ -261,7 +255,9 @@ impl StaticTool for DispatchAgentTool {
         }
 
         let env_info = workspace.environment().await.map_err(|e| {
-            StaticToolError::execution(format!("Failed to get environment: {e}"))
+            StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                DispatchAgentError::Workspace(workspace_op_error(e)),
+            ))
         })?;
 
         let system_prompt = format!(
@@ -387,7 +383,11 @@ Notes:
 
         let result = spawn_result.map_err(|e| match e {
             SubAgentError::Cancelled => StaticToolError::Cancelled,
-            other => StaticToolError::execution(other.to_string()),
+            other => StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                DispatchAgentError::SpawnFailed {
+                    message: other.to_string(),
+                },
+            )),
         })?;
 
         Ok(AgentResult {
@@ -396,6 +396,56 @@ Notes:
             workspace: workspace_info,
         })
     }
+}
+
+fn build_runtime_tool_executor(
+    workspace: Arc<dyn Workspace>,
+    parent_services: &Arc<ToolServices>,
+) -> Arc<ToolExecutor> {
+    let mut services = ToolServices::new(
+        workspace.clone(),
+        parent_services.event_store.clone(),
+        parent_services.api_client.clone(),
+    );
+
+    if let Some(spawner) = parent_services.agent_spawner() {
+        services = services.with_agent_spawner(spawner.clone());
+    }
+    if let Some(caller) = parent_services.model_caller() {
+        services = services.with_model_caller(caller.clone());
+    }
+    if let Some(manager) = parent_services.workspace_manager() {
+        services = services.with_workspace_manager(manager.clone());
+    }
+    if let Some(manager) = parent_services.repo_manager() {
+        services = services.with_repo_manager(manager.clone());
+    }
+    if parent_services.capabilities().contains(Capabilities::NETWORK) {
+        services = services.with_network();
+    }
+
+    let mut registry = ToolRegistry::new();
+    registry.register_static(GrepTool);
+    registry.register_static(GlobTool);
+    registry.register_static(LsTool);
+    registry.register_static(ViewTool);
+    registry.register_static(BashTool);
+    registry.register_static(EditTool);
+    registry.register_static(MultiEditTool);
+    registry.register_static(ReplaceTool);
+    registry.register_static(AstGrepTool);
+    registry.register_static(TodoReadTool);
+    registry.register_static(TodoWriteTool);
+    registry.register_static(DispatchAgentTool);
+    registry.register_static(FetchTool);
+
+    Arc::new(
+        ToolExecutor::with_components(
+            Arc::new(BackendRegistry::new()),
+            Arc::new(ValidatorRegistry::new()),
+        )
+        .with_static_tools(Arc::new(registry), Arc::new(services)),
+    )
 }
 
 async fn resume_agent_session(
@@ -409,8 +459,10 @@ async fn resume_agent_session(
         .load_events(session_id)
         .await
         .map_err(|e| {
-            StaticToolError::execution(format!(
-                "Failed to load session {session_id}: {e}"
+            StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                DispatchAgentError::SpawnFailed {
+                    message: format!("Failed to load session {session_id}: {e}"),
+                },
             ))
         })?;
 
@@ -421,8 +473,12 @@ async fn resume_agent_session(
             _ => None,
         })
         .ok_or_else(|| {
-            StaticToolError::execution(format!(
-                "Session {session_id} is missing a SessionCreated event"
+            StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                DispatchAgentError::SpawnFailed {
+                    message: format!(
+                        "Session {session_id} is missing a SessionCreated event"
+                    ),
+                },
             ))
         })?;
 
@@ -436,12 +492,14 @@ async fn resume_agent_session(
     let workspace = create_workspace_from_session_config(&session_config.workspace)
         .await
         .map_err(|e| {
-            StaticToolError::execution(format!(
-                "Failed to open workspace for session {session_id}: {e}"
+            StaticToolError::execution(ToolExecutionError::DispatchAgent(
+                DispatchAgentError::SpawnFailed {
+                    message: format!("Failed to open workspace for session {session_id}: {e}"),
+                },
             ))
         })?;
 
-    let tool_executor = Arc::new(ToolExecutor::with_workspace(workspace));
+    let tool_executor = build_runtime_tool_executor(workspace, &ctx.services);
     let runtime = RuntimeService::spawn(
         ctx.services.event_store.clone(),
         ctx.services.api_client.clone(),
@@ -461,7 +519,11 @@ async fn resume_agent_session(
 
     let run_result = run_result.map_err(|e| match e {
         crate::error::Error::Cancelled => StaticToolError::Cancelled,
-        other => StaticToolError::execution(other.to_string()),
+        other => StaticToolError::execution(ToolExecutionError::DispatchAgent(
+            DispatchAgentError::SpawnFailed {
+                message: other.to_string(),
+            },
+        )),
     })?;
 
     Ok(AgentResult {

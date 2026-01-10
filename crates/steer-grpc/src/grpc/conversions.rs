@@ -190,16 +190,16 @@ fn tool_error_to_proto(error: &steer_tools::error::ToolError) -> proto::ToolErro
 
     let error_type = match error {
         ToolError::UnknownTool(name) => ErrorType::UnknownTool(name.clone()),
-        ToolError::InvalidParams(tool_name, message) => {
+        ToolError::InvalidParams { tool_name, message } => {
             ErrorType::InvalidParams(proto::InvalidParamsError {
                 tool_name: tool_name.clone(),
                 message: message.clone(),
             })
         }
-        ToolError::Execution { tool_name, message } => {
+        ToolError::Execution(error) => {
             ErrorType::Execution(proto::ExecutionError {
-                tool_name: tool_name.clone(),
-                message: message.clone(),
+                tool_name: error.tool_name().to_string(),
+                message: error.to_string(),
             })
         }
         ToolError::Cancelled(name) => ErrorType::Cancelled(name.clone()),
@@ -207,10 +207,6 @@ fn tool_error_to_proto(error: &steer_tools::error::ToolError) -> proto::ToolErro
         ToolError::DeniedByUser(name) => ErrorType::DeniedByUser(name.clone()),
         ToolError::DeniedByPolicy(name) => ErrorType::DeniedByPolicy(name.clone()),
         ToolError::InternalError(msg) => ErrorType::InternalError(msg.clone()),
-        ToolError::Io { tool_name, message } => ErrorType::Io(proto::IoError {
-            tool_name: tool_name.clone(),
-            message: message.clone(),
-        }),
     };
 
     proto::ToolError {
@@ -328,7 +324,7 @@ fn proto_to_tool_error(
     proto_error: proto::ToolError,
 ) -> Result<steer_tools::error::ToolError, ConversionError> {
     use proto::tool_error::ErrorType;
-    use steer_tools::error::ToolError;
+    use steer_tools::error::{ToolError, ToolExecutionError};
 
     let error_type = proto_error
         .error_type
@@ -338,20 +334,23 @@ fn proto_to_tool_error(
 
     Ok(match error_type {
         ErrorType::UnknownTool(name) => ToolError::UnknownTool(name),
-        ErrorType::InvalidParams(e) => ToolError::InvalidParams(e.tool_name, e.message),
-        ErrorType::Execution(e) => ToolError::Execution {
+        ErrorType::InvalidParams(e) => ToolError::InvalidParams {
             tool_name: e.tool_name,
             message: e.message,
         },
+        ErrorType::Execution(e) => ToolError::Execution(ToolExecutionError::External {
+            tool_name: e.tool_name,
+            message: e.message,
+        }),
         ErrorType::Cancelled(name) => ToolError::Cancelled(name),
         ErrorType::Timeout(name) => ToolError::Timeout(name),
         ErrorType::DeniedByUser(name) => ToolError::DeniedByUser(name),
         ErrorType::DeniedByPolicy(name) => ToolError::DeniedByPolicy(name),
         ErrorType::InternalError(msg) => ToolError::InternalError(msg),
-        ErrorType::Io(e) => ToolError::Io {
+        ErrorType::Io(e) => ToolError::Execution(ToolExecutionError::External {
             tool_name: e.tool_name,
             message: e.message,
-        },
+        }),
     })
 }
 
