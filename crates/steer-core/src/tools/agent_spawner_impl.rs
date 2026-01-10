@@ -15,8 +15,8 @@ use crate::session::state::{
     ApprovalRules, BackendConfig, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
     ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
 };
-use crate::tools::{BackendResolver, McpBackend, SessionMcpBackends, ToolExecutor};
-use crate::workspace::Workspace;
+use crate::tools::{BackendResolver, McpBackend, SessionMcpBackends, ToolExecutor, ToolSystemBuilder};
+use crate::workspace::{RepoManager, Workspace, WorkspaceManager};
 use tracing::warn;
 
 use super::services::{AgentSpawner, SubAgentConfig, SubAgentError, SubAgentResult};
@@ -26,6 +26,8 @@ pub struct DefaultAgentSpawner {
     api_client: Arc<ApiClient>,
     workspace: Arc<dyn Workspace>,
     model_registry: Arc<ModelRegistry>,
+    workspace_manager: Option<Arc<dyn WorkspaceManager>>,
+    repo_manager: Option<Arc<dyn RepoManager>>,
 }
 
 impl DefaultAgentSpawner {
@@ -34,13 +36,35 @@ impl DefaultAgentSpawner {
         api_client: Arc<ApiClient>,
         workspace: Arc<dyn Workspace>,
         model_registry: Arc<ModelRegistry>,
+        workspace_manager: Option<Arc<dyn WorkspaceManager>>,
+        repo_manager: Option<Arc<dyn RepoManager>>,
     ) -> Self {
         Self {
             event_store,
             api_client,
             workspace,
             model_registry,
+            workspace_manager,
+            repo_manager,
         }
+    }
+
+    fn build_tool_executor(&self, workspace: Arc<dyn Workspace>) -> Arc<ToolExecutor> {
+        let mut tool_builder = ToolSystemBuilder::new(
+            workspace,
+            self.event_store.clone(),
+            self.api_client.clone(),
+            self.model_registry.clone(),
+        );
+
+        if let Some(manager) = &self.workspace_manager {
+            tool_builder = tool_builder.with_workspace_manager(manager.clone());
+        }
+        if let Some(manager) = &self.repo_manager {
+            tool_builder = tool_builder.with_repo_manager(manager.clone());
+        }
+
+        tool_builder.build()
     }
 }
 
@@ -136,7 +160,7 @@ impl AgentSpawner for DefaultAgentSpawner {
             session_backends: session_backends.clone(),
         };
 
-        let tool_executor = Arc::new(ToolExecutor::with_workspace(workspace));
+        let tool_executor = self.build_tool_executor(workspace);
 
         let interpreter = match AgentInterpreter::new(
             self.event_store.clone(),
@@ -222,5 +246,71 @@ impl AgentSpawner for DefaultAgentSpawner {
             session_id,
             final_message,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DefaultAgentSpawner;
+    use crate::api::Client as ApiClient;
+    use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::auth::ProviderRegistry;
+    use crate::config::model::builtin;
+    use crate::model_registry::ModelRegistry;
+    use crate::session::state::ToolVisibility;
+    use crate::test_utils::test_llm_config_provider;
+    use crate::tools::services::AgentSpawner;
+    use crate::tools::services::SubAgentConfig;
+    use crate::workspace::WorkspaceConfig;
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use steer_tools::tools::{
+        BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
+        VIEW_TOOL_NAME,
+    };
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn sub_agent_tool_executor_includes_static_tools() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let workspace = crate::workspace::create_workspace(&WorkspaceConfig::Local {
+            path: temp_dir.path().to_path_buf(),
+        })
+        .await
+        .expect("create workspace");
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            test_llm_config_provider(),
+            provider_registry,
+            model_registry.clone(),
+        ));
+
+        let spawner = DefaultAgentSpawner::new(
+            event_store,
+            api_client,
+            workspace.clone(),
+            model_registry,
+            None,
+            None,
+        );
+
+        let tool_executor = spawner.build_tool_executor(workspace);
+        for tool_name in [
+            GLOB_TOOL_NAME,
+            GREP_TOOL_NAME,
+            LS_TOOL_NAME,
+            VIEW_TOOL_NAME,
+            EDIT_TOOL_NAME,
+            MULTI_EDIT_TOOL_NAME,
+            REPLACE_TOOL_NAME,
+            BASH_TOOL_NAME,
+        ] {
+            assert!(
+                tool_executor.is_static_tool(tool_name),
+                "expected sub-agent to have static tool: {tool_name}"
+            );
+        }
     }
 }

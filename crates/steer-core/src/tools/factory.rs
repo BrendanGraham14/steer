@@ -79,6 +79,8 @@ impl ToolSystemBuilder {
             self.api_client.clone(),
             self.workspace.clone(),
             self.model_registry,
+            self.workspace_manager.clone(),
+            self.repo_manager.clone(),
         ));
 
         let model_caller = Arc::new(DefaultModelCaller::new(self.api_client.clone()));
