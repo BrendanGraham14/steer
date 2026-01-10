@@ -23,11 +23,11 @@ pub use todo::{TodoReadTool, TodoWriteTool};
 pub use view::ViewTool;
 
 pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
-    grep::GREP_TOOL_NAME,
-    astgrep::AST_GREP_TOOL_NAME,
-    glob::GLOB_TOOL_NAME,
-    ls::LS_TOOL_NAME,
-    view::VIEW_TOOL_NAME,
-    todo::TODO_READ_TOOL_NAME,
-    todo::TODO_WRITE_TOOL_NAME,
+    steer_tools::tools::GREP_TOOL_NAME,
+    steer_tools::tools::AST_GREP_TOOL_NAME,
+    steer_tools::tools::GLOB_TOOL_NAME,
+    steer_tools::tools::LS_TOOL_NAME,
+    steer_tools::tools::VIEW_TOOL_NAME,
+    steer_tools::tools::TODO_READ_TOOL_NAME,
+    steer_tools::tools::TODO_WRITE_TOOL_NAME,
 ];

@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use schemars::JsonSchema;
-use serde::Deserialize;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -11,21 +9,14 @@ use tokio::time::timeout;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::BashResult;
-
-pub const BASH_TOOL_NAME: &str = "bash";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BashToolParams {
-    pub command: String,
-    #[schemars(range(min = 1, max = 3600000))]
-    pub timeout: Option<u64>,
-}
+use steer_tools::tools::BASH_TOOL_NAME;
+use steer_tools::tools::bash::BashParams;
 
 pub struct BashTool;
 
 #[async_trait]
 impl StaticTool for BashTool {
-    type Params = BashToolParams;
+    type Params = BashParams;
     type Output = BashResult;
 
     const NAME: &'static str = BASH_TOOL_NAME;

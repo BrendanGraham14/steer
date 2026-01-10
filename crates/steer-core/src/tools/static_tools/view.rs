@@ -1,26 +1,17 @@
-
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::FileContentResult;
+use steer_tools::tools::VIEW_TOOL_NAME;
+use steer_tools::tools::view::ViewParams;
 use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
-
-pub const VIEW_TOOL_NAME: &str = "read_file";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ViewToolParams {
-    pub file_path: String,
-    pub offset: Option<u64>,
-    pub limit: Option<u64>,
-}
 
 pub struct ViewTool;
 
 #[async_trait]
 impl StaticTool for ViewTool {
-    type Params = ViewToolParams;
+    type Params = ViewParams;
     type Output = FileContentResult;
 
     const NAME: &'static str = VIEW_TOOL_NAME;

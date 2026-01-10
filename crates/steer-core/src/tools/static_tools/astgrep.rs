@@ -1,28 +1,17 @@
-
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::AstGrepResult;
+use steer_tools::tools::AST_GREP_TOOL_NAME;
+use steer_tools::tools::astgrep::AstGrepParams;
 use steer_workspace::{AstGrepRequest, WorkspaceOpContext};
-
-pub const AST_GREP_TOOL_NAME: &str = "astgrep";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AstGrepToolParams {
-    pub pattern: String,
-    pub lang: Option<String>,
-    pub include: Option<String>,
-    pub exclude: Option<String>,
-    pub path: Option<String>,
-}
 
 pub struct AstGrepTool;
 
 #[async_trait]
 impl StaticTool for AstGrepTool {
-    type Params = AstGrepToolParams;
+    type Params = AstGrepParams;
     type Output = AstGrepResult;
 
     const NAME: &'static str = AST_GREP_TOOL_NAME;

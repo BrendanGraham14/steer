@@ -1,25 +1,21 @@
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::{TodoListResult, TodoWriteResult};
-use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
-
-pub const TODO_READ_TOOL_NAME: &str = "TodoRead";
-pub const TODO_WRITE_TOOL_NAME: &str = "TodoWrite";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct TodoReadToolParams {}
+use steer_tools::tools::TODO_READ_TOOL_NAME;
+use steer_tools::tools::TODO_WRITE_TOOL_NAME;
+use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
+use steer_tools::tools::todo::read::TodoReadParams;
+use steer_tools::tools::todo::write::TodoWriteParams;
 
 pub struct TodoReadTool;
 
 #[async_trait]
 impl StaticTool for TodoReadTool {
-    type Params = TodoReadToolParams;
+    type Params = TodoReadParams;
     type Output = TodoListResult;
 
     const NAME: &'static str = TODO_READ_TOOL_NAME;
@@ -54,24 +50,11 @@ Usage:
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct TodoWriteToolParams {
-    pub todos: Vec<TodoItemInput>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct TodoItemInput {
-    pub content: String,
-    pub status: String,
-    pub priority: String,
-    pub id: String,
-}
-
 pub struct TodoWriteTool;
 
 #[async_trait]
 impl StaticTool for TodoWriteTool {
-    type Params = TodoWriteToolParams;
+    type Params = TodoWriteParams;
     type Output = TodoWriteResult;
 
     const NAME: &'static str = TODO_WRITE_TOOL_NAME;
@@ -112,29 +95,13 @@ Task Management:
             return Err(StaticToolError::Cancelled);
         }
 
-        let todos: Vec<TodoItem> = params
-            .todos
-            .into_iter()
-            .map(|t| TodoItem {
-                content: t.content,
-                status: match t.status.to_lowercase().as_str() {
-                    "in_progress" => TodoStatus::InProgress,
-                    "completed" => TodoStatus::Completed,
-                    _ => TodoStatus::Pending,
-                },
-                priority: match t.priority.to_lowercase().as_str() {
-                    "high" => TodoPriority::High,
-                    "low" => TodoPriority::Low,
-                    _ => TodoPriority::Medium,
-                },
-                id: t.id,
-            })
-            .collect();
-
         let operation =
-            write_todos(&todos).map_err(|e| StaticToolError::Io(e.to_string()))?;
+            write_todos(&params.todos).map_err(|e| StaticToolError::Io(e.to_string()))?;
 
-        Ok(TodoWriteResult { todos, operation })
+        Ok(TodoWriteResult {
+            todos: params.todos,
+            operation,
+        })
     }
 }
 

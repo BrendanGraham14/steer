@@ -1,25 +1,17 @@
-
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::GlobResult;
+use steer_tools::tools::GLOB_TOOL_NAME;
+use steer_tools::tools::glob::GlobParams;
 use steer_workspace::{GlobRequest, WorkspaceOpContext};
-
-pub const GLOB_TOOL_NAME: &str = "glob";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GlobToolParams {
-    pub pattern: String,
-    pub path: Option<String>,
-}
 
 pub struct GlobTool;
 
 #[async_trait]
 impl StaticTool for GlobTool {
-    type Params = GlobToolParams;
+    type Params = GlobParams;
     type Output = GlobResult;
 
     const NAME: &'static str = GLOB_TOOL_NAME;

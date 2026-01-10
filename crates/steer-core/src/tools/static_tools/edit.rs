@@ -1,21 +1,11 @@
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
-
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::{EditResult, MultiEditResult};
+use steer_tools::tools::EDIT_TOOL_NAME;
+use steer_tools::tools::edit::EditParams;
+use steer_tools::tools::edit::multi_edit::{MULTI_EDIT_TOOL_NAME, MultiEditParams};
 use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
-
-pub const EDIT_TOOL_NAME: &str = "edit_file";
-pub const MULTI_EDIT_TOOL_NAME: &str = "multi_edit_file";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EditToolParams {
-    pub file_path: String,
-    pub old_string: String,
-    pub new_string: String,
-}
 
 pub struct EditTool;
 
@@ -70,7 +60,7 @@ Remember: when making multiple file edits in a row to the same file, you should 
 
 #[async_trait]
 impl StaticTool for EditTool {
-    type Params = EditToolParams;
+    type Params = EditParams;
     type Output = EditResult;
 
     const NAME: &'static str = EDIT_TOOL_NAME;
@@ -100,23 +90,11 @@ impl StaticTool for EditTool {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SingleEditOperation {
-    pub old_string: String,
-    pub new_string: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MultiEditToolParams {
-    pub file_path: String,
-    pub edits: Vec<SingleEditOperation>,
-}
-
 pub struct MultiEditTool;
 
 #[async_trait]
 impl StaticTool for MultiEditTool {
-    type Params = MultiEditToolParams;
+    type Params = MultiEditParams;
     type Output = MultiEditResult;
 
     const NAME: &'static str = MULTI_EDIT_TOOL_NAME;

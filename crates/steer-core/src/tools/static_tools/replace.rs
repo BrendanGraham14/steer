@@ -1,25 +1,17 @@
-
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::ReplaceResult;
+use steer_tools::tools::REPLACE_TOOL_NAME;
+use steer_tools::tools::replace::ReplaceParams;
 use steer_workspace::{WriteFileRequest, WorkspaceOpContext};
-
-pub const REPLACE_TOOL_NAME: &str = "write_file";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ReplaceToolParams {
-    pub file_path: String,
-    pub content: String,
-}
 
 pub struct ReplaceTool;
 
 #[async_trait]
 impl StaticTool for ReplaceTool {
-    type Params = ReplaceToolParams;
+    type Params = ReplaceParams;
     type Output = ReplaceResult;
 
     const NAME: &'static str = REPLACE_TOOL_NAME;

@@ -1,25 +1,17 @@
-
 use async_trait::async_trait;
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::FileListResult;
+use steer_tools::tools::LS_TOOL_NAME;
+use steer_tools::tools::ls::LsParams;
 use steer_workspace::{ListDirectoryRequest, WorkspaceOpContext};
-
-pub const LS_TOOL_NAME: &str = "ls";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LsToolParams {
-    pub path: String,
-    pub ignore: Option<Vec<String>>,
-}
 
 pub struct LsTool;
 
 #[async_trait]
 impl StaticTool for LsTool {
-    type Params = LsToolParams;
+    type Params = LsParams;
     type Output = FileListResult;
 
     const NAME: &'static str = LS_TOOL_NAME;
