@@ -268,7 +268,8 @@ impl SessionConfig {
 
 /// Tool visibility configuration - controls which tools are shown to the AI agent
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", content = "tools", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolVisibility {
     /// Show all registered tools to the AI
     All,

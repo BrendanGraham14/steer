@@ -564,6 +564,9 @@ impl SessionCatalog for SqliteEventStore {
 mod tests {
     use super::*;
     use crate::app::domain::event::SessionEvent;
+    use crate::config::model::builtin;
+    use crate::session::state::{SessionConfig, ToolVisibility};
+    use std::collections::{HashMap, HashSet};
 
     #[tokio::test]
     async fn test_sqlite_store_append_and_load() {
@@ -687,5 +690,38 @@ mod tests {
         let sessions = store.list_session_ids().await.unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(sessions.contains(&session_a) || sessions.contains(&session_b));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_serializes_tool_visibility_whitelist() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let mut session_config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        session_config.tool_config.visibility =
+            ToolVisibility::Whitelist(HashSet::from(["view".to_string()]));
+
+        let event = SessionEvent::SessionCreated {
+            config: Box::new(session_config),
+            metadata: HashMap::new(),
+            parent_session_id: None,
+        };
+
+        store.append(session_id, &event).await.unwrap();
+
+        let events = store.load_events(session_id).await.unwrap();
+        let loaded_config = match &events[0].1 {
+            SessionEvent::SessionCreated { config, .. } => config,
+            other => panic!("Expected SessionCreated event, got {other:?}"),
+        };
+
+        match &loaded_config.tool_config.visibility {
+            ToolVisibility::Whitelist(allowed) => {
+                assert!(allowed.contains("view"));
+            }
+            other => panic!("Expected Whitelist visibility, got {other:?}"),
+        }
     }
 }
