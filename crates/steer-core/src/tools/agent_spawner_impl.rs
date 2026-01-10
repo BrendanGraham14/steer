@@ -10,9 +10,10 @@ use crate::app::domain::runtime::{
 };
 use crate::app::domain::session::EventStore;
 use crate::model_registry::ModelRegistry;
-use crate::session::state::{SessionConfig, SessionToolConfig, WorkspaceConfig};
-use crate::tools::ToolExecutor;
+use crate::session::state::{BackendConfig, SessionConfig, SessionToolConfig, WorkspaceConfig};
+use crate::tools::{McpBackend, SessionMcpBackends, ToolExecutor};
 use crate::workspace::Workspace;
+use tracing::warn;
 
 use super::services::{AgentSpawner, SubAgentConfig, SubAgentError, SubAgentResult};
 
@@ -59,29 +60,75 @@ impl AgentSpawner for DefaultAgentSpawner {
         session_config.repo_ref = config.repo_ref.clone();
         session_config.workspace_name = config.workspace_name.clone();
         session_config.parent_session_id = Some(config.parent_session_id);
-        session_config.tool_config = SessionToolConfig::read_only();
+        let mut tool_config = SessionToolConfig::read_only();
+        tool_config.backends = config.mcp_backends.clone();
+        session_config.tool_config = tool_config;
+
+        let session_backends = if config.allow_mcp_tools && !config.mcp_backends.is_empty() {
+            let session_backends = Arc::new(SessionMcpBackends::new());
+            for backend_config in &config.mcp_backends {
+                let BackendConfig::Mcp {
+                    server_name,
+                    transport,
+                    tool_filter,
+                } = backend_config;
+
+                match McpBackend::new(
+                    server_name.clone(),
+                    transport.clone(),
+                    tool_filter.clone(),
+                )
+                .await
+                {
+                    Ok(backend) => {
+                        session_backends
+                            .register(server_name.clone(), Arc::new(backend))
+                            .await;
+                    }
+                    Err(err) => {
+                        warn!(
+                            server_name = %server_name,
+                            error = %err,
+                            "Failed to start MCP server for sub-agent"
+                        );
+                    }
+                }
+            }
+            Some(session_backends)
+        } else {
+            None
+        };
 
         let interpreter_config = AgentInterpreterConfig {
             auto_approve_tools: true,
             parent_session_id: Some(config.parent_session_id),
             session_config: Some(session_config),
+            session_backends: session_backends.clone(),
         };
 
         let tool_executor = Arc::new(ToolExecutor::with_workspace(workspace));
 
-        let interpreter = AgentInterpreter::new(
+        let interpreter = match AgentInterpreter::new(
             self.event_store.clone(),
             self.api_client.clone(),
             tool_executor.clone(),
             interpreter_config,
         )
         .await
-        .map_err(|e| match e {
+        {
+            Ok(interpreter) => interpreter,
+            Err(e) => {
+                if let Some(backends) = session_backends.as_ref() {
+                    backends.clear().await;
+                }
+                return Err(match e {
             AgentInterpreterError::EventStore(msg) => SubAgentError::EventStore(msg),
             AgentInterpreterError::Api(msg) => SubAgentError::Api(msg),
             AgentInterpreterError::Agent(msg) => SubAgentError::Agent(msg),
             AgentInterpreterError::Cancelled => SubAgentError::Cancelled,
-        })?;
+                });
+            }
+        };
 
         let session_id = interpreter.session_id();
 
@@ -91,11 +138,18 @@ impl AgentSpawner for DefaultAgentSpawner {
             .ok_or_else(|| SubAgentError::Agent(format!("Model not found: {:?}", config.model)))?
             .clone();
 
+        let resolver = session_backends
+            .as_ref()
+            .map(|backends| backends.as_ref() as &dyn crate::tools::BackendResolver);
+
         let available_tools: Vec<_> = tool_executor
-            .get_tool_schemas()
+            .get_tool_schemas_with_resolver(resolver)
             .await
             .into_iter()
-            .filter(|schema| config.allowed_tools.contains(&schema.name))
+            .filter(|schema| {
+                config.allowed_tools.contains(&schema.name)
+                    || (config.allow_mcp_tools && schema.name.starts_with("mcp__"))
+            })
             .collect();
 
         let agent_config = AgentConfig {
@@ -123,7 +177,13 @@ impl AgentSpawner for DefaultAgentSpawner {
                 AgentInterpreterError::Api(msg) => SubAgentError::Api(msg),
                 AgentInterpreterError::Agent(msg) => SubAgentError::Agent(msg),
                 AgentInterpreterError::Cancelled => SubAgentError::Cancelled,
-            })?;
+            });
+
+        if let Some(backends) = session_backends.as_ref() {
+            backends.clear().await;
+        }
+
+        let final_message = final_message?;
 
         Ok(SubAgentResult {
             session_id,

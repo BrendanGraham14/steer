@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,16 +14,28 @@ use crate::app::domain::session::EventStore;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::builtin::default_model;
 use crate::session::state::SessionConfig;
-use crate::tools::ToolExecutor;
+use crate::tools::{SessionMcpBackends, ToolExecutor};
 
 use super::interpreter::EffectInterpreter;
 use super::stepper::{AgentConfig, AgentInput, AgentOutput, AgentState, AgentStepper};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AgentInterpreterConfig {
     pub auto_approve_tools: bool,
     pub parent_session_id: Option<SessionId>,
     pub session_config: Option<SessionConfig>,
+    pub session_backends: Option<Arc<SessionMcpBackends>>,
+}
+
+impl std::fmt::Debug for AgentInterpreterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentInterpreterConfig")
+            .field("auto_approve_tools", &self.auto_approve_tools)
+            .field("parent_session_id", &self.parent_session_id)
+            .field("session_config", &self.session_config)
+            .field("session_backends", &self.session_backends.is_some())
+            .finish()
+    }
 }
 
 impl AgentInterpreterConfig {
@@ -32,6 +44,7 @@ impl AgentInterpreterConfig {
             auto_approve_tools: true,
             parent_session_id: Some(parent_session_id),
             session_config: None,
+            session_backends: None,
         }
     }
 }
@@ -77,8 +90,11 @@ impl AgentInterpreter {
             .await
             .map_err(|e| AgentInterpreterError::EventStore(e.to_string()))?;
 
-        let effect_interpreter =
+        let mut effect_interpreter =
             EffectInterpreter::new(api_client, tool_executor).with_session(session_id);
+        if let Some(backends) = config.session_backends.clone() {
+            effect_interpreter = effect_interpreter.with_session_backends(backends);
+        }
 
         Ok(Self {
             session_id,
@@ -116,7 +132,7 @@ impl AgentInterpreter {
             tools: agent_config.tools.clone(),
         }];
 
-        let mut pending_outputs = initial_outputs;
+        let mut pending_outputs: VecDeque<AgentOutput> = VecDeque::from(initial_outputs);
 
         loop {
             if cancel_token.is_cancelled() {
@@ -130,7 +146,7 @@ impl AgentInterpreter {
                 return Err(AgentInterpreterError::Cancelled);
             }
 
-            let output = match pending_outputs.pop() {
+            let output = match pending_outputs.pop_front() {
                 Some(o) => o,
                 None => {
                     if stepper.is_terminal(&state) {

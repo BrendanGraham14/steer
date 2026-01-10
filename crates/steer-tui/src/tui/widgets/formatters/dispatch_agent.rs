@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
+use steer_core::agents::default_agent_spec_id;
 use steer_core::app::conversation::ToolResult;
 use steer_core::tools::{DispatchAgentParams, WorkspaceTarget};
 
@@ -33,6 +34,13 @@ impl ToolFormatter for DispatchAgentFormatter {
             params.prompt.clone()
         };
 
+        let agent_id = params
+            .agent
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| default_agent_spec_id().to_string());
+
         let workspace_summary = match &params.workspace {
             WorkspaceTarget::Current => "current".to_string(),
             WorkspaceTarget::New { name } => format!("{name} (new)"),
@@ -49,6 +57,7 @@ impl ToolFormatter for DispatchAgentFormatter {
         };
 
         lines.push(Line::from(vec![
+            Span::styled(format!("agent={agent_id} "), theme.subtle_text()),
             Span::styled(format!("workspace={workspace_summary} "), theme.subtle_text()),
             Span::styled(format!("task='{preview}' "), Style::default()),
             Span::styled(format!("({info})"), theme.subtle_text()),
@@ -73,11 +82,22 @@ impl ToolFormatter for DispatchAgentFormatter {
             ))];
         };
 
+        let agent_id = params
+            .agent
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| default_agent_spec_id().to_string());
+
         let workspace_label = match &params.workspace {
             WorkspaceTarget::Current => "current".to_string(),
             WorkspaceTarget::New { name } => format!("{name} (new)"),
         };
 
+        lines.push(Line::from(vec![
+            Span::styled("Agent: ", theme.subtle_text()),
+            Span::styled(agent_id, Style::default()),
+        ]));
         lines.push(Line::from(vec![
             Span::styled("Workspace: ", theme.subtle_text()),
             Span::styled(workspace_label, Style::default()),
@@ -179,11 +199,22 @@ impl ToolFormatter for DispatchAgentFormatter {
             ))];
         };
 
+        let agent_id = params
+            .agent
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| default_agent_spec_id().to_string());
+
         let workspace_label = match &params.workspace {
             WorkspaceTarget::Current => "current".to_string(),
             WorkspaceTarget::New { name } => format!("{name} (new)"),
         };
 
+        lines.push(Line::from(vec![
+            Span::styled("Agent: ", theme.subtle_text()),
+            Span::styled(agent_id, Style::default()),
+        ]));
         lines.push(Line::from(vec![
             Span::styled("Workspace: ", theme.subtle_text()),
             Span::styled(workspace_label, Style::default()),

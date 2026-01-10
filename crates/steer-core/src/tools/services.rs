@@ -8,6 +8,7 @@ use crate::app::conversation::Message;
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::SessionId;
 use crate::config::model::ModelId;
+use crate::session::state::BackendConfig;
 use crate::workspace::{RepoManager, RepoRef, Workspace, WorkspaceId, WorkspaceManager, WorkspaceRef};
 
 use super::capability::Capabilities;
@@ -34,6 +35,8 @@ pub struct SubAgentConfig {
     pub workspace_id: Option<WorkspaceId>,
     pub repo_ref: Option<RepoRef>,
     pub workspace_name: Option<String>,
+    pub mcp_backends: Vec<BackendConfig>,
+    pub allow_mcp_tools: bool,
 }
 
 #[derive(Debug, Clone)]

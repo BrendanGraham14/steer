@@ -361,6 +361,13 @@ impl WorkspaceManager for LocalWorkspaceManager {
                         "Failed to remove jj workspace: {e}"
                     ))
                 })?;
+            if tx.repo_mut().has_rewrites() {
+                tx.repo_mut().rebase_descendants().map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to rebase jj descendants after workspace removal: {e}"
+                    ))
+                })?;
+            }
             let workspace_name_ref: &jj_lib::ref_name::WorkspaceName =
                 workspace_name.as_ref();
             tx.commit(format!(

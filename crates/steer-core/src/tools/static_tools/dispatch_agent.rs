@@ -2,34 +2,35 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::agents::{
+    McpAccessPolicy, agent_spec, agent_specs, agent_specs_prompt, default_agent_spec_id,
+};
 use crate::config::model::builtin::claude_sonnet_4_5 as default_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::SubAgentConfig;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use crate::app::domain::event::SessionEvent;
+use crate::session::state::BackendConfig;
 use crate::workspace::{
     CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentId, RepoRef, VcsStatus,
     WorkspaceCreateStrategy, WorkspaceRef,
 };
 use steer_tools::result::{AgentResult, AgentWorkspaceCommit, AgentWorkspaceInfo};
-use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
+use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
 
 pub const DISPATCH_AGENT_TOOL_NAME: &str = "dispatch_agent";
 
-const DISPATCH_AGENT_TOOLS: [&str; 4] =
-    [GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME];
-
-fn format_dispatch_agent_tools() -> String {
-    DISPATCH_AGENT_TOOLS
-        .iter()
-        .map(|tool| tool.to_string())
-        .collect::<Vec<String>>()
-        .join(", ")
-}
-
 fn dispatch_agent_description() -> String {
+    let agent_specs = agent_specs_prompt();
+    let agent_specs_block = if agent_specs.is_empty() {
+        "No agent specs registered.".to_string()
+    } else {
+        agent_specs
+    };
+
     format!(
-        r#"Launch a new agent that has access to the following tools: {}. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
+        r#"Launch a new agent to help with a focused task. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
 
 When to use the Agent tool:
 - If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended
@@ -44,16 +45,23 @@ Usage notes:
 2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
 3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
 4. The agent's outputs should generally be trusted
-5. IMPORTANT: The agent can not modify files. If you want to modify files, do it directly instead of going through the agent.
+5. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
+6. IMPORTANT: If you create a new workspace, it will be deleted automatically after the sub-agent finishes. You must rely on the returned workspace commit/revision info to retrieve the results.
 
 Workspace options:
 - `workspace: "current"` to run in the current workspace
-- `workspace: {{ "new": {{ "name": "..." }} }}` to run in a fresh workspace (jj only)"#,
-        format_dispatch_agent_tools(),
+- `workspace: {{ "new": {{ "name": "..." }} }}` to run in a fresh workspace (jj only)
+
+Agent options:
+- `agent: "<id>"` selects an agent spec (defaults to "{default_agent}")
+
+{agent_specs_block}"#,
         VIEW_TOOL_NAME,
         GLOB_TOOL_NAME,
         GREP_TOOL_NAME,
         GREP_TOOL_NAME,
+        default_agent = default_agent_spec_id(),
+        agent_specs_block = agent_specs_block
     )
 }
 
@@ -68,6 +76,8 @@ pub enum WorkspaceTarget {
 pub struct DispatchAgentParams {
     pub prompt: String,
     pub workspace: WorkspaceTarget,
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 pub struct DispatchAgentTool;
@@ -235,10 +245,59 @@ Notes:
             env_info.as_context()
         );
 
+        let agent_id = params
+            .agent
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| default_agent_spec_id().to_string());
+
+        let agent_spec = agent_spec(&agent_id).ok_or_else(|| {
+            let available = agent_specs()
+                .into_iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            StaticToolError::invalid_params(format!(
+                "Unknown agent spec '{agent_id}'. Available: {available}"
+            ))
+        })?;
+
+        let parent_mcp_backends = match ctx.services.event_store.load_events(ctx.session_id).await {
+            Ok(events) => events
+                .into_iter()
+                .find_map(|(_, event)| match event {
+                    SessionEvent::SessionCreated { config, .. } => Some(config.tool_config.backends),
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            Err(err) => {
+                warn!(
+                    session_id = %ctx.session_id,
+                    "Failed to load parent session config for MCP servers: {err}"
+                );
+                Vec::new()
+            }
+        };
+
+        let allow_mcp_tools = agent_spec.mcp_access.allow_mcp_tools();
+        let mcp_backends = match &agent_spec.mcp_access {
+            McpAccessPolicy::None => Vec::new(),
+            McpAccessPolicy::All => parent_mcp_backends,
+            McpAccessPolicy::Allowlist(servers) => parent_mcp_backends
+                .into_iter()
+                .filter(|backend| match backend {
+                    BackendConfig::Mcp { server_name, .. } => {
+                        servers.iter().any(|allowed| allowed == server_name)
+                    }
+                })
+                .collect(),
+        };
+
         let config = SubAgentConfig {
             parent_session_id: ctx.session_id,
             prompt: params.prompt,
-            allowed_tools: DISPATCH_AGENT_TOOLS.iter().map(|s| s.to_string()).collect(),
+            allowed_tools: agent_spec.tools.clone(),
             model: default_model(),
             system_prompt: Some(system_prompt),
             workspace: Some(workspace),
@@ -246,6 +305,8 @@ Notes:
             workspace_id,
             repo_ref,
             workspace_name,
+            mcp_backends,
+            allow_mcp_tools,
         };
 
         let spawn_result = spawner
