@@ -7,9 +7,11 @@ use crate::tools::capability::Capabilities;
 use crate::tools::services::SubAgentConfig;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use crate::workspace::{
-    CreateWorkspaceRequest, EnvironmentId, RepoRef, WorkspaceCreateStrategy, WorkspaceRef,
+    CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentId, RepoRef,
+    WorkspaceCreateStrategy, WorkspaceRef,
 };
 use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
+use tracing::warn;
 
 pub const DISPATCH_AGENT_TOOL_NAME: &str = "dispatch_agent";
 
@@ -160,11 +162,15 @@ impl StaticTool for DispatchAgentTool {
             }
         }
 
+        let mut created_workspace_id = None;
+        let mut cleanup_manager = None;
+
         if new_workspace {
             let manager = ctx
                 .services
                 .workspace_manager()
                 .ok_or_else(|| StaticToolError::missing_capability("workspace_manager"))?;
+            cleanup_manager = Some(manager.clone());
 
             let base_repo_id = repo_id.ok_or_else(|| {
                 StaticToolError::execution(
@@ -194,6 +200,7 @@ impl StaticTool for DispatchAgentTool {
                 })?;
 
             workspace_id = Some(info.workspace_id);
+            created_workspace_id = Some(info.workspace_id);
             workspace_name = info.name.clone();
             workspace_ref = Some(WorkspaceRef {
                 environment_id: info.environment_id,
@@ -245,9 +252,23 @@ Notes:
             workspace_name,
         };
 
-        let result = spawner
+        let spawn_result = spawner
             .spawn(config, ctx.cancellation_token.clone())
-            .await
+            .await;
+
+        if let (Some(manager), Some(workspace_id)) = (cleanup_manager, created_workspace_id) {
+            if let Err(err) = manager
+                .delete_workspace(DeleteWorkspaceRequest { workspace_id })
+                .await
+            {
+                warn!(
+                    workspace_id = %workspace_id.as_uuid(),
+                    "Failed to cleanup sub-agent workspace: {err}"
+                );
+            }
+        }
+
+        let result = spawn_result
             .map_err(|e| StaticToolError::execution(e.to_string()))?;
 
         Ok(DispatchAgentOutput {
