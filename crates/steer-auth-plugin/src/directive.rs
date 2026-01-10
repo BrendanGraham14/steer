@@ -1,6 +1,7 @@
 use crate::error::Result;
 use crate::identifiers::ModelId;
 use async_trait::async_trait;
+use std::fmt;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -69,9 +70,31 @@ pub struct OpenAiResponsesAuth {
     pub include: Option<Vec<String>>,
 }
 
+impl fmt::Debug for OpenAiResponsesAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenAiResponsesAuth")
+            .field("headers", &"<AuthHeaderProvider>")
+            .field("base_url_override", &self.base_url_override)
+            .field("require_streaming", &self.require_streaming)
+            .field("instruction_policy", &self.instruction_policy)
+            .field("include", &self.include)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct AnthropicAuth {
     pub headers: Arc<dyn AuthHeaderProvider>,
     pub instruction_policy: Option<InstructionPolicy>,
     pub query_params: Option<Vec<QueryParam>>,
+}
+
+impl fmt::Debug for AnthropicAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnthropicAuth")
+            .field("headers", &"<AuthHeaderProvider>")
+            .field("instruction_policy", &self.instruction_policy)
+            .field("query_params", &self.query_params)
+            .finish()
+    }
 }
