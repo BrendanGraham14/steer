@@ -33,19 +33,21 @@ pub struct FetchResult {
     pub content: String,
 }
 
-/// Workspace commit metadata for dispatched agents.
+/// Workspace revision metadata for dispatched agents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentWorkspaceCommit {
-    pub change_id: String,
-    pub commit_id: String,
-    pub description: String,
+pub struct AgentWorkspaceRevision {
+    pub vcs_kind: String,
+    pub revision_id: String,
+    pub summary: String,
+    #[serde(default)]
+    pub change_id: Option<String>,
 }
 
 /// Workspace context for dispatched agents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentWorkspaceInfo {
     pub workspace_id: Option<String>,
-    pub commit: Option<AgentWorkspaceCommit>,
+    pub revision: Option<AgentWorkspaceRevision>,
 }
 
 /// Result for the dispatch_agent tool

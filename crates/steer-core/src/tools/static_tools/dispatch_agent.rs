@@ -15,7 +15,7 @@ use crate::workspace::{
     CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentId, RepoRef, VcsStatus,
     WorkspaceCreateStrategy, WorkspaceRef,
 };
-use steer_tools::result::{AgentResult, AgentWorkspaceCommit, AgentWorkspaceInfo};
+use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
 use steer_tools::tools::{GLOB_TOOL_NAME, GREP_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
 
@@ -318,17 +318,18 @@ Notes:
         if let (Some(manager), Some(workspace_id)) =
             (cleanup_manager.clone(), created_workspace_id)
         {
-            let commit = match manager.get_workspace_status(workspace_id).await {
+            let revision = match manager.get_workspace_status(workspace_id).await {
                 Ok(status) => match status.vcs {
                     Some(vcs) => match vcs.status {
                         VcsStatus::Jj(jj_status) => jj_status.working_copy.map(|wc| {
-                            AgentWorkspaceCommit {
-                                change_id: wc.change_id,
-                                commit_id: wc.commit_id,
-                                description: wc.description,
+                            AgentWorkspaceRevision {
+                                vcs_kind: "jj".to_string(),
+                                revision_id: wc.commit_id,
+                                summary: wc.description,
+                                change_id: Some(wc.change_id),
                             }
                         }),
-                        _ => None,
+                        VcsStatus::Git(_) => None,
                     },
                     None => None,
                 },
@@ -343,7 +344,7 @@ Notes:
 
             workspace_info = Some(AgentWorkspaceInfo {
                 workspace_id: Some(workspace_id.as_uuid().to_string()),
-                commit,
+                revision,
             });
 
             if let Err(err) = manager

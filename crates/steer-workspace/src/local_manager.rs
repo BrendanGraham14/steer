@@ -15,8 +15,12 @@ use crate::{
 };
 use crate::workspace_registry::WorkspaceRegistry;
 
+use jj_lib::gitignore::GitIgnoreFile;
+use jj_lib::matchers::EverythingMatcher;
+use jj_lib::repo::Repo;
 use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::workspace::{Workspace as JjWorkspace, default_working_copy_factory};
+use jj_lib::working_copy::SnapshotOptions;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -149,6 +153,91 @@ impl LocalWorkspaceManager {
             .load_at_head()
             .map_err(|e| WorkspaceManagerError::Other(format!("Failed to load jj repo: {e}")))?;
         Ok((workspace, repo))
+    }
+
+    async fn snapshot_working_copy(
+        &self,
+        workspace: &mut JjWorkspace,
+        repo: Arc<jj_lib::repo::ReadonlyRepo>,
+    ) -> WorkspaceManagerResult<Arc<jj_lib::repo::ReadonlyRepo>> {
+        let workspace_name = workspace.workspace_name().to_owned();
+        let mut locked_ws = workspace.start_working_copy_mutation().map_err(|e| {
+            WorkspaceManagerError::Other(format!("Failed to lock jj working copy: {e}"))
+        })?;
+        let old_tree_id = locked_ws.locked_wc().old_tree_id().clone();
+        let old_op_id = locked_ws.locked_wc().old_operation_id().clone();
+
+        let snapshot_options = SnapshotOptions {
+            base_ignores: GitIgnoreFile::empty(),
+            progress: None,
+            start_tracking_matcher: &EverythingMatcher,
+            max_new_file_size: u64::MAX,
+        };
+
+        let snapshot_result = locked_ws.locked_wc().snapshot(&snapshot_options).await;
+        let (new_tree_id, _stats) = match snapshot_result {
+            Ok(result) => result,
+            Err(err) => {
+                locked_ws.finish(old_op_id).map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to release jj working copy after snapshot error: {e}"
+                    ))
+                })?;
+                return Err(WorkspaceManagerError::Other(format!(
+                    "Failed to snapshot jj working copy: {err}"
+                )));
+            }
+        };
+
+        let mut updated_repo = repo.clone();
+        if new_tree_id != old_tree_id {
+            let wc_commit_id = repo
+                .view()
+                .get_wc_commit_id(workspace_name.as_ref())
+                .ok_or_else(|| {
+                    WorkspaceManagerError::Other(format!(
+                        "No working copy commit for workspace '{}'",
+                        workspace_name.as_str()
+                    ))
+                })?;
+            let wc_commit = repo.store().get_commit(wc_commit_id).map_err(|e| {
+                WorkspaceManagerError::Other(format!("Failed to load working copy commit: {e}"))
+            })?;
+
+            let mut tx = repo.start_transaction();
+            let new_commit = tx
+                .repo_mut()
+                .new_commit(wc_commit.parent_ids().to_vec(), new_tree_id)
+                .write()
+                .map_err(|e| {
+                    WorkspaceManagerError::Other(format!("Failed to write jj snapshot commit: {e}"))
+                })?;
+            tx.repo_mut()
+                .set_wc_commit(workspace_name, new_commit.id().clone())
+                .map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to update jj working copy commit: {e}"
+                    ))
+                })?;
+
+            updated_repo = tx
+                .commit("snapshot working copy for workspace cleanup")
+                .map_err(|e| {
+                    WorkspaceManagerError::Other(format!(
+                        "Failed to commit jj snapshot transaction: {e}"
+                    ))
+                })?;
+        }
+
+        locked_ws
+            .finish(updated_repo.op_id().clone())
+            .map_err(|e| {
+                WorkspaceManagerError::Other(format!(
+                    "Failed to update jj working copy state: {e}"
+                ))
+            })?;
+
+        Ok(updated_repo)
     }
 
     fn repo_id_for_path(&self, path: &Path) -> RepoId {
@@ -320,6 +409,12 @@ impl WorkspaceManager for LocalWorkspaceManager {
                 WorkspaceManagerError::NotFound(workspace_id.as_uuid().to_string())
             })?;
 
+        if let Ok(jj_root) = self.ensure_jj_workspace_root(&info.path) {
+            if let Ok((mut workspace, repo)) = self.load_jj_workspace(&jj_root) {
+                let _ = self.snapshot_working_copy(&mut workspace, repo).await;
+            }
+        }
+
         let vcs = VcsUtils::collect_vcs_info(&info.path);
         Ok(WorkspaceStatus {
             workspace_id: info.workspace_id,
@@ -351,8 +446,9 @@ impl WorkspaceManager for LocalWorkspaceManager {
             }
 
             let jj_root = self.ensure_jj_workspace_root(&info.path)?;
-            let (workspace, repo) = self.load_jj_workspace(&jj_root)?;
+            let (mut workspace, repo) = self.load_jj_workspace(&jj_root)?;
             let workspace_name = workspace.workspace_name().to_owned();
+            let repo = self.snapshot_working_copy(&mut workspace, repo).await?;
             let mut tx = repo.start_transaction();
             tx.repo_mut()
                 .remove_wc_commit(&workspace_name)

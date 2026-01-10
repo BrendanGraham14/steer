@@ -120,7 +120,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                     if let Some(workspace) = agent_result.workspace.as_ref() {
                         lines.push(separator_line(wrap_width, theme.dim_text()));
                         lines.push(Line::from(Span::styled(
-                            "Workspace Commit:",
+                            "Workspace Revision:",
                             theme.subtle_text(),
                         )));
                         if let Some(workspace_id) = workspace.workspace_id.as_ref() {
@@ -129,17 +129,20 @@ impl ToolFormatter for DispatchAgentFormatter {
                                 Style::default(),
                             )));
                         }
-                        if let Some(commit) = workspace.commit.as_ref() {
+                        if let Some(revision) = workspace.revision.as_ref() {
+                            let kind = revision.vcs_kind.as_str();
+                            let mut summary_line =
+                                format!("  {}: revision {}", kind, revision.revision_id);
+                            if let Some(change_id) = revision.change_id.as_ref() {
+                                summary_line.push_str(&format!("  change {change_id}"));
+                            }
                             lines.push(Line::from(Span::styled(
-                                format!(
-                                    "  change: {}  commit: {}",
-                                    commit.change_id, commit.commit_id
-                                ),
+                                summary_line,
                                 Style::default(),
                             )));
-                            if !commit.description.trim().is_empty() {
+                            if !revision.summary.trim().is_empty() {
                                 lines.push(Line::from(Span::styled(
-                                    format!("  message: {}", commit.description),
+                                    format!("  summary: {}", revision.summary),
                                     Style::default(),
                                 )));
                             }

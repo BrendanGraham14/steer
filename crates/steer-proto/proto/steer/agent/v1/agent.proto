@@ -708,15 +708,16 @@ message FetchResult {
   string content = 2;
 }
 
-message AgentWorkspaceCommit {
-  string change_id = 1;
-  string commit_id = 2;
-  string description = 3;
+message AgentWorkspaceRevision {
+  string vcs_kind = 1;
+  string revision_id = 2;
+  string summary = 3;
+  string change_id = 4;
 }
 
 message AgentWorkspaceInfo {
   string workspace_id = 1;
-  AgentWorkspaceCommit commit = 2;
+  AgentWorkspaceRevision revision = 2;
 }
 
 message AgentResult {

@@ -41,13 +41,14 @@ pub fn proto_to_model(
     Ok((provider_id, spec.model_id.clone()))
 }
 
-fn agent_workspace_commit_to_proto(
-    commit: &steer_tools::result::AgentWorkspaceCommit,
-) -> proto::AgentWorkspaceCommit {
-    proto::AgentWorkspaceCommit {
-        change_id: commit.change_id.clone(),
-        commit_id: commit.commit_id.clone(),
-        description: commit.description.clone(),
+fn agent_workspace_revision_to_proto(
+    revision: &steer_tools::result::AgentWorkspaceRevision,
+) -> proto::AgentWorkspaceRevision {
+    proto::AgentWorkspaceRevision {
+        vcs_kind: revision.vcs_kind.clone(),
+        revision_id: revision.revision_id.clone(),
+        summary: revision.summary.clone(),
+        change_id: revision.change_id.clone().unwrap_or_default(),
     }
 }
 
@@ -56,7 +57,10 @@ fn agent_workspace_info_to_proto(
 ) -> proto::AgentWorkspaceInfo {
     proto::AgentWorkspaceInfo {
         workspace_id: info.workspace_id.clone().unwrap_or_default(),
-        commit: info.commit.as_ref().map(agent_workspace_commit_to_proto),
+        revision: info
+            .revision
+            .as_ref()
+            .map(agent_workspace_revision_to_proto),
     }
 }
 /// Convert steer_tools ToolResult to protobuf
@@ -147,13 +151,18 @@ fn steer_tools_result_to_proto(
     })
 }
 
-fn proto_to_agent_workspace_commit(
-    commit: proto::AgentWorkspaceCommit,
-) -> steer_tools::result::AgentWorkspaceCommit {
-    steer_tools::result::AgentWorkspaceCommit {
-        change_id: commit.change_id,
-        commit_id: commit.commit_id,
-        description: commit.description,
+fn proto_to_agent_workspace_revision(
+    revision: proto::AgentWorkspaceRevision,
+) -> steer_tools::result::AgentWorkspaceRevision {
+    steer_tools::result::AgentWorkspaceRevision {
+        vcs_kind: revision.vcs_kind,
+        revision_id: revision.revision_id,
+        summary: revision.summary,
+        change_id: if revision.change_id.is_empty() {
+            None
+        } else {
+            Some(revision.change_id)
+        },
     }
 }
 
@@ -166,7 +175,7 @@ fn proto_to_agent_workspace_info(
         } else {
             Some(info.workspace_id)
         },
-        commit: info.commit.map(proto_to_agent_workspace_commit),
+        revision: info.revision.map(proto_to_agent_workspace_revision),
     }
 }
 
