@@ -6,7 +6,7 @@ use ratatui::{
 };
 use serde_json::Value;
 use steer_core::app::conversation::ToolResult;
-use steer_core::tools::DispatchAgentParams;
+use steer_core::tools::{DispatchAgentParams, WorkspaceTarget};
 
 pub struct DispatchAgentFormatter;
 
@@ -33,6 +33,11 @@ impl ToolFormatter for DispatchAgentFormatter {
             params.prompt.clone()
         };
 
+        let workspace_summary = match &params.workspace {
+            WorkspaceTarget::Current => "current".to_string(),
+            WorkspaceTarget::New { name } => format!("{name} (new)"),
+        };
+
         let info = match result {
             Some(ToolResult::Agent(agent_result)) => {
                 let line_count = agent_result.content.lines().count();
@@ -44,6 +49,7 @@ impl ToolFormatter for DispatchAgentFormatter {
         };
 
         lines.push(Line::from(vec![
+            Span::styled(format!("workspace={workspace_summary} "), theme.subtle_text()),
             Span::styled(format!("task='{preview}' "), Style::default()),
             Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
@@ -67,7 +73,17 @@ impl ToolFormatter for DispatchAgentFormatter {
             ))];
         };
 
-        lines.push(Line::from(Span::styled("Agent Task:", theme.text())));
+        let workspace_label = match &params.workspace {
+            WorkspaceTarget::Current => "current".to_string(),
+            WorkspaceTarget::New { name } => format!("{name} (new)"),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("Workspace: ", theme.subtle_text()),
+            Span::styled(workspace_label, Style::default()),
+        ]));
+
+        lines.push(Line::from(Span::styled("Instructions:", theme.text())));
         for line in params.prompt.lines() {
             for wrapped_line in textwrap::wrap(line, wrap_width) {
                 lines.push(Line::from(Span::styled(
@@ -118,6 +134,42 @@ impl ToolFormatter for DispatchAgentFormatter {
                         theme.error_text(),
                     )));
                 }
+            }
+        }
+
+        lines
+    }
+
+    fn approval(&self, params: &Value, wrap_width: usize, theme: &Theme) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        let Ok(params) = serde_json::from_value::<DispatchAgentParams>(params.clone()) else {
+            return vec![Line::from(Span::styled(
+                "Invalid agent params",
+                theme.error_text(),
+            ))];
+        };
+
+        let workspace_label = match &params.workspace {
+            WorkspaceTarget::Current => "current".to_string(),
+            WorkspaceTarget::New { name } => format!("{name} (new)"),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("Workspace: ", theme.subtle_text()),
+            Span::styled(workspace_label, Style::default()),
+        ]));
+
+        lines.push(Line::from(Span::styled(
+            "Instructions:",
+            theme.subtle_text(),
+        )));
+        for line in params.prompt.lines() {
+            for wrapped_line in textwrap::wrap(line, wrap_width) {
+                lines.push(Line::from(Span::styled(
+                    wrapped_line.to_string(),
+                    Style::default(),
+                )));
             }
         }
 

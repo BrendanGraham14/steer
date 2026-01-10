@@ -249,6 +249,7 @@ impl WorkspaceManager for LocalWorkspaceManager {
         let parent_dir = self.workspace_parent_dir(repo_info.repo_id);
         std::fs::create_dir_all(&parent_dir)?;
         let workspace_path = self.ensure_unique_path(&parent_dir, &jj_name);
+        std::fs::create_dir_all(&workspace_path)?;
 
         {
             let (workspace, repo) = self.load_jj_workspace(&jj_root)?;

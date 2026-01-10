@@ -44,8 +44,8 @@ Usage notes:
 5. IMPORTANT: The agent can not modify files. If you want to modify files, do it directly instead of going through the agent.
 
 Workspace options:
-- Set `new_workspace` to true to run the sub-agent in a fresh workspace (jj only)
-- Optionally set `workspace_name` to label the new workspace"#,
+- `workspace: "current"` to run in the current workspace
+- `workspace: {{ "new": {{ "name": "..." }} }}` to run in a fresh workspace (jj only)"#,
         format_dispatch_agent_tools(),
         VIEW_TOOL_NAME,
         GLOB_TOOL_NAME,
@@ -55,12 +55,16 @@ Workspace options:
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceTarget {
+    Current,
+    New { name: String },
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DispatchAgentParams {
     pub prompt: String,
-    #[serde(default)]
-    pub new_workspace: bool,
-    #[serde(default)]
-    pub workspace_name: Option<String>,
+    pub workspace: WorkspaceTarget,
 }
 
 #[derive(Debug, Serialize)]
@@ -145,7 +149,18 @@ impl StaticTool for DispatchAgentTool {
             }
         }
 
-        if params.new_workspace {
+        let mut new_workspace = false;
+        let mut requested_workspace_name = None;
+
+        match &params.workspace {
+            WorkspaceTarget::Current => {}
+            WorkspaceTarget::New { name } => {
+                new_workspace = true;
+                requested_workspace_name = Some(name.clone());
+            }
+        }
+
+        if new_workspace {
             let manager = ctx
                 .services
                 .workspace_manager()
@@ -159,7 +174,7 @@ impl StaticTool for DispatchAgentTool {
 
             let create_request = CreateWorkspaceRequest {
                 repo_id: base_repo_id,
-                name: params.workspace_name.clone(),
+                name: requested_workspace_name.clone(),
                 parent_workspace_id: workspace_id,
                 strategy: WorkspaceCreateStrategy::JjWorkspace,
             };

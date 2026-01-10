@@ -27,7 +27,9 @@ pub use services::{
     AgentSpawner, ModelCaller, SubAgentConfig, SubAgentError, SubAgentResult, ToolServices,
 };
 pub use static_tool::{StaticTool, StaticToolContext, StaticToolErased, StaticToolError};
-pub use static_tools::dispatch_agent::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams};
+pub use static_tools::dispatch_agent::{
+    DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, WorkspaceTarget,
+};
 pub use static_tools::fetch::{FETCH_TOOL_NAME, FetchParams};
 pub use steer_tools::ToolSchema;
 
