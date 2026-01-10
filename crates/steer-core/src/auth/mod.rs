@@ -3,12 +3,14 @@ pub mod api_key;
 pub mod callback_server;
 pub mod error;
 pub mod openai;
+pub mod plugin_registry;
 pub mod registry;
 pub mod storage;
 
 use std::sync::Arc;
 
 pub use error::{AuthError, Result};
+pub use plugin_registry::AuthPluginRegistry;
 pub use registry::ProviderRegistry;
 pub use storage::{AuthStorage, AuthTokens, Credential, CredentialType, DefaultAuthStorage};
 pub use steer_auth_plugin::flow::{

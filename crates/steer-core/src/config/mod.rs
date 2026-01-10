@@ -260,6 +260,16 @@ impl LlmConfigProvider {
         }
     }
 
+    /// Resolve authentication for a provider using server-side auto-selection.
+    ///
+    /// This is a compatibility shim; it currently delegates to `get_auth_for_provider`.
+    pub async fn resolve_auth_for_provider(
+        &self,
+        provider_id: &ProviderId,
+    ) -> Result<Option<ApiAuth>> {
+        self.get_auth_for_provider(provider_id).await
+    }
+
     /// Get the auth storage
     pub fn auth_storage(&self) -> &Arc<dyn AuthStorage> {
         &self.storage

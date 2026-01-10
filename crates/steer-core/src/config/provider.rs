@@ -71,6 +71,9 @@ pub struct ProviderConfig {
     pub base_url: Option<Url>,
 }
 
+/// Alias to clarify intent: ProviderConfig is the provider profile shape.
+pub type ProviderProfile = ProviderConfig;
+
 #[derive(Debug, Clone)]
 pub struct ProviderModel {
     pub provider: ProviderId,
