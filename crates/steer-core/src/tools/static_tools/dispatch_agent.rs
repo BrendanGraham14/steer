@@ -53,6 +53,7 @@ Usage notes:
 5. The agent's outputs should generally be trusted
 6. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
 7. IMPORTANT: New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
+8. If the agent spec omits a model, the parent session's default model is used.
 
 Workspace options:
 - `workspace: "current"` to run in the current workspace
@@ -293,22 +294,30 @@ Notes:
             ))
         })?;
 
-        let parent_mcp_backends = match ctx.services.event_store.load_events(ctx.session_id).await {
-            Ok(events) => events
-                .into_iter()
-                .find_map(|(_, event)| match event {
-                    SessionEvent::SessionCreated { config, .. } => Some(config.tool_config.backends),
-                    _ => None,
-                })
-                .unwrap_or_default(),
+        let parent_session_config = match ctx.services.event_store.load_events(ctx.session_id).await
+        {
+            Ok(events) => events.into_iter().find_map(|(_, event)| match event {
+                SessionEvent::SessionCreated { config, .. } => Some(*config),
+                _ => None,
+            }),
             Err(err) => {
                 warn!(
                     session_id = %ctx.session_id,
                     "Failed to load parent session config for MCP servers: {err}"
                 );
-                Vec::new()
+                None
             }
         };
+
+        let parent_mcp_backends = parent_session_config
+            .as_ref()
+            .map(|config| config.tool_config.backends.clone())
+            .unwrap_or_default();
+
+        let parent_model = parent_session_config
+            .as_ref()
+            .map(|config| config.default_model.clone())
+            .unwrap_or_else(default_model);
 
         let allow_mcp_tools = agent_spec.mcp_access.allow_mcp_tools();
         let mcp_backends = match &agent_spec.mcp_access {
@@ -328,7 +337,7 @@ Notes:
             parent_session_id: ctx.session_id,
             prompt,
             allowed_tools: agent_spec.tools.clone(),
-            model: default_model(),
+            model: agent_spec.model.clone().unwrap_or(parent_model),
             system_prompt: Some(system_prompt),
             workspace: Some(workspace),
             workspace_ref,
@@ -954,6 +963,7 @@ mod tests {
             description: "allowlist test".to_string(),
             tools: vec![VIEW_TOOL_NAME.to_string()],
             mcp_access: McpAccessPolicy::Allowlist(vec!["allowed-server".to_string()]),
+            model: None,
         };
         match register_agent_spec(spec) {
             Ok(()) => {}
@@ -1000,6 +1010,171 @@ mod tests {
 
         assert_eq!(backend_names, vec!["allowed-server".to_string()]);
         assert!(captured.allow_mcp_tools);
+    }
+
+    #[tokio::test]
+    async fn dispatch_agent_uses_parent_model_when_spec_missing_model() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace = crate::workspace::create_workspace(
+            &steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let parent_session_id = SessionId::new();
+        let parent_model = builtin::claude_sonnet_4_5();
+        let session_config = SessionConfig::read_only(parent_model.clone());
+
+        event_store.create_session(parent_session_id).await.unwrap();
+        event_store
+            .append(
+                parent_session_id,
+                &SessionEvent::SessionCreated {
+                    config: Box::new(session_config),
+                    metadata: HashMap::new(),
+                    parent_session_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let agent_id = format!("inherit_model_{}", Uuid::new_v4());
+        let spec = AgentSpec {
+            id: agent_id.clone(),
+            name: "inherit model test".to_string(),
+            description: "inherit model test".to_string(),
+            tools: vec![VIEW_TOOL_NAME.to_string()],
+            mcp_access: McpAccessPolicy::None,
+            model: None,
+        };
+        match register_agent_spec(spec) {
+            Ok(()) => {}
+            Err(AgentSpecError::AlreadyRegistered(_)) => {}
+        }
+
+        let captured = Arc::new(tokio::sync::Mutex::new(None));
+        let spawner = CapturingAgentSpawner {
+            session_id: SessionId::new(),
+            response: "ok".to_string(),
+            captured: captured.clone(),
+        };
+
+        let services = Arc::new(
+            ToolServices::new(workspace, event_store, api_client)
+                .with_agent_spawner(Arc::new(spawner)),
+        );
+
+        let ctx = StaticToolContext {
+            tool_call_id: ToolCallId::new(),
+            session_id: parent_session_id,
+            cancellation_token: CancellationToken::new(),
+            services,
+        };
+
+        let params = DispatchAgentParams {
+            prompt: "test".to_string(),
+            target: DispatchAgentTarget::New {
+                workspace: WorkspaceTarget::Current,
+                agent: Some(agent_id),
+            },
+        };
+
+        let _ = DispatchAgentTool.execute(params, &ctx).await.unwrap();
+        let captured = captured.lock().await.clone().expect("no config captured");
+
+        assert_eq!(captured.model, parent_model);
+    }
+
+    #[tokio::test]
+    async fn dispatch_agent_uses_spec_model_when_set() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace = crate::workspace::create_workspace(
+            &steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let parent_session_id = SessionId::new();
+        let parent_model = builtin::claude_sonnet_4_5();
+        let session_config = SessionConfig::read_only(parent_model);
+
+        event_store.create_session(parent_session_id).await.unwrap();
+        event_store
+            .append(
+                parent_session_id,
+                &SessionEvent::SessionCreated {
+                    config: Box::new(session_config),
+                    metadata: HashMap::new(),
+                    parent_session_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let spec_model = builtin::claude_haiku_4_5();
+        let agent_id = format!("spec_model_{}", Uuid::new_v4());
+        let spec = AgentSpec {
+            id: agent_id.clone(),
+            name: "spec model test".to_string(),
+            description: "spec model test".to_string(),
+            tools: vec![VIEW_TOOL_NAME.to_string()],
+            mcp_access: McpAccessPolicy::None,
+            model: Some(spec_model.clone()),
+        };
+        match register_agent_spec(spec) {
+            Ok(()) => {}
+            Err(AgentSpecError::AlreadyRegistered(_)) => {}
+        }
+
+        let captured = Arc::new(tokio::sync::Mutex::new(None));
+        let spawner = CapturingAgentSpawner {
+            session_id: SessionId::new(),
+            response: "ok".to_string(),
+            captured: captured.clone(),
+        };
+
+        let services = Arc::new(
+            ToolServices::new(workspace, event_store, api_client)
+                .with_agent_spawner(Arc::new(spawner)),
+        );
+
+        let ctx = StaticToolContext {
+            tool_call_id: ToolCallId::new(),
+            session_id: parent_session_id,
+            cancellation_token: CancellationToken::new(),
+            services,
+        };
+
+        let params = DispatchAgentParams {
+            prompt: "test".to_string(),
+            target: DispatchAgentTarget::New {
+                workspace: WorkspaceTarget::Current,
+                agent: Some(agent_id),
+            },
+        };
+
+        let _ = DispatchAgentTool.execute(params, &ctx).await.unwrap();
+        let captured = captured.lock().await.clone().expect("no config captured");
+
+        assert_eq!(captured.model, spec_model);
     }
 
     #[tokio::test]

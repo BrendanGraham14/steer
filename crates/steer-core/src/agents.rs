@@ -6,6 +6,7 @@ use std::sync::RwLock;
 
 use thiserror::Error;
 
+use crate::config::model::ModelId;
 use steer_tools::tools::edit::multi_edit::MULTI_EDIT_TOOL_NAME;
 use steer_tools::tools::replace::REPLACE_TOOL_NAME;
 use steer_tools::tools::{
@@ -58,6 +59,8 @@ pub struct AgentSpec {
     pub description: String,
     pub tools: Vec<String>,
     pub mcp_access: McpAccessPolicy,
+    #[serde(default)]
+    pub model: Option<ModelId>,
 }
 
 #[derive(Debug, Error)]
@@ -115,9 +118,17 @@ pub fn agent_specs_prompt() -> String {
     for spec in specs {
         let tools = spec.tools.join(", ");
         let mcp = spec.mcp_access.describe();
+        let model = spec
+            .model
+            .as_ref()
+            .map(|(provider, id)| format!("{provider}/{id}"));
+        let mut details = format!("tools: {tools}; mcp: {mcp}");
+        if let Some(model) = model {
+            details.push_str(&format!("; model: {model}"));
+        }
         lines.push(format!(
-            "- {}: {} (tools: {}; mcp: {})",
-            spec.id, spec.description, tools, mcp
+            "- {}: {} ({details})",
+            spec.id, spec.description
         ));
     }
     lines.join("\n")
@@ -150,6 +161,7 @@ fn default_agent_specs() -> Vec<AgentSpec> {
             description: "Read-only search and inspection".to_string(),
             tools: explore_tools,
             mcp_access: McpAccessPolicy::None,
+            model: None,
         },
         AgentSpec {
             id: "build".to_string(),
@@ -157,6 +169,7 @@ fn default_agent_specs() -> Vec<AgentSpec> {
             description: "Read/write changes plus build commands".to_string(),
             tools: build_tools,
             mcp_access: McpAccessPolicy::All,
+            model: None,
         },
     ]
 }
