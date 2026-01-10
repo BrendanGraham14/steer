@@ -7,7 +7,7 @@ use ratatui::{
 use serde_json::Value;
 use steer_core::agents::default_agent_spec_id;
 use steer_core::app::conversation::ToolResult;
-use steer_core::tools::{DispatchAgentParams, WorkspaceTarget};
+use steer_core::tools::{DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget};
 
 pub struct DispatchAgentFormatter;
 
@@ -34,17 +34,31 @@ impl ToolFormatter for DispatchAgentFormatter {
             params.prompt.clone()
         };
 
-        let agent_id = params
-            .agent
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| default_agent_spec_id().to_string());
-
-        let workspace_summary = match &params.workspace {
-            WorkspaceTarget::Current => "current".to_string(),
-            WorkspaceTarget::New { name } => format!("{name} (new)"),
+        let (agent_id, workspace_summary, params_session_id) = match &params.target {
+            DispatchAgentTarget::New { workspace, agent } => {
+                let agent_id = agent
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| default_agent_spec_id().to_string());
+                let workspace_summary = match workspace {
+                    WorkspaceTarget::Current => "current".to_string(),
+                    WorkspaceTarget::New { name } => format!("{name} (new)"),
+                };
+                (agent_id, workspace_summary, None)
+            }
+            DispatchAgentTarget::Resume { session_id } => (
+                "resume".to_string(),
+                "session".to_string(),
+                Some(session_id.clone()),
+            ),
         };
+
+        let session_label = match result {
+            Some(ToolResult::Agent(agent_result)) => agent_result.session_id.clone(),
+            _ => None,
+        }
+        .or(params_session_id);
 
         let info = match result {
             Some(ToolResult::Agent(agent_result)) => {
@@ -59,6 +73,10 @@ impl ToolFormatter for DispatchAgentFormatter {
         lines.push(Line::from(vec![
             Span::styled(format!("agent={agent_id} "), theme.subtle_text()),
             Span::styled(format!("workspace={workspace_summary} "), theme.subtle_text()),
+            session_label
+                .as_ref()
+                .map(|id| Span::styled(format!("session={id} "), theme.subtle_text()))
+                .unwrap_or_else(|| Span::raw("")),
             Span::styled(format!("task='{preview}' "), Style::default()),
             Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
@@ -82,16 +100,24 @@ impl ToolFormatter for DispatchAgentFormatter {
             ))];
         };
 
-        let agent_id = params
-            .agent
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| default_agent_spec_id().to_string());
-
-        let workspace_label = match &params.workspace {
-            WorkspaceTarget::Current => "current".to_string(),
-            WorkspaceTarget::New { name } => format!("{name} (new)"),
+        let (agent_id, workspace_label, params_session_id) = match &params.target {
+            DispatchAgentTarget::New { workspace, agent } => {
+                let agent_id = agent
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| default_agent_spec_id().to_string());
+                let workspace_label = match workspace {
+                    WorkspaceTarget::Current => "current".to_string(),
+                    WorkspaceTarget::New { name } => format!("{name} (new)"),
+                };
+                (agent_id, workspace_label, None)
+            }
+            DispatchAgentTarget::Resume { session_id } => (
+                "resume".to_string(),
+                "session".to_string(),
+                Some(session_id.clone()),
+            ),
         };
 
         lines.push(Line::from(vec![
@@ -102,6 +128,12 @@ impl ToolFormatter for DispatchAgentFormatter {
             Span::styled("Workspace: ", theme.subtle_text()),
             Span::styled(workspace_label, Style::default()),
         ]));
+        if let Some(session_id) = params_session_id.as_ref() {
+            lines.push(Line::from(vec![
+                Span::styled("Session: ", theme.subtle_text()),
+                Span::styled(session_id.clone(), Style::default()),
+            ]));
+        }
 
         lines.push(Line::from(Span::styled("Instructions:", theme.text())));
         for line in params.prompt.lines() {
@@ -117,6 +149,15 @@ impl ToolFormatter for DispatchAgentFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::Agent(agent_result) => {
+                    if let Some(session_id) = agent_result.session_id.as_ref() {
+                        lines.push(separator_line(wrap_width, theme.dim_text()));
+                        lines.push(Line::from(Span::styled("Session:", theme.subtle_text())));
+                        lines.push(Line::from(Span::styled(
+                            format!("  {session_id}"),
+                            Style::default(),
+                        )));
+                    }
+
                     if let Some(workspace) = agent_result.workspace.as_ref() {
                         lines.push(separator_line(wrap_width, theme.dim_text()));
                         lines.push(Line::from(Span::styled(
@@ -202,16 +243,24 @@ impl ToolFormatter for DispatchAgentFormatter {
             ))];
         };
 
-        let agent_id = params
-            .agent
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| default_agent_spec_id().to_string());
-
-        let workspace_label = match &params.workspace {
-            WorkspaceTarget::Current => "current".to_string(),
-            WorkspaceTarget::New { name } => format!("{name} (new)"),
+        let (agent_id, workspace_label, params_session_id) = match &params.target {
+            DispatchAgentTarget::New { workspace, agent } => {
+                let agent_id = agent
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| default_agent_spec_id().to_string());
+                let workspace_label = match workspace {
+                    WorkspaceTarget::Current => "current".to_string(),
+                    WorkspaceTarget::New { name } => format!("{name} (new)"),
+                };
+                (agent_id, workspace_label, None)
+            }
+            DispatchAgentTarget::Resume { session_id } => (
+                "resume".to_string(),
+                "session".to_string(),
+                Some(session_id.clone()),
+            ),
         };
 
         lines.push(Line::from(vec![
@@ -222,6 +271,12 @@ impl ToolFormatter for DispatchAgentFormatter {
             Span::styled("Workspace: ", theme.subtle_text()),
             Span::styled(workspace_label, Style::default()),
         ]));
+        if let Some(session_id) = params_session_id.as_ref() {
+            lines.push(Line::from(vec![
+                Span::styled("Session: ", theme.subtle_text()),
+                Span::styled(session_id.clone(), Style::default()),
+            ]));
+        }
 
         lines.push(Line::from(Span::styled(
             "Instructions:",

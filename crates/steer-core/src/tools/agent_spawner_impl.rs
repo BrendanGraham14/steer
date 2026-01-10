@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -10,8 +11,11 @@ use crate::app::domain::runtime::{
 };
 use crate::app::domain::session::EventStore;
 use crate::model_registry::ModelRegistry;
-use crate::session::state::{BackendConfig, SessionConfig, SessionToolConfig, WorkspaceConfig};
-use crate::tools::{McpBackend, SessionMcpBackends, ToolExecutor};
+use crate::session::state::{
+    ApprovalRules, BackendConfig, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
+    ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
+};
+use crate::tools::{BackendResolver, McpBackend, SessionMcpBackends, ToolExecutor};
 use crate::workspace::Workspace;
 use tracing::warn;
 
@@ -53,17 +57,6 @@ impl AgentSpawner for DefaultAgentSpawner {
             .unwrap_or_else(|| self.workspace.clone());
         let workspace_path = workspace.working_directory().to_path_buf();
 
-        let mut session_config = SessionConfig::read_only(config.model.clone());
-        session_config.workspace = WorkspaceConfig::Local { path: workspace_path };
-        session_config.workspace_ref = config.workspace_ref.clone();
-        session_config.workspace_id = config.workspace_id;
-        session_config.repo_ref = config.repo_ref.clone();
-        session_config.workspace_name = config.workspace_name.clone();
-        session_config.parent_session_id = Some(config.parent_session_id);
-        let mut tool_config = SessionToolConfig::read_only();
-        tool_config.backends = config.mcp_backends.clone();
-        session_config.tool_config = tool_config;
-
         let session_backends = if config.allow_mcp_tools && !config.mcp_backends.is_empty() {
             let session_backends = Arc::new(SessionMcpBackends::new());
             for backend_config in &config.mcp_backends {
@@ -98,6 +91,43 @@ impl AgentSpawner for DefaultAgentSpawner {
         } else {
             None
         };
+
+        let mut approved_tools: HashSet<String> =
+            config.allowed_tools.iter().cloned().collect();
+        let mut visibility_tools = approved_tools.clone();
+
+        if let Some(backends) = session_backends.as_ref() {
+            for schema in backends.get_tool_schemas().await {
+                visibility_tools.insert(schema.name.clone());
+                approved_tools.insert(schema.name);
+            }
+        }
+
+        let approval_policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Deny,
+            preapproved: ApprovalRules {
+                tools: approved_tools,
+                per_tool: HashMap::new(),
+            },
+        };
+
+        let tool_config = SessionToolConfig {
+            backends: config.mcp_backends.clone(),
+            visibility: ToolVisibility::Whitelist(visibility_tools),
+            approval_policy,
+            metadata: HashMap::new(),
+        };
+
+        let mut session_config = SessionConfig::read_only(config.model.clone());
+        session_config.workspace = WorkspaceConfig::Local {
+            path: workspace_path,
+        };
+        session_config.workspace_ref = config.workspace_ref.clone();
+        session_config.workspace_id = config.workspace_id;
+        session_config.repo_ref = config.repo_ref.clone();
+        session_config.workspace_name = config.workspace_name.clone();
+        session_config.parent_session_id = Some(config.parent_session_id);
+        session_config.tool_config = tool_config;
 
         let interpreter_config = AgentInterpreterConfig {
             auto_approve_tools: true,

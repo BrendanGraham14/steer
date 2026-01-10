@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::app::conversation::Message;
@@ -34,6 +35,23 @@ impl OneShotRunner {
         message: String,
         model: ModelId,
     ) -> Result<RunOnceResult> {
+        Self::run_in_session_with_cancel(
+            runtime,
+            session_id,
+            message,
+            model,
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    pub async fn run_in_session_with_cancel(
+        runtime: &RuntimeHandle,
+        session_id: SessionId,
+        message: String,
+        model: ModelId,
+        cancel_token: CancellationToken,
+    ) -> Result<RunOnceResult> {
         runtime.resume_session(session_id).await.map_err(|e| {
             Error::InvalidOperation(format!("Failed to resume session {session_id}: {e}"))
         })?;
@@ -46,7 +64,7 @@ impl OneShotRunner {
 
         info!(session_id = %session_id, message = %message, "Sending message to session");
 
-        let _op_id = runtime
+        let op_id = runtime
             .submit_user_input(session_id, message, model)
             .await
             .map_err(|e| {
@@ -55,7 +73,24 @@ impl OneShotRunner {
                 ))
             })?;
 
-        let result = Self::process_events(subscription, session_id).await;
+        let cancel_task = {
+            let runtime = runtime.clone();
+            let cancel_token = cancel_token.clone();
+            tokio::spawn(async move {
+                cancel_token.cancelled().await;
+                if let Err(err) = runtime.cancel_operation(session_id, Some(op_id)).await {
+                    warn!(
+                        session_id = %session_id,
+                        error = %err,
+                        "Failed to cancel one-shot operation"
+                    );
+                }
+            })
+        };
+
+        let result = Self::process_events(subscription, session_id, op_id).await;
+
+        cancel_task.abort();
 
         if let Err(e) = runtime.suspend_session(session_id).await {
             error!(session_id = %session_id, error = %e, "Failed to suspend session");
@@ -85,6 +120,7 @@ impl OneShotRunner {
     async fn process_events(
         mut subscription: crate::app::domain::runtime::SessionEventSubscription,
         session_id: SessionId,
+        op_id: crate::app::domain::types::OpId,
     ) -> Result<RunOnceResult> {
         let mut messages = Vec::new();
         info!(session_id = %session_id, "Starting event processing loop");
@@ -109,16 +145,36 @@ impl OneShotRunner {
                     );
                 }
 
-                SessionEvent::OperationCompleted { op_id } => {
+                SessionEvent::OperationCompleted {
+                    op_id: completed_op,
+                } => {
+                    if completed_op != op_id {
+                        continue;
+                    }
                     info!(
                         session_id = %session_id,
-                        op_id = %op_id,
+                        op_id = %completed_op,
                         "OperationCompleted event received"
                     );
                     if !messages.is_empty() {
                         info!(session_id = %session_id, "Final message received, exiting event loop");
                         break;
                     }
+                }
+
+                SessionEvent::OperationCancelled {
+                    op_id: cancelled_op,
+                    ..
+                } => {
+                    if cancelled_op != op_id {
+                        continue;
+                    }
+                    warn!(
+                        session_id = %session_id,
+                        op_id = %cancelled_op,
+                        "OperationCancelled event received"
+                    );
+                    return Err(Error::Cancelled);
                 }
 
                 SessionEvent::Error { message } => {

@@ -723,6 +723,7 @@ message AgentWorkspaceInfo {
 message AgentResult {
   string content = 1;
   AgentWorkspaceInfo workspace = 2;
+  string session_id = 3;
 }
 
 message ExternalResult {

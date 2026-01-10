@@ -138,6 +138,7 @@ fn steer_tools_result_to_proto(
         CoreResult::Agent(r) => ProtoResult::Agent(proto::AgentResult {
             content: r.content.clone(),
             workspace: r.workspace.as_ref().map(agent_workspace_info_to_proto),
+            session_id: r.session_id.clone().unwrap_or_default(),
         }),
         CoreResult::External(r) => ProtoResult::External(proto::ExternalResult {
             tool_name: r.tool_name.clone(),
@@ -304,6 +305,11 @@ fn proto_to_steer_tools_result(
         }),
         ProtoResult::Agent(r) => ToolResult::Agent(AgentResult {
             content: r.content,
+            session_id: if r.session_id.is_empty() {
+                None
+            } else {
+                Some(r.session_id)
+            },
             workspace: r.workspace.map(proto_to_agent_workspace_info),
         }),
         ProtoResult::External(r) => ToolResult::External(ExternalResult {

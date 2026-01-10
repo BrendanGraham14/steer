@@ -55,6 +55,8 @@ pub struct AgentWorkspaceInfo {
 pub struct AgentResult {
     pub content: String,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub workspace: Option<AgentWorkspaceInfo>,
 }
 
@@ -337,7 +339,11 @@ impl ToolResult {
             ToolResult::Fetch(r) => {
                 format!("Fetched content from {}:\n{}", r.url, r.content)
             }
-            ToolResult::Agent(r) => r.content.clone(),
+            ToolResult::Agent(r) => r
+                .session_id
+                .as_ref()
+                .map(|session_id| format!("{}\n\nsession_id: {}", r.content, session_id))
+                .unwrap_or_else(|| r.content.clone()),
             ToolResult::External(r) => r.payload.clone(),
             ToolResult::Error(e) => format!("Error: {e}"),
         }
