@@ -26,7 +26,28 @@ use crate::tui::events::processor::PendingToolApproval;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::tui::auth_controller::AuthController;
+fn auth_status_from_source(
+    source: Option<&steer_grpc::proto::AuthSource>,
+) -> crate::tui::state::AuthStatus {
+    match source.and_then(|s| s.source.as_ref()) {
+        Some(steer_grpc::proto::auth_source::Source::ApiKey(_)) => {
+            crate::tui::state::AuthStatus::ApiKeySet
+        }
+        Some(steer_grpc::proto::auth_source::Source::Plugin(_)) => {
+            crate::tui::state::AuthStatus::OAuthConfigured
+        }
+        _ => crate::tui::state::AuthStatus::NotConfigured,
+    }
+}
+
+fn has_any_auth_source(source: Option<&steer_grpc::proto::AuthSource>) -> bool {
+    matches!(
+        source.and_then(|s| s.source.as_ref()),
+        Some(steer_grpc::proto::auth_source::Source::ApiKey(_))
+            | Some(steer_grpc::proto::auth_source::Source::Plugin(_))
+    )
+}
+
 use crate::tui::events::pipeline::EventPipeline;
 use crate::tui::events::processors::message::MessageEventProcessor;
 use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
@@ -49,7 +70,6 @@ pub mod terminal;
 pub mod theme;
 pub mod widgets;
 
-mod auth_controller;
 mod chat_viewport;
 pub mod core_commands;
 mod events;
@@ -143,8 +163,6 @@ pub struct Tui {
     theme: Theme,
     /// Setup state for first-run experience
     setup_state: Option<SetupState>,
-    /// Authentication controller (if active)
-    auth_controller: Option<AuthController>,
     /// Track in-flight operations (operation_id -> chat_store_index)
     in_flight_operations: HashSet<OpId>,
     /// Command registry for slash commands
@@ -274,7 +292,6 @@ impl Tui {
             session_id,
             theme: theme.unwrap_or_default(),
             setup_state: None,
-            auth_controller: None,
             in_flight_operations: HashSet::new(),
             command_registry: CommandRegistry::new(),
             preferences,
@@ -570,13 +587,7 @@ impl Tui {
                                         if let Some(setup_state) = &mut self.setup_state {
                                             match &setup_state.current_step {
                                                 crate::tui::state::SetupStep::Authentication(_) => {
-                                                    if setup_state.oauth_state.is_some() {
-                                                        // Pasting OAuth callback code
-                                                        setup_state.oauth_callback_input.push_str(&data);
-                                                    } else {
-                                                        // Pasting API key
-                                                        setup_state.api_key_input.push_str(&data);
-                                                    }
+                                                    setup_state.auth_input.push_str(&data);
                                                     debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
                                                     needs_redraw = true;
                                                 }
@@ -1175,10 +1186,9 @@ impl Tui {
                         // Build provider registry view from remote providers
                         let mut provider_status = std::collections::HashMap::new();
 
-                        use steer_grpc::proto::provider_auth_status::Status;
                         let mut status_map = std::collections::HashMap::new();
                         for s in statuses {
-                            status_map.insert(s.provider_id.clone(), s.status);
+                            status_map.insert(s.provider_id.clone(), s.auth_source);
                         }
 
                         // Convert remote providers into a minimal registry-like view for TUI
@@ -1186,15 +1196,9 @@ impl Tui {
                             std::sync::Arc::new(RemoteProviderRegistry::from_proto(providers));
 
                         for p in registry.all() {
-                            let status = match status_map.get(&p.id).copied() {
-                                Some(v) if v == Status::AuthStatusOauth as i32 => {
-                                    crate::tui::state::AuthStatus::OAuthConfigured
-                                }
-                                Some(v) if v == Status::AuthStatusApiKey as i32 => {
-                                    crate::tui::state::AuthStatus::ApiKeySet
-                                }
-                                _ => crate::tui::state::AuthStatus::NotConfigured,
-                            };
+                            let status = auth_status_from_source(
+                                status_map.get(&p.id).and_then(|s| s.as_ref()),
+                            );
                             provider_status.insert(
                                 steer_core::config::provider::ProviderId(p.id.clone()),
                                 status,
@@ -1583,11 +1587,9 @@ pub async fn run_tui(
         .await
         .map_err(|e| Error::Generic(format!("Failed to get provider auth status: {e}")))?;
 
-    use steer_grpc::proto::provider_auth_status::Status as AuthStatusProto;
-    let has_any_auth = statuses.iter().any(|s| {
-        s.status == AuthStatusProto::AuthStatusOauth as i32
-            || s.status == AuthStatusProto::AuthStatusApiKey as i32
-    });
+    let has_any_auth = statuses
+        .iter()
+        .any(|s| has_any_auth_source(s.auth_source.as_ref()));
 
     let should_run_setup = force_setup
         || (!steer_core::preferences::Preferences::config_path()
@@ -1607,21 +1609,12 @@ pub async fn run_tui(
         // Map statuses by id for quick lookup
         let mut status_map = std::collections::HashMap::new();
         for s in statuses {
-            status_map.insert(s.provider_id.clone(), s.status);
+            status_map.insert(s.provider_id.clone(), s.auth_source);
         }
 
         let mut provider_status = std::collections::HashMap::new();
-        use steer_grpc::proto::provider_auth_status::Status as AuthStatusProto;
         for p in registry.all() {
-            let status = match status_map.get(&p.id).copied() {
-                Some(v) if v == AuthStatusProto::AuthStatusOauth as i32 => {
-                    crate::tui::state::AuthStatus::OAuthConfigured
-                }
-                Some(v) if v == AuthStatusProto::AuthStatusApiKey as i32 => {
-                    crate::tui::state::AuthStatus::ApiKeySet
-                }
-                _ => crate::tui::state::AuthStatus::NotConfigured,
-            };
+            let status = auth_status_from_source(status_map.get(&p.id).and_then(|s| s.as_ref()));
             provider_status.insert(
                 steer_core::config::provider::ProviderId(p.id.clone()),
                 status,

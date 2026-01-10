@@ -638,6 +638,67 @@ impl AgentClient {
         Ok(response.into_inner().statuses)
     }
 
+    pub async fn start_auth(&self, provider_id: String) -> GrpcResult<proto::StartAuthResponse> {
+        let request = Request::new(proto::StartAuthRequest { provider_id });
+        let response = self
+            .client
+            .lock()
+            .await
+            .start_auth(request)
+            .await
+            .map_err(Box::new)?;
+        Ok(response.into_inner())
+    }
+
+    pub async fn send_auth_input(
+        &self,
+        flow_id: String,
+        input: String,
+    ) -> GrpcResult<proto::AuthProgress> {
+        let request = Request::new(proto::SendAuthInputRequest { flow_id, input });
+        let response = self
+            .client
+            .lock()
+            .await
+            .send_auth_input(request)
+            .await
+            .map_err(Box::new)?;
+        response
+            .into_inner()
+            .progress
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "Missing auth progress in response".to_string(),
+            })
+    }
+
+    pub async fn get_auth_progress(&self, flow_id: String) -> GrpcResult<proto::AuthProgress> {
+        let request = Request::new(proto::GetAuthProgressRequest { flow_id });
+        let response = self
+            .client
+            .lock()
+            .await
+            .get_auth_progress(request)
+            .await
+            .map_err(Box::new)?;
+        response
+            .into_inner()
+            .progress
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "Missing auth progress in response".to_string(),
+            })
+    }
+
+    pub async fn cancel_auth(&self, flow_id: String) -> GrpcResult<()> {
+        let request = Request::new(proto::CancelAuthRequest { flow_id });
+        self.client
+            .lock()
+            .await
+            .cancel_auth(request)
+            .await
+            .map_err(Box::new)?;
+        Ok(())
+    }
+
     pub async fn list_models(
         &self,
         provider_id: Option<String>,

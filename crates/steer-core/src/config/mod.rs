@@ -1,4 +1,4 @@
-use crate::auth::AuthStorage;
+use crate::auth::{ApiKeyOrigin, AuthMethod, AuthSource, AuthStorage};
 use crate::config::provider::ProviderId;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -144,119 +144,26 @@ impl LlmConfigProvider {
 
     /// Get authentication for a specific provider ID
     pub async fn get_auth_for_provider(&self, provider_id: &ProviderId) -> Result<Option<ApiAuth>> {
-        if provider_id.as_str() == self::provider::ANTHROPIC_ID {
-            // API key via env var > OAuth > stored API key
-            let anthropic_key = self
-                .env_provider
-                .var("CLAUDE_API_KEY")
-                .or_else(|| self.env_provider.var("ANTHROPIC_API_KEY"));
-            if let Some(key) = anthropic_key {
-                Ok(Some(ApiAuth::Key(key)))
-            } else if self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::OAuth2,
-                )
-                .await?
-                .is_some()
-            {
-                Ok(Some(ApiAuth::OAuth))
-            } else {
-                // Fall back to stored API key in keyring
-                if let Some(crate::auth::Credential::ApiKey { value }) = self
-                    .storage
-                    .get_credential(
-                        &provider_id.storage_key(),
-                        crate::auth::CredentialType::ApiKey,
-                    )
-                    .await?
-                {
-                    Ok(Some(ApiAuth::Key(value)))
-                } else {
-                    Ok(None)
-                }
-            }
-        } else if provider_id.as_str() == self::provider::OPENAI_ID {
-            // OAuth > env API key > stored API key
-            if self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::OAuth2,
-                )
-                .await?
-                .is_some()
-            {
-                Ok(Some(ApiAuth::OAuth))
-            } else if let Some(key) = self.env_provider.var("OPENAI_API_KEY") {
-                Ok(Some(ApiAuth::Key(key)))
-            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::ApiKey,
-                )
-                .await?
-            {
-                Ok(Some(ApiAuth::Key(value)))
-            } else {
-                Ok(None)
-            }
-        } else if provider_id.as_str() == self::provider::GOOGLE_ID {
-            // API key via env var > stored API key
-            if let Some(key) = self
-                .env_provider
-                .var("GEMINI_API_KEY")
-                .or_else(|| self.env_provider.var("GOOGLE_API_KEY"))
-            {
-                Ok(Some(ApiAuth::Key(key)))
-            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::ApiKey,
-                )
-                .await?
-            {
-                Ok(Some(ApiAuth::Key(value)))
-            } else {
-                Ok(None)
-            }
-        } else if provider_id.as_str() == self::provider::XAI_ID {
-            // API key via env var > stored API key
-            if let Some(key) = self
-                .env_provider
-                .var("XAI_API_KEY")
-                .or_else(|| self.env_provider.var("GROK_API_KEY"))
-            {
-                Ok(Some(ApiAuth::Key(key)))
-            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::ApiKey,
-                )
-                .await?
-            {
-                Ok(Some(ApiAuth::Key(value)))
-            } else {
-                Ok(None)
-            }
-        } else {
-            // Custom providers - check for stored API key
-            if let Some(crate::auth::Credential::ApiKey { value }) = self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::ApiKey,
-                )
-                .await?
-            {
-                Ok(Some(ApiAuth::Key(value)))
-            } else {
-                Ok(None)
-            }
+        Ok(self
+            .resolve_auth_for_provider_with_origin(provider_id)
+            .await?
+            .map(|(auth, _)| auth))
+    }
+
+    /// Resolve authentication source for a provider, including API key origin.
+    pub async fn resolve_auth_source(&self, provider_id: &ProviderId) -> Result<AuthSource> {
+        match self
+            .resolve_auth_for_provider_with_origin(provider_id)
+            .await?
+        {
+            Some((ApiAuth::OAuth, _)) => Ok(AuthSource::Plugin {
+                method: AuthMethod::OAuth,
+            }),
+            Some((ApiAuth::Key(_), Some(origin))) => Ok(AuthSource::ApiKey { origin }),
+            Some((ApiAuth::Key(_), None)) => Ok(AuthSource::ApiKey {
+                origin: ApiKeyOrigin::Stored,
+            }),
+            None => Ok(AuthSource::None),
         }
     }
 
@@ -268,6 +175,116 @@ impl LlmConfigProvider {
         provider_id: &ProviderId,
     ) -> Result<Option<ApiAuth>> {
         self.get_auth_for_provider(provider_id).await
+    }
+
+    async fn resolve_auth_for_provider_with_origin(
+        &self,
+        provider_id: &ProviderId,
+    ) -> Result<Option<(ApiAuth, Option<ApiKeyOrigin>)>> {
+        if provider_id.as_str() == self::provider::ANTHROPIC_ID {
+            let anthropic_key = self
+                .env_provider
+                .var("CLAUDE_API_KEY")
+                .or_else(|| self.env_provider.var("ANTHROPIC_API_KEY"));
+            if let Some(key) = anthropic_key {
+                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+            } else if self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::OAuth2,
+                )
+                .await?
+                .is_some()
+            {
+                Ok(Some((ApiAuth::OAuth, None)))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+            } else {
+                Ok(None)
+            }
+        } else if provider_id.as_str() == self::provider::OPENAI_ID {
+            if self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::OAuth2,
+                )
+                .await?
+                .is_some()
+            {
+                Ok(Some((ApiAuth::OAuth, None)))
+            } else if let Some(key) = self.env_provider.var("OPENAI_API_KEY") {
+                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+            } else {
+                Ok(None)
+            }
+        } else if provider_id.as_str() == self::provider::GOOGLE_ID {
+            if let Some(key) = self
+                .env_provider
+                .var("GEMINI_API_KEY")
+                .or_else(|| self.env_provider.var("GOOGLE_API_KEY"))
+            {
+                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+            } else {
+                Ok(None)
+            }
+        } else if provider_id.as_str() == self::provider::XAI_ID {
+            if let Some(key) = self
+                .env_provider
+                .var("XAI_API_KEY")
+                .or_else(|| self.env_provider.var("GROK_API_KEY"))
+            {
+                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+            } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+                .storage
+                .get_credential(
+                    &provider_id.storage_key(),
+                    crate::auth::CredentialType::ApiKey,
+                )
+                .await?
+            {
+                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+            } else {
+                Ok(None)
+            }
+        } else if let Some(crate::auth::Credential::ApiKey { value }) = self
+            .storage
+            .get_credential(
+                &provider_id.storage_key(),
+                crate::auth::CredentialType::ApiKey,
+            )
+            .await?
+        {
+            Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get the auth storage

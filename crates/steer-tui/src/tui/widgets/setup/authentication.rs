@@ -33,18 +33,6 @@ impl AuthenticationWidget {
         let provider_name = provider_config
             .map(|c| c.name.as_str())
             .unwrap_or("Unknown Provider");
-        let supports_oauth = provider_config
-            .map(|c| {
-                c.auth_schemes
-                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2)
-            })
-            .unwrap_or(false);
-        let supports_api_key = provider_config
-            .map(|c| {
-                c.auth_schemes
-                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeApiKey)
-            })
-            .unwrap_or(false);
         let is_openai = provider_id == provider::openai();
 
         let header = vec![
@@ -67,20 +55,22 @@ impl AuthenticationWidget {
         // Main content
         let mut content = vec![];
 
-        if let Some(oauth_state) = &state.oauth_state {
-            // OAuth flow in progress
-            content.push(Line::from(""));
-            content.push(Line::from(Span::styled(
-                "OAuth Authentication",
-                theme.style(Component::SetupHeader),
-            )));
-            content.push(Line::from(""));
-
-            if state.oauth_callback_input.is_empty() {
+        match state
+            .auth_progress
+            .as_ref()
+            .and_then(|progress| progress.state.as_ref())
+        {
+            Some(steer_grpc::proto::auth_progress::State::OauthStarted(oauth)) => {
+                content.push(Line::from(""));
+                content.push(Line::from(Span::styled(
+                    "OAuth Authentication",
+                    theme.style(Component::SetupHeader),
+                )));
+                content.push(Line::from(""));
                 content.push(Line::from("Please visit this URL in your browser:"));
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
-                    &oauth_state.auth_url,
+                    &oauth.auth_url,
                     theme.style(Component::SetupUrl),
                 )));
                 content.push(Line::from(""));
@@ -105,67 +95,54 @@ impl AuthenticationWidget {
                 content.push(Line::from(vec![
                     Span::styled("Callback: ", theme.style(Component::SetupInputLabel)),
                     Span::styled(
-                        if state.oauth_callback_input.is_empty() {
+                        if state.auth_input.is_empty() {
                             "_"
                         } else {
-                            &state.oauth_callback_input
+                            &state.auth_input
                         },
                         theme.style(Component::SetupInputValue),
                     ),
                 ]));
-            } else {
-                content.push(Line::from("Processing authorization code..."));
-                content.push(Line::from(""));
-                content.push(Line::from(vec![
-                    Span::styled("Callback: ", theme.style(Component::SetupInputLabel)),
-                    Span::styled(
-                        &state.oauth_callback_input,
-                        theme.style(Component::SetupInputValue),
-                    ),
-                ]));
             }
-        } else if supports_oauth
-            && supports_api_key
-            && state.api_key_input.is_empty()
-            && state.oauth_state.is_none()
-            && state.auth_providers.get(&provider_id)
-                != Some(&crate::tui::state::AuthStatus::InProgress)
-        {
-            // Show auth options
-            content.push(Line::from(""));
-            content.push(Line::from("Choose authentication method:"));
-            content.push(Line::from(""));
-            content.push(Line::from(vec![
-                Span::styled("1. ", theme.style(Component::SetupKeyBinding)),
-                Span::raw("OAuth Login"),
-            ]));
-            content.push(Line::from(vec![
-                Span::styled("2. ", theme.style(Component::SetupKeyBinding)),
-                Span::raw("API Key"),
-            ]));
-        } else {
-            // API key input
-            content.push(Line::from(""));
-            content.push(Line::from(format!("Enter your {provider_name} API key:")));
-            content.push(Line::from(""));
-
-            let masked_key = if state.api_key_input.is_empty() {
-                String::from("_")
-            } else {
-                "*".repeat(state.api_key_input.len())
-            };
-
-            content.push(Line::from(vec![
-                Span::styled("API Key: ", theme.style(Component::SetupInputLabel)),
-                Span::styled(masked_key, theme.style(Component::SetupInputValue)),
-            ]));
-
-            if provider_id == provider::anthropic() {
+            Some(steer_grpc::proto::auth_progress::State::NeedInput(need_input)) => {
                 content.push(Line::from(""));
-                content.push(Line::from(Span::styled(
-                    "Tip: Get your API key from console.anthropic.com",
-                    theme.style(Component::SetupHint),
-                )));
+                content.push(Line::from(need_input.prompt.clone()));
+                content.push(Line::from(""));
+
+                let masked_input = if state.auth_input.is_empty() {
+                    String::from("_")
+                } else {
+                    "*".repeat(state.auth_input.len())
+                };
+
+                content.push(Line::from(vec![
+                    Span::styled("Input: ", theme.style(Component::SetupInputLabel)),
+                    Span::styled(masked_input, theme.style(Component::SetupInputValue)),
+                ]));
+
+                if provider_id == provider::anthropic() {
+                    content.push(Line::from(""));
+                    content.push(Line::from(Span::styled(
+                        "Tip: Get your API key from console.anthropic.com",
+                        theme.style(Component::SetupHint),
+                    )));
+                }
+            }
+            Some(steer_grpc::proto::auth_progress::State::InProgress(in_progress)) => {
+                content.push(Line::from(""));
+                content.push(Line::from(in_progress.message.clone()));
+            }
+            Some(steer_grpc::proto::auth_progress::State::Complete(_)) => {
+                content.push(Line::from(""));
+                content.push(Line::from("Authentication complete."));
+            }
+            Some(steer_grpc::proto::auth_progress::State::Error(error)) => {
+                content.push(Line::from(""));
+                content.push(Line::from(format!("Error: {}", error.message)));
+            }
+            None => {
+                content.push(Line::from(""));
+                content.push(Line::from("Starting authentication..."));
             }
         }
 
@@ -197,32 +174,25 @@ impl AuthenticationWidget {
         }
 
         // Instructions
-        let instructions = if state.oauth_state.is_some() {
-            vec![Line::from(vec![
-                Span::raw("Paste the callback, "),
-                Span::styled("Enter", theme.style(Component::SetupKeyBinding)),
-                Span::raw(" to submit, "),
-                Span::styled("Esc", theme.style(Component::SetupKeyBinding)),
-                Span::raw(" to cancel"),
-            ])]
-        } else if supports_oauth && supports_api_key && state.api_key_input.is_empty() {
-            vec![Line::from(vec![
-                Span::raw("Press "),
-                Span::styled("1", theme.style(Component::SetupKeyBinding)),
-                Span::raw(" or "),
-                Span::styled("2", theme.style(Component::SetupKeyBinding)),
-                Span::raw(" to select, "),
-                Span::styled("Esc", theme.style(Component::SetupKeyBinding)),
-                Span::raw(" to go back"),
-            ])]
-        } else {
-            vec![Line::from(vec![
-                Span::raw("Type your API key, "),
-                Span::styled("Enter", theme.style(Component::SetupKeyBinding)),
-                Span::raw(" to submit, "),
+        let instructions = match state
+            .auth_progress
+            .as_ref()
+            .and_then(|progress| progress.state.as_ref())
+        {
+            Some(steer_grpc::proto::auth_progress::State::OauthStarted(_))
+            | Some(steer_grpc::proto::auth_progress::State::NeedInput(_)) => {
+                vec![Line::from(vec![
+                    Span::raw("Type or paste input, "),
+                    Span::styled("Enter", theme.style(Component::SetupKeyBinding)),
+                    Span::raw(" to submit, "),
+                    Span::styled("Esc", theme.style(Component::SetupKeyBinding)),
+                    Span::raw(" to cancel"),
+                ])]
+            }
+            _ => vec![Line::from(vec![
                 Span::styled("Esc", theme.style(Component::SetupKeyBinding)),
                 Span::raw(" to go back"),
-            ])]
+            ])],
         };
 
         Paragraph::new(instructions)

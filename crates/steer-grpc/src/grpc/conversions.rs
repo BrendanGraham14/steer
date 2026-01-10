@@ -2317,3 +2317,55 @@ pub(crate) fn proto_to_client_event(
 
     Ok(Some(client_event))
 }
+
+pub(crate) fn auth_progress_to_proto(
+    progress: steer_core::auth::AuthProgress,
+) -> proto::AuthProgress {
+    use proto::auth_progress::State;
+
+    let state = match progress {
+        steer_core::auth::AuthProgress::NeedInput(prompt) => {
+            State::NeedInput(proto::AuthNeedInput { prompt })
+        }
+        steer_core::auth::AuthProgress::InProgress(message) => {
+            State::InProgress(proto::AuthInProgress { message })
+        }
+        steer_core::auth::AuthProgress::Complete => State::Complete(proto::AuthComplete {}),
+        steer_core::auth::AuthProgress::Error(message) => {
+            State::Error(proto::AuthError { message })
+        }
+        steer_core::auth::AuthProgress::OAuthStarted { auth_url } => {
+            State::OauthStarted(proto::AuthOAuthStarted { auth_url })
+        }
+    };
+
+    proto::AuthProgress { state: Some(state) }
+}
+
+pub(crate) fn auth_source_to_proto(source: steer_core::auth::AuthSource) -> proto::AuthSource {
+    use proto::auth_source::Source;
+
+    match source {
+        steer_core::auth::AuthSource::ApiKey { origin } => {
+            let origin = match origin {
+                steer_core::auth::ApiKeyOrigin::Env => proto::ApiKeyOrigin::Env as i32,
+                steer_core::auth::ApiKeyOrigin::Stored => proto::ApiKeyOrigin::Stored as i32,
+            };
+            proto::AuthSource {
+                source: Some(Source::ApiKey(proto::AuthSourceApiKey { origin })),
+            }
+        }
+        steer_core::auth::AuthSource::Plugin { method } => {
+            let method = match method {
+                steer_core::auth::AuthMethod::OAuth => proto::AuthMethod::Oauth as i32,
+                steer_core::auth::AuthMethod::ApiKey => proto::AuthMethod::ApiKey as i32,
+            };
+            proto::AuthSource {
+                source: Some(Source::Plugin(proto::AuthSourcePlugin { method })),
+            }
+        }
+        steer_core::auth::AuthSource::None => proto::AuthSource {
+            source: Some(Source::None(proto::AuthSourceNone {})),
+        },
+    }
+}

@@ -64,23 +64,9 @@ impl ProviderSelectionWidget {
                     theme.style(Component::SetupProviderName)
                 };
 
-                let has_oauth = provider
-                    .auth_schemes
-                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2);
-                let has_api_key = provider
-                    .auth_schemes
-                    .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeApiKey);
-                let auth_hint = if has_oauth && has_api_key {
-                    " (OAuth/API Key)"
-                } else if has_oauth {
-                    " (OAuth)"
-                } else {
-                    " (API Key)"
-                };
-
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("  {icon} "), status_style),
-                    Span::styled(format!("{}{auth_hint}", provider.name), style),
+                    Span::styled(provider.name.clone(), style),
                 ]))
             })
             .collect();

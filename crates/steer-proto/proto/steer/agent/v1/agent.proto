@@ -32,6 +32,11 @@ service AgentService {
   rpc ResolveModel(ResolveModelRequest) returns (ResolveModelResponse);
   rpc GetProviderAuthStatus(GetProviderAuthStatusRequest) returns (GetProviderAuthStatusResponse);
 
+  rpc StartAuth(StartAuthRequest) returns (StartAuthResponse);
+  rpc SendAuthInput(SendAuthInputRequest) returns (SendAuthInputResponse);
+  rpc GetAuthProgress(GetAuthProgressRequest) returns (GetAuthProgressResponse);
+  rpc CancelAuth(CancelAuthRequest) returns (CancelAuthResponse);
+
   // Workspace orchestration
   rpc ResolveRepo(ResolveRepoRequest) returns (ResolveRepoResponse);
   rpc ListRepos(ListReposRequest) returns (ListReposResponse);
@@ -407,6 +412,38 @@ message GetProviderAuthStatusRequest {
 message GetProviderAuthStatusResponse {
   repeated ProviderAuthStatus statuses = 1;
 }
+
+message StartAuthRequest {
+  string provider_id = 1;
+}
+
+message StartAuthResponse {
+  string flow_id = 1;
+  AuthProgress progress = 2;
+}
+
+message SendAuthInputRequest {
+  string flow_id = 1;
+  string input = 2;
+}
+
+message SendAuthInputResponse {
+  AuthProgress progress = 1;
+}
+
+message GetAuthProgressRequest {
+  string flow_id = 1;
+}
+
+message GetAuthProgressResponse {
+  AuthProgress progress = 1;
+}
+
+message CancelAuthRequest {
+  string flow_id = 1;
+}
+
+message CancelAuthResponse {}
 
 // Core data types
 
@@ -980,7 +1017,6 @@ message McpDisconnected {
 message ProviderInfo {
   string id = 1;  // "anthropic", "openai", "gemini", "xai", or custom name
   string name = 2;  // Display name
-  repeated ProviderAuthScheme auth_schemes = 3;  // supported auth methods
 }
 
 message ProviderModel {
@@ -998,12 +1034,53 @@ message ModelSpec {
 
 message ProviderAuthStatus {
   string provider_id = 1;
-  enum Status {
-    AUTH_STATUS_NONE = 0;
-    AUTH_STATUS_API_KEY = 1;
-    AUTH_STATUS_OAUTH = 2;
+  AuthSource auth_source = 2;
+}
+
+message AuthSource {
+  oneof source {
+    AuthSourceApiKey api_key = 1;
+    AuthSourcePlugin plugin = 2;
+    AuthSourceNone none = 3;
   }
-  Status status = 2;
+}
+
+message AuthSourceApiKey {
+  ApiKeyOrigin origin = 1;
+}
+
+message AuthSourcePlugin {
+  AuthMethod method = 1;
+}
+
+message AuthSourceNone {}
+
+message AuthProgress {
+  oneof state {
+    AuthNeedInput need_input = 1;
+    AuthInProgress in_progress = 2;
+    AuthOAuthStarted oauth_started = 3;
+    AuthComplete complete = 4;
+    AuthError error = 5;
+  }
+}
+
+message AuthNeedInput {
+  string prompt = 1;
+}
+
+message AuthInProgress {
+  string message = 1;
+}
+
+message AuthOAuthStarted {
+  string auth_url = 1;
+}
+
+message AuthComplete {}
+
+message AuthError {
+  string message = 1;
 }
 
 // Enums
@@ -1053,7 +1130,14 @@ enum McpTransport {
   MCP_TRANSPORT_WEBSOCKET = 3;
 }
 
-enum ProviderAuthScheme {
-  AUTH_SCHEME_API_KEY = 0;
-  AUTH_SCHEME_OAUTH2 = 1;
+enum AuthMethod {
+  AUTH_METHOD_UNSPECIFIED = 0;
+  AUTH_METHOD_OAUTH = 1;
+  AUTH_METHOD_API_KEY = 2;
+}
+
+enum ApiKeyOrigin {
+  API_KEY_ORIGIN_UNSPECIFIED = 0;
+  API_KEY_ORIGIN_ENV = 1;
+  API_KEY_ORIGIN_STORED = 2;
 }

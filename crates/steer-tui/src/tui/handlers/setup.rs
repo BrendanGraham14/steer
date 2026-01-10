@@ -1,104 +1,66 @@
 use crate::error::Result;
 use crate::tui::InputMode;
 use crate::tui::Tui;
-use crate::tui::auth_controller::AuthController;
 use crate::tui::state::{AuthStatus, SetupState, SetupStep};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::sync::Arc;
-use steer_core::auth::{
-    AuthFlowWrapper, AuthMethod, AuthProgress, DefaultAuthStorage, DynAuthenticationFlow,
-    api_key::ApiKeyAuthFlow,
-};
-use steer_core::config::provider::{self, ProviderId};
+use steer_core::config::provider::ProviderId;
 use tracing::debug;
 
 // Remove TODO comment - authentication is now handled using the generic trait
 pub struct SetupHandler;
 
 impl SetupHandler {
-    /// Ensure an auth controller exists for the given provider and method
-    async fn ensure_controller(
-        tui: &mut Tui,
-        provider_id: ProviderId,
-        method: AuthMethod,
-    ) -> Result<()> {
-        if tui.auth_controller.is_some() {
-            return Ok(());
-        }
+    async fn start_auth_flow(tui: &mut Tui, provider_id: &ProviderId) -> Result<()> {
+        let response = tui
+            .client
+            .start_auth(provider_id.storage_key())
+            .await
+            .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
 
-        let auth_storage = Arc::new(
-            DefaultAuthStorage::new().map_err(|e| crate::error::Error::Auth(e.to_string()))?,
-        );
+        let setup_state = tui.setup_state.as_mut().ok_or_else(|| {
+            crate::error::Error::Generic("Missing setup state during auth".to_string())
+        })?;
 
-        // Get provider config name without holding borrow across mutation
-        let (provider_name, supports_oauth) = {
-            let cfg = tui
-                .setup_state
-                .as_ref()
-                .and_then(|s| s.registry.get(&provider_id))
-                .ok_or_else(|| {
-                    crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
-                })?;
-            let supports_oauth = cfg
-                .auth_schemes
-                .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2);
-            (cfg.name.clone(), supports_oauth)
-        };
+        setup_state.auth_flow_id = Some(response.flow_id.clone());
+        setup_state.auth_progress = response.progress;
+        setup_state.auth_input.clear();
+        setup_state
+            .auth_providers
+            .insert(provider_id.clone(), AuthStatus::InProgress);
 
-        // Create appropriate auth flow based on provider and method
-        let auth_flow: Box<dyn DynAuthenticationFlow> = match (&provider_id, method) {
-            (id, AuthMethod::OAuth) if *id == provider::anthropic() && supports_oauth => {
-                use steer_core::auth::anthropic::AnthropicOAuthFlow;
-                Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage)))
-            }
-            (id, AuthMethod::OAuth) if *id == provider::openai() && supports_oauth => {
-                use steer_core::auth::openai::OpenAIOAuthFlow;
-                Box::new(AuthFlowWrapper::new(OpenAIOAuthFlow::new(auth_storage)))
-            }
-            (_, AuthMethod::ApiKey) => {
-                // All providers support API key
-                Box::new(AuthFlowWrapper::new(ApiKeyAuthFlow::new(
-                    auth_storage,
-                    provider_id.clone(),
-                    provider_name.clone(),
-                )))
-            }
-            _ => {
-                if let Some(setup_state) = tui.setup_state.as_mut() {
-                    setup_state.error_message = Some(format!(
-                        "{provider_name} doesn't support {method:?} authentication"
-                    ));
+        if let Some(progress) = setup_state.auth_progress.as_ref() {
+            if let Some(steer_grpc::proto::auth_progress::State::OauthStarted(oauth)) =
+                progress.state.as_ref()
+            {
+                if let Err(e) = open::that(&oauth.auth_url) {
+                    setup_state.error_message = Some(format!("Failed to open browser: {e}"));
                 }
-                return Err(crate::error::Error::Auth(
-                    "Unsupported authentication method".to_string(),
-                ));
-            }
-        };
-
-        let start_result = auth_flow.start_auth(method).await;
-        match start_result {
-            Ok(auth_state) => {
-                tui.auth_controller = Some(AuthController {
-                    flow: Arc::from(auth_flow),
-                    state: auth_state,
-                });
-                // Mark authentication as in progress
-                if let Some(setup_state) = tui.setup_state.as_mut() {
-                    setup_state
-                        .auth_providers
-                        .insert(provider_id, AuthStatus::InProgress);
-                }
-            }
-            Err(e) => {
-                if let Some(setup_state) = tui.setup_state.as_mut() {
-                    setup_state.error_message =
-                        Some(format!("Failed to initialize authentication: {e}"));
-                }
-                return Err(crate::error::Error::Auth(e.to_string()));
             }
         }
 
         Ok(())
+    }
+
+    async fn refresh_auth_status(tui: &mut Tui, provider_id: &ProviderId) -> Result<AuthStatus> {
+        let statuses = tui
+            .client
+            .get_provider_auth_status(Some(provider_id.storage_key()))
+            .await
+            .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
+        let status = statuses
+            .first()
+            .and_then(|s| s.auth_source.as_ref())
+            .and_then(|source| source.source.as_ref());
+
+        let mapped = match status {
+            Some(steer_grpc::proto::auth_source::Source::ApiKey(_)) => AuthStatus::ApiKeySet,
+            Some(steer_grpc::proto::auth_source::Source::Plugin(_)) => AuthStatus::OAuthConfigured,
+            Some(steer_grpc::proto::auth_source::Source::None(_)) | None => {
+                AuthStatus::NotConfigured
+            }
+        };
+
+        Ok(mapped)
     }
 
     pub async fn handle_key_event(tui: &mut Tui, key: KeyEvent) -> Result<Option<InputMode>> {
@@ -207,196 +169,86 @@ impl SetupHandler {
         provider_id: ProviderId,
         key: KeyEvent,
     ) -> Result<Option<InputMode>> {
-        // Get provider config to check auth schemes
-        let (supports_oauth, supports_api_key, provider_name) = {
-            let provider_config = tui
-                .setup_state
-                .as_ref()
-                .and_then(|s| s.registry.get(&provider_id))
-                .ok_or_else(|| {
-                    crate::error::Error::Generic(format!("Provider {provider_id:?} not found"))
-                })?;
-            let has_oauth = provider_config
-                .auth_schemes
-                .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeOauth2);
-            let has_api_key = provider_config
-                .auth_schemes
-                .contains(&steer_grpc::proto::ProviderAuthScheme::AuthSchemeApiKey);
-            (has_oauth, has_api_key, provider_config.name.clone())
-        };
-
-        // For providers that only support API key, automatically initialize API key auth
-        if !supports_oauth
-            && supports_api_key
-            && tui.auth_controller.is_none()
-            && Self::ensure_controller(tui, provider_id.clone(), AuthMethod::ApiKey)
-                .await
-                .is_err()
+        if tui
+            .setup_state
+            .as_ref()
+            .and_then(|s| s.auth_flow_id.as_ref())
+            .is_none()
         {
-            // Error message already set in ensure_controller
-            return Ok(None);
+            Self::start_auth_flow(tui, &provider_id).await?;
         }
 
         match key.code {
-            KeyCode::Char('1') if supports_oauth => {
-                // Start OAuth flow
-                if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::OAuth)
-                    .await
-                    .is_err()
-                {
-                    return Ok(None);
-                }
-
-                // Get the auth controller we just created
-                if let Some(ref auth_controller) = tui.auth_controller {
-                    // Get initial progress to extract auth URL
-                    match auth_controller
-                        .flow
-                        .get_initial_progress(&auth_controller.state, AuthMethod::OAuth)
-                        .await
-                    {
-                        Ok(AuthProgress::OAuthStarted { auth_url }) => {
-                            let state = tui.setup_state.as_mut().unwrap();
-                            state.oauth_state = Some(crate::tui::state::OAuthFlowState {
-                                auth_url: auth_url.clone(),
-                                state: String::new(),
-                                waiting_for_callback: true,
-                            });
-
-                            // Try to open browser
-                            if let Err(e) = open::that(&auth_url) {
-                                state.error_message = Some(format!("Failed to open browser: {e}"));
-                            }
-                        }
-                        _ => {
-                            let state = tui.setup_state.as_mut().unwrap();
-                            state.error_message = Some("Failed to get OAuth URL".to_string());
-                        }
-                    }
-                }
-                Ok(None)
-            }
-            KeyCode::Char('2') if supports_api_key => {
-                // Check conditions before calling ensure_controller
-                let should_proceed = {
-                    let state = tui.setup_state.as_ref().unwrap();
-                    state.api_key_input.is_empty() && state.oauth_state.is_none()
-                };
-
-                if should_proceed {
-                    // API key input mode
-                    debug!("Starting API key input mode");
-                    let state = tui.setup_state.as_mut().unwrap();
-                    state.api_key_input.clear();
-                    if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::ApiKey)
-                        .await
-                        .is_err()
-                    {
-                        return Ok(None);
-                    }
-                }
-                Ok(None)
-            }
             KeyCode::Enter => {
-                // Check what type of input we have
-                let has_oauth_callback = {
-                    let state = tui.setup_state.as_ref().unwrap();
-                    state.oauth_state.is_some() && !state.oauth_callback_input.is_empty()
+                let progress_state = {
+                    let setup_state = tui.setup_state.as_ref().unwrap();
+                    setup_state
+                        .auth_progress
+                        .as_ref()
+                        .and_then(|progress| progress.state.as_ref())
+                        .cloned()
                 };
 
-                let has_api_key = {
-                    let state = tui.setup_state.as_ref().unwrap();
-                    !state.api_key_input.is_empty()
-                };
+                let expects_input = matches!(
+                    progress_state,
+                    Some(steer_grpc::proto::auth_progress::State::NeedInput(_))
+                        | Some(steer_grpc::proto::auth_progress::State::OauthStarted(_))
+                );
 
-                if has_oauth_callback {
-                    // Handle OAuth callback
-                    let state = tui.setup_state.as_mut().unwrap();
-                    if let Some(ref mut auth_controller) = tui.auth_controller {
-                        let input = state.oauth_callback_input.clone();
+                let flow_id = tui
+                    .setup_state
+                    .as_ref()
+                    .and_then(|s| s.auth_flow_id.clone());
 
-                        match auth_controller
-                            .flow
-                            .handle_input(&mut auth_controller.state, &input)
+                if expects_input
+                    && let (Some(flow_id), Some(input)) = (
+                        flow_id,
+                        tui.setup_state
+                            .as_ref()
+                            .map(|s| s.auth_input.clone())
+                            .filter(|input| !input.is_empty()),
+                    ) {
+                        let progress = tui
+                            .client
+                            .send_auth_input(flow_id.clone(), input)
                             .await
-                        {
-                            Ok(AuthProgress::Complete) => {
-                                state.oauth_state = None;
-                                state.oauth_callback_input.clear();
-                                state
-                                    .auth_providers
-                                    .insert(provider_id.clone(), AuthStatus::OAuthConfigured);
-                                state.error_message =
-                                    Some("OAuth authentication successful!".to_string());
-                                // Clear auth controller for next provider
-                                tui.auth_controller = None;
-                                // Return to provider selection to allow authenticating with other providers
-                                state.current_step = SetupStep::ProviderSelection;
-                                state.selected_provider = None;
-                            }
-                            Ok(AuthProgress::NeedInput(prompt)) => {
-                                state.error_message = Some(prompt);
-                            }
-                            Ok(AuthProgress::InProgress(msg)) => {
-                                state.error_message = Some(msg);
-                            }
-                            Ok(AuthProgress::Error(err)) => {
-                                state.error_message = Some(err);
-                                state.oauth_callback_input.clear();
-                            }
-                            Ok(AuthProgress::OAuthStarted { .. }) => {
-                                // Shouldn't happen at this stage
-                                state.error_message = Some("Unexpected OAuth state".to_string());
-                            }
-                            Err(e) => {
-                                state.error_message =
-                                    Some(format!("OAuth authentication failed: {e}"));
-                                state.oauth_callback_input.clear();
-                            }
-                        }
-                    }
-                } else if has_api_key {
-                    // Ensure we have a controller for API key auth
-                    if Self::ensure_controller(tui, provider_id.clone(), AuthMethod::ApiKey)
-                        .await
-                        .is_err()
-                    {
-                        return Ok(None);
-                    }
+                            .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
 
-                    // Handle API key input
-                    let state = tui.setup_state.as_mut().unwrap();
-                    if let Some(ref mut auth_controller) = tui.auth_controller {
-                        let api_key = state.api_key_input.clone();
+                    let mut completed = false;
+                    let mut error_message = None;
 
-                        match auth_controller
-                            .flow
-                            .handle_input(&mut auth_controller.state, &api_key)
-                            .await
-                        {
-                            Ok(AuthProgress::Complete) => {
-                                state.api_key_input.clear();
-                                state
-                                    .auth_providers
-                                    .insert(provider_id.clone(), AuthStatus::ApiKeySet);
-                                state.error_message = Some(format!(
-                                    "API key successfully imported for {provider_name}!"
-                                ));
-                                // Clear auth controller for next provider
-                                tui.auth_controller = None;
-                                // Return to provider selection to allow authenticating with other providers
-                                state.current_step = SetupStep::ProviderSelection;
-                                state.selected_provider = None;
+                        match &progress.state {
+                            Some(steer_grpc::proto::auth_progress::State::Complete(_)) => {
+                                completed = true;
                             }
-                            Ok(AuthProgress::Error(err)) => {
-                                state.error_message = Some(err);
-                                state.api_key_input.clear();
-                            }
-                            Err(e) => {
-                                state.error_message = Some(e.to_string());
-                                state.api_key_input.clear();
+                            Some(steer_grpc::proto::auth_progress::State::Error(error)) => {
+                                error_message = Some(error.message.clone());
                             }
                             _ => {}
+                        }
+
+                        {
+                            let setup_state = tui.setup_state.as_mut().unwrap();
+                            setup_state.auth_progress = Some(progress.clone());
+                            setup_state.auth_input.clear();
+
+                            if let Some(message) = &error_message {
+                                setup_state.error_message = Some(message.clone());
+                                setup_state.auth_flow_id = None;
+                                setup_state.auth_progress = None;
+                            }
+                        }
+
+                        if completed {
+                            let status = Self::refresh_auth_status(tui, &provider_id).await?;
+                            let setup_state = tui.setup_state.as_mut().unwrap();
+                            setup_state
+                                .auth_providers
+                                .insert(provider_id.clone(), status);
+                            setup_state.error_message =
+                                Some("Authentication successful!".to_string());
+                            setup_state.auth_flow_id = None;
+                            setup_state.auth_progress = None;
                         }
                     }
                 }
@@ -404,35 +256,49 @@ impl SetupHandler {
             }
             KeyCode::Char(c) => {
                 let state = tui.setup_state.as_mut().unwrap();
-                if state.oauth_state.is_some() {
-                    // Typing OAuth callback
-                    state.oauth_callback_input.push(c);
-                    Ok(None)
-                } else if tui.auth_controller.is_some() {
-                    // Typing API key
-                    state.api_key_input.push(c);
-                    Ok(None)
-                } else {
-                    Ok(None)
+                let expects_input = state
+                    .auth_progress
+                    .as_ref()
+                    .and_then(|progress| progress.state.as_ref())
+                    .map(|state| {
+                        matches!(
+                            state,
+                            steer_grpc::proto::auth_progress::State::NeedInput(_)
+                                | steer_grpc::proto::auth_progress::State::OauthStarted(_)
+                        )
+                    })
+                    .unwrap_or(false);
+                if expects_input {
+                    state.auth_input.push(c);
                 }
+                Ok(None)
             }
             KeyCode::Backspace => {
                 let state = tui.setup_state.as_mut().unwrap();
-                if state.oauth_state.is_some() {
-                    state.oauth_callback_input.pop();
-                    Ok(None)
-                } else if tui.auth_controller.is_some() {
-                    state.api_key_input.pop();
-                    Ok(None)
-                } else {
-                    Ok(None)
+                let expects_input = state
+                    .auth_progress
+                    .as_ref()
+                    .and_then(|progress| progress.state.as_ref())
+                    .map(|state| {
+                        matches!(
+                            state,
+                            steer_grpc::proto::auth_progress::State::NeedInput(_)
+                                | steer_grpc::proto::auth_progress::State::OauthStarted(_)
+                        )
+                    })
+                    .unwrap_or(false);
+                if expects_input {
+                    state.auth_input.pop();
                 }
+                Ok(None)
             }
             KeyCode::Esc => {
                 let state = tui.setup_state.as_mut().unwrap();
-                state.oauth_state = None;
-                state.api_key_input.clear();
-                state.oauth_callback_input.clear();
+                if let Some(flow_id) = state.auth_flow_id.take() {
+                    let _ = tui.client.cancel_auth(flow_id).await;
+                }
+                state.auth_progress = None;
+                state.auth_input.clear();
                 state.error_message = None; // Clear any error messages
                 // Reset auth status if it was in progress
                 if let Some(provider) = &state.selected_provider {
@@ -442,7 +308,6 @@ impl SetupHandler {
                             .insert(provider.clone(), AuthStatus::NotConfigured);
                     }
                 }
-                tui.auth_controller = None; // Clear auth controller
                 state.previous_step();
                 Ok(None)
             }
@@ -478,57 +343,107 @@ impl SetupHandler {
 
 impl SetupHandler {
     pub async fn poll_oauth_callback(tui: &mut Tui) -> Result<bool> {
-        let Some(setup_state) = tui.setup_state.as_mut() else {
-            return Ok(false);
+        let provider_id = {
+            let Some(setup_state) = tui.setup_state.as_ref() else {
+                return Ok(false);
+            };
+            match &setup_state.current_step {
+                SetupStep::Authentication(provider_id) => provider_id.clone(),
+                _ => return Ok(false),
+            }
         };
 
-        let provider_id = match &setup_state.current_step {
-            SetupStep::Authentication(provider_id) => provider_id.clone(),
-            _ => return Ok(false),
-        };
+        let flow_id = tui
+            .setup_state
+            .as_ref()
+            .and_then(|state| state.auth_flow_id.clone());
 
-        if provider_id != provider::openai() {
-            return Ok(false);
+        if flow_id.is_none() {
+            Self::start_auth_flow(tui, &provider_id).await?;
+            return Ok(true);
         }
 
-        let has_oauth_state = setup_state.oauth_state.is_some();
-        if !has_oauth_state || !setup_state.oauth_callback_input.is_empty() {
-            return Ok(false);
-        }
+        let flow_id = flow_id.expect("auth_flow_id just checked");
 
-        let Some(auth_controller) = tui.auth_controller.as_mut() else {
-            return Ok(false);
-        };
-
-        match auth_controller
-            .flow
-            .handle_input(&mut auth_controller.state, "")
-            .await
+        if tui
+            .setup_state
+            .as_ref()
+            .map(|state| !state.auth_input.is_empty())
+            .unwrap_or(false)
         {
-            Ok(AuthProgress::Complete) => {
-                setup_state.oauth_state = None;
-                setup_state.oauth_callback_input.clear();
-                setup_state
-                    .auth_providers
-                    .insert(provider_id.clone(), AuthStatus::OAuthConfigured);
-                setup_state.error_message =
-                    Some("OAuth authentication successful!".to_string());
-                tui.auth_controller = None;
-                setup_state.current_step = SetupStep::ProviderSelection;
-                setup_state.selected_provider = None;
-                Ok(true)
+            return Ok(false);
+        }
+
+        let should_poll = tui
+            .setup_state
+            .as_ref()
+            .and_then(|state| state.auth_progress.as_ref())
+            .and_then(|progress| progress.state.as_ref())
+            .map(|state| {
+                matches!(
+                    state,
+                    steer_grpc::proto::auth_progress::State::OauthStarted(_)
+                        | steer_grpc::proto::auth_progress::State::InProgress(_)
+                )
+            })
+            .unwrap_or(false);
+
+        if !should_poll {
+            return Ok(false);
+        }
+
+        let progress = tui
+            .client
+            .get_auth_progress(flow_id.clone())
+            .await
+            .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
+
+        let mut completed = false;
+        let mut error_message = None;
+
+        match &progress.state {
+            Some(steer_grpc::proto::auth_progress::State::Complete(_)) => {
+                completed = true;
             }
-            Ok(AuthProgress::InProgress(_)) => Ok(false),
-            Ok(AuthProgress::NeedInput(_)) => Ok(false),
-            Ok(AuthProgress::Error(err)) => {
-                setup_state.error_message = Some(err);
-                Ok(true)
+            Some(steer_grpc::proto::auth_progress::State::Error(error)) => {
+                error_message = Some(error.message.clone());
             }
-            Ok(AuthProgress::OAuthStarted { .. }) => Ok(false),
-            Err(e) => {
-                setup_state.error_message = Some(format!("OAuth authentication failed: {e}"));
-                Ok(true)
+            _ => {}
+        }
+
+        {
+            let Some(setup_state) = tui.setup_state.as_mut() else {
+                return Ok(false);
+            };
+            setup_state.auth_progress = Some(progress.clone());
+
+            if let Some(message) = &error_message {
+                setup_state.error_message = Some(message.clone());
+                setup_state.auth_flow_id = None;
+                setup_state.auth_progress = None;
             }
         }
+
+        if completed {
+            let status = Self::refresh_auth_status(tui, &provider_id).await?;
+            let Some(setup_state) = tui.setup_state.as_mut() else {
+                return Ok(false);
+            };
+            setup_state
+                .auth_providers
+                .insert(provider_id.clone(), status);
+            setup_state.error_message = Some("Authentication successful!".to_string());
+            setup_state.auth_flow_id = None;
+            setup_state.auth_progress = None;
+            setup_state.current_step = SetupStep::ProviderSelection;
+            setup_state.selected_provider = None;
+            return Ok(true);
+        }
+
+        if error_message.is_some() {
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 }

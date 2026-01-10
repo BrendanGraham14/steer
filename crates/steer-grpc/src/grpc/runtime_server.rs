@@ -3,15 +3,20 @@ use crate::grpc::conversions::{
     proto_to_workspace_config, session_event_to_proto, stream_delta_to_proto,
     repo_info_to_proto, workspace_info_to_proto, workspace_status_to_proto,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
+use steer_core::auth::{AuthFlowWrapper, AuthMethod, DynAuthenticationFlow};
+use steer_core::auth::anthropic::AnthropicOAuthFlow;
+use steer_core::auth::openai::OpenAIOAuthFlow;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
 use steer_workspace::{EnvironmentManager, RepoManager, WorkspaceManager};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
@@ -26,6 +31,41 @@ pub struct RuntimeAgentService {
     environment_manager: Arc<dyn EnvironmentManager>,
     workspace_manager: Arc<dyn WorkspaceManager>,
     repo_manager: Arc<dyn RepoManager>,
+    auth_flow_manager: Arc<AuthFlowManager>,
+}
+
+const AUTH_FLOW_TTL: Duration = Duration::from_secs(10 * 60);
+
+struct AuthFlowEntry {
+    flow: Arc<dyn DynAuthenticationFlow>,
+    state: Box<dyn std::any::Any + Send + Sync>,
+    last_updated: Instant,
+}
+
+#[derive(Default)]
+struct AuthFlowManager {
+    flows: Mutex<HashMap<String, AuthFlowEntry>>,
+}
+
+impl AuthFlowManager {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    async fn insert(&self, flow_id: String, entry: AuthFlowEntry) {
+        let mut flows = self.flows.lock().await;
+        flows.insert(flow_id, entry);
+    }
+
+    async fn take(&self, flow_id: &str) -> Option<AuthFlowEntry> {
+        let mut flows = self.flows.lock().await;
+        flows.remove(flow_id)
+    }
+
+    async fn cleanup(&self) {
+        let mut flows = self.flows.lock().await;
+        flows.retain(|_, entry| entry.last_updated.elapsed() <= AUTH_FLOW_TTL);
+    }
 }
 
 impl RuntimeAgentService {
@@ -48,6 +88,7 @@ impl RuntimeAgentService {
             environment_manager,
             workspace_manager,
             repo_manager,
+            auth_flow_manager: Arc::new(AuthFlowManager::new()),
         }
     }
 
@@ -57,8 +98,9 @@ impl RuntimeAgentService {
             .map(SessionId::from)
             .map_err(|_| Status::invalid_argument(format!("Invalid session ID: {session_id}")))
     }
-
-    fn parse_environment_id(environment_id: &str) -> Result<steer_workspace::EnvironmentId, Status> {
+    fn parse_environment_id(
+        environment_id: &str,
+    ) -> Result<steer_workspace::EnvironmentId, Status> {
         if environment_id.is_empty() {
             return Ok(steer_workspace::EnvironmentId::local());
         }
@@ -144,6 +186,34 @@ impl RuntimeAgentService {
             steer_workspace::EnvironmentManagerError::Io(msg)
             | steer_workspace::EnvironmentManagerError::Other(msg) => Status::internal(msg),
         }
+    }
+
+    fn create_auth_flow(
+        &self,
+        provider_id: &steer_core::config::provider::ProviderId,
+    ) -> Result<(Arc<dyn DynAuthenticationFlow>, AuthMethod), Status> {
+        let provider_cfg = self.provider_registry.get(provider_id).ok_or_else(|| {
+            Status::not_found(format!("Unknown provider: {}", provider_id.as_str()))
+        })?;
+        let provider_name = provider_cfg.name.clone();
+        let auth_storage = self.llm_config_provider.auth_storage().clone();
+
+        if *provider_id == steer_core::config::provider::openai() {
+            let flow = AuthFlowWrapper::new(OpenAIOAuthFlow::new(auth_storage));
+            return Ok((Arc::new(flow), AuthMethod::OAuth));
+        }
+
+        if *provider_id == steer_core::config::provider::anthropic() {
+            let flow = AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage));
+            return Ok((Arc::new(flow), AuthMethod::OAuth));
+        }
+
+        let flow = AuthFlowWrapper::new(ApiKeyAuthFlow::new(
+            auth_storage,
+            provider_id.clone(),
+            provider_name,
+        ));
+        Ok((Arc::new(flow), AuthMethod::ApiKey))
     }
 }
 
@@ -931,18 +1001,6 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map(|p| proto::ProviderInfo {
                 id: p.id.storage_key(),
                 name: p.name.clone(),
-                auth_schemes: p
-                    .auth_schemes
-                    .iter()
-                    .map(|s| match s {
-                        steer_core::config::toml_types::AuthScheme::ApiKey => {
-                            proto::ProviderAuthScheme::AuthSchemeApiKey as i32
-                        }
-                        steer_core::config::toml_types::AuthScheme::Oauth2 => {
-                            proto::ProviderAuthScheme::AuthSchemeOauth2 as i32
-                        }
-                    })
-                    .collect(),
             })
             .collect();
 
@@ -1028,29 +1086,140 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             {
                 continue;
             }
-            let status = match self
+            let auth_source = self
                 .llm_config_provider
-                .get_auth_for_provider(&p.id)
+                .resolve_auth_source(&p.id)
                 .await
-                .map_err(|e| Status::internal(format!("auth lookup failed: {e}")))?
-            {
-                Some(steer_core::config::ApiAuth::OAuth) => {
-                    proto::provider_auth_status::Status::AuthStatusOauth as i32
-                }
-                Some(steer_core::config::ApiAuth::Key(_)) => {
-                    proto::provider_auth_status::Status::AuthStatusApiKey as i32
-                }
-                None => proto::provider_auth_status::Status::AuthStatusNone as i32,
-            };
+                .map_err(|e| Status::internal(format!("auth lookup failed: {e}")))?;
+            let auth_source = crate::grpc::conversions::auth_source_to_proto(auth_source);
             statuses.push(proto::ProviderAuthStatus {
                 provider_id: p.id.storage_key(),
-                status,
+                auth_source: Some(auth_source),
             });
         }
 
         Ok(Response::new(proto::GetProviderAuthStatusResponse {
             statuses,
         }))
+    }
+
+    async fn start_auth(
+        &self,
+        request: Request<proto::StartAuthRequest>,
+    ) -> Result<Response<proto::StartAuthResponse>, Status> {
+        self.auth_flow_manager.cleanup().await;
+        let req = request.into_inner();
+        let provider_id = steer_core::config::provider::ProviderId(req.provider_id);
+
+        let (flow, method) = self.create_auth_flow(&provider_id)?;
+        let state = flow
+            .start_auth(method)
+            .await
+            .map_err(|e| Status::internal(format!("auth start failed: {e}")))?;
+        let progress = flow
+            .get_initial_progress(&state, method)
+            .await
+            .map_err(|e| Status::internal(format!("auth progress failed: {e}")))?;
+
+        let flow_id = Uuid::new_v4().to_string();
+        self.auth_flow_manager
+            .insert(
+                flow_id.clone(),
+                AuthFlowEntry {
+                    flow,
+                    state,
+                    last_updated: Instant::now(),
+                },
+            )
+            .await;
+
+        Ok(Response::new(proto::StartAuthResponse {
+            flow_id,
+            progress: Some(crate::grpc::conversions::auth_progress_to_proto(progress)),
+        }))
+    }
+
+    async fn send_auth_input(
+        &self,
+        request: Request<proto::SendAuthInputRequest>,
+    ) -> Result<Response<proto::SendAuthInputResponse>, Status> {
+        self.auth_flow_manager.cleanup().await;
+        let req = request.into_inner();
+        let flow_id = req.flow_id.clone();
+
+        let mut entry = self
+            .auth_flow_manager
+            .take(&flow_id)
+            .await
+            .ok_or_else(|| Status::not_found("Auth flow not found"))?;
+
+        let progress = entry
+            .flow
+            .handle_input(&mut entry.state, &req.input)
+            .await
+            .map_err(|e| Status::internal(format!("auth input failed: {e}")))?;
+
+        let done = matches!(
+            progress,
+            steer_core::auth::AuthProgress::Complete | steer_core::auth::AuthProgress::Error(_)
+        );
+
+        if !done {
+            entry.last_updated = Instant::now();
+            self.auth_flow_manager.insert(flow_id, entry).await;
+        }
+
+        Ok(Response::new(proto::SendAuthInputResponse {
+            progress: Some(crate::grpc::conversions::auth_progress_to_proto(progress)),
+        }))
+    }
+
+    async fn get_auth_progress(
+        &self,
+        request: Request<proto::GetAuthProgressRequest>,
+    ) -> Result<Response<proto::GetAuthProgressResponse>, Status> {
+        self.auth_flow_manager.cleanup().await;
+        let req = request.into_inner();
+        let flow_id = req.flow_id.clone();
+
+        let mut entry = self
+            .auth_flow_manager
+            .take(&flow_id)
+            .await
+            .ok_or_else(|| Status::not_found("Auth flow not found"))?;
+
+        let progress = entry
+            .flow
+            .handle_input(&mut entry.state, "")
+            .await
+            .map_err(|e| Status::internal(format!("auth progress failed: {e}")))?;
+
+        let done = matches!(
+            progress,
+            steer_core::auth::AuthProgress::Complete | steer_core::auth::AuthProgress::Error(_)
+        );
+
+        if !done {
+            entry.last_updated = Instant::now();
+            self.auth_flow_manager.insert(flow_id, entry).await;
+        }
+
+        Ok(Response::new(proto::GetAuthProgressResponse {
+            progress: Some(crate::grpc::conversions::auth_progress_to_proto(progress)),
+        }))
+    }
+
+    async fn cancel_auth(
+        &self,
+        request: Request<proto::CancelAuthRequest>,
+    ) -> Result<Response<proto::CancelAuthResponse>, Status> {
+        self.auth_flow_manager.cleanup().await;
+        let req = request.into_inner();
+        let flow_id = req.flow_id;
+
+        let _ = self.auth_flow_manager.take(&flow_id).await;
+
+        Ok(Response::new(proto::CancelAuthResponse {}))
     }
 
     async fn resolve_model(

@@ -7,9 +7,9 @@ pub struct SetupState {
     pub current_step: SetupStep,
     pub auth_providers: HashMap<ProviderId, AuthStatus>,
     pub selected_provider: Option<ProviderId>,
-    pub oauth_state: Option<OAuthFlowState>,
-    pub api_key_input: String,
-    pub oauth_callback_input: String,
+    pub auth_flow_id: Option<String>,
+    pub auth_progress: Option<steer_grpc::proto::AuthProgress>,
+    pub auth_input: String,
     pub error_message: Option<String>,
     pub provider_cursor: usize,
     pub skip_setup: bool,
@@ -32,19 +32,11 @@ pub enum AuthStatus {
     InProgress,
 }
 
-#[derive(Debug, Clone)]
-pub struct OAuthFlowState {
-    pub auth_url: String,
-    pub state: String,
-    pub waiting_for_callback: bool,
-}
-
 /// Minimal provider view built from remote proto ProviderInfo
 #[derive(Debug, Clone)]
 pub struct RemoteProviderConfig {
     pub id: String,
     pub name: String,
-    pub auth_schemes: Vec<steer_grpc::proto::ProviderAuthScheme>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,11 +51,6 @@ impl RemoteProviderRegistry {
             .map(|p| RemoteProviderConfig {
                 id: p.id,
                 name: p.name,
-                auth_schemes: p
-                    .auth_schemes
-                    .into_iter()
-                    .filter_map(|v| steer_grpc::proto::ProviderAuthScheme::try_from(v).ok())
-                    .collect(),
             })
             .collect();
         Self { providers }
@@ -87,9 +74,9 @@ impl SetupState {
             current_step: SetupStep::Welcome,
             auth_providers,
             selected_provider: None,
-            oauth_state: None,
-            api_key_input: String::new(),
-            oauth_callback_input: String::new(),
+            auth_flow_id: None,
+            auth_progress: None,
+            auth_input: String::new(),
             error_message: None,
             provider_cursor: 0,
             skip_setup: false,
