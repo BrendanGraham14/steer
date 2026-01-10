@@ -15,13 +15,19 @@ use crate::{
 };
 use crate::workspace_registry::WorkspaceRegistry;
 
+use jj_lib::config::ConfigGetError;
+use jj_lib::fileset::{self, FilesetDiagnostics};
 use jj_lib::gitignore::GitIgnoreFile;
-use jj_lib::matchers::EverythingMatcher;
+use jj_lib::matchers::Matcher;
 use jj_lib::repo::Repo;
+use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::ref_name::WorkspaceNameBuf;
+use jj_lib::settings::HumanByteSize;
 use jj_lib::workspace::{Workspace as JjWorkspace, default_working_copy_factory};
 use jj_lib::working_copy::SnapshotOptions;
 use uuid::Uuid;
+
+const DEFAULT_MAX_NEW_FILE_SIZE: u64 = 10_000_000;
 
 #[derive(Debug, Clone)]
 pub struct LocalWorkspaceManager {
@@ -161,6 +167,8 @@ impl LocalWorkspaceManager {
         repo: Arc<jj_lib::repo::ReadonlyRepo>,
     ) -> WorkspaceManagerResult<Arc<jj_lib::repo::ReadonlyRepo>> {
         let workspace_name = workspace.workspace_name().to_owned();
+        let start_tracking_matcher = self.snapshot_start_tracking_matcher(workspace)?;
+        let max_new_file_size = self.snapshot_max_new_file_size(workspace.settings())?;
         let mut locked_ws = workspace.start_working_copy_mutation().map_err(|e| {
             WorkspaceManagerError::Other(format!("Failed to lock jj working copy: {e}"))
         })?;
@@ -170,8 +178,8 @@ impl LocalWorkspaceManager {
         let snapshot_options = SnapshotOptions {
             base_ignores: GitIgnoreFile::empty(),
             progress: None,
-            start_tracking_matcher: &EverythingMatcher,
-            max_new_file_size: u64::MAX,
+            start_tracking_matcher: start_tracking_matcher.as_ref(),
+            max_new_file_size,
         };
 
         let snapshot_result = locked_ws.locked_wc().snapshot(&snapshot_options).await;
@@ -238,6 +246,60 @@ impl LocalWorkspaceManager {
             })?;
 
         Ok(updated_repo)
+    }
+
+    fn snapshot_start_tracking_matcher(
+        &self,
+        workspace: &JjWorkspace,
+    ) -> WorkspaceManagerResult<Box<dyn Matcher>> {
+        let settings = workspace.settings();
+        let expression = match settings.get_string("snapshot.auto-track") {
+            Ok(value) => value,
+            Err(ConfigGetError::NotFound { .. }) => String::new(),
+            Err(err) => {
+                return Err(WorkspaceManagerError::Other(format!(
+                    "Failed to read jj snapshot.auto-track setting: {err}"
+                )));
+            }
+        };
+
+        let expression = if expression.trim().is_empty() {
+            "none()"
+        } else {
+            expression.trim()
+        };
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: workspace.workspace_root().to_path_buf(),
+            base: workspace.workspace_root().to_path_buf(),
+        };
+        let mut diagnostics = FilesetDiagnostics::new();
+        let fileset = fileset::parse(&mut diagnostics, expression, &path_converter).map_err(
+            |err| {
+                WorkspaceManagerError::Other(format!(
+                    "Failed to parse jj snapshot.auto-track fileset: {err}"
+                ))
+            },
+        )?;
+        Ok(fileset.to_matcher())
+    }
+
+    fn snapshot_max_new_file_size(
+        &self,
+        settings: &jj_lib::settings::UserSettings,
+    ) -> WorkspaceManagerResult<u64> {
+        match settings.get_value("snapshot.max-new-file-size") {
+            Ok(value) => HumanByteSize::try_from(value)
+                .map(|size| size.0)
+                .map_err(|err| {
+                    WorkspaceManagerError::Other(format!(
+                        "Invalid jj snapshot.max-new-file-size setting: {err}"
+                    ))
+                }),
+            Err(ConfigGetError::NotFound { .. }) => Ok(DEFAULT_MAX_NEW_FILE_SIZE),
+            Err(err) => Err(WorkspaceManagerError::Other(format!(
+                "Failed to read jj snapshot.max-new-file-size setting: {err}"
+            ))),
+        }
     }
 
     fn repo_id_for_path(&self, path: &Path) -> RepoId {
