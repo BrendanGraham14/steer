@@ -6225,6 +6225,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "steer-auth-plugin"
+version = "0.8.1"
+dependencies = [
+ "async-trait",
+ "keyring",
+ "reqwest",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "steer-core"
 version = "0.8.2"
 dependencies = [
@@ -6275,6 +6286,7 @@ dependencies = [
  "shell-words",
  "similar",
  "sqlx",
+ "steer-auth-plugin",
  "steer-macros",
  "steer-proto",
  "steer-tools",
