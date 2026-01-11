@@ -312,24 +312,27 @@ impl From<RuntimeError> for Error {
 mod tests {
     use super::*;
     use crate::api::Client as ApiClient;
-    use crate::app::conversation::{AssistantContent, MessageData};
+    use crate::api::{ApiError, CompletionResponse, Provider};
+    use crate::app::conversation::{AssistantContent, Message, MessageData};
     use crate::app::domain::runtime::RuntimeService;
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::validation::ValidatorRegistry;
     use crate::config::model::builtin;
     use crate::session::ToolApprovalPolicy;
-    use crate::session::state::{SessionToolConfig, WorkspaceConfig};
+    use crate::session::state::{
+        ApprovalRules, SessionToolConfig, UnapprovedBehavior, WorkspaceConfig,
+    };
     use crate::tools::{BackendRegistry, ToolExecutor};
     use dotenvy::dotenv;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
+    use crate::app::domain::ApprovalDecision;
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use steer_tools::ToolCall;
     use steer_tools::tools::BASH_TOOL_NAME;
     use tokio_util::sync::CancellationToken;
-    use crate::api::{ApiError, CompletionResponse, Provider};
 
     #[derive(Clone)]
     struct ToolCallThenTextProvider {
@@ -419,7 +422,6 @@ mod tests {
     }
 
     fn create_test_tool_approval_policy() -> ToolApprovalPolicy {
-        use crate::session::state::{ApprovalRules, UnapprovedBehavior};
         let tool_names = READ_ONLY_TOOL_NAMES
             .iter()
             .map(|name| (*name).to_string())
@@ -484,6 +486,82 @@ mod tests {
         };
 
         assert!(!tool_is_preapproved(&tool_call, &policy));
+    }
+
+    #[tokio::test]
+    async fn run_new_session_denies_unapproved_tool_requests() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider(),
+            provider_registry,
+            model_registry.clone(),
+        ));
+
+        let tool_call = ToolCall {
+            id: "tc_1".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({ "command": "echo denied" }),
+        };
+        api_client.insert_test_provider(
+            builtin::claude_sonnet_4_5().provider.clone(),
+            Arc::new(ToolCallThenTextProvider::new(tool_call, "done")),
+        );
+
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            Arc::new(BackendRegistry::new()),
+            Arc::new(ValidatorRegistry::new()),
+        ));
+        let runtime = RuntimeService::spawn(event_store, api_client, tool_executor);
+
+        let mut config = create_test_session_config();
+        config.tool_config.approval_policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: HashSet::new(),
+                per_tool: HashMap::new(),
+            },
+        };
+
+        let model = builtin::claude_sonnet_4_5();
+        let result = OneShotRunner::run_new_session(
+            &runtime.handle,
+            config,
+            "Trigger tool call".to_string(),
+            model,
+        )
+        .await
+        .expect("run_new_session should complete");
+
+        let events = runtime
+            .handle
+            .load_events_after(result.session_id, 0)
+            .await
+            .expect("load events");
+
+        let mut saw_request = false;
+        let mut saw_decision = false;
+        let mut saw_denied = false;
+
+        for (_, event) in events {
+            match event {
+                SessionEvent::ApprovalRequested { .. } => saw_request = true,
+                SessionEvent::ApprovalDecided { decision, .. } => {
+                    saw_decision = true;
+                    if decision == ApprovalDecision::Denied {
+                        saw_denied = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_request, "expected ApprovalRequested event");
+        assert!(saw_decision, "expected ApprovalDecided event");
+        assert!(saw_denied, "expected denied decision");
+
+        runtime.shutdown().await;
     }
 
     #[tokio::test]
