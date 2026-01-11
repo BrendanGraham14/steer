@@ -8,7 +8,6 @@ use tokio::time::timeout;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::BashResult;
 use steer_tools::tools::bash::{BashError, BashParams, BashToolSpec};
 
@@ -28,17 +27,15 @@ impl StaticTool for BashTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<BashError>> {
         if ctx.is_cancelled() {
             return Err(StaticToolError::Cancelled);
         }
 
         if is_banned_command(&params.command) {
-            return Err(StaticToolError::execution(ToolExecutionError::Bash(
-                BashError::DisallowedCommand {
-                    command: params.command,
-                },
-            )));
+            return Err(StaticToolError::execution(BashError::DisallowedCommand {
+                command: params.command,
+            }));
         }
 
         let timeout_ms = params.timeout.unwrap_or(3_600_000).min(3_600_000);
@@ -61,7 +58,7 @@ async fn run_command(
     command: &str,
     working_directory: &std::path::Path,
     cancellation_token: tokio_util::sync::CancellationToken,
-) -> Result<BashResult, StaticToolError> {
+) -> Result<BashResult, StaticToolError<BashError>> {
     let mut cmd = Command::new("/bin/bash");
     cmd.arg("-c")
         .arg(command)
@@ -73,26 +70,26 @@ async fn run_command(
     let mut child = cmd
         .spawn()
         .map_err(|e| {
-            StaticToolError::execution(ToolExecutionError::Bash(BashError::Io {
+            StaticToolError::execution(BashError::Io {
                 message: e.to_string(),
-            }))
+            })
         })?;
 
     let mut stdout = child
         .stdout
         .take()
         .ok_or_else(|| {
-            StaticToolError::execution(ToolExecutionError::Bash(BashError::Io {
+            StaticToolError::execution(BashError::Io {
                 message: "Failed to capture stdout".to_string(),
-            }))
+            })
         })?;
     let mut stderr = child
         .stderr
         .take()
         .ok_or_else(|| {
-            StaticToolError::execution(ToolExecutionError::Bash(BashError::Io {
+            StaticToolError::execution(BashError::Io {
                 message: "Failed to capture stderr".to_string(),
-            }))
+            })
         })?;
 
     let stdout_handle = tokio::spawn(async move {
@@ -117,22 +114,22 @@ async fn run_command(
                 Ok(status) => {
                     let (stdout_result, stderr_result) = tokio::try_join!(stdout_handle, stderr_handle)
                         .map_err(|e| {
-                            StaticToolError::execution(ToolExecutionError::Bash(BashError::Io {
+                            StaticToolError::execution(BashError::Io {
                                 message: format!("Failed to join read tasks: {e}"),
-                            }))
+                            })
                         })?;
 
                     let stdout_bytes = stdout_result
                         .map_err(|e| {
-                            StaticToolError::execution(ToolExecutionError::Bash(BashError::Io {
+                            StaticToolError::execution(BashError::Io {
                                 message: format!("Failed to read stdout: {e}"),
-                            }))
+                            })
                         })?;
                     let stderr_bytes = stderr_result
                         .map_err(|e| {
-                            StaticToolError::execution(ToolExecutionError::Bash(BashError::Io {
+                            StaticToolError::execution(BashError::Io {
                                 message: format!("Failed to read stderr: {e}"),
-                            }))
+                            })
                         })?;
 
                     let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
@@ -146,11 +143,9 @@ async fn run_command(
                         command: command.to_string(),
                     })
                 }
-                Err(e) => Err(StaticToolError::execution(ToolExecutionError::Bash(
-                    BashError::Io {
-                        message: e.to_string(),
-                    },
-                ))),
+                Err(e) => Err(StaticToolError::execution(BashError::Io {
+                    message: e.to_string(),
+                })),
             }
         }
     };

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use strum::Display;
 
 use crate::ToolSpec;
+use crate::error::ToolExecutionError;
 use crate::result::{TodoListResult, TodoWriteResult};
 
 #[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema, Hash, Display)]
@@ -56,6 +57,10 @@ pub mod read {
 
         const NAME: &'static str = TODO_READ_TOOL_NAME;
         const DISPLAY_NAME: &'static str = "Read Todos";
+
+        fn execution_error(error: Self::Error) -> ToolExecutionError {
+            ToolExecutionError::TodoRead(error)
+        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
@@ -85,6 +90,10 @@ pub mod write {
 
         const NAME: &'static str = TODO_WRITE_TOOL_NAME;
         const DISPLAY_NAME: &'static str = "Write Todos";
+
+        fn execution_error(error: Self::Error) -> ToolExecutionError {
+            ToolExecutionError::TodoWrite(error)
+        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

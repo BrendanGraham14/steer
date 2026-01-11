@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::FileListResult;
 use steer_tools::tools::ls::{LsError, LsParams, LsToolSpec};
 use super::workspace_op_error;
@@ -24,7 +23,7 @@ impl StaticTool for LsTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<LsError>> {
         let request = ListDirectoryRequest {
             path: params.path,
             ignore: params.ignore,
@@ -36,9 +35,7 @@ impl StaticTool for LsTool {
             .list_directory(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::Ls(LsError::Workspace(
-                    workspace_op_error(e),
-                )))
+                StaticToolError::execution(LsError::Workspace(workspace_op_error(e)))
             })
     }
 }

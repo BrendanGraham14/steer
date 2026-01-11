@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::FileContentResult;
 
 pub const VIEW_TOOL_NAME: &str = "read_file";
@@ -16,6 +16,10 @@ impl ToolSpec for ViewToolSpec {
 
     const NAME: &'static str = VIEW_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "View File";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::View(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

@@ -5,7 +5,6 @@ use crate::config::model::builtin::claude_haiku_4_5 as summarization_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::FetchResult;
 use steer_tools::tools::fetch::{FetchError, FetchParams, FetchToolSpec};
 
@@ -42,7 +41,7 @@ impl StaticTool for FetchTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<FetchError>> {
         let model_caller = ctx
             .services
             .model_caller()
@@ -81,9 +80,9 @@ Provide a concise response based only on the content above.
             )
             .await
             .map_err(|e| match e {
-                ModelCallError::Api(msg) => StaticToolError::execution(ToolExecutionError::Fetch(
-                    FetchError::ModelCallFailed { message: msg },
-                )),
+                ModelCallError::Api(msg) => {
+                    StaticToolError::execution(FetchError::ModelCallFailed { message: msg })
+                }
                 ModelCallError::Cancelled => StaticToolError::Cancelled,
             })?;
 
@@ -99,7 +98,7 @@ Provide a concise response based only on the content above.
 async fn fetch_url(
     url: &str,
     token: &tokio_util::sync::CancellationToken,
-) -> Result<String, StaticToolError> {
+) -> Result<String, StaticToolError<FetchError>> {
     let client = reqwest::Client::new();
     let request = client.get(url);
 
@@ -114,12 +113,10 @@ async fn fetch_url(
             let url = response.url().to_string();
 
             if !status.is_success() {
-                return Err(StaticToolError::execution(ToolExecutionError::Fetch(
-                    FetchError::Http {
-                        status: status.as_u16(),
-                        url,
-                    },
-                )));
+                return Err(StaticToolError::execution(FetchError::Http {
+                    status: status.as_u16(),
+                    url,
+                }));
             }
 
             let text = tokio::select! {
@@ -129,18 +126,14 @@ async fn fetch_url(
 
             match text {
                 Ok(content) => Ok(content),
-                Err(e) => Err(StaticToolError::execution(ToolExecutionError::Fetch(
-                    FetchError::ReadFailed {
-                        url,
-                        message: e.to_string(),
-                    },
-                ))),
+                Err(e) => Err(StaticToolError::execution(FetchError::ReadFailed {
+                    url,
+                    message: e.to_string(),
+                })),
             }
         }
-        Err(e) => Err(StaticToolError::execution(ToolExecutionError::Fetch(
-            FetchError::RequestFailed {
-                message: format!("Request to URL {url} failed: {e}"),
-            },
-        ))),
+        Err(e) => Err(StaticToolError::execution(FetchError::RequestFailed {
+            message: format!("Request to URL {url} failed: {e}"),
+        })),
     }
 }

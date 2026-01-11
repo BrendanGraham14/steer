@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::error::ToolExecutionError;
 use crate::result::FetchResult;
 
 pub const FETCH_TOOL_NAME: &str = "web_fetch";
@@ -15,6 +16,10 @@ impl ToolSpec for FetchToolSpec {
 
     const NAME: &'static str = FETCH_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Fetch URL";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Fetch(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

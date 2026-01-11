@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::GlobResult;
 
 pub const GLOB_TOOL_NAME: &str = "glob";
@@ -16,6 +16,10 @@ impl ToolSpec for GlobToolSpec {
 
     const NAME: &'static str = GLOB_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Glob";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Glob(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

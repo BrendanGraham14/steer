@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::AstGrepResult;
 use steer_tools::tools::astgrep::{AstGrepError, AstGrepParams, AstGrepToolSpec};
 use super::workspace_op_error;
@@ -38,7 +37,7 @@ Automatically respects .gitignore files"#;
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<AstGrepError>> {
         let request = AstGrepRequest {
             pattern: params.pattern,
             lang: params.lang,
@@ -54,9 +53,7 @@ Automatically respects .gitignore files"#;
             .astgrep(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::AstGrep(
-                    AstGrepError::Workspace(workspace_op_error(e)),
-                ))
+                StaticToolError::execution(AstGrepError::Workspace(workspace_op_error(e)))
             })?;
         Ok(AstGrepResult(result))
     }

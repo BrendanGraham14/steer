@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::ReplaceResult;
 use steer_tools::tools::replace::{ReplaceError, ReplaceParams, ReplaceToolSpec};
 use steer_workspace::{WriteFileRequest, WorkspaceOpContext};
@@ -31,7 +30,7 @@ Before using this tool:
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<ReplaceError>> {
         let request = WriteFileRequest {
             file_path: params.file_path,
             content: params.content,
@@ -44,9 +43,7 @@ Before using this tool:
             .write_file(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::Replace(
-                    ReplaceError::Workspace(workspace_op_error(e)),
-                ))
+                StaticToolError::execution(ReplaceError::Workspace(workspace_op_error(e)))
             })?;
         Ok(ReplaceResult(result))
     }

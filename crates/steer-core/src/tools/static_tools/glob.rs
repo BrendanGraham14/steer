@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::GlobResult;
 use steer_tools::tools::glob::{GlobError, GlobParams, GlobToolSpec};
 use super::workspace_op_error;
@@ -27,7 +26,7 @@ impl StaticTool for GlobTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<GlobError>> {
         let request = GlobRequest {
             pattern: params.pattern,
             path: params.path,
@@ -39,9 +38,7 @@ impl StaticTool for GlobTool {
             .glob(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::Glob(GlobError::Workspace(
-                    workspace_op_error(e),
-                )))
+                StaticToolError::execution(GlobError::Workspace(workspace_op_error(e)))
             })
     }
 }

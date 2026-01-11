@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::GrepResult;
 
 pub const GREP_TOOL_NAME: &str = "grep";
@@ -16,6 +16,10 @@ impl ToolSpec for GrepToolSpec {
 
     const NAME: &'static str = GREP_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Grep";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Grep(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::edit::{EditError, EditParams, EditToolSpec};
 use super::workspace_op_error;
@@ -72,7 +71,7 @@ impl StaticTool for EditTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<EditError>> {
         let request = ApplyEditsRequest {
             file_path: params.file_path,
             edits: vec![EditOperation {
@@ -87,9 +86,7 @@ impl StaticTool for EditTool {
             .apply_edits(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::Edit(EditError::Workspace(
-                    workspace_op_error(e),
-                )))
+                StaticToolError::execution(EditError::Workspace(workspace_op_error(e)))
             })
     }
 }
@@ -110,7 +107,7 @@ impl StaticTool for MultiEditTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<MultiEditError>> {
         let request = ApplyEditsRequest {
             file_path: params.file_path,
             edits: params
@@ -130,9 +127,7 @@ impl StaticTool for MultiEditTool {
             .apply_edits(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::MultiEdit(
-                    MultiEditError::Workspace(workspace_op_error(e)),
-                ))
+                StaticToolError::execution(MultiEditError::Workspace(workspace_op_error(e)))
             })?;
         Ok(MultiEditResult(result))
     }

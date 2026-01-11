@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::{EditResult, MultiEditResult};
 
 pub const EDIT_TOOL_NAME: &str = "edit_file";
@@ -16,6 +16,10 @@ impl ToolSpec for EditToolSpec {
 
     const NAME: &'static str = EDIT_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Edit File";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Edit(error)
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
@@ -57,6 +61,10 @@ pub mod multi_edit {
 
         const NAME: &'static str = MULTI_EDIT_TOOL_NAME;
         const DISPLAY_NAME: &'static str = "Multi Edit";
+
+        fn execution_error(error: Self::Error) -> ToolExecutionError {
+            ToolExecutionError::MultiEdit(error)
+        }
     }
 
     #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]

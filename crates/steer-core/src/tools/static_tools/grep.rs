@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::GrepResult;
 use steer_tools::tools::grep::{GrepError, GrepParams, GrepToolSpec};
 use super::workspace_op_error;
@@ -30,7 +29,7 @@ impl StaticTool for GrepTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<GrepError>> {
         let request = GrepRequest {
             pattern: params.pattern,
             include: params.include,
@@ -44,9 +43,7 @@ impl StaticTool for GrepTool {
             .grep(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ToolExecutionError::Grep(GrepError::Workspace(
-                    workspace_op_error(e),
-                )))
+                StaticToolError::execution(GrepError::Workspace(workspace_op_error(e)))
             })?;
         Ok(GrepResult(result))
     }

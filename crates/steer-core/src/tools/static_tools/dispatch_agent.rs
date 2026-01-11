@@ -21,7 +21,6 @@ use crate::workspace::{
     create_workspace_from_session_config, CreateWorkspaceRequest, EnvironmentId, RepoRef,
     VcsStatus, Workspace, WorkspaceCreateStrategy, WorkspaceRef,
 };
-use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
 use steer_tools::tools::dispatch_agent::{
     DispatchAgentError, DispatchAgentParams, DispatchAgentTarget, DispatchAgentToolSpec,
@@ -118,7 +117,7 @@ impl StaticTool for DispatchAgentTool {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError> {
+    ) -> Result<Self::Output, StaticToolError<DispatchAgentError>> {
         let DispatchAgentParams { prompt, target } = params;
 
         let (workspace_target, agent) = match target {
@@ -199,13 +198,10 @@ impl StaticTool for DispatchAgentTool {
             status_manager = Some(manager.clone());
 
             let base_repo_id = repo_id.ok_or_else(|| {
-                StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                    DispatchAgentError::WorkspaceUnavailable {
-                        message:
-                            "Current path is not a jj workspace; cannot create new workspace"
-                                .to_string(),
-                    },
-                ))
+                StaticToolError::execution(DispatchAgentError::WorkspaceUnavailable {
+                    message: "Current path is not a jj workspace; cannot create new workspace"
+                        .to_string(),
+                })
             })?;
 
             let create_request = CreateWorkspaceRequest {
@@ -219,8 +215,8 @@ impl StaticTool for DispatchAgentTool {
                 .create_workspace(create_request)
                 .await
                 .map_err(|e| {
-                    StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                        DispatchAgentError::Workspace(workspace_manager_op_error(e)),
+                    StaticToolError::execution(DispatchAgentError::Workspace(
+                        workspace_manager_op_error(e),
                     ))
                 })?;
 
@@ -228,8 +224,8 @@ impl StaticTool for DispatchAgentTool {
                 .open_workspace(info.workspace_id)
                 .await
                 .map_err(|e| {
-                    StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                        DispatchAgentError::Workspace(workspace_manager_op_error(e)),
+                    StaticToolError::execution(DispatchAgentError::Workspace(
+                        workspace_manager_op_error(e),
                     ))
                 })?;
 
@@ -257,9 +253,7 @@ impl StaticTool for DispatchAgentTool {
         }
 
         let env_info = workspace.environment().await.map_err(|e| {
-            StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                DispatchAgentError::Workspace(workspace_op_error(e)),
-            ))
+            StaticToolError::execution(DispatchAgentError::Workspace(workspace_op_error(e)))
         })?;
 
         let system_prompt = format!(
@@ -385,11 +379,9 @@ Notes:
 
         let result = spawn_result.map_err(|e| match e {
             SubAgentError::Cancelled => StaticToolError::Cancelled,
-            other => StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                DispatchAgentError::SpawnFailed {
-                    message: other.to_string(),
-                },
-            )),
+            other => StaticToolError::execution(DispatchAgentError::SpawnFailed {
+                message: other.to_string(),
+            }),
         })?;
 
         Ok(AgentResult {
@@ -454,18 +446,16 @@ async fn resume_agent_session(
     session_id: SessionId,
     prompt: String,
     ctx: &StaticToolContext,
-) -> Result<AgentResult, StaticToolError> {
+) -> Result<AgentResult, StaticToolError<DispatchAgentError>> {
     let events = ctx
         .services
         .event_store
         .load_events(session_id)
         .await
         .map_err(|e| {
-            StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                DispatchAgentError::SpawnFailed {
-                    message: format!("Failed to load session {session_id}: {e}"),
-                },
-            ))
+            StaticToolError::execution(DispatchAgentError::SpawnFailed {
+                message: format!("Failed to load session {session_id}: {e}"),
+            })
         })?;
 
     let session_config = events
@@ -475,13 +465,11 @@ async fn resume_agent_session(
             _ => None,
         })
         .ok_or_else(|| {
-            StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                DispatchAgentError::SpawnFailed {
-                    message: format!(
-                        "Session {session_id} is missing a SessionCreated event"
-                    ),
-                },
-            ))
+            StaticToolError::execution(DispatchAgentError::SpawnFailed {
+                message: format!(
+                    "Session {session_id} is missing a SessionCreated event"
+                ),
+            })
         })?;
 
     if session_config.parent_session_id != Some(ctx.session_id) {
@@ -494,11 +482,9 @@ async fn resume_agent_session(
     let workspace = create_workspace_from_session_config(&session_config.workspace)
         .await
         .map_err(|e| {
-            StaticToolError::execution(ToolExecutionError::DispatchAgent(
-                DispatchAgentError::SpawnFailed {
-                    message: format!("Failed to open workspace for session {session_id}: {e}"),
-                },
-            ))
+            StaticToolError::execution(DispatchAgentError::SpawnFailed {
+                message: format!("Failed to open workspace for session {session_id}: {e}"),
+            })
         })?;
 
     let tool_executor = build_runtime_tool_executor(workspace, &ctx.services);
@@ -521,11 +507,9 @@ async fn resume_agent_session(
 
     let run_result = run_result.map_err(|e| match e {
         crate::error::Error::Cancelled => StaticToolError::Cancelled,
-        other => StaticToolError::execution(ToolExecutionError::DispatchAgent(
-            DispatchAgentError::SpawnFailed {
-                message: other.to_string(),
-            },
-        )),
+        other => StaticToolError::execution(DispatchAgentError::SpawnFailed {
+            message: other.to_string(),
+        }),
     })?;
 
     Ok(AgentResult {

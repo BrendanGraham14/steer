@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::FileListResult;
 
 pub const LS_TOOL_NAME: &str = "ls";
@@ -16,6 +16,10 @@ impl ToolSpec for LsToolSpec {
 
     const NAME: &'static str = LS_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "List Files";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Ls(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

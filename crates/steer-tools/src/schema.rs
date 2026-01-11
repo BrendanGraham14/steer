@@ -56,6 +56,8 @@ pub trait ToolSpec {
 
     const NAME: &'static str;
     const DISPLAY_NAME: &'static str;
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

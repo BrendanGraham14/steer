@@ -1,3 +1,4 @@
+use std::error::Error as StdError;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -27,13 +28,13 @@ impl StaticToolContext {
     }
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum StaticToolError {
+#[derive(Debug, thiserror::Error)]
+pub enum StaticToolError<E: StdError + Send + Sync + 'static> {
     #[error("Invalid parameters: {0}")]
     InvalidParams(String),
 
     #[error("{0}")]
-    Execution(ToolExecutionError),
+    Execution(E),
 
     #[error("Missing capability: {0}")]
     MissingCapability(String),
@@ -45,17 +46,31 @@ pub enum StaticToolError {
     Timeout,
 }
 
-impl StaticToolError {
+impl<E: StdError + Send + Sync + 'static> StaticToolError<E> {
     pub fn invalid_params(msg: impl Into<String>) -> Self {
         Self::InvalidParams(msg.into())
     }
 
-    pub fn execution(error: ToolExecutionError) -> Self {
+    pub fn execution(error: E) -> Self {
         Self::Execution(error)
     }
 
     pub fn missing_capability(cap: &str) -> Self {
         Self::MissingCapability(cap.to_string())
+    }
+
+    pub fn map_execution<F, E2>(self, f: F) -> StaticToolError<E2>
+    where
+        F: FnOnce(E) -> E2,
+        E2: StdError + Send + Sync + 'static,
+    {
+        match self {
+            StaticToolError::InvalidParams(msg) => StaticToolError::InvalidParams(msg),
+            StaticToolError::Execution(err) => StaticToolError::Execution(f(err)),
+            StaticToolError::MissingCapability(cap) => StaticToolError::MissingCapability(cap),
+            StaticToolError::Cancelled => StaticToolError::Cancelled,
+            StaticToolError::Timeout => StaticToolError::Timeout,
+        }
     }
 }
 
@@ -73,7 +88,7 @@ pub trait StaticTool: Send + Sync + 'static {
         &self,
         params: Self::Params,
         ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError>;
+    ) -> Result<Self::Output, StaticToolError<<Self::Spec as ToolSpec>::Error>>;
 
     fn schema() -> ToolSchema
     where
@@ -107,7 +122,7 @@ pub trait StaticToolErased: Send + Sync {
         &self,
         params: serde_json::Value,
         ctx: &StaticToolContext,
-    ) -> Result<ToolResult, StaticToolError>;
+    ) -> Result<ToolResult, StaticToolError<ToolExecutionError>>;
 }
 
 #[async_trait]
@@ -143,7 +158,7 @@ where
         &self,
         params: serde_json::Value,
         ctx: &StaticToolContext,
-    ) -> Result<ToolResult, StaticToolError> {
+    ) -> Result<ToolResult, StaticToolError<ToolExecutionError>> {
         let typed_params: T::Params = serde_json::from_value(params)
             .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
 
@@ -151,7 +166,10 @@ where
             return Err(StaticToolError::Cancelled);
         }
 
-        let result = self.execute(typed_params, ctx).await?;
+        let result = self
+            .execute(typed_params, ctx)
+            .await
+            .map_err(|e| e.map_execution(T::Spec::execution_error))?;
         Ok(result.into())
     }
 }

@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::ToolSpec;
+use crate::error::ToolExecutionError;
 use crate::result::BashResult;
 
 pub const BASH_TOOL_NAME: &str = "bash";
@@ -15,6 +17,10 @@ impl ToolSpec for BashToolSpec {
 
     const NAME: &'static str = BASH_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Bash";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Bash(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]

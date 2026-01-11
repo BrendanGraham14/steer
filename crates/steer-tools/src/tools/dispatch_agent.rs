@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::AgentResult;
 
 pub const DISPATCH_AGENT_TOOL_NAME: &str = "dispatch_agent";
@@ -16,6 +16,10 @@ impl ToolSpec for DispatchAgentToolSpec {
 
     const NAME: &'static str = DISPATCH_AGENT_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Dispatch Agent";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::DispatchAgent(error)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

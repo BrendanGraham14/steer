@@ -93,6 +93,7 @@ mod tests {
     use schemars::JsonSchema;
     use serde::Deserialize;
     use steer_tools::ToolSpec;
+    use steer_tools::error::ToolExecutionError;
 
     #[derive(Debug, Deserialize, JsonSchema)]
     struct TestParams {
@@ -115,15 +116,28 @@ mod tests {
 
     struct TestTool;
 
+    #[derive(Debug, Clone, thiserror::Error)]
+    #[error("test tool error: {message}")]
+    struct TestToolError {
+        message: String,
+    }
+
     struct TestToolSpec;
 
     impl ToolSpec for TestToolSpec {
         type Params = TestParams;
         type Result = TestOutput;
-        type Error = StaticToolError;
+        type Error = TestToolError;
 
         const NAME: &'static str = "test_tool";
         const DISPLAY_NAME: &'static str = "Test Tool";
+
+        fn execution_error(error: Self::Error) -> ToolExecutionError {
+            ToolExecutionError::External {
+                tool_name: Self::NAME.to_string(),
+                message: error.to_string(),
+            }
+        }
     }
 
     #[async_trait]
@@ -140,7 +154,7 @@ mod tests {
             &self,
             params: Self::Params,
             _ctx: &StaticToolContext,
-        ) -> Result<Self::Output, StaticToolError> {
+        ) -> Result<Self::Output, StaticToolError<TestToolError>> {
             Ok(TestOutput {
                 result: params.value,
             })
@@ -154,10 +168,17 @@ mod tests {
     impl ToolSpec for AgentToolSpec {
         type Params = TestParams;
         type Result = TestOutput;
-        type Error = StaticToolError;
+        type Error = TestToolError;
 
         const NAME: &'static str = "agent_tool";
         const DISPLAY_NAME: &'static str = "Agent Tool";
+
+        fn execution_error(error: Self::Error) -> ToolExecutionError {
+            ToolExecutionError::External {
+                tool_name: Self::NAME.to_string(),
+                message: error.to_string(),
+            }
+        }
     }
 
     #[async_trait]
@@ -174,7 +195,7 @@ mod tests {
             &self,
             params: Self::Params,
             _ctx: &StaticToolContext,
-        ) -> Result<Self::Output, StaticToolError> {
+        ) -> Result<Self::Output, StaticToolError<TestToolError>> {
             Ok(TestOutput {
                 result: params.value,
             })

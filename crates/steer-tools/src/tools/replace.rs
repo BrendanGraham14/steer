@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::error::WorkspaceOpError;
+use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::ReplaceResult;
 
 pub const REPLACE_TOOL_NAME: &str = "write_file";
@@ -16,6 +16,10 @@ impl ToolSpec for ReplaceToolSpec {
 
     const NAME: &'static str = REPLACE_TOOL_NAME;
     const DISPLAY_NAME: &'static str = "Replace File";
+
+    fn execution_error(error: Self::Error) -> ToolExecutionError {
+        ToolExecutionError::Replace(error)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
