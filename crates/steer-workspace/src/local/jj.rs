@@ -10,6 +10,7 @@ use jj_lib::file_util;
 use jj_lib::fileset::{self, FilesetDiagnostics};
 use jj_lib::gitignore::GitIgnoreFile;
 use jj_lib::matchers::Matcher;
+use jj_lib::repo::Repo;
 use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::settings::HumanByteSize;
 use jj_lib::working_copy::SnapshotOptions;
