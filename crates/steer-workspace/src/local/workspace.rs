@@ -5,17 +5,14 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
-use thiserror::Error;
 use tracing::info;
 
-use crate::error::{EnvironmentManagerResult, Result as WorkspaceResult, WorkspaceError};
-use crate::manager::{
-    CreateEnvironmentRequest, EnvironmentDeletePolicy, EnvironmentDescriptor, EnvironmentManager,
-};
+use crate::error::{Result as WorkspaceResult, WorkspaceError};
 use crate::ops::{
     ApplyEditsRequest, AstGrepRequest, GlobRequest, GrepRequest, ListDirectoryRequest,
     ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
@@ -23,9 +20,7 @@ use crate::ops::{
 use crate::result::{
     EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
 };
-use crate::{
-    CachedEnvironment, EnvironmentId, EnvironmentInfo, Workspace, WorkspaceMetadata, WorkspaceType,
-};
+use crate::{CachedEnvironment, EnvironmentInfo, Workspace, WorkspaceMetadata, WorkspaceType};
 
 use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Pattern};
@@ -344,10 +339,10 @@ fn grep_search_internal(
             continue;
         }
 
-        if let Some(ref pattern) = include_pattern {
-            if !path_matches_glob(path, pattern, base_path) {
-                continue;
-            }
+        if let Some(ref pattern) = include_pattern
+            && !path_matches_glob(path, pattern, base_path)
+        {
+            continue;
         }
 
         files_searched += 1;
@@ -371,10 +366,10 @@ fn grep_search_internal(
             }),
         );
 
-        if let Err(e) = search_result {
-            if e.kind() == std::io::ErrorKind::InvalidData {
-                continue;
-            }
+        if let Err(e) = search_result
+            && e.kind() == std::io::ErrorKind::InvalidData
+        {
+            continue;
         }
 
         all_matches.extend(matches_in_file);
@@ -471,16 +466,16 @@ fn astgrep_search_internal(
             continue;
         }
 
-        if let Some(ref pattern) = include_pattern {
-            if !path_matches_glob(path, pattern, base_path) {
-                continue;
-            }
+        if let Some(ref pattern) = include_pattern
+            && !path_matches_glob(path, pattern, base_path)
+        {
+            continue;
         }
 
-        if let Some(ref pattern) = exclude_pattern {
-            if path_matches_glob(path, pattern, base_path) {
-                continue;
-            }
+        if let Some(ref pattern) = exclude_pattern
+            && path_matches_glob(path, pattern, base_path)
+        {
+            continue;
         }
 
         let detected_lang = if let Some(l) = lang {
@@ -594,16 +589,16 @@ fn path_matches_glob(path: &Path, pattern: &glob::Pattern, base_path: &Path) -> 
         return true;
     }
 
-    if let Ok(relative_path) = path.strip_prefix(base_path) {
-        if pattern.matches_path(relative_path) {
-            return true;
-        }
+    if let Ok(relative_path) = path.strip_prefix(base_path)
+        && pattern.matches_path(relative_path)
+    {
+        return true;
     }
 
-    if let Some(filename) = path.file_name() {
-        if pattern.matches(&filename.to_string_lossy()) {
-            return true;
-        }
+    if let Some(filename) = path.file_name()
+        && pattern.matches(&filename.to_string_lossy())
+    {
+        return true;
     }
 
     false
@@ -625,7 +620,9 @@ async fn perform_edit_operations(
     token: Option<&CancellationToken>,
 ) -> WorkspaceResult<(String, usize, bool)> {
     if token.is_some_and(|t| t.is_cancelled()) {
-        return Err(WorkspaceError::ToolExecution("Operation cancelled".to_string()));
+        return Err(WorkspaceError::ToolExecution(
+            "Operation cancelled".to_string(),
+        ));
     }
 
     let mut current_content: String;
@@ -644,25 +641,24 @@ async fn perform_edit_operations(
             }
             let first_op = &operations[0];
             if first_op.old_string.is_empty() {
-                if let Some(parent) = file_path.parent() {
-                    if !tokio::fs::metadata(parent)
+                if let Some(parent) = file_path.parent()
+                    && !tokio::fs::metadata(parent)
                         .await
                         .map(|m| m.is_dir())
                         .unwrap_or(false)
-                    {
-                        if token.is_some_and(|t| t.is_cancelled()) {
-                            return Err(WorkspaceError::ToolExecution(
-                                "Operation cancelled".to_string(),
-                            ));
-                        }
-                        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                            WorkspaceError::Io(format!(
-                                "Failed to create directory {}: {}",
-                                parent.display(),
-                                e
-                            ))
-                        })?;
+                {
+                    if token.is_some_and(|t| t.is_cancelled()) {
+                        return Err(WorkspaceError::ToolExecution(
+                            "Operation cancelled".to_string(),
+                        ));
                     }
+                    tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                        WorkspaceError::Io(format!(
+                            "Failed to create directory {}: {}",
+                            parent.display(),
+                            e
+                        ))
+                    })?;
                 }
                 current_content = first_op.new_string.clone();
                 file_created_this_op = true;
@@ -688,7 +684,9 @@ async fn perform_edit_operations(
     let mut edits_applied_count = 0usize;
     for (index, edit_op) in operations.iter().enumerate() {
         if token.is_some_and(|t| t.is_cancelled()) {
-            return Err(WorkspaceError::ToolExecution("Operation cancelled".to_string()));
+            return Err(WorkspaceError::ToolExecution(
+                "Operation cancelled".to_string(),
+            ));
         }
 
         if edit_op.old_string.is_empty() {
@@ -756,79 +754,6 @@ impl LocalWorkspace {
     }
 }
 
-/// Local environment manager (single implicit environment).
-#[derive(Debug, Clone)]
-pub struct LocalEnvironmentManager {
-    root: PathBuf,
-    environment_id: EnvironmentId,
-}
-
-impl LocalEnvironmentManager {
-    pub fn new(root: PathBuf) -> Self {
-        Self {
-            root,
-            environment_id: EnvironmentId::local(),
-        }
-    }
-
-    pub fn environment_id(&self) -> EnvironmentId {
-        self.environment_id
-    }
-}
-
-#[async_trait]
-impl EnvironmentManager for LocalEnvironmentManager {
-    async fn create_environment(
-        &self,
-        _request: CreateEnvironmentRequest,
-    ) -> EnvironmentManagerResult<EnvironmentDescriptor> {
-        Ok(EnvironmentDescriptor {
-            environment_id: self.environment_id,
-            root: self.root.clone(),
-        })
-    }
-
-    async fn get_environment(
-        &self,
-        environment_id: EnvironmentId,
-    ) -> EnvironmentManagerResult<EnvironmentDescriptor> {
-        if environment_id != self.environment_id {
-            return Err(crate::error::EnvironmentManagerError::NotFound(
-                environment_id.as_uuid().to_string(),
-            ));
-        }
-
-        Ok(EnvironmentDescriptor {
-            environment_id: self.environment_id,
-            root: self.root.clone(),
-        })
-    }
-
-    async fn delete_environment(
-        &self,
-        _environment_id: EnvironmentId,
-        _policy: EnvironmentDeletePolicy,
-    ) -> EnvironmentManagerResult<()> {
-        // Local environments are implicit and not deletable.
-        Err(crate::error::EnvironmentManagerError::NotSupported(
-            "local environment cannot be deleted".to_string(),
-        ))
-    }
-
-    async fn environment_info(
-        &self,
-        environment_id: EnvironmentId,
-    ) -> EnvironmentManagerResult<EnvironmentInfo> {
-        if environment_id != self.environment_id {
-            return Err(crate::error::EnvironmentManagerError::NotFound(
-                environment_id.as_uuid().to_string(),
-            ));
-        }
-
-        Ok(EnvironmentInfo::collect_for_path(&self.root)?)
-    }
-}
-
 impl std::fmt::Debug for LocalWorkspace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LocalWorkspace")
@@ -844,10 +769,10 @@ impl Workspace for LocalWorkspace {
         let mut cache = self.environment_cache.write().await;
 
         // Check if we have valid cached data
-        if let Some(cached) = cache.as_ref() {
-            if !cached.is_expired() {
-                return Ok(cached.info.clone());
-            }
+        if let Some(cached) = cache.as_ref()
+            && !cached.is_expired()
+        {
+            return Ok(cached.info.clone());
         }
 
         // Collect fresh environment info
@@ -893,9 +818,14 @@ impl Workspace for LocalWorkspace {
         ctx: &WorkspaceOpContext,
     ) -> WorkspaceResult<FileContentResult> {
         let abs_path = resolve_path(&self.path, &request.file_path);
-        view_file_internal(&abs_path, request.offset, request.limit, &ctx.cancellation_token)
-            .await
-            .map_err(|e| WorkspaceError::Io(e.to_string()))
+        view_file_internal(
+            &abs_path,
+            request.offset,
+            request.limit,
+            &ctx.cancellation_token,
+        )
+        .await
+        .map_err(|e| WorkspaceError::Io(e.to_string()))
     }
 
     async fn list_directory(
@@ -915,9 +845,7 @@ impl Workspace for LocalWorkspace {
 
         match result {
             Ok(listing_result) => listing_result.map_err(|e| WorkspaceError::Io(e.to_string())),
-            Err(join_error) => Err(WorkspaceError::Io(format!(
-                "Task join error: {join_error}"
-            ))),
+            Err(join_error) => Err(WorkspaceError::Io(format!("Task join error: {join_error}"))),
         }
     }
 
@@ -984,7 +912,12 @@ impl Workspace for LocalWorkspace {
         let cancellation_token = ctx.cancellation_token.clone();
 
         let result = task::spawn_blocking(move || {
-            grep_search_internal(&pattern, include.as_deref(), &base_path, &cancellation_token)
+            grep_search_internal(
+                &pattern,
+                include.as_deref(),
+                &base_path,
+                &cancellation_token,
+            )
         })
         .await;
 
@@ -1096,14 +1029,12 @@ impl Workspace for LocalWorkspace {
 
         if let Some(parent) = abs_path.parent() {
             if !parent.exists() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| {
-                        WorkspaceError::Io(format!(
-                            "Failed to create parent directory {}: {e}",
-                            parent.display()
-                        ))
-                    })?;
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    WorkspaceError::Io(format!(
+                        "Failed to create parent directory {}: {e}",
+                        parent.display()
+                    ))
+                })?;
             }
         }
 
@@ -1111,10 +1042,7 @@ impl Workspace for LocalWorkspace {
         tokio::fs::write(&abs_path, &request.content)
             .await
             .map_err(|e| {
-                WorkspaceError::Io(format!(
-                    "Failed to write file {}: {e}",
-                    abs_path.display()
-                ))
+                WorkspaceError::Io(format!("Failed to write file {}: {e}", abs_path.display()))
             })?;
 
         Ok(EditResult {
