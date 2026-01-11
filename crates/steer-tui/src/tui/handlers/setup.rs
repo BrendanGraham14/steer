@@ -251,7 +251,6 @@ impl SetupHandler {
                             setup_state.auth_progress = None;
                         }
                     }
-                }
                 Ok(None)
             }
             KeyCode::Char(c) => {

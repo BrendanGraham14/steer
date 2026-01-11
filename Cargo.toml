@@ -12,6 +12,8 @@ repository = "https://github.com/brendangraham14/steer"
 
 [workspace.dependencies]
 steer = { version = "0.8.2", path = "crates/steer" }
+steer-auth-anthropic = { version = "0.8.2", path = "crates/steer-auth-anthropic" }
+steer-auth-openai = { version = "0.8.2", path = "crates/steer-auth-openai" }
 steer-auth-plugin = { version = "0.8.2", path = "crates/steer-auth-plugin" }
 steer-core = { version = "0.8.2", path = "crates/steer-core" }
 steer-grpc = { version = "0.8.2", path = "crates/steer-grpc" }

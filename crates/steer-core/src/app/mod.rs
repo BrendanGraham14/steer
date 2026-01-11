@@ -28,7 +28,7 @@ impl AppConfig {
         auth_storage: Arc<dyn crate::auth::AuthStorage>,
         catalog_config: CatalogConfig,
     ) -> Result<Self> {
-        let llm_config_provider = LlmConfigProvider::new(auth_storage);
+        let llm_config_provider = LlmConfigProvider::new(auth_storage)?;
         let model_registry = Arc::new(ModelRegistry::load(&catalog_config.catalog_paths)?);
         let provider_registry = Arc::new(ProviderRegistry::load(&catalog_config.catalog_paths)?);
 

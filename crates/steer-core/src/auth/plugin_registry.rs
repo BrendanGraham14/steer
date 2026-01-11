@@ -2,6 +2,10 @@ use crate::config::provider::ProviderId;
 use crate::error::{Error, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+use steer_auth_anthropic::AnthropicAuthPlugin;
+use steer_auth_openai::OpenAiAuthPlugin;
+use steer_auth_plugin::identifiers::ProviderId as PluginProviderId;
+use steer_auth_plugin::plugin::AuthPlugin;
 
 #[derive(Clone, Default)]
 pub struct AuthPluginRegistry {
@@ -11,6 +15,13 @@ pub struct AuthPluginRegistry {
 impl AuthPluginRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_defaults() -> Result<Self> {
+        let mut registry = Self::new();
+        registry.register(Arc::new(OpenAiAuthPlugin::new()))?;
+        registry.register(Arc::new(AnthropicAuthPlugin::new()))?;
+        Ok(registry)
     }
 
     pub fn register(&mut self, plugin: Arc<dyn AuthPlugin>) -> Result<()> {

@@ -63,7 +63,7 @@ impl AuthStorage for InMemoryAuthStorage {
 /// Create an `LlmConfigProvider` backed by in-memory auth storage for tests
 pub fn test_llm_config_provider() -> LlmConfigProvider {
     let storage = Arc::new(InMemoryAuthStorage::new());
-    LlmConfigProvider::new(storage)
+    LlmConfigProvider::new(storage).expect("test config provider")
 }
 
 /// Convenience to build an `AppConfig` for tests with a fresh provider

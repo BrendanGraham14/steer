@@ -6225,6 +6225,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "steer-auth-anthropic"
+version = "0.8.1"
+dependencies = [
+ "async-trait",
+ "base64",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2",
+ "steer-auth-plugin",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "steer-auth-openai"
+version = "0.8.1"
+dependencies = [
+ "async-trait",
+ "base64",
+ "hyper",
+ "hyper-util",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2",
+ "steer-auth-plugin",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "steer-auth-plugin"
 version = "0.8.1"
 dependencies = [
@@ -6286,6 +6323,8 @@ dependencies = [
  "shell-words",
  "similar",
  "sqlx",
+ "steer-auth-anthropic",
+ "steer-auth-openai",
  "steer-auth-plugin",
  "steer-macros",
  "steer-proto",

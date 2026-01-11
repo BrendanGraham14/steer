@@ -4,11 +4,10 @@ use super::responses;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider};
 use crate::app::conversation::Message;
-use crate::auth::AuthStorage;
+use crate::auth::OpenAiResponsesAuth;
 use crate::config::model::{ModelId, ModelParameters};
 use async_trait::async_trait;
 use steer_tools::ToolSchema;
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// Unified OpenAI client that supports both the Chat and Responses APIs.
@@ -40,9 +39,9 @@ impl OpenAIClient {
         }
     }
 
-    pub fn with_oauth(storage: Arc<dyn AuthStorage>) -> Self {
+    pub fn with_directive(directive: OpenAiResponsesAuth, base_url: Option<String>) -> Self {
         Self {
-            responses_client: responses::Client::with_oauth(storage),
+            responses_client: responses::Client::with_directive(directive, base_url),
             chat_client: None,
             default_mode: OpenAIMode::Responses,
         }

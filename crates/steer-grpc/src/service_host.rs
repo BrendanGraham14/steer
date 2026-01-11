@@ -112,7 +112,8 @@ impl ServiceHost {
         );
 
         let llm_config_provider =
-            steer_core::config::LlmConfigProvider::new(config.auth_storage.clone());
+            steer_core::config::LlmConfigProvider::new(config.auth_storage.clone())
+                .map_err(GrpcError::CoreError)?;
 
         let api_client = Arc::new(ApiClient::new_with_deps(
             llm_config_provider.clone(),

@@ -3,7 +3,7 @@ use crate::api::provider::Provider;
 use crate::api::{
     claude::AnthropicClient, gemini::GeminiClient, openai::OpenAIClient, xai::XAIClient,
 };
-use crate::auth::storage::Credential;
+use crate::auth::{AuthDirective, Credential};
 use crate::config::provider::{ApiFormat, ProviderConfig};
 use std::sync::Arc;
 
@@ -72,65 +72,42 @@ pub fn create_provider(
                 Ok(Arc::new(client))
             }
         },
-        Credential::OAuth2(_) => {
-            // Only Anthropic supports OAuth currently
-            match &provider_cfg.api_format {
-                ApiFormat::Anthropic => {
-                    // OAuth for Anthropic requires the storage, which we don't have here
-                    // This will be handled differently in the refactored code
-                    Err(ApiError::Configuration(
-                        "OAuth support requires auth storage context".to_string(),
-                    ))
-                }
-                _ => Err(ApiError::Configuration(format!(
-                    "OAuth is not supported for {:?} API format",
-                    provider_cfg.api_format
-                ))),
-            }
-        }
+        Credential::OAuth2(_) => Err(ApiError::Configuration(
+            "OAuth requires an AuthDirective, not a raw credential".to_string(),
+        )),
     }
 }
 
-/// Factory function that creates a provider with OAuth support (requires storage).
-///
-/// This is a separate function because OAuth providers need access to the auth storage
-/// to refresh tokens.
-pub fn create_provider_with_storage(
+/// Factory function that creates a provider using an auth directive.
+pub fn create_provider_with_directive(
     provider_cfg: &ProviderConfig,
-    credential: &Credential,
-    storage: Arc<dyn crate::auth::AuthStorage>,
+    directive: &AuthDirective,
 ) -> Result<Arc<dyn Provider>, ApiError> {
-    match credential {
-        Credential::ApiKey { .. } => create_provider(provider_cfg, credential),
-        Credential::OAuth2(_) => {
-            if provider_cfg.id == crate::config::provider::openai() {
-                if provider_cfg.base_url.is_some() {
-                    return Err(ApiError::Configuration(
-                        "Base URL override not supported with OpenAI OAuth".to_string(),
-                    ));
-                }
-                if provider_cfg.api_format != ApiFormat::OpenaiResponses {
-                    return Err(ApiError::Configuration(
-                        "OpenAI OAuth is only supported with responses API format".to_string(),
-                    ));
-                }
-                return Ok(Arc::new(OpenAIClient::with_oauth(storage)));
+    match directive {
+        AuthDirective::OpenAiResponses(openai) => {
+            if provider_cfg.api_format != ApiFormat::OpenaiResponses {
+                return Err(ApiError::Configuration(
+                    "OpenAI OAuth directives require responses API format".to_string(),
+                ));
             }
-
-            match &provider_cfg.api_format {
-                ApiFormat::Anthropic => {
-                    if provider_cfg.base_url.is_some() {
-                        return Err(ApiError::Configuration(
-                            "Base URL override not supported with OAuth authentication".to_string(),
-                        ));
-                    }
-                    Ok(Arc::new(AnthropicClient::with_oauth(storage)))
-                }
-                _ => Err(ApiError::Configuration(format!(
-                    "OAuth is not supported for {:?} API format",
-                    provider_cfg.api_format
-                ))),
+            let base_url = provider_cfg.base_url.as_ref().map(|url| url.to_string());
+            Ok(Arc::new(OpenAIClient::with_directive(
+                openai.clone(),
+                base_url,
+            )))
+        }
+        AuthDirective::Anthropic(anthropic) => {
+            if provider_cfg.api_format != ApiFormat::Anthropic {
+                return Err(ApiError::Configuration(
+                    "Anthropic OAuth directives require Anthropic API format".to_string(),
+                ));
             }
+            if provider_cfg.base_url.is_some() {
+                return Err(ApiError::Configuration(
+                    "Base URL override not yet supported for Anthropic API format".to_string(),
+                ));
+            }
+            Ok(Arc::new(AnthropicClient::with_directive(anthropic.clone())))
         }
     }
 }
@@ -177,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn test_oauth_requires_storage() {
+    fn test_oauth_requires_directive() {
         let config = ProviderConfig {
             id: provider::anthropic(),
             name: "Anthropic".to_string(),
@@ -199,6 +176,6 @@ mod tests {
             Err(e) => e.to_string(),
             Ok(_) => panic!("Expected error"),
         };
-        assert!(err_msg.contains("OAuth support requires auth storage"));
+        assert!(err_msg.contains("OAuth requires an AuthDirective"));
     }
 }

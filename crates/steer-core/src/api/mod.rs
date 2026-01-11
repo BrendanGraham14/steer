@@ -8,15 +8,15 @@ pub mod sse;
 pub mod util;
 pub mod xai;
 
-use crate::auth::ProviderRegistry;
-use crate::auth::storage::{Credential, CredentialType};
+use crate::auth::storage::Credential;
+use crate::auth::{AuthSource, ProviderRegistry};
 use crate::config::model::ModelId;
 use crate::config::provider::ProviderId;
-use crate::config::{ApiAuth, LlmConfigProvider};
+use crate::config::{LlmConfigProvider, ResolvedAuth};
 use crate::error::Result;
 use crate::model_registry::ModelRegistry;
 pub use error::{ApiError, StreamError};
-pub use factory::{create_provider, create_provider_with_storage};
+pub use factory::{create_provider, create_provider_with_directive};
 pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,10 +30,16 @@ use crate::app::conversation::Message;
 
 #[derive(Clone)]
 pub struct Client {
-    provider_map: Arc<RwLock<HashMap<ProviderId, Arc<dyn Provider>>>>,
+    provider_map: Arc<RwLock<HashMap<ProviderId, ProviderEntry>>>,
     config_provider: LlmConfigProvider,
     provider_registry: Arc<ProviderRegistry>,
     model_registry: Arc<ModelRegistry>,
+}
+
+#[derive(Clone)]
+struct ProviderEntry {
+    provider: Arc<dyn Provider>,
+    auth_source: AuthSource,
 }
 
 impl Client {
@@ -72,15 +78,21 @@ impl Client {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insert_test_provider(&self, provider_id: ProviderId, provider: Arc<dyn Provider>) {
         let mut map = self.provider_map.write().unwrap();
-        map.insert(provider_id, provider);
+        map.insert(
+            provider_id,
+            ProviderEntry {
+                provider,
+                auth_source: AuthSource::None,
+            },
+        );
     }
 
-    async fn get_or_create_provider(&self, provider_id: ProviderId) -> Result<Arc<dyn Provider>> {
+    async fn get_or_create_provider_entry(&self, provider_id: ProviderId) -> Result<ProviderEntry> {
         // First check without holding the lock across await
         {
             let map = self.provider_map.read().unwrap();
-            if let Some(provider) = map.get(&provider_id) {
-                return Ok(provider.clone());
+            if let Some(entry) = map.get(&provider_id) {
+                return Ok(entry.clone());
             }
         }
 
@@ -91,60 +103,79 @@ impl Client {
             )))
         })?;
 
-        // Get credential for the provider
-        let credential = match self
+        let resolved = self
             .config_provider
-            .get_auth_for_provider(&provider_id)
-            .await?
-        {
-            Some(ApiAuth::OAuth) => {
-                // Get OAuth credential from storage using the centralized storage_key()
-                self.config_provider
-                    .auth_storage()
-                    .get_credential(&provider_id.storage_key(), CredentialType::OAuth2)
-                    .await
-                    .map_err(|e| {
-                        crate::error::Error::Api(ApiError::Configuration(format!(
-                            "Failed to get OAuth credential: {e}"
-                        )))
-                    })?
-                    .ok_or_else(|| {
-                        crate::error::Error::Api(ApiError::Configuration(
-                            "OAuth credential not found in storage".to_string(),
-                        ))
-                    })?
-            }
-            Some(ApiAuth::Key(key)) => Credential::ApiKey { value: key },
-            None => {
-                return Err(crate::error::Error::Api(ApiError::Configuration(format!(
-                    "No authentication configured for {provider_id:?}"
-                ))));
-            }
-        };
+            .resolve_auth_for_provider(&provider_id)
+            .await?;
 
         // Now acquire write lock and create provider
         let mut map = self.provider_map.write().unwrap();
 
         // Check again in case another thread added it
-        if let Some(provider) = map.get(&provider_id) {
-            return Ok(provider.clone());
+        if let Some(entry) = map.get(&provider_id) {
+            return Ok(entry.clone());
         }
 
-        // Create the provider using factory
-        let provider_instance = if matches!(&credential, Credential::OAuth2(_)) {
-            factory::create_provider_with_storage(
-                provider_config,
-                &credential,
-                self.config_provider.auth_storage().clone(),
-            )
-            .map_err(crate::error::Error::Api)?
-        } else {
-            factory::create_provider(provider_config, &credential)
-                .map_err(crate::error::Error::Api)?
+        let entry = self
+            .build_provider_entry(provider_config, &resolved)
+            .map_err(crate::error::Error::Api)?;
+
+        map.insert(provider_id, entry.clone());
+        Ok(entry)
+    }
+
+    fn build_provider_entry(
+        &self,
+        provider_config: &crate::config::provider::ProviderConfig,
+        resolved: &ResolvedAuth,
+    ) -> std::result::Result<ProviderEntry, ApiError> {
+        let provider = match resolved {
+            ResolvedAuth::Plugin { directive, .. } => {
+                factory::create_provider_with_directive(provider_config, directive)?
+            }
+            ResolvedAuth::ApiKey { credential, .. } => {
+                factory::create_provider(provider_config, credential)?
+            }
+            ResolvedAuth::None => {
+                return Err(ApiError::Configuration(format!(
+                    "No authentication configured for {:?}",
+                    provider_config.id
+                )));
+            }
         };
 
-        map.insert(provider_id, provider_instance.clone());
-        Ok(provider_instance)
+        Ok(ProviderEntry {
+            provider,
+            auth_source: resolved.source(),
+        })
+    }
+
+    async fn fallback_api_key_entry(
+        &self,
+        provider_id: &ProviderId,
+    ) -> Result<Option<ProviderEntry>> {
+        let Some((key, origin)) = self
+            .config_provider
+            .resolve_api_key_for_provider(provider_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let provider_config = self.provider_registry.get(provider_id).ok_or_else(|| {
+            crate::error::Error::Api(ApiError::Configuration(format!(
+                "No provider configuration found for {provider_id:?}"
+            )))
+        })?;
+
+        let credential = Credential::ApiKey { value: key };
+        let provider = factory::create_provider(provider_config, &credential)
+            .map_err(crate::error::Error::Api)?;
+
+        Ok(Some(ProviderEntry {
+            provider,
+            auth_source: AuthSource::ApiKey { origin },
+        }))
     }
 
     /// Complete a prompt with a specific model ID and optional parameters
@@ -159,10 +190,11 @@ impl Client {
     ) -> std::result::Result<CompletionResponse, ApiError> {
         // Get provider from model ID
         let provider_id = model_id.0.clone();
-        let provider = self
-            .get_or_create_provider(provider_id.clone())
+        let entry = self
+            .get_or_create_provider_entry(provider_id.clone())
             .await
             .map_err(ApiError::from)?;
+        let provider = entry.provider.clone();
 
         if token.is_cancelled() {
             return Err(ApiError::Cancelled {
@@ -188,12 +220,37 @@ impl Client {
         );
 
         let result = provider
-            .complete(model_id, messages, system, tools, effective_params, token)
+            .complete(
+                model_id,
+                messages.clone(),
+                system.clone(),
+                tools.clone(),
+                effective_params,
+                token.clone(),
+            )
             .await;
 
         if let Err(ref err) = result {
             if Self::should_invalidate_provider(err) {
                 self.invalidate_provider(&provider_id);
+
+                if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
+                    if let Some(fallback) = self
+                        .fallback_api_key_entry(&provider_id)
+                        .await
+                        .map_err(ApiError::from)?
+                    {
+                        let fallback_result = fallback
+                            .provider
+                            .complete(model_id, messages, system, tools, effective_params, token)
+                            .await;
+                        if fallback_result.is_ok() {
+                            let mut map = self.provider_map.write().unwrap();
+                            map.insert(provider_id, fallback);
+                        }
+                        return fallback_result;
+                    }
+                }
             }
         }
 
@@ -210,10 +267,11 @@ impl Client {
         token: CancellationToken,
     ) -> std::result::Result<CompletionStream, ApiError> {
         let provider_id = model_id.0.clone();
-        let provider = self
-            .get_or_create_provider(provider_id.clone())
+        let entry = self
+            .get_or_create_provider_entry(provider_id.clone())
             .await
             .map_err(ApiError::from)?;
+        let provider = entry.provider.clone();
 
         if token.is_cancelled() {
             return Err(ApiError::Cancelled {
@@ -238,12 +296,44 @@ impl Client {
         );
 
         let result = provider
-            .stream_complete(model_id, messages, system, tools, effective_params, token)
+            .stream_complete(
+                model_id,
+                messages.clone(),
+                system.clone(),
+                tools.clone(),
+                effective_params,
+                token.clone(),
+            )
             .await;
 
         if let Err(ref err) = result {
             if Self::should_invalidate_provider(err) {
                 self.invalidate_provider(&provider_id);
+
+                if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
+                    if let Some(fallback) = self
+                        .fallback_api_key_entry(&provider_id)
+                        .await
+                        .map_err(ApiError::from)?
+                    {
+                        let fallback_result = fallback
+                            .provider
+                            .stream_complete(
+                                model_id,
+                                messages,
+                                system,
+                                tools,
+                                effective_params,
+                                token,
+                            )
+                            .await;
+                        if fallback_result.is_ok() {
+                            let mut map = self.provider_map.write().unwrap();
+                            map.insert(provider_id, fallback);
+                        }
+                        return fallback_result;
+                    }
+                }
             }
         }
 
@@ -263,10 +353,11 @@ impl Client {
 
         // Prepare provider and parameters once
         let provider_id = model_id.0.clone();
-        let provider = self
-            .get_or_create_provider(provider_id.clone())
+        let entry = self
+            .get_or_create_provider_entry(provider_id.clone())
             .await
             .map_err(ApiError::from)?;
+        let provider = entry.provider.clone();
 
         let model_config = self.model_registry.get(model_id);
         debug!(
@@ -321,6 +412,30 @@ impl Client {
 
                     if Self::should_invalidate_provider(&error) {
                         self.invalidate_provider(&provider_id);
+                        if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
+                            if let Some(fallback) = self
+                                .fallback_api_key_entry(&provider_id)
+                                .await
+                                .map_err(ApiError::from)?
+                            {
+                                let fallback_result = fallback
+                                    .provider
+                                    .complete(
+                                        model_id,
+                                        messages.to_vec(),
+                                        system_prompt.clone(),
+                                        tools.clone(),
+                                        effective_params,
+                                        token.clone(),
+                                    )
+                                    .await;
+                                if fallback_result.is_ok() {
+                                    let mut map = self.provider_map.write().unwrap();
+                                    map.insert(provider_id.clone(), fallback);
+                                }
+                                return fallback_result;
+                            }
+                        }
                         return Err(error);
                     }
 
@@ -367,6 +482,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::ApiKeyOrigin;
     use crate::config::provider::ProviderId;
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
@@ -420,7 +536,7 @@ mod tests {
 
     fn test_client() -> Client {
         let auth_storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
-        let config_provider = LlmConfigProvider::new(auth_storage);
+        let config_provider = LlmConfigProvider::new(auth_storage).expect("config provider");
         let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
         let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
 
@@ -432,7 +548,15 @@ mod tests {
             .provider_map
             .write()
             .unwrap()
-            .insert(provider_id, Arc::new(StubProvider::new(error)));
+            .insert(
+                provider_id,
+                ProviderEntry {
+                    provider: Arc::new(StubProvider::new(error)),
+                    auth_source: AuthSource::ApiKey {
+                        origin: ApiKeyOrigin::Stored,
+                    },
+                },
+            );
     }
 
     #[tokio::test]

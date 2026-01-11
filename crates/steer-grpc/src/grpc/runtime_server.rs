@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
-use steer_core::auth::{AuthFlowWrapper, AuthMethod, DynAuthenticationFlow};
-use steer_core::auth::anthropic::AnthropicOAuthFlow;
-use steer_core::auth::openai::OpenAIOAuthFlow;
+use steer_core::auth::{
+    AuthFlowWrapper, AuthMethod, AuthSource, DynAuthenticationFlow, ModelId as AuthModelId,
+    ModelVisibilityPolicy, ProviderId as AuthProviderId,
+};
+use steer_core::auth::api_key::ApiKeyAuthFlow;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
 use steer_workspace::{EnvironmentManager, RepoManager, WorkspaceManager};
@@ -198,14 +200,21 @@ impl RuntimeAgentService {
         let provider_name = provider_cfg.name.clone();
         let auth_storage = self.llm_config_provider.auth_storage().clone();
 
-        if *provider_id == steer_core::config::provider::openai() {
-            let flow = AuthFlowWrapper::new(OpenAIOAuthFlow::new(auth_storage));
-            return Ok((Arc::new(flow), AuthMethod::OAuth));
-        }
-
-        if *provider_id == steer_core::config::provider::anthropic() {
-            let flow = AuthFlowWrapper::new(AnthropicOAuthFlow::new(auth_storage));
-            return Ok((Arc::new(flow), AuthMethod::OAuth));
+        if let Some(plugin) = self.llm_config_provider.plugin_registry().get(provider_id)
+            && let Some(flow) = plugin.create_flow(auth_storage.clone())
+        {
+            let methods = flow.available_methods();
+            let method = if methods.contains(&AuthMethod::OAuth) {
+                AuthMethod::OAuth
+            } else if methods.contains(&AuthMethod::ApiKey) {
+                AuthMethod::ApiKey
+            } else {
+                return Err(Status::failed_precondition(format!(
+                    "No supported auth methods for provider {}",
+                    provider_id.as_str()
+                )));
+            };
+            return Ok((Arc::from(flow), method));
         }
 
         let flow = AuthFlowWrapper::new(ApiKeyAuthFlow::new(
@@ -1013,62 +1022,80 @@ impl agent_service_server::AgentService for RuntimeAgentService {
     ) -> Result<Response<ListModelsResponse>, Status> {
         let req = request.into_inner();
 
-        let openai_oauth_configured = if req
-            .provider_id
-            .as_deref()
-            .map(|id| id == steer_core::config::provider::OPENAI_ID)
-            .unwrap_or(true)
-        {
-            match self
-                .llm_config_provider
-                .get_auth_for_provider(&steer_core::config::provider::openai())
-                .await
-            {
-                Ok(Some(steer_core::config::ApiAuth::OAuth)) => true,
-                Ok(_) => false,
-                Err(err) => {
-                    warn!(
-                        "Failed to determine OpenAI auth status for model listing: {err}"
-                    );
-                    false
+        let mut auth_sources: HashMap<steer_core::config::provider::ProviderId, AuthSource> =
+            HashMap::new();
+        let mut visibility_policies: HashMap<
+            steer_core::config::provider::ProviderId,
+            Option<Arc<dyn ModelVisibilityPolicy>>,
+        > = HashMap::new();
+
+        let mut all_models = Vec::new();
+
+        for model in self.model_registry.recommended() {
+            if let Some(ref provider_id) = req.provider_id {
+                if model.provider.storage_key() != *provider_id {
+                    continue;
                 }
             }
-        } else {
-            true
-        };
 
-        let all_models: Vec<proto::ProviderModel> = self
-            .model_registry
-            .recommended()
-            .filter(|m| {
-                if let Some(ref provider_id) = req.provider_id {
-                    m.provider.storage_key() == *provider_id
-                } else {
-                    true
-                }
-            })
-            .filter(|m| {
-                if m.provider == steer_core::config::provider::openai()
-                    && m.id == "gpt-5.2-codex"
+            let provider_id = model.provider.clone();
+
+            let auth_source = if let Some(source) = auth_sources.get(&provider_id) {
+                source.clone()
+            } else {
+                let source = match self
+                    .llm_config_provider
+                    .resolve_auth_source(&provider_id)
+                    .await
                 {
-                    openai_oauth_configured
-                } else {
-                    true
+                    Ok(source) => source,
+                    Err(err) => {
+                        warn!(
+                            "Failed to resolve auth source for provider {}: {err}",
+                            provider_id.as_str()
+                        );
+                        AuthSource::None
+                    }
+                };
+                auth_sources.insert(provider_id.clone(), source.clone());
+                source
+            };
+
+            let policy = visibility_policies
+                .entry(provider_id.clone())
+                .or_insert_with(|| {
+                    self.llm_config_provider
+                        .plugin_registry()
+                        .get(&provider_id)
+                        .and_then(|plugin| plugin.model_visibility().map(Arc::from))
+                });
+
+            if let Some(policy) = policy {
+                let auth_model_id = AuthModelId {
+                    provider_id: AuthProviderId(provider_id.as_str().to_string()),
+                    model_id: model.id.clone(),
+                };
+                if !policy.allow_model(&auth_model_id, &auth_source) {
+                    continue;
                 }
-            })
-            .map(|m| proto::ProviderModel {
-                provider_id: m.provider.storage_key(),
-                model_id: m.id.clone(),
-                display_name: m.display_name.clone().unwrap_or_else(|| m.id.clone()),
-                supports_thinking: m
+            }
+
+            all_models.push(proto::ProviderModel {
+                provider_id: model.provider.storage_key(),
+                model_id: model.id.clone(),
+                display_name: model
+                    .display_name
+                    .clone()
+                    .unwrap_or_else(|| model.id.clone()),
+                supports_thinking: model
                     .parameters
                     .as_ref()
                     .and_then(|p| p.thinking_config.as_ref())
                     .map(|tc| tc.enabled)
                     .unwrap_or(false),
-                aliases: m.aliases.clone(),
-            })
-            .collect();
+                aliases: model.aliases.clone(),
+            });
+        }
 
         Ok(Response::new(ListModelsResponse { models: all_models }))
     }

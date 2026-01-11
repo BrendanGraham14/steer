@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use steer_grpc::{ServiceHost, ServiceHostConfig};
 use steer_proto::agent::v1::{
-    CreateSessionRequest, ListFilesRequest, SubscribeSessionEventsRequest, WorkspaceConfig,
-    agent_service_client::AgentServiceClient,
+    CreateSessionRequest, GetAuthProgressRequest, ListFilesRequest, StartAuthRequest,
+    SubscribeSessionEventsRequest, WorkspaceConfig, agent_service_client::AgentServiceClient,
+    auth_progress::State as AuthProgressState,
 };
 use steer_tui::error::Result;
 use tempfile::TempDir;
@@ -84,6 +85,14 @@ fn test_something() {
     tokio::fs::write(workspace_path.join(".gitignore"), "target/\n*.swp\n").await?;
 
     Ok((temp_dir, workspace_path))
+}
+
+fn unused_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind to ephemeral port")
+        .local_addr()
+        .expect("local addr")
+        .port()
 }
 
 #[tokio::test]
@@ -246,6 +255,114 @@ async fn test_tui_agent_service_file_listing() {
         .shutdown()
         .await
         .expect("Failed to shutdown service host");
+}
+
+#[tokio::test]
+async fn test_tui_auth_flow_poll_no_input() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let (_temp_dir, workspace_path) = setup_test_workspace()
+        .await
+        .expect("Failed to setup test workspace");
+
+    let db_path = workspace_path.join("test_sessions_auth.db");
+    let bind_addr = format!("127.0.0.1:{}", unused_port()).parse().unwrap();
+    let config = ServiceHostConfig {
+        db_path,
+        bind_addr,
+        auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
+        catalog_config: steer_core::catalog::CatalogConfig::default(),
+        workspace_root: Some(workspace_path.clone()),
+    };
+
+    let mut service_host = ServiceHost::new(config).await.unwrap();
+    service_host.start().await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let mut grpc_client = AgentServiceClient::new(channel.clone());
+
+    let start = grpc_client
+        .start_auth(StartAuthRequest {
+            provider_id: "anthropic".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(!start.flow_id.is_empty());
+
+    let progress = grpc_client
+        .get_auth_progress(GetAuthProgressRequest {
+            flow_id: start.flow_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .progress
+        .expect("progress response");
+
+    assert!(!matches!(progress.state, Some(AuthProgressState::Error(_))));
+
+    service_host.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_tui_auth_flow_poll_no_input_openai() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let (_temp_dir, workspace_path) = setup_test_workspace()
+        .await
+        .expect("Failed to setup test workspace");
+
+    let db_path = workspace_path.join("test_sessions_auth_openai.db");
+    let bind_addr = format!("127.0.0.1:{}", unused_port()).parse().unwrap();
+    let config = ServiceHostConfig {
+        db_path,
+        bind_addr,
+        auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
+        catalog_config: steer_core::catalog::CatalogConfig::default(),
+        workspace_root: Some(workspace_path.clone()),
+    };
+
+    let mut service_host = ServiceHost::new(config).await.unwrap();
+    service_host.start().await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let channel = Channel::from_shared(format!("http://{bind_addr}"))
+        .unwrap()
+        .connect()
+        .await
+        .unwrap();
+    let mut grpc_client = AgentServiceClient::new(channel.clone());
+
+    let start = grpc_client
+        .start_auth(StartAuthRequest {
+            provider_id: "openai".to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert!(!start.flow_id.is_empty());
+
+    let progress = grpc_client
+        .get_auth_progress(GetAuthProgressRequest {
+            flow_id: start.flow_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .progress
+        .expect("progress response");
+
+    assert!(!matches!(progress.state, Some(AuthProgressState::Error(_))));
+
+    service_host.shutdown().await.unwrap();
 }
 
 #[tokio::test]

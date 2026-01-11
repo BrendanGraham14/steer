@@ -117,7 +117,8 @@ pub async fn setup_local_grpc_with_catalog(
     #[cfg(test)]
     let auth_storage = std::sync::Arc::new(steer_core::test_utils::InMemoryAuthStorage::new());
 
-    let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
+    let llm_config_provider =
+        steer_core::config::LlmConfigProvider::new(auth_storage).map_err(GrpcError::CoreError)?;
 
     let api_client = Arc::new(ApiClient::new_with_deps(
         llm_config_provider.clone(),
@@ -255,7 +256,8 @@ mod tests {
         );
 
         let auth_storage = Arc::new(steer_core::test_utils::InMemoryAuthStorage::new());
-        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage);
+        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage)
+            .map_err(GrpcError::CoreError)?;
 
         let api_client = Arc::new(ApiClient::new_with_deps(
             llm_config_provider.clone(),

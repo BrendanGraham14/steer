@@ -15,35 +15,26 @@ use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
-use crate::auth::AuthStorage;
-use crate::auth::openai::{OpenAIOAuth, extract_chatgpt_account_id, refresh_if_needed};
+use crate::auth::{
+    AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy, OpenAiResponsesAuth,
+    RequestKind,
+};
+use crate::auth::{ModelId as AuthModelId, ProviderId as AuthProviderId};
 use crate::config::model::{ModelId, ModelParameters};
-use std::sync::Arc;
 use steer_tools::ToolSchema;
 
 const DEFAULT_API_URL: &str = "https://api.openai.com/v1/responses";
-const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
-const OPENAI_BETA: &str = "responses=experimental";
-const ORIGINATOR: &str = "codex_cli_rs";
-const CODEX_BASE_INSTRUCTIONS: &str = include_str!("../../../assets/codex/gpt-5.2-codex_prompt.md");
-const GPT_5_2_CODEX_MODEL_ID: &str = "gpt-5.2-codex";
-
+#[derive(Clone)]
 enum ResponsesAuth {
     ApiKey(String),
-    OAuth {
-        storage: Arc<dyn AuthStorage>,
-        oauth: OpenAIOAuth,
-    },
+    Directive(OpenAiResponsesAuth),
 }
 
-impl Clone for ResponsesAuth {
-    fn clone(&self) -> Self {
+impl ResponsesAuth {
+    fn directive(&self) -> Option<&OpenAiResponsesAuth> {
         match self {
-            ResponsesAuth::ApiKey(value) => ResponsesAuth::ApiKey(value.clone()),
-            ResponsesAuth::OAuth { storage, .. } => ResponsesAuth::OAuth {
-                storage: Arc::clone(storage),
-                oauth: OpenAIOAuth::new(),
-            },
+            ResponsesAuth::Directive(directive) => Some(directive),
+            _ => None,
         }
     }
 }
@@ -76,34 +67,25 @@ impl Client {
         }
     }
 
-    pub(super) fn with_oauth(storage: Arc<dyn AuthStorage>) -> Self {
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            header::ACCEPT,
-            header::HeaderValue::from_static("text/event-stream"),
-        );
-        headers.insert(
-            header::HeaderName::from_static("openai-beta"),
-            header::HeaderValue::from_static(OPENAI_BETA),
-        );
-        headers.insert(
-            header::HeaderName::from_static("originator"),
-            header::HeaderValue::from_static(ORIGINATOR),
-        );
-
+    pub(super) fn with_directive(
+        directive: OpenAiResponsesAuth,
+        base_url: Option<String>,
+    ) -> Self {
         let http_client = reqwest::Client::builder()
-            .default_headers(headers)
             .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
             .build()
             .expect("Failed to build HTTP client");
 
+        let base_url = directive
+            .base_url_override
+            .as_deref()
+            .or(base_url.as_deref());
+        let base_url = crate::api::util::normalize_responses_url(base_url, DEFAULT_API_URL);
+
         Self {
             http_client,
-            base_url: CODEX_BASE_URL.to_string(),
-            auth: ResponsesAuth::OAuth {
-                storage,
-                oauth: OpenAIOAuth::new(),
-            },
+            base_url,
+            auth: ResponsesAuth::Directive(directive),
         }
     }
 
@@ -116,16 +98,11 @@ impl Client {
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
     ) -> ResponsesRequest {
-        let mut instructions = system;
-        if matches!(self.auth, ResponsesAuth::OAuth { .. }) {
-            let system_prompt = instructions
-                .as_deref()
-                .map(str::trim)
-                .filter(|prompt| !prompt.is_empty())
-                .map(str::to_owned);
-            instructions =
-                Some(system_prompt.unwrap_or_else(|| CODEX_BASE_INSTRUCTIONS.to_string()));
-        }
+        let directive = self.auth.directive();
+        let instructions = apply_instruction_policy(
+            system,
+            directive.and_then(|d| d.instruction_policy.as_ref()),
+        );
 
         let input = self.convert_messages_to_input(&messages);
 
@@ -205,32 +182,24 @@ impl Client {
             extra: Default::default(),
         };
 
-        if matches!(self.auth, ResponsesAuth::OAuth { .. }) {
-            request.extra.insert(
-                "include".to_string(),
-                ExtraValue::Array(vec![ExtraValue::String(
-                    "reasoning.encrypted_content".to_string(),
-                )]),
-            );
+        if let Some(include) = directive.and_then(|d| d.include.as_ref()) {
+            let values = include
+                .iter()
+                .cloned()
+                .map(ExtraValue::String)
+                .collect();
+            request
+                .extra
+                .insert("include".to_string(), ExtraValue::Array(values));
         }
 
         request
     }
 
-    fn is_oauth(&self) -> bool {
-        matches!(self.auth, ResponsesAuth::OAuth { .. })
-    }
-
-    fn ensure_model_supported(&self, model_id: &ModelId) -> Result<(), ApiError> {
-        if matches!(self.auth, ResponsesAuth::ApiKey(_)) && model_id.1 == GPT_5_2_CODEX_MODEL_ID {
-            return Err(ApiError::Configuration(format!(
-                "{GPT_5_2_CODEX_MODEL_ID} is only available when using OpenAI OAuth"
-            )));
-        }
-        Ok(())
-    }
-
-    async fn auth_headers(&self) -> Result<header::HeaderMap, ApiError> {
+    async fn auth_headers(
+        &self,
+        ctx: AuthHeaderContext,
+    ) -> Result<header::HeaderMap, ApiError> {
         match &self.auth {
             ResponsesAuth::ApiKey(value) => {
                 let mut headers = header::HeaderMap::new();
@@ -245,52 +214,52 @@ impl Client {
                 );
                 Ok(headers)
             }
-            ResponsesAuth::OAuth { storage, oauth } => {
-                let tokens = refresh_if_needed(storage, oauth).await.map_err(|e| {
-                    ApiError::AuthenticationFailed {
-                        provider: "openai".to_string(),
-                        details: e.to_string(),
-                    }
-                })?;
-
-                let id_token =
-                    tokens
-                        .id_token
-                        .as_deref()
-                        .ok_or_else(|| ApiError::AuthenticationFailed {
-                            provider: "openai".to_string(),
-                            details: "Missing id_token in OAuth credentials".to_string(),
-                        })?;
-
-                let account_id = extract_chatgpt_account_id(id_token).map_err(|e| {
-                    ApiError::AuthenticationFailed {
-                        provider: "openai".to_string(),
-                        details: e.to_string(),
-                    }
-                })?;
-
+            ResponsesAuth::Directive(directive) => {
+                let header_pairs = directive
+                    .headers
+                    .headers(ctx)
+                    .await
+                    .map_err(|e| ApiError::AuthError(e.to_string()))?;
                 let mut headers = header::HeaderMap::new();
-                headers.insert(
-                    header::AUTHORIZATION,
-                    header::HeaderValue::from_str(&format!("Bearer {}", tokens.access_token))
-                        .map_err(|e| ApiError::AuthenticationFailed {
-                            provider: "openai".to_string(),
-                            details: format!("Invalid access token: {e}"),
-                        })?,
-                );
-                headers.insert(
-                    header::HeaderName::from_static("chatgpt-account-id"),
-                    header::HeaderValue::from_str(&account_id.0).map_err(|e| {
+                for pair in header_pairs {
+                    let name = header::HeaderName::from_bytes(pair.name.as_bytes()).map_err(|e| {
                         ApiError::AuthenticationFailed {
                             provider: "openai".to_string(),
-                            details: format!("Invalid account id: {e}"),
+                            details: format!("Invalid header name: {e}"),
                         }
-                    })?,
-                );
-
+                    })?;
+                    let value = header::HeaderValue::from_str(&pair.value).map_err(|e| {
+                        ApiError::AuthenticationFailed {
+                            provider: "openai".to_string(),
+                            details: format!("Invalid header value: {e}"),
+                        }
+                    })?;
+                    headers.insert(name, value);
+                }
                 Ok(headers)
             }
         }
+    }
+
+    async fn on_auth_error(
+        &self,
+        status: u16,
+        body: &str,
+        request_kind: RequestKind,
+    ) -> Result<AuthErrorAction, ApiError> {
+        let Some(directive) = self.auth.directive() else {
+            return Ok(AuthErrorAction::NoAction);
+        };
+        let context = AuthErrorContext {
+            status: Some(status),
+            body_snippet: Some(truncate_body(body)),
+            request_kind,
+        };
+        directive
+            .headers
+            .on_auth_error(context)
+            .await
+            .map_err(|e| ApiError::AuthError(e.to_string()))
     }
 
     pub(super) fn convert_output(
@@ -512,140 +481,156 @@ impl Client {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        self.ensure_model_supported(model_id)?;
-        if self.is_oauth() {
+        if let Some(directive) = self.auth.directive()
+            && directive.require_streaming.unwrap_or(false)
+        {
             return Err(ApiError::Configuration(
                 "OpenAI OAuth requests require streaming responses".to_string(),
             ));
         }
 
-        let request = self.build_request(model_id, messages, system, tools, call_options);
-        log_request_payload(&request, false);
-        let headers = self.auth_headers().await?;
-        let request_builder = self
-            .http_client
-            .post(&self.base_url)
-            .headers(headers)
-            .json(&request);
+        let auth_ctx = auth_header_context(model_id, RequestKind::Complete);
+        let mut attempts = 0;
 
-        let response = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                debug!(target: "openai::responses", "Cancellation token triggered before sending request.");
-                return Err(ApiError::Cancelled{ provider: "openai".to_string()});
-            }
-            res = request_builder.send() => {
-                res.map_err(|e| {
-                    error!(
-                        target: "openai::responses",
-                        "Request send failed: {}",
-                        e
-                    );
-                    ApiError::Network(e)
-                })?
-            }
-        };
+        loop {
+            let request = self.build_request(model_id, messages.clone(), system.clone(), tools.clone(), call_options);
+            log_request_payload(&request, false);
+            let headers = self.auth_headers(auth_ctx.clone()).await?;
+            let request_builder = self
+                .http_client
+                .post(&self.base_url)
+                .headers(headers)
+                .json(&request);
 
-        if token.is_cancelled() {
-            debug!(target: "openai::responses", "Cancellation token triggered after sending request, before status check.");
-            return Err(ApiError::Cancelled {
-                provider: "openai".to_string(),
-            });
-        }
-
-        let status = response.status();
-
-        let body_text = if !status.is_success() {
-            // For error responses, also handle cancellation
-            tokio::select! {
+            let response = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
-                    debug!(target: "openai::responses", "Cancellation token triggered while reading error response body.");
+                    debug!(target: "openai::responses", "Cancellation token triggered before sending request.");
                     return Err(ApiError::Cancelled{ provider: "openai".to_string()});
                 }
-                text_res = response.text() => {
-                    text_res.map_err(|e| {
+                res = request_builder.send() => {
+                    res.map_err(|e| {
                         error!(
                             target: "openai::responses",
-                            "Failed to read response body: {}",
+                            "Request send failed: {}",
                             e
                         );
-                        ApiError::ResponseParsingError {
-                            provider: "openai".to_string(),
-                            details: e.to_string(),
-                        }
+                        ApiError::Network(e)
                     })?
                 }
-            }
-        } else {
-            // For successful responses, also handle cancellation
-            tokio::select! {
-                biased;
-                _ = token.cancelled() => {
-                    debug!(target: "openai::responses", "Cancellation token triggered while reading successful response body.");
-                    return Err(ApiError::Cancelled { provider: "openai".to_string() });
-                }
-                text_res = response.text() => {
-                    text_res.map_err(|e| {
-                        error!(
-                            target: "openai::responses",
-                            "Failed to read response body: {}",
-                            e
-                        );
-                        ApiError::ResponseParsingError {
-                            provider: "openai".to_string(),
-                            details: e.to_string(),
-                        }
-                    })?
-                }
-            }
-        };
+            };
 
-        // If the request failed, try to parse as error
-        if !status.is_success() {
-            error!(
-                target: "openai::responses",
-                "Request failed with status {}: {}",
-                status,
-                &body_text
-            );
+            if token.is_cancelled() {
+                debug!(target: "openai::responses", "Cancellation token triggered after sending request, before status check.");
+                return Err(ApiError::Cancelled {
+                    provider: "openai".to_string(),
+                });
+            }
 
-            // Try to parse as an OpenAI error response
-            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                if let Some(error) = err_json.get("error") {
-                    let message = error
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error");
-                    return Err(ApiError::ServerError {
+            let status = response.status();
+
+            let body_text = if !status.is_success() {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        debug!(target: "openai::responses", "Cancellation token triggered while reading error response body.");
+                        return Err(ApiError::Cancelled{ provider: "openai".to_string()});
+                    }
+                    text_res = response.text() => {
+                        text_res.map_err(|e| {
+                            error!(
+                                target: "openai::responses",
+                                "Failed to read response body: {}",
+                                e
+                            );
+                            ApiError::ResponseParsingError {
+                                provider: "openai".to_string(),
+                                details: e.to_string(),
+                            }
+                        })?
+                    }
+                }
+            } else {
+                tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        debug!(target: "openai::responses", "Cancellation token triggered while reading successful response body.");
+                        return Err(ApiError::Cancelled { provider: "openai".to_string() });
+                    }
+                    text_res = response.text() => {
+                        text_res.map_err(|e| {
+                            error!(
+                                target: "openai::responses",
+                                "Failed to read response body: {}",
+                                e
+                            );
+                            ApiError::ResponseParsingError {
+                                provider: "openai".to_string(),
+                                details: e.to_string(),
+                            }
+                        })?
+                    }
+                }
+            };
+
+            if !status.is_success() {
+                if is_auth_status(status) && self.auth.directive().is_some() {
+                    let action = self
+                        .on_auth_error(status.as_u16(), &body_text, RequestKind::Complete)
+                        .await?;
+                    if matches!(action, AuthErrorAction::RetryOnce) && attempts == 0 {
+                        attempts += 1;
+                        continue;
+                    }
+                    return Err(ApiError::AuthenticationFailed {
                         provider: "openai".to_string(),
-                        status_code: status.as_u16(),
-                        details: message.to_string(),
+                        details: body_text,
                     });
                 }
+
+                error!(
+                    target: "openai::responses",
+                    "Request failed with status {}: {}",
+                    status,
+                    &body_text
+                );
+
+                if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                    if let Some(error) = err_json.get("error") {
+                        let message = error
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown error");
+                        return Err(ApiError::ServerError {
+                            provider: "openai".to_string(),
+                            status_code: status.as_u16(),
+                            details: message.to_string(),
+                        });
+                    }
+                }
+
+                return Err(ApiError::ServerError {
+                    provider: "openai".to_string(),
+                    status_code: status.as_u16(),
+                    details: body_text,
+                });
             }
 
-            return Err(ApiError::ServerError {
-                provider: "openai".to_string(),
-                status_code: status.as_u16(),
-                details: body_text,
-            });
+            let parsed: ResponsesApiResponse = serde_json::from_str(&body_text).map_err(|e| {
+                error!(
+                    target: "openai::responses",
+                    "Failed to parse response JSON: {}. Body: {}",
+                    e,
+                    &body_text
+                );
+                ApiError::ResponseParsingError {
+                    provider: "openai".to_string(),
+                    details: format!("Invalid response format: {e}"),
+                }
+            })?;
+
+            return Ok(self.convert_response(parsed));
         }
-
-        let parsed: ResponsesApiResponse = serde_json::from_str(&body_text).map_err(|e| {
-            error!(
-                target: "openai::responses",
-                "Failed to parse response JSON: {}. Body: {}",
-                e,
-                &body_text
-            );
-            ApiError::ResponseParsingError {
-                provider: "openai".to_string(),
-                details: format!("Invalid response format: {e}"),
-            }
-        })?;
-
-        Ok(self.convert_response(parsed))
     }
 
     pub(super) async fn stream_complete(
@@ -657,19 +642,121 @@ impl Client {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
-        self.ensure_model_supported(model_id)?;
+        let auth_ctx = auth_header_context(model_id, RequestKind::Stream);
+        let mut attempts = 0;
 
-        let mut request = self.build_request(model_id, messages, system, tools, call_options);
-        request.stream = Some(true);
-        log_request_payload(&request, true);
+        loop {
+            let mut request = self.build_request(
+                model_id,
+                messages.clone(),
+                system.clone(),
+                tools.clone(),
+                call_options,
+            );
+            request.stream = Some(true);
+            log_request_payload(&request, true);
 
-        let headers = self.auth_headers().await?;
-        let request_builder = self
-            .http_client
-            .post(&self.base_url)
-            .headers(headers)
-            .json(&request);
-        stream_responses_request(request_builder, token).await
+            let headers = self.auth_headers(auth_ctx.clone()).await?;
+            let request_builder = self
+                .http_client
+                .post(&self.base_url)
+                .headers(headers)
+                .json(&request);
+
+            let response = tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    debug!(target: "openai::responses::stream", "Cancellation token triggered before sending request.");
+                    return Err(ApiError::Cancelled{ provider: "openai".to_string()});
+                }
+                res = request_builder.send() => {
+                    res.map_err(|e| {
+                        error!(target: "openai::responses::stream", "Request send failed: {}", e);
+                        ApiError::Network(e)
+                    })?
+                }
+            };
+
+            if token.is_cancelled() {
+                debug!(target: "openai::responses::stream", "Cancellation token triggered after sending request.");
+                return Err(ApiError::Cancelled {
+                    provider: "openai".to_string(),
+                });
+            }
+
+            let status = response.status();
+
+            if !status.is_success() {
+                let body_text = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        debug!(target: "openai::responses::stream", "Cancellation token triggered while reading error response body.");
+                        return Err(ApiError::Cancelled{ provider: "openai".to_string()});
+                    }
+                    text_res = response.text() => {
+                        text_res.map_err(|e| {
+                            error!(
+                                target: "openai::responses::stream",
+                                "Failed to read response body: {}",
+                                e
+                            );
+                            ApiError::ResponseParsingError {
+                                provider: "openai".to_string(),
+                                details: e.to_string(),
+                            }
+                        })?
+                    }
+                };
+
+                if is_auth_status(status) && self.auth.directive().is_some() {
+                    let action = self
+                        .on_auth_error(status.as_u16(), &body_text, RequestKind::Stream)
+                        .await?;
+                    if matches!(action, AuthErrorAction::RetryOnce) && attempts == 0 {
+                        attempts += 1;
+                        continue;
+                    }
+                    return Err(ApiError::AuthenticationFailed {
+                        provider: "openai".to_string(),
+                        details: body_text,
+                    });
+                }
+
+                error!(
+                    target: "openai::responses::stream",
+                    "Request failed with status {}: {}",
+                    status,
+                    &body_text
+                );
+
+                if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                    if let Some(error) = err_json.get("error") {
+                        let message = error
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown error");
+                        return Err(ApiError::ServerError {
+                            provider: "openai".to_string(),
+                            status_code: status.as_u16(),
+                            details: message.to_string(),
+                        });
+                    }
+                }
+
+                return Err(ApiError::ServerError {
+                    provider: "openai".to_string(),
+                    status_code: status.as_u16(),
+                    details: body_text,
+                });
+            }
+
+            let byte_stream = response.bytes_stream();
+            let sse_stream = parse_sse_stream(byte_stream);
+
+            return Ok(Box::pin(Client::convert_responses_stream(
+                sse_stream, token,
+            )));
+        }
     }
 
     pub(crate) fn convert_responses_stream(
@@ -938,53 +1025,6 @@ impl Client {
     }
 }
 
-pub(crate) async fn stream_responses_request(
-    request_builder: reqwest::RequestBuilder,
-    token: CancellationToken,
-) -> Result<CompletionStream, ApiError> {
-    let response = tokio::select! {
-        biased;
-        _ = token.cancelled() => {
-            debug!(target: "openai::responses::stream", "Cancellation token triggered before sending request.");
-            return Err(ApiError::Cancelled{ provider: "openai".to_string()});
-        }
-        res = request_builder.send() => {
-            res.map_err(|e| {
-                error!(target: "openai::responses::stream", "Request send failed: {}", e);
-                ApiError::Network(e)
-            })?
-        }
-    };
-
-    if token.is_cancelled() {
-        debug!(target: "openai::responses::stream", "Cancellation token triggered after sending request.");
-        return Err(ApiError::Cancelled {
-            provider: "openai".to_string(),
-        });
-    }
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        error!(
-            target: "openai::responses::stream",
-            "Request failed with status {}: {}", status, body
-        );
-        return Err(ApiError::ServerError {
-            provider: "openai".to_string(),
-            status_code: status.as_u16(),
-            details: body,
-        });
-    }
-
-    let byte_stream = response.bytes_stream();
-    let sse_stream = parse_sse_stream(byte_stream);
-
-    Ok(Box::pin(Client::convert_responses_stream(
-        sse_stream, token,
-    )))
-}
-
 fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -1036,6 +1076,64 @@ fn resolve_call_id(
     }
 
     Some(candidate)
+}
+
+fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
+    AuthHeaderContext {
+        model_id: Some(AuthModelId {
+            provider_id: AuthProviderId(model_id.0.as_str().to_string()),
+            model_id: model_id.1.clone(),
+        }),
+        request_kind,
+    }
+}
+
+fn is_auth_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    )
+}
+
+fn truncate_body(body: &str) -> String {
+    const LIMIT: usize = 512;
+    let mut chars = body.chars();
+    let truncated: String = chars.by_ref().take(LIMIT).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn apply_instruction_policy(
+    system: Option<String>,
+    policy: Option<&InstructionPolicy>,
+) -> Option<String> {
+    let trimmed = system.as_ref().map(|s| s.trim()).unwrap_or("");
+    match policy {
+        None => {
+            if trimmed.is_empty() {
+                None
+            } else {
+                system
+            }
+        }
+        Some(InstructionPolicy::Prefix(prefix)) => {
+            if trimmed.is_empty() {
+                Some(prefix.clone())
+            } else {
+                Some(format!("{prefix}\n{}", system.unwrap_or_default()))
+            }
+        }
+        Some(InstructionPolicy::DefaultIfEmpty(default)) => {
+            if trimmed.is_empty() {
+                Some(default.clone())
+            } else {
+                system
+            }
+        }
+    }
 }
 
 #[cfg(test)]

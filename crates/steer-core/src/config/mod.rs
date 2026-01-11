@@ -1,4 +1,7 @@
-use crate::auth::{ApiKeyOrigin, AuthMethod, AuthSource, AuthStorage};
+use crate::auth::{
+    ApiKeyOrigin, AuthDirective, AuthMethod, AuthPluginRegistry, AuthSource, AuthStorage,
+    Credential,
+};
 use crate::config::provider::ProviderId;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -108,11 +111,49 @@ pub enum ApiAuth {
     OAuth,
 }
 
+#[derive(Debug, Clone)]
+pub enum ResolvedAuth {
+    Plugin {
+        directive: AuthDirective,
+        source: AuthSource,
+    },
+    ApiKey {
+        credential: Credential,
+        source: AuthSource,
+    },
+    None,
+}
+
+impl ResolvedAuth {
+    pub fn source(&self) -> AuthSource {
+        match self {
+            ResolvedAuth::Plugin { source, .. } => source.clone(),
+            ResolvedAuth::ApiKey { source, .. } => source.clone(),
+            ResolvedAuth::None => AuthSource::None,
+        }
+    }
+
+    pub fn directive(&self) -> Option<&AuthDirective> {
+        match self {
+            ResolvedAuth::Plugin { directive, .. } => Some(directive),
+            _ => None,
+        }
+    }
+
+    pub fn credential(&self) -> Option<&Credential> {
+        match self {
+            ResolvedAuth::ApiKey { credential, .. } => Some(credential),
+            _ => None,
+        }
+    }
+}
+
 /// Provider for authentication credentials
 #[derive(Clone)]
 pub struct LlmConfigProvider {
     storage: Arc<dyn AuthStorage>,
     env_provider: Arc<dyn EnvProvider>,
+    plugin_registry: Arc<AuthPluginRegistry>,
 }
 
 impl std::fmt::Debug for LlmConfigProvider {
@@ -122,11 +163,21 @@ impl std::fmt::Debug for LlmConfigProvider {
 }
 
 impl LlmConfigProvider {
-    /// Create a new LlmConfigProvider with the given auth storage
-    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
+    /// Create a new LlmConfigProvider with the given auth storage and default plugins.
+    pub fn new(storage: Arc<dyn AuthStorage>) -> Result<Self> {
+        let plugin_registry = Arc::new(AuthPluginRegistry::with_defaults()?);
+        Ok(Self::new_with_plugins(storage, plugin_registry))
+    }
+
+    /// Create a new LlmConfigProvider with an explicit plugin registry.
+    pub fn new_with_plugins(
+        storage: Arc<dyn AuthStorage>,
+        plugin_registry: Arc<AuthPluginRegistry>,
+    ) -> Self {
         Self {
             storage,
             env_provider: Arc::new(StdEnvProvider),
+            plugin_registry,
         }
     }
 
@@ -136,68 +187,70 @@ impl LlmConfigProvider {
         storage: Arc<dyn AuthStorage>,
         env_provider: Arc<dyn EnvProvider>,
     ) -> Self {
+        let plugin_registry =
+            Arc::new(AuthPluginRegistry::with_defaults().expect("default plugins"));
         Self {
             storage,
             env_provider,
+            plugin_registry,
         }
     }
 
-    /// Get authentication for a specific provider ID
+    /// Get authentication for a specific provider ID (legacy API).
     pub async fn get_auth_for_provider(&self, provider_id: &ProviderId) -> Result<Option<ApiAuth>> {
-        Ok(self
-            .resolve_auth_for_provider_with_origin(provider_id)
-            .await?
-            .map(|(auth, _)| auth))
+        let resolved = self.resolve_auth_for_provider(provider_id).await?;
+        match resolved {
+            ResolvedAuth::Plugin { .. } => Ok(Some(ApiAuth::OAuth)),
+            ResolvedAuth::ApiKey { credential, .. } => match credential {
+                Credential::ApiKey { value } => Ok(Some(ApiAuth::Key(value.clone()))),
+                _ => Ok(None),
+            },
+            ResolvedAuth::None => Ok(None),
+        }
     }
 
     /// Resolve authentication source for a provider, including API key origin.
     pub async fn resolve_auth_source(&self, provider_id: &ProviderId) -> Result<AuthSource> {
-        match self
-            .resolve_auth_for_provider_with_origin(provider_id)
-            .await?
-        {
-            Some((ApiAuth::OAuth, _)) => Ok(AuthSource::Plugin {
-                method: AuthMethod::OAuth,
-            }),
-            Some((ApiAuth::Key(_), Some(origin))) => Ok(AuthSource::ApiKey { origin }),
-            Some((ApiAuth::Key(_), None)) => Ok(AuthSource::ApiKey {
-                origin: ApiKeyOrigin::Stored,
-            }),
-            None => Ok(AuthSource::None),
-        }
+        Ok(self.resolve_auth_for_provider(provider_id).await?.source())
     }
 
     /// Resolve authentication for a provider using server-side auto-selection.
-    ///
-    /// This is a compatibility shim; it currently delegates to `get_auth_for_provider`.
     pub async fn resolve_auth_for_provider(
         &self,
         provider_id: &ProviderId,
-    ) -> Result<Option<ApiAuth>> {
-        self.get_auth_for_provider(provider_id).await
+    ) -> Result<ResolvedAuth> {
+        if let Some(plugin) = self.plugin_registry.get(provider_id)
+            && let Some(directive) = plugin.resolve_auth(self.storage.clone()).await?
+        {
+            return Ok(ResolvedAuth::Plugin {
+                directive,
+                source: AuthSource::Plugin {
+                    method: AuthMethod::OAuth,
+                },
+            });
+        }
+
+        if let Some((key, origin)) = self.resolve_api_key_for_provider(provider_id).await? {
+            return Ok(ResolvedAuth::ApiKey {
+                credential: Credential::ApiKey { value: key },
+                source: AuthSource::ApiKey { origin },
+            });
+        }
+
+        Ok(ResolvedAuth::None)
     }
 
-    async fn resolve_auth_for_provider_with_origin(
+    pub async fn resolve_api_key_for_provider(
         &self,
         provider_id: &ProviderId,
-    ) -> Result<Option<(ApiAuth, Option<ApiKeyOrigin>)>> {
+    ) -> Result<Option<(String, ApiKeyOrigin)>> {
         if provider_id.as_str() == self::provider::ANTHROPIC_ID {
             let anthropic_key = self
                 .env_provider
                 .var("CLAUDE_API_KEY")
                 .or_else(|| self.env_provider.var("ANTHROPIC_API_KEY"));
             if let Some(key) = anthropic_key {
-                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
-            } else if self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::OAuth2,
-                )
-                .await?
-                .is_some()
-            {
-                Ok(Some((ApiAuth::OAuth, None)))
+                Ok(Some((key, ApiKeyOrigin::Env)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                 .storage
                 .get_credential(
@@ -206,23 +259,13 @@ impl LlmConfigProvider {
                 )
                 .await?
             {
-                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+                Ok(Some((value, ApiKeyOrigin::Stored)))
             } else {
                 Ok(None)
             }
         } else if provider_id.as_str() == self::provider::OPENAI_ID {
-            if self
-                .storage
-                .get_credential(
-                    &provider_id.storage_key(),
-                    crate::auth::CredentialType::OAuth2,
-                )
-                .await?
-                .is_some()
-            {
-                Ok(Some((ApiAuth::OAuth, None)))
-            } else if let Some(key) = self.env_provider.var("OPENAI_API_KEY") {
-                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+            if let Some(key) = self.env_provider.var("OPENAI_API_KEY") {
+                Ok(Some((key, ApiKeyOrigin::Env)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                 .storage
                 .get_credential(
@@ -231,7 +274,7 @@ impl LlmConfigProvider {
                 )
                 .await?
             {
-                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+                Ok(Some((value, ApiKeyOrigin::Stored)))
             } else {
                 Ok(None)
             }
@@ -241,7 +284,7 @@ impl LlmConfigProvider {
                 .var("GEMINI_API_KEY")
                 .or_else(|| self.env_provider.var("GOOGLE_API_KEY"))
             {
-                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+                Ok(Some((key, ApiKeyOrigin::Env)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                 .storage
                 .get_credential(
@@ -250,7 +293,7 @@ impl LlmConfigProvider {
                 )
                 .await?
             {
-                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+                Ok(Some((value, ApiKeyOrigin::Stored)))
             } else {
                 Ok(None)
             }
@@ -260,7 +303,7 @@ impl LlmConfigProvider {
                 .var("XAI_API_KEY")
                 .or_else(|| self.env_provider.var("GROK_API_KEY"))
             {
-                Ok(Some((ApiAuth::Key(key), Some(ApiKeyOrigin::Env))))
+                Ok(Some((key, ApiKeyOrigin::Env)))
             } else if let Some(crate::auth::Credential::ApiKey { value }) = self
                 .storage
                 .get_credential(
@@ -269,7 +312,7 @@ impl LlmConfigProvider {
                 )
                 .await?
             {
-                Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+                Ok(Some((value, ApiKeyOrigin::Stored)))
             } else {
                 Ok(None)
             }
@@ -281,7 +324,7 @@ impl LlmConfigProvider {
             )
             .await?
         {
-            Ok(Some((ApiAuth::Key(value), Some(ApiKeyOrigin::Stored))))
+            Ok(Some((value, ApiKeyOrigin::Stored)))
         } else {
             Ok(None)
         }
@@ -290,6 +333,10 @@ impl LlmConfigProvider {
     /// Get the auth storage
     pub fn auth_storage(&self) -> &Arc<dyn AuthStorage> {
         &self.storage
+    }
+
+    pub fn plugin_registry(&self) -> &Arc<AuthPluginRegistry> {
+        &self.plugin_registry
     }
 }
 
@@ -349,7 +396,7 @@ mod tests {
                     access_token: "token".to_string(),
                     refresh_token: "refresh".to_string(),
                     expires_at: SystemTime::now() + Duration::from_secs(3600),
-                    id_token: None,
+                    id_token: Some("id-token".to_string()),
                 }),
             )
             .await

@@ -1,5 +1,6 @@
 // Core steer functionality without UI dependencies
 
+pub mod agents;
 pub mod api;
 pub mod app;
 pub mod auth;

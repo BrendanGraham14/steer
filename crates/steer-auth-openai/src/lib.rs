@@ -1,9 +1,6 @@
-use crate::auth::callback_server::{spawn_callback_server, CallbackResponse, CallbackServerHandle};
-use crate::auth::{AuthError, AuthStorage, AuthTokens, Credential, CredentialType, Result};
-use crate::auth::{AuthMethod, AuthProgress, AuthenticationFlow};
-use crate::config::provider;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
@@ -11,7 +8,18 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;
 
-// OAuth constants
+use steer_auth_plugin::AuthPlugin;
+use steer_auth_plugin::{
+    AuthDirective, AuthError, AuthErrorAction, AuthErrorContext, AuthHeaderContext,
+    AuthHeaderProvider, AuthMethod, AuthProgress, AuthSource, AuthStorage, AuthTokens,
+    AuthenticationFlow, Credential, CredentialType, DynAuthenticationFlow, HeaderPair,
+    InstructionPolicy, ModelId, ModelVisibilityPolicy, OpenAiResponsesAuth, ProviderId, Result,
+};
+
+mod callback_server;
+use callback_server::{CallbackResponse, CallbackServerHandle, spawn_callback_server};
+
+const PROVIDER_ID: &str = "openai";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -20,6 +28,11 @@ const SCOPES: &str = "openid profile email offline_access";
 const ORIGINATOR: &str = "codex_cli_rs";
 const CALLBACK_PATH: &str = "/auth/callback";
 const CALLBACK_PORT: u16 = 1455;
+
+const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+const OPENAI_BETA: &str = "responses=experimental";
+const GPT_5_2_CODEX_MODEL_ID: &str = "gpt-5.2-codex";
+const CODEX_INSTRUCTION_PREFIX: &str = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.";
 
 const CHATGPT_ACCOUNT_ID_NESTED_CLAIM: &str = "https://api.openai.com/auth";
 
@@ -32,6 +45,7 @@ pub struct PkceChallenge {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChatGptAccountId(pub String);
 
+#[derive(Clone)]
 pub struct OpenAIOAuth {
     client_id: String,
     redirect_uri: String,
@@ -248,7 +262,7 @@ pub async fn refresh_if_needed(
     oauth_client: &OpenAIOAuth,
 ) -> Result<AuthTokens> {
     let credential = storage
-        .get_credential(&provider::openai().storage_key(), CredentialType::OAuth2)
+        .get_credential(PROVIDER_ID, CredentialType::OAuth2)
         .await?
         .ok_or(AuthError::ReauthRequired)?;
 
@@ -265,13 +279,13 @@ pub async fn refresh_if_needed(
                     ..new_tokens
                 };
                 storage
-                    .set_credential("openai", Credential::OAuth2(merged_tokens.clone()))
+                    .set_credential(PROVIDER_ID, Credential::OAuth2(merged_tokens.clone()))
                     .await?;
                 tokens = merged_tokens;
             }
             Err(AuthError::ReauthRequired) => {
                 storage
-                    .remove_credential("openai", CredentialType::OAuth2)
+                    .remove_credential(PROVIDER_ID, CredentialType::OAuth2)
                     .await?;
                 return Err(AuthError::ReauthRequired);
             }
@@ -284,6 +298,41 @@ pub async fn refresh_if_needed(
     }
 
     Ok(tokens)
+}
+
+async fn force_refresh(
+    storage: &Arc<dyn AuthStorage>,
+    oauth_client: &OpenAIOAuth,
+) -> Result<AuthTokens> {
+    let credential = storage
+        .get_credential(PROVIDER_ID, CredentialType::OAuth2)
+        .await?
+        .ok_or(AuthError::ReauthRequired)?;
+
+    let tokens = match credential {
+        Credential::OAuth2(tokens) => tokens,
+        _ => return Err(AuthError::ReauthRequired),
+    };
+
+    match oauth_client.refresh_tokens(&tokens.refresh_token).await {
+        Ok(new_tokens) => {
+            let merged_tokens = AuthTokens {
+                id_token: new_tokens.id_token.or(tokens.id_token),
+                ..new_tokens
+            };
+            storage
+                .set_credential(PROVIDER_ID, Credential::OAuth2(merged_tokens.clone()))
+                .await?;
+            Ok(merged_tokens)
+        }
+        Err(AuthError::ReauthRequired) => {
+            storage
+                .remove_credential(PROVIDER_ID, CredentialType::OAuth2)
+                .await?;
+            Err(AuthError::ReauthRequired)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn extract_chatgpt_account_id(id_token: &str) -> Result<ChatGptAccountId> {
@@ -321,6 +370,7 @@ fn decode_jwt_payload(access_token: &str) -> Result<serde_json::Value> {
     serde_json::from_slice(&payload_bytes)
         .map_err(|e| AuthError::InvalidResponse(format!("Invalid token payload JSON: {e}")))
 }
+
 fn extract_chatgpt_account_id_from_id_token(id_token: &str) -> Result<ChatGptAccountId> {
     let payload = decode_jwt_payload(id_token)?;
 
@@ -371,8 +421,8 @@ fn parse_callback_input(input: &str) -> Result<CallbackResponse> {
             .ok_or_else(|| AuthError::MissingInput("state parameter".to_string()))?;
 
         return Ok(CallbackResponse {
-            code: code.to_string(),
-            state: state.to_string(),
+            code: code.clone(),
+            state: state.clone(),
         });
     }
 
@@ -402,8 +452,6 @@ fn parse_callback_input(input: &str) -> Result<CallbackResponse> {
 }
 
 fn generate_random_string(length: usize) -> String {
-    use rand::Rng;
-
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     let mut rng = rand::thread_rng();
 
@@ -497,7 +545,7 @@ impl AuthenticationFlow for OpenAIOAuthFlow {
             }
             _ => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
-                provider: provider::openai().storage_key(),
+                provider: PROVIDER_ID.to_string(),
             }),
         }
     }
@@ -516,7 +564,7 @@ impl AuthenticationFlow for OpenAIOAuthFlow {
             }
             _ => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
-                provider: provider::openai().storage_key(),
+                provider: PROVIDER_ID.to_string(),
             }),
         }
     }
@@ -557,10 +605,9 @@ impl AuthenticationFlow for OpenAIOAuthFlow {
                     .await?;
 
                 self.storage
-                    .set_credential("openai", Credential::OAuth2(tokens))
+                    .set_credential(PROVIDER_ID, Credential::OAuth2(tokens))
                     .await?;
 
-                // Stop callback server if still running.
                 if let Some(server) = callback_server.take() {
                     drop(server);
                 }
@@ -573,7 +620,7 @@ impl AuthenticationFlow for OpenAIOAuthFlow {
     async fn is_authenticated(&self) -> Result<bool> {
         if let Some(Credential::OAuth2(tokens)) = self
             .storage
-            .get_credential(&provider::openai().storage_key(), CredentialType::OAuth2)
+            .get_credential(PROVIDER_ID, CredentialType::OAuth2)
             .await?
         {
             return Ok(tokens.id_token.is_some() && !tokens_need_refresh(&tokens));
@@ -583,7 +630,148 @@ impl AuthenticationFlow for OpenAIOAuthFlow {
     }
 
     fn provider_name(&self) -> String {
-        provider::openai().storage_key()
+        PROVIDER_ID.to_string()
+    }
+}
+
+#[derive(Clone)]
+struct OpenAiHeaderProvider {
+    storage: Arc<dyn AuthStorage>,
+    oauth: OpenAIOAuth,
+}
+
+impl OpenAiHeaderProvider {
+    fn new(storage: Arc<dyn AuthStorage>) -> Self {
+        Self {
+            storage,
+            oauth: OpenAIOAuth::new(),
+        }
+    }
+
+    async fn header_pairs(&self, _ctx: AuthHeaderContext) -> Result<Vec<HeaderPair>> {
+        let tokens = refresh_if_needed(&self.storage, &self.oauth).await?;
+        let id_token = tokens
+            .id_token
+            .as_deref()
+            .ok_or(AuthError::ReauthRequired)?;
+        let account_id = extract_chatgpt_account_id(id_token)?;
+
+        Ok(vec![
+            HeaderPair {
+                name: "authorization".to_string(),
+                value: format!("Bearer {}", tokens.access_token),
+            },
+            HeaderPair {
+                name: "chatgpt-account-id".to_string(),
+                value: account_id.0,
+            },
+            HeaderPair {
+                name: "openai-beta".to_string(),
+                value: OPENAI_BETA.to_string(),
+            },
+            HeaderPair {
+                name: "originator".to_string(),
+                value: ORIGINATOR.to_string(),
+            },
+        ])
+    }
+}
+
+#[async_trait]
+impl AuthHeaderProvider for OpenAiHeaderProvider {
+    async fn headers(&self, ctx: AuthHeaderContext) -> Result<Vec<HeaderPair>> {
+        self.header_pairs(ctx).await
+    }
+
+    async fn on_auth_error(&self, _ctx: AuthErrorContext) -> Result<AuthErrorAction> {
+        match force_refresh(&self.storage, &self.oauth).await {
+            Ok(_) => Ok(AuthErrorAction::RetryOnce),
+            Err(AuthError::ReauthRequired) => Ok(AuthErrorAction::ReauthRequired),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+struct OpenAiModelVisibility;
+
+impl ModelVisibilityPolicy for OpenAiModelVisibility {
+    fn allow_model(&self, model_id: &ModelId, auth_source: &AuthSource) -> bool {
+        if model_id.provider_id.0 != PROVIDER_ID {
+            return true;
+        }
+
+        if model_id.model_id == GPT_5_2_CODEX_MODEL_ID {
+            return matches!(auth_source, AuthSource::Plugin { .. });
+        }
+
+        true
+    }
+}
+
+#[derive(Clone)]
+pub struct OpenAiAuthPlugin;
+
+impl Default for OpenAiAuthPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OpenAiAuthPlugin {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl AuthPlugin for OpenAiAuthPlugin {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId(PROVIDER_ID.to_string())
+    }
+
+    fn supported_methods(&self) -> Vec<AuthMethod> {
+        vec![AuthMethod::OAuth]
+    }
+
+    fn create_flow(&self, storage: Arc<dyn AuthStorage>) -> Option<Box<dyn DynAuthenticationFlow>> {
+        Some(Box::new(steer_auth_plugin::AuthFlowWrapper::new(
+            OpenAIOAuthFlow::new(storage),
+        )))
+    }
+
+    async fn resolve_auth(&self, storage: Arc<dyn AuthStorage>) -> Result<Option<AuthDirective>> {
+        let is_authenticated = self.is_authenticated(storage.clone()).await?;
+        if !is_authenticated {
+            return Ok(None);
+        }
+
+        let headers = Arc::new(OpenAiHeaderProvider::new(storage));
+        let directive = OpenAiResponsesAuth {
+            headers,
+            base_url_override: Some(CODEX_BASE_URL.to_string()),
+            require_streaming: Some(true),
+            instruction_policy: Some(InstructionPolicy::Prefix(
+                CODEX_INSTRUCTION_PREFIX.trim().to_string(),
+            )),
+            include: Some(vec!["reasoning.encrypted_content".to_string()]),
+        };
+
+        Ok(Some(AuthDirective::OpenAiResponses(directive)))
+    }
+
+    async fn is_authenticated(&self, storage: Arc<dyn AuthStorage>) -> Result<bool> {
+        if let Some(Credential::OAuth2(tokens)) = storage
+            .get_credential(PROVIDER_ID, CredentialType::OAuth2)
+            .await?
+        {
+            return Ok(tokens.id_token.is_some() && !tokens_need_refresh(&tokens));
+        }
+
+        Ok(false)
+    }
+
+    fn model_visibility(&self) -> Option<Box<dyn ModelVisibilityPolicy>> {
+        Some(Box::new(OpenAiModelVisibility))
     }
 }
 
@@ -612,8 +800,7 @@ mod tests {
 
     #[test]
     fn test_parse_callback_input_url() {
-        let input =
-            "http://localhost:1455/auth/callback?code=abc123&state=state456";
+        let input = "http://localhost:1455/auth/callback?code=abc123&state=state456";
         let parsed = parse_callback_input(input).unwrap();
         assert_eq!(parsed.code, "abc123");
         assert_eq!(parsed.state, "state456");

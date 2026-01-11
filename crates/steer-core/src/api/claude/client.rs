@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -15,9 +14,10 @@ use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
 use crate::auth::{
-    AuthFlowWrapper, AuthStorage, DynAuthenticationFlow, InteractiveAuth,
-    anthropic::{AnthropicOAuth, AnthropicOAuthFlow, refresh_if_needed},
+    AnthropicAuth, AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy,
+    RequestKind,
 };
+use crate::auth::{ModelId as AuthModelId, ProviderId as AuthProviderId};
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::{ToolCall, ToolSchema};
 
@@ -62,15 +62,15 @@ pub enum ClaudeMessageContent {
 pub struct ClaudeStructuredContent(pub Vec<ClaudeContentBlock>);
 
 #[derive(Clone)]
-pub enum AuthMethod {
+enum AuthMode {
     ApiKey(String),
-    OAuth(Arc<dyn AuthStorage>),
+    Directive(AnthropicAuth),
 }
 
 #[derive(Clone)]
 pub struct AnthropicClient {
     http_client: reqwest::Client,
-    auth: AuthMethod,
+    auth: AuthMode,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -308,30 +308,20 @@ impl AnthropicClient {
     }
 
     pub fn with_api_key(api_key: &str) -> Self {
-        let mut headers = header::HeaderMap::new();
-        headers.insert("x-api-key", header::HeaderValue::from_str(api_key).unwrap());
-        headers.insert(
-            "anthropic-version",
-            header::HeaderValue::from_static("2023-06-01"),
-        );
-        headers.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/json"),
-        );
-
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .expect("Failed to build HTTP client");
-
         Self {
-            http_client: client,
-            auth: AuthMethod::ApiKey(api_key.to_string()),
+            http_client: Self::build_http_client(),
+            auth: AuthMode::ApiKey(api_key.to_string()),
         }
     }
 
-    pub fn with_oauth(storage: Arc<dyn AuthStorage>) -> Self {
-        // For OAuth, we don't set default headers since they're dynamic
+    pub fn with_directive(directive: AnthropicAuth) -> Self {
+        Self {
+            http_client: Self::build_http_client(),
+            auth: AuthMode::Directive(directive),
+        }
+    }
+
+    fn build_http_client() -> reqwest::Client {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             "anthropic-version",
@@ -342,30 +332,71 @@ impl AnthropicClient {
             header::HeaderValue::from_static("application/json"),
         );
 
-        let client = reqwest::Client::builder()
+        reqwest::Client::builder()
             .default_headers(headers)
             .build()
-            .expect("Failed to build HTTP client");
-
-        Self {
-            http_client: client,
-            auth: AuthMethod::OAuth(storage),
-        }
+            .expect("Failed to build HTTP client")
     }
 
-    async fn get_auth_headers(&self) -> Result<Vec<(String, String)>, ApiError> {
+    async fn auth_headers(
+        &self,
+        ctx: AuthHeaderContext,
+    ) -> Result<Vec<(String, String)>, ApiError> {
         match &self.auth {
-            AuthMethod::ApiKey(key) => Ok(vec![("x-api-key".to_string(), key.clone())]),
-            AuthMethod::OAuth(storage) => {
-                let oauth_client = AnthropicOAuth::new();
-                let tokens = refresh_if_needed(storage, &oauth_client)
+            AuthMode::ApiKey(key) => Ok(vec![("x-api-key".to_string(), key.clone())]),
+            AuthMode::Directive(directive) => {
+                let header_pairs = directive
+                    .headers
+                    .headers(ctx)
                     .await
                     .map_err(|e| ApiError::AuthError(e.to_string()))?;
-                Ok(crate::auth::anthropic::get_oauth_headers(
-                    &tokens.access_token,
-                ))
+                Ok(header_pairs
+                    .into_iter()
+                    .map(|pair| (pair.name, pair.value))
+                    .collect())
             }
         }
+    }
+
+    async fn on_auth_error(
+        &self,
+        status: u16,
+        body: &str,
+        request_kind: RequestKind,
+    ) -> Result<AuthErrorAction, ApiError> {
+        let AuthMode::Directive(directive) = &self.auth else {
+            return Ok(AuthErrorAction::NoAction);
+        };
+        let context = AuthErrorContext {
+            status: Some(status),
+            body_snippet: Some(truncate_body(body)),
+            request_kind,
+        };
+        directive
+            .headers
+            .on_auth_error(context)
+            .await
+            .map_err(|e| ApiError::AuthError(e.to_string()))
+    }
+
+    fn request_url(&self) -> String {
+        let AuthMode::Directive(directive) = &self.auth else {
+            return API_URL.to_string();
+        };
+
+        let Some(query_params) = &directive.query_params else {
+            return API_URL.to_string();
+        };
+
+        if query_params.is_empty() {
+            return API_URL.to_string();
+        }
+
+        let mut url = url::Url::parse(API_URL).expect("API_URL is valid");
+        for param in query_params {
+            url.query_pairs_mut().append_pair(&param.name, &param.value);
+        }
+        url.to_string()
     }
 }
 
@@ -638,31 +669,12 @@ impl Provider for AnthropicClient {
             cache_type: "ephemeral".to_string(),
         });
 
-        let system_content = match (system, &self.auth) {
-            (Some(sys), AuthMethod::ApiKey(_)) => Some(System::Content(vec![SystemContentBlock {
-                content_type: "text".to_string(),
-                text: sys,
-                cache_control: cache_setting.clone(),
-            }])),
-            (Some(sys), AuthMethod::OAuth(_)) => Some(System::Content(vec![
-                SystemContentBlock {
-                    content_type: "text".to_string(),
-                    text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
-                    cache_control: cache_setting.clone(),
-                },
-                SystemContentBlock {
-                    content_type: "text".to_string(),
-                    text: sys,
-                    cache_control: cache_setting.clone(),
-                },
-            ])),
-            (None, AuthMethod::ApiKey(_)) => None,
-            (None, AuthMethod::OAuth(_)) => Some(System::Content(vec![SystemContentBlock {
-                content_type: "text".to_string(),
-                text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
-                cache_control: cache_setting.clone(),
-            }])),
+        let instruction_policy = match &self.auth {
+            AuthMode::Directive(directive) => directive.instruction_policy.as_ref(),
+            AuthMode::ApiKey(_) => None,
         };
+        let system_text = apply_instruction_policy(system, instruction_policy);
+        let system_content = build_system_content(system_text, cache_setting.clone());
 
         match &mut last_message.content {
             ClaudeMessageContent::StructuredContent { content } => {
@@ -743,100 +755,115 @@ impl Provider for AnthropicClient {
             }
         };
 
-        let auth_headers = self.get_auth_headers().await?;
-        let mut request_builder = self.http_client.post(API_URL).json(&request);
+        let auth_ctx = auth_header_context(model_id, RequestKind::Complete);
+        let mut attempts = 0;
 
-        // Add dynamic auth headers
-        for (name, value) in auth_headers {
-            request_builder = request_builder.header(&name, &value);
-        }
+        loop {
+            let auth_headers = self.auth_headers(auth_ctx.clone()).await?;
+            let url = self.request_url();
+            let mut request_builder = self.http_client.post(&url).json(&request);
 
-        // Check for thinking beta header based on model ID
-        if supports_thinking && matches!(&self.auth, AuthMethod::ApiKey(_)) {
-            request_builder =
-                request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
-        }
-
-        let response = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                debug!(target: "claude::complete", "Cancellation token triggered before sending request.");
-                return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+            for (name, value) in auth_headers {
+                request_builder = request_builder.header(&name, &value);
             }
-            res = request_builder.send() => {
-                res?
+
+            if supports_thinking && matches!(&self.auth, AuthMode::ApiKey(_)) {
+                request_builder =
+                    request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
             }
-        };
 
-        if token.is_cancelled() {
-            debug!(target: "claude::complete", "Cancellation token triggered after sending request, before status check.");
-            return Err(ApiError::Cancelled {
-                provider: self.name().to_string(),
-            });
-        }
-
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = tokio::select! {
+            let response = tokio::select! {
                 biased;
                 _ = token.cancelled() => {
-                    debug!(target: "claude::complete", "Cancellation token triggered while reading error response body.");
+                    debug!(target: "claude::complete", "Cancellation token triggered before sending request.");
                     return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+                }
+                res = request_builder.send() => {
+                    res?
+                }
+            };
+
+            if token.is_cancelled() {
+                debug!(target: "claude::complete", "Cancellation token triggered after sending request, before status check.");
+                return Err(ApiError::Cancelled {
+                    provider: self.name().to_string(),
+                });
+            }
+
+            let status = response.status();
+            if !status.is_success() {
+                let error_text = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        debug!(target: "claude::complete", "Cancellation token triggered while reading error response body.");
+                        return Err(ApiError::Cancelled{ provider: self.name().to_string()});
+                    }
+                    text_res = response.text() => {
+                        text_res?
+                    }
+                };
+
+                if is_auth_status(status) && matches!(&self.auth, AuthMode::Directive(_)) {
+                    let action = self
+                        .on_auth_error(status.as_u16(), &error_text, RequestKind::Complete)
+                        .await?;
+                    if matches!(action, AuthErrorAction::RetryOnce) && attempts == 0 {
+                        attempts += 1;
+                        continue;
+                    }
+                    return Err(ApiError::AuthenticationFailed {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    });
+                }
+
+                return Err(match status.as_u16() {
+                    401 | 403 => ApiError::AuthenticationFailed {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                    429 => ApiError::RateLimited {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                    400..=499 => ApiError::InvalidRequest {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                    500..=599 => ApiError::ServerError {
+                        provider: self.name().to_string(),
+                        status_code: status.as_u16(),
+                        details: error_text,
+                    },
+                    _ => ApiError::Unknown {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                });
+            }
+
+            let response_text = tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    debug!(target: "claude::complete", "Cancellation token triggered while reading successful response body.");
+                    return Err(ApiError::Cancelled { provider: self.name().to_string() });
                 }
                 text_res = response.text() => {
                     text_res?
                 }
             };
-            return Err(match status.as_u16() {
-                401 => ApiError::AuthenticationFailed {
+
+            let claude_completion: ClaudeCompletionResponse = serde_json::from_str(&response_text)
+                .map_err(|e| ApiError::ResponseParsingError {
                     provider: self.name().to_string(),
-                    details: error_text,
-                },
-                403 => ApiError::AuthenticationFailed {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                429 => ApiError::RateLimited {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                400..=499 => ApiError::InvalidRequest {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                500..=599 => ApiError::ServerError {
-                    provider: self.name().to_string(),
-                    status_code: status.as_u16(),
-                    details: error_text,
-                },
-                _ => ApiError::Unknown {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-            });
+                    details: format!("Error: {e}, Body: {response_text}"),
+                })?;
+            let completion = CompletionResponse {
+                content: convert_claude_content(claude_completion.content),
+            };
+
+            return Ok(completion);
         }
-
-        let response_text = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                debug!(target: "claude::complete", "Cancellation token triggered while reading successful response body.");
-                return Err(ApiError::Cancelled { provider: self.name().to_string() });
-            }
-            text_res = response.text() => {
-                text_res?
-            }
-        };
-
-        let claude_completion: ClaudeCompletionResponse = serde_json::from_str(&response_text)
-            .map_err(|e| ApiError::ResponseParsingError {
-                provider: self.name().to_string(),
-                details: format!("Error: {e}, Body: {response_text}"),
-            })?;
-        let completion = CompletionResponse {
-            content: convert_claude_content(claude_completion.content),
-        };
-
-        Ok(completion)
     }
 
     async fn stream_complete(
@@ -862,31 +889,12 @@ impl Provider for AnthropicClient {
             cache_type: "ephemeral".to_string(),
         });
 
-        let system_content = match (system, &self.auth) {
-            (Some(sys), AuthMethod::ApiKey(_)) => Some(System::Content(vec![SystemContentBlock {
-                content_type: "text".to_string(),
-                text: sys,
-                cache_control: cache_setting.clone(),
-            }])),
-            (Some(sys), AuthMethod::OAuth(_)) => Some(System::Content(vec![
-                SystemContentBlock {
-                    content_type: "text".to_string(),
-                    text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
-                    cache_control: cache_setting.clone(),
-                },
-                SystemContentBlock {
-                    content_type: "text".to_string(),
-                    text: sys,
-                    cache_control: cache_setting.clone(),
-                },
-            ])),
-            (None, AuthMethod::ApiKey(_)) => None,
-            (None, AuthMethod::OAuth(_)) => Some(System::Content(vec![SystemContentBlock {
-                content_type: "text".to_string(),
-                text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
-                cache_control: cache_setting.clone(),
-            }])),
+        let instruction_policy = match &self.auth {
+            AuthMode::Directive(directive) => directive.instruction_policy.as_ref(),
+            AuthMode::ApiKey(_) => None,
         };
+        let system_text = apply_instruction_policy(system, instruction_policy);
+        let system_content = build_system_content(system_text, cache_setting.clone());
 
         match &mut last_message.content {
             ClaudeMessageContent::StructuredContent { content } => {
@@ -965,63 +973,163 @@ impl Provider for AnthropicClient {
             }
         };
 
-        let auth_headers = self.get_auth_headers().await?;
-        let mut request_builder = self.http_client.post(API_URL).json(&request);
+        let auth_ctx = auth_header_context(model_id, RequestKind::Stream);
+        let mut attempts = 0;
 
-        for (name, value) in auth_headers {
-            request_builder = request_builder.header(&name, &value);
-        }
+        loop {
+            let auth_headers = self.auth_headers(auth_ctx.clone()).await?;
+            let url = self.request_url();
+            let mut request_builder = self.http_client.post(&url).json(&request);
 
-        if supports_thinking && matches!(&self.auth, AuthMethod::ApiKey(_)) {
-            request_builder =
-                request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
-        }
-
-        let response = tokio::select! {
-            biased;
-            _ = token.cancelled() => {
-                return Err(ApiError::Cancelled { provider: self.name().to_string() });
+            for (name, value) in auth_headers {
+                request_builder = request_builder.header(&name, &value);
             }
-            res = request_builder.send() => {
-                res?
+
+            if supports_thinking && matches!(&self.auth, AuthMode::ApiKey(_)) {
+                request_builder =
+                    request_builder.header("anthropic-beta", "interleaved-thinking-2025-05-14");
             }
-        };
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await?;
-            return Err(match status.as_u16() {
-                401 | 403 => ApiError::AuthenticationFailed {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                429 => ApiError::RateLimited {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                400..=499 => ApiError::InvalidRequest {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                500..=599 => ApiError::ServerError {
-                    provider: self.name().to_string(),
-                    status_code: status.as_u16(),
-                    details: error_text,
-                },
-                _ => ApiError::Unknown {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-            });
+            let response = tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    return Err(ApiError::Cancelled { provider: self.name().to_string() });
+                }
+                res = request_builder.send() => {
+                    res?
+                }
+            };
+
+            let status = response.status();
+            if !status.is_success() {
+                let error_text = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        return Err(ApiError::Cancelled { provider: self.name().to_string() });
+                    }
+                    text_res = response.text() => {
+                        text_res?
+                    }
+                };
+
+                if is_auth_status(status) && matches!(&self.auth, AuthMode::Directive(_)) {
+                    let action = self
+                        .on_auth_error(status.as_u16(), &error_text, RequestKind::Stream)
+                        .await?;
+                    if matches!(action, AuthErrorAction::RetryOnce) && attempts == 0 {
+                        attempts += 1;
+                        continue;
+                    }
+                    return Err(ApiError::AuthenticationFailed {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    });
+                }
+
+                return Err(match status.as_u16() {
+                    401 | 403 => ApiError::AuthenticationFailed {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                    429 => ApiError::RateLimited {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                    400..=499 => ApiError::InvalidRequest {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                    500..=599 => ApiError::ServerError {
+                        provider: self.name().to_string(),
+                        status_code: status.as_u16(),
+                        details: error_text,
+                    },
+                    _ => ApiError::Unknown {
+                        provider: self.name().to_string(),
+                        details: error_text,
+                    },
+                });
+            }
+
+            let byte_stream = response.bytes_stream();
+            let sse_stream = parse_sse_stream(byte_stream);
+
+            let stream = convert_claude_stream(sse_stream, token);
+
+            return Ok(Box::pin(stream));
         }
-
-        let byte_stream = response.bytes_stream();
-        let sse_stream = parse_sse_stream(byte_stream);
-
-        let stream = convert_claude_stream(sse_stream, token);
-
-        Ok(Box::pin(stream))
     }
+}
+
+fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
+    AuthHeaderContext {
+        model_id: Some(AuthModelId {
+            provider_id: AuthProviderId(model_id.0.as_str().to_string()),
+            model_id: model_id.1.clone(),
+        }),
+        request_kind,
+    }
+}
+
+fn is_auth_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    )
+}
+
+fn truncate_body(body: &str) -> String {
+    const LIMIT: usize = 512;
+    let mut chars = body.chars();
+    let truncated: String = chars.by_ref().take(LIMIT).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn apply_instruction_policy(
+    system: Option<String>,
+    policy: Option<&InstructionPolicy>,
+) -> Option<String> {
+    let trimmed = system.as_ref().map(|s| s.trim()).unwrap_or("");
+    match policy {
+        None => {
+            if trimmed.is_empty() {
+                None
+            } else {
+                system
+            }
+        }
+        Some(InstructionPolicy::Prefix(prefix)) => {
+            if trimmed.is_empty() {
+                Some(prefix.clone())
+            } else {
+                Some(format!("{prefix}\n{}", system.unwrap_or_default()))
+            }
+        }
+        Some(InstructionPolicy::DefaultIfEmpty(default)) => {
+            if trimmed.is_empty() {
+                Some(default.clone())
+            } else {
+                system
+            }
+        }
+    }
+}
+
+fn build_system_content(
+    system: Option<String>,
+    cache_setting: Option<CacheControl>,
+) -> Option<System> {
+    system.map(|text| {
+        System::Content(vec![SystemContentBlock {
+            content_type: "text".to_string(),
+            text,
+            cache_control: cache_setting,
+        }])
+    })
 }
 
 #[derive(Debug)]
@@ -1235,16 +1343,5 @@ fn convert_claude_stream(
                 | ClaudeStreamEvent::Ping => {}
             }
         }
-    }
-}
-
-impl InteractiveAuth for AnthropicClient {
-    fn create_auth_flow(
-        &self,
-        storage: Arc<dyn AuthStorage>,
-    ) -> Option<Box<dyn DynAuthenticationFlow>> {
-        Some(Box::new(AuthFlowWrapper::new(AnthropicOAuthFlow::new(
-            storage,
-        ))))
     }
 }
