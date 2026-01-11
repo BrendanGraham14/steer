@@ -65,6 +65,7 @@ pub struct CreateWorkspaceRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListWorkspacesRequest {
+    pub environment_id: EnvironmentId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

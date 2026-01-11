@@ -152,10 +152,15 @@ impl WorkspaceManager for LocalWorkspaceManager {
 
     async fn list_workspaces(
         &self,
-        _request: ListWorkspacesRequest,
+        request: ListWorkspacesRequest,
     ) -> WorkspaceManagerResult<Vec<WorkspaceInfo>> {
+        if request.environment_id != self.environment_id {
+            return Err(WorkspaceManagerError::NotFound(
+                request.environment_id.as_uuid().to_string(),
+            ));
+        }
         self.registry
-            .list_workspaces(self.environment_id)
+            .list_workspaces(request.environment_id)
             .await
     }
 
@@ -345,7 +350,9 @@ mod tests {
             .unwrap();
 
         let workspaces = manager
-            .list_workspaces(ListWorkspacesRequest {})
+            .list_workspaces(ListWorkspacesRequest {
+                environment_id: manager.environment_id(),
+            })
             .await
             .unwrap();
         assert!(workspaces.is_empty());

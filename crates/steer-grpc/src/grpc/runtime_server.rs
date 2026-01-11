@@ -1356,17 +1356,12 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let workspaces = self
             .workspace_manager
-            .list_workspaces(steer_workspace::ListWorkspacesRequest {})
+            .list_workspaces(steer_workspace::ListWorkspacesRequest { environment_id })
             .await
             .map_err(Self::workspace_manager_error_to_status)?;
 
-        let filtered: Vec<_> = workspaces
-            .into_iter()
-            .filter(|workspace| workspace.environment_id == environment_id)
-            .collect();
-
         Ok(Response::new(proto::ListWorkspacesResponse {
-            workspaces: filtered
+            workspaces: workspaces
                 .iter()
                 .map(workspace_info_to_proto)
                 .collect(),
