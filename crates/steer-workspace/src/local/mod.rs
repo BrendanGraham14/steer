@@ -1,5 +1,6 @@
 mod environment;
 pub(crate) mod jj;
+mod layout;
 mod manager;
 mod workspace;
 

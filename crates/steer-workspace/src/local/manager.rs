@@ -16,11 +16,12 @@ use crate::{
 };
 
 use super::jj;
+use super::layout::WorkspaceLayout;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct LocalWorkspaceManager {
-    root: PathBuf,
+    layout: WorkspaceLayout,
     environment_id: EnvironmentId,
     registry: Arc<WorkspaceRegistry>,
 }
@@ -29,7 +30,7 @@ impl LocalWorkspaceManager {
     pub async fn new(root: PathBuf) -> WorkspaceManagerResult<Self> {
         let registry = WorkspaceRegistry::open(&root).await?;
         let manager = Self {
-            root,
+            layout: WorkspaceLayout::new(root),
             environment_id: EnvironmentId::local(),
             registry: Arc::new(registry),
         };
@@ -38,51 +39,6 @@ impl LocalWorkspaceManager {
 
     pub fn environment_id(&self) -> EnvironmentId {
         self.environment_id
-    }
-
-    fn workspace_parent_dir(&self, repo_id: RepoId) -> PathBuf {
-        self.root
-            .join(".steer")
-            .join("workspaces")
-            .join(repo_id.as_uuid().to_string())
-    }
-
-    fn sanitize_name(&self, name: &str) -> String {
-        let mut sanitized = String::new();
-        for ch in name.chars() {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                sanitized.push(ch);
-            } else if ch.is_ascii_whitespace() {
-                sanitized.push('-');
-            }
-        }
-        if sanitized.is_empty() {
-            "workspace".to_string()
-        } else {
-            sanitized
-        }
-    }
-
-    fn default_workspace_name(&self, workspace_id: WorkspaceId) -> String {
-        let id = workspace_id.as_uuid().to_string();
-        let short = id.split('-').next().unwrap_or("workspace");
-        format!("ws-{short}")
-    }
-
-    fn ensure_unique_path(&self, base_dir: &Path, name: &str) -> PathBuf {
-        let mut candidate = base_dir.join(name);
-        if !candidate.exists() {
-            return candidate;
-        }
-        let mut counter = 1;
-        loop {
-            let candidate_name = format!("{name}-{counter}");
-            candidate = base_dir.join(candidate_name);
-            if !candidate.exists() {
-                return candidate;
-            }
-            counter += 1;
-        }
     }
 
     fn repo_id_for_path(&self, path: &Path) -> RepoId {
@@ -159,13 +115,14 @@ impl WorkspaceManager for LocalWorkspaceManager {
 
         let jj_root = jj::ensure_jj_workspace_root(&repo_info.root_path)?;
         let workspace_id = WorkspaceId::new();
-        let requested_name =
-            request.name.unwrap_or_else(|| self.default_workspace_name(workspace_id));
-        let jj_name = self.sanitize_name(&requested_name);
+        let requested_name = request
+            .name
+            .unwrap_or_else(|| self.layout.default_workspace_name(workspace_id));
+        let jj_name = self.layout.sanitize_name(&requested_name);
 
-        let parent_dir = self.workspace_parent_dir(repo_info.repo_id);
+        let parent_dir = self.layout.workspace_parent_dir(repo_info.repo_id);
         std::fs::create_dir_all(&parent_dir)?;
-        let workspace_path = self.ensure_unique_path(&parent_dir, &jj_name);
+        let workspace_path = self.layout.ensure_unique_path(&parent_dir, &jj_name);
         std::fs::create_dir_all(&workspace_path)?;
 
         {
@@ -257,7 +214,7 @@ impl WorkspaceManager for LocalWorkspaceManager {
             })?;
 
         {
-            let managed_root = self.workspace_parent_dir(info.repo_id);
+            let managed_root = self.layout.workspace_parent_dir(info.repo_id);
             let managed_root =
                 std::fs::canonicalize(&managed_root).unwrap_or_else(|_| managed_root.clone());
             let info_path =
@@ -464,8 +421,8 @@ debug.operation-timestamp = "2001-01-01T00:00:00Z"
 
         assert!(child_info.path.exists());
         let managed_root =
-            std::fs::canonicalize(manager.workspace_parent_dir(child_info.repo_id))
-                .unwrap_or_else(|_| manager.workspace_parent_dir(child_info.repo_id));
+            std::fs::canonicalize(manager.layout.workspace_parent_dir(child_info.repo_id))
+                .unwrap_or_else(|_| manager.layout.workspace_parent_dir(child_info.repo_id));
         let child_path =
             std::fs::canonicalize(&child_info.path).unwrap_or_else(|_| child_info.path.clone());
         assert!(
