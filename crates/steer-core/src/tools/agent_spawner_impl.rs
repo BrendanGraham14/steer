@@ -5,19 +5,17 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
-use crate::app::conversation::{Message, MessageData, UserContent};
-use crate::app::domain::runtime::{
-    AgentConfig, AgentInterpreter, AgentInterpreterConfig, AgentInterpreterError,
-};
+use crate::app::domain::runtime::RuntimeService;
 use crate::app::domain::session::EventStore;
+use crate::error::Error;
 use crate::model_registry::ModelRegistry;
+use crate::runners::OneShotRunner;
 use crate::session::state::{
-    ApprovalRules, BackendConfig, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
-    ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
+    ApprovalRules, SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility,
+    UnapprovedBehavior, WorkspaceConfig,
 };
-use crate::tools::{BackendResolver, McpBackend, SessionMcpBackends, ToolExecutor, ToolSystemBuilder};
+use crate::tools::{ToolExecutor, ToolSystemBuilder};
 use crate::workspace::{RepoManager, Workspace, WorkspaceManager};
-use tracing::warn;
 
 use super::services::{AgentSpawner, SubAgentConfig, SubAgentError, SubAgentResult};
 
@@ -81,62 +79,23 @@ impl AgentSpawner for DefaultAgentSpawner {
             .unwrap_or_else(|| self.workspace.clone());
         let workspace_path = workspace.working_directory().to_path_buf();
 
-        let session_backends = if config.allow_mcp_tools && !config.mcp_backends.is_empty() {
-            let session_backends = Arc::new(SessionMcpBackends::new());
-            for backend_config in &config.mcp_backends {
-                let BackendConfig::Mcp {
-                    server_name,
-                    transport,
-                    tool_filter,
-                } = backend_config;
-
-                match McpBackend::new(
-                    server_name.clone(),
-                    transport.clone(),
-                    tool_filter.clone(),
-                )
-                .await
-                {
-                    Ok(backend) => {
-                        session_backends
-                            .register(server_name.clone(), Arc::new(backend))
-                            .await;
-                    }
-                    Err(err) => {
-                        warn!(
-                            server_name = %server_name,
-                            error = %err,
-                            "Failed to start MCP server for sub-agent"
-                        );
-                    }
-                }
-            }
-            Some(session_backends)
+        let visibility_tools: HashSet<String> = config.allowed_tools.iter().cloned().collect();
+        let mcp_backends = if config.allow_mcp_tools {
+            config.mcp_backends.clone()
         } else {
-            None
+            Vec::new()
         };
 
-        let mut approved_tools: HashSet<String> =
-            config.allowed_tools.iter().cloned().collect();
-        let mut visibility_tools = approved_tools.clone();
-
-        if let Some(backends) = session_backends.as_ref() {
-            for schema in backends.get_tool_schemas().await {
-                visibility_tools.insert(schema.name.clone());
-                approved_tools.insert(schema.name);
-            }
-        }
-
         let approval_policy = ToolApprovalPolicy {
-            default_behavior: UnapprovedBehavior::Deny,
+            default_behavior: UnapprovedBehavior::Prompt,
             preapproved: ApprovalRules {
-                tools: approved_tools,
+                tools: visibility_tools.clone(),
                 per_tool: HashMap::new(),
             },
         };
 
         let tool_config = SessionToolConfig {
-            backends: config.mcp_backends.clone(),
+            backends: mcp_backends,
             visibility: ToolVisibility::Whitelist(visibility_tools),
             approval_policy,
             metadata: HashMap::new(),
@@ -151,100 +110,36 @@ impl AgentSpawner for DefaultAgentSpawner {
         session_config.repo_ref = config.repo_ref.clone();
         session_config.workspace_name = config.workspace_name.clone();
         session_config.parent_session_id = Some(config.parent_session_id);
+        session_config.system_prompt = config.system_prompt.clone();
         session_config.tool_config = tool_config;
 
-        let interpreter_config = AgentInterpreterConfig {
-            auto_approve_tools: true,
-            parent_session_id: Some(config.parent_session_id),
-            session_config: Some(session_config),
-            session_backends: session_backends.clone(),
-        };
-
         let tool_executor = self.build_tool_executor(workspace);
-
-        let interpreter = match AgentInterpreter::new(
+        let runtime = RuntimeService::spawn(
             self.event_store.clone(),
             self.api_client.clone(),
-            tool_executor.clone(),
-            interpreter_config,
+            tool_executor,
+        );
+
+        let run_result = OneShotRunner::run_new_session_with_cancel(
+            &runtime.handle,
+            session_config,
+            config.prompt,
+            config.model.clone(),
+            cancel_token,
         )
-        .await
-        {
-            Ok(interpreter) => interpreter,
-            Err(e) => {
-                if let Some(backends) = session_backends.as_ref() {
-                    backends.clear().await;
-                }
-                return Err(match e {
-            AgentInterpreterError::EventStore(msg) => SubAgentError::EventStore(msg),
-            AgentInterpreterError::Api(msg) => SubAgentError::Api(msg),
-            AgentInterpreterError::Agent(msg) => SubAgentError::Agent(msg),
-            AgentInterpreterError::Cancelled => SubAgentError::Cancelled,
-                });
-            }
-        };
+        .await;
 
-        let session_id = interpreter.session_id();
+        runtime.shutdown().await;
 
-        let model_config = self
-            .model_registry
-            .get(&config.model)
-            .ok_or_else(|| SubAgentError::Agent(format!("Model not found: {:?}", config.model)))?
-            .clone();
-
-        let resolver = session_backends
-            .as_ref()
-            .map(|backends| backends.as_ref() as &dyn crate::tools::BackendResolver);
-
-        let available_tools: Vec<_> = tool_executor
-            .get_tool_schemas_with_resolver(resolver)
-            .await
-            .into_iter()
-            .filter(|schema| {
-                config.allowed_tools.contains(&schema.name)
-                    || (config.allow_mcp_tools && schema.name.starts_with("mcp__"))
-            })
-            .collect();
-
-        let agent_config = AgentConfig {
-            model: crate::config::model::ModelId::new(
-                model_config.provider.clone(),
-                model_config.id.clone(),
-            ),
-            system_prompt: config.system_prompt,
-            tools: available_tools,
-        };
-
-        let initial_messages = vec![Message {
-            data: MessageData::User {
-                content: vec![UserContent::Text {
-                    text: config.prompt,
-                }],
-            },
-            timestamp: Message::current_timestamp(),
-            id: Message::generate_id("user", Message::current_timestamp()),
-            parent_message_id: None,
-        }];
-
-        let final_message = interpreter
-            .run(agent_config, initial_messages, None, cancel_token)
-            .await
-            .map_err(|e| match e {
-                AgentInterpreterError::EventStore(msg) => SubAgentError::EventStore(msg),
-                AgentInterpreterError::Api(msg) => SubAgentError::Api(msg),
-                AgentInterpreterError::Agent(msg) => SubAgentError::Agent(msg),
-                AgentInterpreterError::Cancelled => SubAgentError::Cancelled,
-            });
-
-        if let Some(backends) = session_backends.as_ref() {
-            backends.clear().await;
-        }
-
-        let final_message = final_message?;
+        let run_result = run_result.map_err(|err| match err {
+            Error::Cancelled => SubAgentError::Cancelled,
+            Error::Api(error) => SubAgentError::Api(error.to_string()),
+            other => SubAgentError::Agent(other.to_string()),
+        })?;
 
         Ok(SubAgentResult {
-            session_id,
-            final_message,
+            session_id: run_result.session_id,
+            final_message: run_result.final_message,
         })
     }
 }

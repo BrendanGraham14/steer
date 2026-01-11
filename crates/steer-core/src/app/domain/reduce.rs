@@ -1203,6 +1203,7 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
             state.session_config = Some((**config).clone());
+            state.cached_system_prompt = config.system_prompt.clone();
 
             state.approved_tools = config
                 .tool_config

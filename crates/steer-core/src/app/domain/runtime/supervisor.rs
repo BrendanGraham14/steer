@@ -216,6 +216,7 @@ impl RuntimeSupervisor {
             .await?;
 
         let mut state = AppState::new(session_id);
+        state.cached_system_prompt = config.system_prompt.clone();
         state.session_config = Some(config);
 
         let handle = spawn_session_actor(
