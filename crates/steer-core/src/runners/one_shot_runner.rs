@@ -8,7 +8,11 @@ use crate::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use crate::app::domain::types::SessionId;
 use crate::config::model::ModelId;
 use crate::error::{Error, Result};
+use crate::session::ToolApprovalPolicy;
 use crate::session::state::SessionConfig;
+use steer_tools::ToolCall;
+use steer_tools::tools::BASH_TOOL_NAME;
+use steer_tools::tools::bash::BashParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOnceResult {
@@ -62,6 +66,21 @@ impl OneShotRunner {
             ))
         })?;
 
+        let approval_policy = match runtime.get_session_state(session_id).await {
+            Ok(state) => state
+                .session_config
+                .map(|config| config.tool_config.approval_policy)
+                .unwrap_or_default(),
+            Err(err) => {
+                warn!(
+                    session_id = %session_id,
+                    error = %err,
+                    "Failed to load session approval policy; defaulting to deny"
+                );
+                ToolApprovalPolicy::default()
+            }
+        };
+
         info!(session_id = %session_id, message = %message, "Sending message to session");
 
         let op_id = runtime
@@ -88,7 +107,8 @@ impl OneShotRunner {
             })
         };
 
-        let result = Self::process_events(subscription, session_id, op_id).await;
+        let result =
+            Self::process_events(runtime, subscription, session_id, op_id, approval_policy).await;
 
         cancel_task.abort();
 
@@ -107,6 +127,17 @@ impl OneShotRunner {
         message: String,
         model: ModelId,
     ) -> Result<RunOnceResult> {
+        Self::run_new_session_with_cancel(runtime, config, message, model, CancellationToken::new())
+            .await
+    }
+
+    pub async fn run_new_session_with_cancel(
+        runtime: &RuntimeHandle,
+        config: SessionConfig,
+        message: String,
+        model: ModelId,
+        cancel_token: CancellationToken,
+    ) -> Result<RunOnceResult> {
         let session_id = runtime
             .create_session(config)
             .await
@@ -114,13 +145,15 @@ impl OneShotRunner {
 
         info!(session_id = %session_id, "Created new session for one-shot run");
 
-        Self::run_in_session(runtime, session_id, message, model).await
+        Self::run_in_session_with_cancel(runtime, session_id, message, model, cancel_token).await
     }
 
     async fn process_events(
+        runtime: &RuntimeHandle,
         mut subscription: crate::app::domain::runtime::SessionEventSubscription,
         session_id: SessionId,
         op_id: crate::app::domain::types::OpId,
+        approval_policy: ToolApprovalPolicy,
     ) -> Result<RunOnceResult> {
         let mut messages = Vec::new();
         info!(session_id = %session_id, "Starting event processing loop");
@@ -188,12 +221,31 @@ impl OneShotRunner {
                     request_id,
                     tool_call,
                 } => {
-                    warn!(
-                        session_id = %session_id,
-                        request_id = %request_id,
-                        tool = %tool_call.name,
-                        "ApprovalRequested event - unexpected in headless mode with pre-approved tools"
-                    );
+                    let approved = tool_is_preapproved(&tool_call, &approval_policy);
+                    if approved {
+                        info!(
+                            session_id = %session_id,
+                            request_id = %request_id,
+                            tool = %tool_call.name,
+                            "Auto-approving preapproved tool"
+                        );
+                    } else {
+                        warn!(
+                            session_id = %session_id,
+                            request_id = %request_id,
+                            tool = %tool_call.name,
+                            "Auto-denying unapproved tool"
+                        );
+                    }
+
+                    runtime
+                        .submit_tool_approval(session_id, request_id, approved, None)
+                        .await
+                        .map_err(|e| {
+                            Error::InvalidOperation(format!(
+                                "Failed to submit tool approval decision: {e}"
+                            ))
+                        })?;
                 }
 
                 _ => {}
@@ -215,6 +267,21 @@ impl OneShotRunner {
             None => Err(Error::InvalidOperation("No message received".to_string())),
         }
     }
+}
+
+fn tool_is_preapproved(tool_call: &ToolCall, policy: &ToolApprovalPolicy) -> bool {
+    if policy.preapproved.tools.contains(&tool_call.name) {
+        return true;
+    }
+
+    if tool_call.name == BASH_TOOL_NAME {
+        let params = serde_json::from_value::<BashParams>(tool_call.parameters.clone());
+        if let Ok(params) = params {
+            return policy.is_bash_pattern_preapproved(&params.command);
+        }
+    }
+
+    false
 }
 
 impl From<RuntimeError> for Error {
@@ -254,8 +321,69 @@ mod tests {
     use crate::session::state::{SessionToolConfig, WorkspaceConfig};
     use crate::tools::{BackendRegistry, ToolExecutor};
     use dotenvy::dotenv;
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use steer_tools::ToolCall;
+    use steer_tools::tools::BASH_TOOL_NAME;
+    use tokio_util::sync::CancellationToken;
+    use crate::api::{ApiError, CompletionResponse, Provider};
+
+    #[derive(Clone)]
+    struct ToolCallThenTextProvider {
+        tool_call: ToolCall,
+        final_text: String,
+        call_count: Arc<StdMutex<usize>>,
+    }
+
+    impl ToolCallThenTextProvider {
+        fn new(tool_call: ToolCall, final_text: impl Into<String>) -> Self {
+            Self {
+                tool_call,
+                final_text: final_text.into(),
+                call_count: Arc::new(StdMutex::new(0)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ToolCallThenTextProvider {
+        fn name(&self) -> &'static str {
+            "stub-tool-call"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &crate::config::model::ModelId,
+            _messages: Vec<Message>,
+            _system: Option<String>,
+            _tools: Option<Vec<steer_tools::ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionResponse, ApiError> {
+            let mut count = self
+                .call_count
+                .lock()
+                .expect("tool call counter lock poisoned");
+            let response = if *count == 0 {
+                CompletionResponse {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: self.tool_call.clone(),
+                    }],
+                }
+            } else {
+                CompletionResponse {
+                    content: vec![AssistantContent::Text {
+                        text: self.final_text.clone(),
+                    }],
+                }
+            };
+            *count += 1;
+            Ok(response)
+        }
+    }
 
     async fn create_test_runtime() -> RuntimeService {
         let event_store = Arc::new(InMemoryEventStore::new());
@@ -303,6 +431,59 @@ mod tests {
                 per_tool: std::collections::HashMap::new(),
             },
         }
+    }
+
+    #[test]
+    fn tool_is_preapproved_allows_whitelisted_tool() {
+        let policy = create_test_tool_approval_policy();
+        let tool_call = ToolCall {
+            id: "tc_read".to_string(),
+            name: READ_ONLY_TOOL_NAMES[0].to_string(),
+            parameters: json!({}),
+        };
+
+        assert!(tool_is_preapproved(&tool_call, &policy));
+    }
+
+    #[test]
+    fn tool_is_preapproved_allows_bash_pattern() {
+        use crate::session::state::{ApprovalRules, ToolRule, UnapprovedBehavior};
+
+        let mut per_tool = HashMap::new();
+        per_tool.insert(
+            "bash".to_string(),
+            ToolRule::Bash {
+                patterns: vec!["echo *".to_string()],
+            },
+        );
+
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: HashSet::new(),
+                per_tool,
+            },
+        };
+
+        let tool_call = ToolCall {
+            id: "tc_bash".to_string(),
+            name: BASH_TOOL_NAME.to_string(),
+            parameters: json!({ "command": "echo hello" }),
+        };
+
+        assert!(tool_is_preapproved(&tool_call, &policy));
+    }
+
+    #[test]
+    fn tool_is_preapproved_denies_unlisted_tool() {
+        let policy = create_test_tool_approval_policy();
+        let tool_call = ToolCall {
+            id: "tc_other".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({ "command": "rm -rf /" }),
+        };
+
+        assert!(!tool_is_preapproved(&tool_call, &policy));
     }
 
     #[tokio::test]
