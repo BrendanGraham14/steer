@@ -205,12 +205,13 @@ impl AgentClient {
                 reason: "No active session".to_string(),
             })?;
 
+        let steer_core::config::model::ModelId { provider, id } = model;
         let request = Request::new(proto::SendMessageRequest {
             session_id,
             message,
             model: Some(proto::ModelSpec {
-                provider_id: model.0.storage_key(),
-                model_id: model.1,
+                provider_id: provider.storage_key(),
+                model_id: id,
             }),
         });
 
@@ -240,13 +241,14 @@ impl AgentClient {
                 reason: "No active session".to_string(),
             })?;
 
+        let steer_core::config::model::ModelId { provider, id } = model;
         let request = Request::new(proto::EditMessageRequest {
             session_id,
             message_id,
             new_content,
             model: Some(proto::ModelSpec {
-                provider_id: model.0.storage_key(),
-                model_id: model.1,
+                provider_id: provider.storage_key(),
+                model_id: id,
             }),
         });
 
@@ -608,7 +610,10 @@ impl AgentClient {
                     ),
                 })?;
 
-        Ok((provider_id, model_spec.model_id))
+        Ok(steer_core::config::model::ModelId::new(
+            provider_id,
+            model_spec.model_id,
+        ))
     }
 
     pub async fn list_providers(&self) -> GrpcResult<Vec<proto::ProviderInfo>> {

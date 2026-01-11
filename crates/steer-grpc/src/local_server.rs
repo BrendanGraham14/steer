@@ -264,7 +264,7 @@ mod tests {
             provider_registry.clone(),
             model_registry.clone(),
         ));
-        api_client.insert_test_provider(default_model.0.clone(), Arc::new(StubProvider));
+        api_client.insert_test_provider(default_model.provider.clone(), Arc::new(StubProvider));
 
         let workspace = steer_core::workspace::create_workspace(
             &steer_core::workspace::WorkspaceConfig::Local {
@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(compact_summary.expect("summary"), STUB_RESPONSE);
         let record = compaction_record.expect("record");
         assert!(!record.id.is_empty());
-        assert_eq!(record.model, model.1);
+        assert_eq!(record.model, model.id);
     }
 
     #[tokio::test]

@@ -53,7 +53,7 @@ fn generate_model_constants(out_dir: &Path, models: &[ModelData]) {
         let const_name = model.id.to_lowercase().replace("-", "_").replace(".", "_");
         let provider_fn = model.provider.to_lowercase();
         output.push_str(&format!(
-            "#[inline]\npub fn {}() -> ModelId {{ ({}(), \"{}\".to_string()) }}\n",
+            "#[inline]\npub fn {}() -> ModelId {{ ModelId {{ provider: {}(), id: \"{}\".to_string() }} }}\n",
             const_name, provider_fn, model.id
         ));
     }

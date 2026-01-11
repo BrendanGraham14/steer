@@ -118,7 +118,7 @@ impl Client {
             });
 
         let request = OpenAIRequest {
-            model: model_id.1.clone(), // Use the model ID string
+            model: model_id.id.clone(), // Use the model ID string
             messages: openai_messages,
             temperature: call_options
                 .as_ref()
@@ -399,7 +399,7 @@ impl Client {
             });
 
         let request = OpenAIRequest {
-            model: model_id.1.clone(),
+            model: model_id.id.clone(),
             messages: openai_messages,
             temperature: call_options
                 .as_ref()
@@ -1121,9 +1121,9 @@ mod tests {
             parent_message_id: None,
         };
 
-        let model_id = (
+        let model_id = ModelId::new(
             crate::config::provider::openai(),
-            "gpt-4.1-mini-2025-04-14".to_string(),
+            "gpt-4.1-mini-2025-04-14",
         );
         let token = CancellationToken::new();
 

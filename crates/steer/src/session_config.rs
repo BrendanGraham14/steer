@@ -347,10 +347,7 @@ mod tests {
     use steer_core::session::ToolFilter;
 
     fn test_model() -> ModelId {
-        (
-            ProviderId("test-provider".to_string()),
-            "test-model".to_string(),
-        )
+        ModelId::new(ProviderId("test-provider".to_string()), "test-model")
     }
 
     #[tokio::test]

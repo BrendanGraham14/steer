@@ -522,7 +522,7 @@ impl SessionActor {
                                 summary: summary_text,
                                 compacted_head_message_id: compacted_head,
                                 previous_active_message_id: previous_active,
-                                model: model.1.clone(),
+                                model: model.id.clone(),
                                 timestamp: current_timestamp(),
                             }
                         }

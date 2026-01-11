@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::provider::ProviderId;
@@ -6,8 +7,21 @@ use super::toml_types::ModelData;
 // Re-export types from toml_types for public use
 pub use super::toml_types::{ModelParameters, ThinkingConfig};
 
-/// Type alias for model identification as a tuple of (ProviderId, model id string).
-pub type ModelId = (ProviderId, String);
+/// Identifier for a model (provider + model id string).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct ModelId {
+    pub provider: ProviderId,
+    pub id: String,
+}
+
+impl ModelId {
+    pub fn new(provider: ProviderId, id: impl Into<String>) -> Self {
+        Self {
+            provider,
+            id: id.into(),
+        }
+    }
+}
 
 /// Built-in model constants generated from default_catalog.toml
 pub mod builtin {

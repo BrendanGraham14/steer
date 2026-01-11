@@ -183,7 +183,10 @@ impl AgentSpawner for DefaultAgentSpawner {
             .collect();
 
         let agent_config = AgentConfig {
-            model: (model_config.provider.clone(), model_config.id.clone()),
+            model: crate::config::model::ModelId::new(
+                model_config.provider.clone(),
+                model_config.id.clone(),
+            ),
             system_prompt: config.system_prompt,
             tools: available_tools,
         };

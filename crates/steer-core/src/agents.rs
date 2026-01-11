@@ -121,7 +121,7 @@ pub fn agent_specs_prompt() -> String {
         let model = spec
             .model
             .as_ref()
-            .map(|(provider, id)| format!("{provider}/{id}"));
+            .map(|model| format!("{}/{}", model.provider.storage_key(), model.id));
         let mut details = format!("tools: {tools}; mcp: {mcp}");
         if let Some(model) = model {
             details.push_str(&format!("; model: {model}"));

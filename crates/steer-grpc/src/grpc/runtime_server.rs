@@ -1257,9 +1257,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         match self.model_registry.resolve(&req.input) {
             Ok(model_id) => {
+                let steer_core::config::model::ModelId { provider, id } = model_id;
                 let model_spec = proto::ModelSpec {
-                    provider_id: model_id.0.storage_key(),
-                    model_id: model_id.1,
+                    provider_id: provider.storage_key(),
+                    model_id: id,
                 };
                 Ok(Response::new(proto::ResolveModelResponse {
                     model: Some(model_spec),

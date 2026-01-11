@@ -189,7 +189,7 @@ impl Client {
         token: CancellationToken,
     ) -> std::result::Result<CompletionResponse, ApiError> {
         // Get provider from model ID
-        let provider_id = model_id.0.clone();
+        let provider_id = model_id.provider.clone();
         let entry = self
             .get_or_create_provider_entry(provider_id.clone())
             .await
@@ -266,7 +266,7 @@ impl Client {
         call_options: Option<crate::config::model::ModelParameters>,
         token: CancellationToken,
     ) -> std::result::Result<CompletionStream, ApiError> {
-        let provider_id = model_id.0.clone();
+        let provider_id = model_id.provider.clone();
         let entry = self
             .get_or_create_provider_entry(provider_id.clone())
             .await
@@ -352,7 +352,7 @@ impl Client {
         let mut attempts = 0;
 
         // Prepare provider and parameters once
-        let provider_id = model_id.0.clone();
+        let provider_id = model_id.provider.clone();
         let entry = self
             .get_or_create_provider_entry(provider_id.clone())
             .await
@@ -563,7 +563,7 @@ mod tests {
     async fn invalidates_cached_provider_on_auth_failure() {
         let client = test_client();
         let provider_id = ProviderId("stub-auth".to_string());
-        let model_id = (provider_id.clone(), "stub-model".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
 
         insert_stub_provider(&client, provider_id.clone(), StubErrorKind::Auth);
 
@@ -593,7 +593,7 @@ mod tests {
     async fn invalidates_cached_provider_on_unauthorized_status_code() {
         let client = test_client();
         let provider_id = ProviderId("stub-unauthorized".to_string());
-        let model_id = (provider_id.clone(), "stub-model".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
 
         insert_stub_provider(&client, provider_id.clone(), StubErrorKind::Server401);
 

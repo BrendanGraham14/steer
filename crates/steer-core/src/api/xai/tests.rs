@@ -24,7 +24,10 @@ async fn test_xai_client_provider_trait() {
     assert_eq!(_name, "xai");
 
     let messages = vec![];
-    let model_id = (crate::config::provider::xai(), "grok-3-mini".to_string());
+    let model_id = crate::config::model::ModelId::new(
+        crate::config::provider::xai(),
+        "grok-3-mini",
+    );
     let result = client
         .complete(
             &model_id,
@@ -176,7 +179,10 @@ async fn test_stream_complete_real_api() {
         parent_message_id: None,
     };
 
-    let model_id = (crate::config::provider::xai(), "grok-3-mini".to_string());
+    let model_id = crate::config::model::ModelId::new(
+        crate::config::provider::xai(),
+        "grok-3-mini",
+    );
     let token = CancellationToken::new();
 
     let mut stream = client

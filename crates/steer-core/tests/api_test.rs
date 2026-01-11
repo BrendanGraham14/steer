@@ -315,9 +315,9 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
         parent_message_id: None,
     }];
 
-    let model_id = (
+    let model_id = steer_core::config::model::ModelId::new(
         steer_core::config::provider::openai(),
-        "gpt-4.1-mini-2025-04-14".to_string(),
+        "gpt-4.1-mini-2025-04-14",
     );
 
     let mut stream = client

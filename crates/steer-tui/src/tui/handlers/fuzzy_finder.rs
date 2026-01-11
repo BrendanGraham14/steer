@@ -5,6 +5,7 @@ use crate::tui::theme::ThemeLoader;
 use crate::tui::widgets::PickerItem;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use steer_core::config::model::ModelId;
 use steer_core::config::provider::ProviderId;
 use tui_textarea::Input;
 
@@ -117,10 +118,11 @@ impl Tui {
                                 let picker_items: Vec<PickerItem> = models
                                     .into_iter()
                                     .map(|m| {
+                                        let provider_id = ProviderId(m.provider_id.clone());
                                         let model_id =
-                                            (ProviderId(m.provider_id.clone()), m.model_id.clone());
+                                            ModelId::new(provider_id.clone(), m.model_id.clone());
                                         let display_name = m.display_name;
-                                        let prov = ProviderId(m.provider_id.clone()).storage_key();
+                                        let prov = provider_id.storage_key();
                                         let display_full = format!("{prov}/{display_name}");
                                         let display = if model_id == current_model {
                                             format!("{display_full} (current)")
@@ -214,12 +216,12 @@ impl Tui {
                                         let results: Vec<PickerItem> = models
                                             .into_iter()
                                             .map(|m| {
-                                                let model_id = (
-                                                    ProviderId(m.provider_id.clone()),
+                                                let provider_id = ProviderId(m.provider_id.clone());
+                                                let model_id = ModelId::new(
+                                                    provider_id.clone(),
                                                     m.model_id.clone(),
                                                 );
-                                                let prov =
-                                                    ProviderId(m.provider_id.clone()).storage_key();
+                                                let prov = provider_id.storage_key();
                                                 let display_full =
                                                     format!("{}/{}", prov, m.display_name);
                                                 let label = if model_id == current_model {
@@ -345,8 +347,9 @@ impl Tui {
                         let mut scored_models: Vec<(i64, String, String)> = Vec::new();
 
                         for m in models {
-                            let model_id = (ProviderId(m.provider_id.clone()), m.model_id.clone());
-                            let prov = ProviderId(m.provider_id.clone()).storage_key();
+                            let provider_id = ProviderId(m.provider_id.clone());
+                            let model_id = ModelId::new(provider_id.clone(), m.model_id.clone());
+                            let prov = provider_id.storage_key();
                             let full_label = if model_id == current_model {
                                 format!("{}/{} (current)", prov, m.display_name)
                             } else {

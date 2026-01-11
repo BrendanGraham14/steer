@@ -91,7 +91,7 @@ impl ModelRegistry {
         };
 
         for model in models {
-            let model_id = (model.provider.clone(), model.id.clone());
+            let model_id = ModelId::new(model.provider.clone(), model.id.clone());
 
             // Track provider presence
             registry.providers.insert(model.provider.clone());
@@ -102,8 +102,8 @@ impl ModelRegistry {
                 if alias.is_empty() {
                     return Err(Error::Configuration(format!(
                         "Empty alias found for {}/{}",
-                        model_id.0.storage_key(),
-                        model_id.1,
+                        model_id.provider.storage_key(),
+                        model_id.id.as_str(),
                     )));
                 }
                 if let Some(existing) = registry.aliases.get(alias) {
@@ -111,10 +111,10 @@ impl ModelRegistry {
                         return Err(Error::Configuration(format!(
                             "Duplicate alias '{}' used by {}/{} and {}/{}",
                             alias,
-                            existing.0.storage_key(),
-                            existing.1,
-                            model_id.0.storage_key(),
-                            model_id.1,
+                            existing.provider.storage_key(),
+                            existing.id.as_str(),
+                            model_id.provider.storage_key(),
+                            model_id.id.as_str(),
                         )));
                     }
                 }
@@ -134,23 +134,23 @@ impl ModelRegistry {
         // Validate display_name values: non-empty, unique per provider
         {
             let mut seen: HashMap<ProviderId, HashSet<String>> = HashMap::new();
-            for ((prov, _mid), cfg) in &registry.models {
+            for (model_id, cfg) in &registry.models {
                 if let Some(name_raw) = cfg.display_name.as_deref() {
                     let name = name_raw.trim();
                     if name.is_empty() {
                         return Err(Error::Configuration(format!(
                             "Invalid display_name '{}' for {}/{}",
                             name_raw,
-                            prov.storage_key(),
+                            model_id.provider.storage_key(),
                             cfg.id
                         )));
                     }
-                    let set = seen.entry(prov.clone()).or_default();
+                    let set = seen.entry(model_id.provider.clone()).or_default();
                     if !set.insert(name.to_string()) {
                         return Err(Error::Configuration(format!(
                             "Duplicate display_name '{}' for provider {}",
                             name,
-                            prov.storage_key()
+                            model_id.provider.storage_key()
                         )));
                     }
                 }
@@ -197,14 +197,14 @@ impl ModelRegistry {
             }
 
             // 1) Try exact model id match (ID can include '/')
-            let candidate = (provider.clone(), part.to_string());
+            let candidate = ModelId::new(provider.clone(), part.to_string());
             if self.models.contains_key(&candidate) {
                 return Ok(candidate);
             }
 
             // 2) Try alias scoped to the provider
             if let Some(alias_id) = self.aliases.get(part) {
-                if alias_id.0 == provider {
+                if alias_id.provider == provider {
                     return Ok(alias_id.clone());
                 }
             }
@@ -214,7 +214,7 @@ impl ModelRegistry {
             )))
         } else {
             self.by_alias(input)
-                .map(|config| (config.provider.clone(), config.id.clone()))
+                .map(|config| ModelId::new(config.provider.clone(), config.id.clone()))
                 .ok_or_else(|| Error::Configuration(format!("Unknown model or alias: {input}")))
         }
     }
@@ -257,15 +257,15 @@ impl ModelRegistry {
     /// Merge user models into the base models file.
     /// Arrays are appended, scalar fields use last-write-wins.
     fn merge_models(base: &mut Vec<ModelConfig>, user_models: Vec<ModelConfig>) {
-        // Create a map of existing models by (provider, id) for efficient lookup
-        let mut existing_models: HashMap<(ProviderId, String), usize> = HashMap::new();
+        // Create a map of existing models by ModelId for efficient lookup
+        let mut existing_models: HashMap<ModelId, usize> = HashMap::new();
         for (idx, model) in base.iter().enumerate() {
-            existing_models.insert((model.provider.clone(), model.id.clone()), idx);
+            existing_models.insert(ModelId::new(model.provider.clone(), model.id.clone()), idx);
         }
 
         // Process each user model
         for user_model in user_models {
-            let key = (user_model.provider.clone(), user_model.id.clone());
+            let key = ModelId::new(user_model.provider.clone(), user_model.id.clone());
 
             if let Some(&idx) = existing_models.get(&key) {
                 // Model exists - merge it
@@ -327,7 +327,7 @@ parameters = { thinking_config = { enabled = true } }
         };
 
         for model in models {
-            let model_id = (model.provider.clone(), model.id.clone());
+            let model_id = ModelId::new(model.provider.clone(), model.id.clone());
 
             // track provider
             registry.providers.insert(model.provider.clone());
@@ -340,7 +340,7 @@ parameters = { thinking_config = { enabled = true } }
         }
 
         // Test get
-        let model_id = (provider::anthropic(), "test-model".to_string());
+        let model_id = ModelId::new(provider::anthropic(), "test-model");
         let model = registry.get(&model_id).unwrap();
         assert_eq!(model.id, "test-model");
         assert!(model.recommended);
@@ -531,8 +531,8 @@ recommended = true
             recommended: false,
             parameters: None,
         };
-        let id1 = (prov.clone(), m1.id.clone());
-        let id2 = (prov.clone(), m2.id.clone());
+        let id1 = ModelId::new(prov.clone(), m1.id.clone());
+        let id2 = ModelId::new(prov.clone(), m2.id.clone());
         registry.aliases.insert("alias1".into(), id1.clone());
         registry.aliases.insert("alias2".into(), id2.clone());
         registry.models.insert(id1.clone(), m1.clone());
@@ -574,8 +574,8 @@ recommended = true
             recommended: false,
             parameters: None,
         };
-        let id1 = (prov.clone(), m1.id.clone());
-        let id2 = (prov.clone(), m2.id.clone());
+        let id1 = ModelId::new(prov.clone(), m1.id.clone());
+        let id2 = ModelId::new(prov.clone(), m2.id.clone());
         registry.models.insert(id1, m1);
         registry.models.insert(id2, m2);
         registry.providers.insert(prov.clone());

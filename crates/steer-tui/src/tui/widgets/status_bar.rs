@@ -60,8 +60,8 @@ impl Widget for StatusBar<'_> {
         // Right: current model
         let model_string = format!(
             " {}/{} ",
-            self.current_model.0.storage_key(),
-            self.current_model.1
+            self.current_model.provider.storage_key(),
+            self.current_model.id
         );
         let right_line = Line::from(vec![Span::raw(model_string)]);
         let right_para = Paragraph::new(right_line)

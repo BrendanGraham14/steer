@@ -513,14 +513,14 @@ impl Provider for XAIClient {
             .unwrap_or((false, None));
 
         // grok-4 supports thinking by default but not the reasoning_effort parameter
-        let reasoning_effort = if supports_thinking && model_id.1 != "grok-4-0709" {
+        let reasoning_effort = if supports_thinking && model_id.id != "grok-4-0709" {
             reasoning_effort.or(Some(ReasoningEffort::High))
         } else {
             None
         };
 
         let request = CompletionRequest {
-            model: model_id.1.clone(), // Use the model ID string
+            model: model_id.id.clone(), // Use the model ID string
             messages: xai_messages,
             deferred: None,
             frequency_penalty: None,
@@ -691,14 +691,14 @@ impl Provider for XAIClient {
             })
             .unwrap_or((false, None));
 
-        let reasoning_effort = if supports_thinking && model_id.1 != "grok-4-0709" {
+        let reasoning_effort = if supports_thinking && model_id.id != "grok-4-0709" {
             reasoning_effort.or(Some(ReasoningEffort::High))
         } else {
             None
         };
 
         let request = CompletionRequest {
-            model: model_id.1.clone(),
+            model: model_id.id.clone(),
             messages: xai_messages,
             deferred: None,
             frequency_penalty: None,

@@ -1349,8 +1349,8 @@ impl Tui {
                                     NoticeLevel::Info,
                                     format!(
                                         "Model set to: {}/{}",
-                                        self.current_model.0.storage_key(),
-                                        self.current_model.1
+                                        self.current_model.provider.storage_key(),
+                                        self.current_model.id
                                     ),
                                 );
                             }
@@ -1366,8 +1366,8 @@ impl Tui {
                             NoticeLevel::Info,
                             format!(
                                 "Current model: {}/{}",
-                                self.current_model.0.storage_key(),
-                                self.current_model.1
+                                self.current_model.provider.storage_key(),
+                                self.current_model.id
                             ),
                         );
                     }

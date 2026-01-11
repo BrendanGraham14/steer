@@ -715,7 +715,7 @@ impl Provider for AnthropicClient {
                 budget_tokens: budget,
             });
             CompletionRequest {
-                model: model_id.1.clone(), // Use the model ID string
+                model: model_id.id.clone(), // Use the model ID string
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
@@ -735,7 +735,7 @@ impl Provider for AnthropicClient {
             }
         } else {
             CompletionRequest {
-                model: model_id.1.clone(), // Use the model ID string
+                model: model_id.id.clone(), // Use the model ID string
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
@@ -933,7 +933,7 @@ impl Provider for AnthropicClient {
                 budget_tokens: budget,
             });
             CompletionRequest {
-                model: model_id.1.clone(),
+                model: model_id.id.clone(),
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
@@ -953,7 +953,7 @@ impl Provider for AnthropicClient {
             }
         } else {
             CompletionRequest {
-                model: model_id.1.clone(),
+                model: model_id.id.clone(),
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
@@ -1064,8 +1064,8 @@ impl Provider for AnthropicClient {
 fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
     AuthHeaderContext {
         model_id: Some(AuthModelId {
-            provider_id: AuthProviderId(model_id.0.as_str().to_string()),
-            model_id: model_id.1.clone(),
+            provider_id: AuthProviderId(model_id.provider.as_str().to_string()),
+            model_id: model_id.id.clone(),
         }),
         request_kind,
     }

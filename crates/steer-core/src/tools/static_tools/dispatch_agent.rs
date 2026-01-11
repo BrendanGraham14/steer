@@ -745,7 +745,7 @@ mod tests {
         ));
         let model = builtin::claude_sonnet_4_5();
         api_client.insert_test_provider(
-            model.0.clone(),
+            model.provider.clone(),
             Arc::new(StubProvider::new("stub-response")),
         );
         let workspace = crate::workspace::create_workspace(
@@ -806,7 +806,7 @@ mod tests {
             model_registry,
         ));
         let model = builtin::claude_sonnet_4_5();
-        api_client.insert_test_provider(model.0.clone(), Arc::new(CancelAwareProvider));
+        api_client.insert_test_provider(model.provider.clone(), Arc::new(CancelAwareProvider));
         let workspace = crate::workspace::create_workspace(
             &steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
@@ -1205,7 +1205,7 @@ mod tests {
             id: "tool_denied".to_string(),
         };
         api_client.insert_test_provider(
-            model.0.clone(),
+            model.provider.clone(),
             Arc::new(ToolCallThenTextProvider::new(tool_call, "done")),
         );
 

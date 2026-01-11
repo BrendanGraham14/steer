@@ -67,10 +67,7 @@ impl Client {
         }
     }
 
-    pub(super) fn with_directive(
-        directive: OpenAiResponsesAuth,
-        base_url: Option<String>,
-    ) -> Self {
+    pub(super) fn with_directive(directive: OpenAiResponsesAuth, base_url: Option<String>) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
             .build()
@@ -162,7 +159,7 @@ impl Client {
         };
 
         let mut request = ResponsesRequest {
-            model: model_id.1.clone(), // Use the model ID string
+            model: model_id.id.clone(), // Use the model ID string
             input,
             instructions,
             previous_response_id: None,
@@ -183,11 +180,7 @@ impl Client {
         };
 
         if let Some(include) = directive.and_then(|d| d.include.as_ref()) {
-            let values = include
-                .iter()
-                .cloned()
-                .map(ExtraValue::String)
-                .collect();
+            let values = include.iter().cloned().map(ExtraValue::String).collect();
             request
                 .extra
                 .insert("include".to_string(), ExtraValue::Array(values));
@@ -196,10 +189,7 @@ impl Client {
         request
     }
 
-    async fn auth_headers(
-        &self,
-        ctx: AuthHeaderContext,
-    ) -> Result<header::HeaderMap, ApiError> {
+    async fn auth_headers(&self, ctx: AuthHeaderContext) -> Result<header::HeaderMap, ApiError> {
         match &self.auth {
             ResponsesAuth::ApiKey(value) => {
                 let mut headers = header::HeaderMap::new();
@@ -222,12 +212,13 @@ impl Client {
                     .map_err(|e| ApiError::AuthError(e.to_string()))?;
                 let mut headers = header::HeaderMap::new();
                 for pair in header_pairs {
-                    let name = header::HeaderName::from_bytes(pair.name.as_bytes()).map_err(|e| {
-                        ApiError::AuthenticationFailed {
-                            provider: "openai".to_string(),
-                            details: format!("Invalid header name: {e}"),
-                        }
-                    })?;
+                    let name =
+                        header::HeaderName::from_bytes(pair.name.as_bytes()).map_err(|e| {
+                            ApiError::AuthenticationFailed {
+                                provider: "openai".to_string(),
+                                details: format!("Invalid header name: {e}"),
+                            }
+                        })?;
                     let value = header::HeaderValue::from_str(&pair.value).map_err(|e| {
                         ApiError::AuthenticationFailed {
                             provider: "openai".to_string(),
@@ -493,7 +484,13 @@ impl Client {
         let mut attempts = 0;
 
         loop {
-            let request = self.build_request(model_id, messages.clone(), system.clone(), tools.clone(), call_options);
+            let request = self.build_request(
+                model_id,
+                messages.clone(),
+                system.clone(),
+                tools.clone(),
+                call_options,
+            );
             log_request_payload(&request, false);
             let headers = self.auth_headers(auth_ctx.clone()).await?;
             let request_builder = self
@@ -1081,8 +1078,8 @@ fn resolve_call_id(
 fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
     AuthHeaderContext {
         model_id: Some(AuthModelId {
-            provider_id: AuthProviderId(model_id.0.as_str().to_string()),
-            model_id: model_id.1.clone(),
+            provider_id: AuthProviderId(model_id.provider.as_str().to_string()),
+            model_id: model_id.id.clone(),
         }),
         request_kind,
     }
@@ -1224,10 +1221,7 @@ mod tests {
             parent_message_id: None,
         }];
 
-        let model_id = (
-            crate::config::provider::openai(),
-            "gpt-4.1-2025-04-14".to_string(),
-        );
+        let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
         let request = client.build_request(
             &model_id,
             messages,
@@ -1261,10 +1255,7 @@ mod tests {
         }];
 
         // Test with reasoning model (with call options enabling thinking)
-        let model_id = (
-            crate::config::provider::openai(),
-            "codex-mini-latest".to_string(),
-        );
+        let model_id = ModelId::new(crate::config::provider::openai(), "codex-mini-latest");
         let call_options = Some(crate::config::model::ModelParameters {
             temperature: None,
             max_tokens: None,
@@ -1284,10 +1275,7 @@ mod tests {
         );
 
         // Test with non-reasoning model (no thinking config)
-        let model_id = (
-            crate::config::provider::openai(),
-            "gpt-4.1-2025-04-14".to_string(),
-        );
+        let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
         let request = client.build_request(&model_id, messages, None, None, None);
 
         assert!(request.reasoning.is_none());

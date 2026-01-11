@@ -21,8 +21,8 @@ use uuid::Uuid;
 /// Convert a core ModelId to proto ModelSpec
 pub fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec {
     proto::ModelSpec {
-        provider_id: model.0.storage_key(),
-        model_id: model.1.clone(),
+        provider_id: model.provider.storage_key(),
+        model_id: model.id.clone(),
     }
 }
 
@@ -38,7 +38,10 @@ pub fn proto_to_model(
             message: format!("Invalid provider ID '{}': {}", spec.provider_id, e),
         })?;
 
-    Ok((provider_id, spec.model_id.clone()))
+    Ok(steer_core::config::model::ModelId::new(
+        provider_id,
+        spec.model_id.clone(),
+    ))
 }
 
 fn agent_workspace_revision_to_proto(

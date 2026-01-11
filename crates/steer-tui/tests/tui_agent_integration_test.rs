@@ -147,8 +147,8 @@ async fn test_tui_agent_service_file_listing() {
             .into_iter()
             .collect(),
         default_model: Some(steer_proto::agent::v1::ModelSpec {
-            provider_id: default_model.0.storage_key(),
-            model_id: default_model.1.clone(),
+            provider_id: default_model.provider.storage_key(),
+            model_id: default_model.id.clone(),
         }),
         ..Default::default()
     };
@@ -403,8 +403,8 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
             )),
         }),
         default_model: Some(steer_proto::agent::v1::ModelSpec {
-            provider_id: default_model.0.storage_key(),
-            model_id: default_model.1.clone(),
+            provider_id: default_model.provider.storage_key(),
+            model_id: default_model.id.clone(),
         }),
         ..Default::default()
     };
@@ -513,8 +513,8 @@ async fn test_workspace_changed_event_flow() {
             )),
         }),
         default_model: Some(steer_proto::agent::v1::ModelSpec {
-            provider_id: default_model.0.storage_key(),
-            model_id: default_model.1.clone(),
+            provider_id: default_model.provider.storage_key(),
+            model_id: default_model.id.clone(),
         }),
         ..Default::default()
     };

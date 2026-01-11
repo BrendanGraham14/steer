@@ -754,7 +754,7 @@ impl Provider for GeminiClient {
         _call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let model_name = &model_id.1; // Use the model ID string
+        let model_name = &model_id.id; // Use the model ID string
         let url = format!(
             "{}/models/{}:generateContent?key={}",
             GEMINI_API_BASE, model_name, self.api_key
@@ -877,7 +877,7 @@ impl Provider for GeminiClient {
         _call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
-        let model_name = &model_id.1;
+        let model_name = &model_id.id;
         let url = format!(
             "{}/models/{}:streamGenerateContent?alt=sse&key={}",
             GEMINI_API_BASE, model_name, self.api_key
@@ -1502,9 +1502,9 @@ mod tests {
             parent_message_id: None,
         };
 
-        let model_id = (
+        let model_id = ModelId::new(
             crate::config::provider::google(),
-            "gemini-2.5-flash-preview-04-17".to_string(),
+            "gemini-2.5-flash-preview-04-17",
         );
         let token = CancellationToken::new();
 
