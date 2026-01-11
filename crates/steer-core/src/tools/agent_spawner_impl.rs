@@ -147,8 +147,12 @@ impl AgentSpawner for DefaultAgentSpawner {
 #[cfg(test)]
 mod tests {
     use super::DefaultAgentSpawner;
+    use crate::api::{ApiError, CompletionResponse, Provider};
     use crate::api::Client as ApiClient;
+    use crate::app::conversation::AssistantContent;
     use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::app::domain::event::SessionEvent;
+    use crate::app::domain::session::EventStore;
     use crate::auth::ProviderRegistry;
     use crate::config::model::builtin;
     use crate::model_registry::ModelRegistry;
@@ -159,11 +163,56 @@ mod tests {
     use crate::workspace::WorkspaceConfig;
     use std::collections::HashSet;
     use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
     use steer_tools::tools::{
         BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
         VIEW_TOOL_NAME,
     };
     use tempfile::TempDir;
+    use tokio_util::sync::CancellationToken;
+
+    #[derive(Clone)]
+    struct RecordingProvider {
+        response: String,
+        last_system: Arc<StdMutex<Option<String>>>,
+    }
+
+    impl RecordingProvider {
+        fn new(response: impl Into<String>, last_system: Arc<StdMutex<Option<String>>>) -> Self {
+            Self {
+                response: response.into(),
+                last_system,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for RecordingProvider {
+        fn name(&self) -> &'static str {
+            "recording"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &crate::config::model::ModelId,
+            _messages: Vec<crate::app::conversation::Message>,
+            system: Option<String>,
+            _tools: Option<Vec<steer_tools::ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            *self
+                .last_system
+                .lock()
+                .expect("system prompt lock poisoned") = system;
+
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: self.response.clone(),
+                }],
+            })
+        }
+    }
 
     #[tokio::test]
     async fn sub_agent_tool_executor_includes_static_tools() {
@@ -207,5 +256,125 @@ mod tests {
                 "expected sub-agent to have static tool: {tool_name}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn sub_agent_persists_events_and_uses_whitelist_visibility() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let workspace = crate::workspace::create_workspace(&WorkspaceConfig::Local {
+            path: temp_dir.path().to_path_buf(),
+        })
+        .await
+        .expect("create workspace");
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            test_llm_config_provider(),
+            provider_registry,
+            model_registry.clone(),
+        ));
+
+        let system_capture = Arc::new(StdMutex::new(None));
+        let model = builtin::claude_sonnet_4_5();
+        api_client.insert_test_provider(
+            model.provider.clone(),
+            Arc::new(RecordingProvider::new("ok", system_capture.clone())),
+        );
+
+        let spawner = DefaultAgentSpawner::new(
+            event_store.clone(),
+            api_client,
+            workspace.clone(),
+            model_registry,
+            None,
+            None,
+        );
+
+        let parent_session_id = crate::app::domain::types::SessionId::new();
+        let allowed_tools = vec![
+            VIEW_TOOL_NAME.to_string(),
+            "mcp__alpha__allowed".to_string(),
+        ];
+        let system_prompt = "subagent system".to_string();
+
+        let config = SubAgentConfig {
+            parent_session_id,
+            prompt: "hello".to_string(),
+            allowed_tools: allowed_tools.clone(),
+            model: model.clone(),
+            system_prompt: Some(system_prompt.clone()),
+            workspace: Some(workspace),
+            workspace_ref: None,
+            workspace_id: None,
+            repo_ref: None,
+            workspace_name: None,
+            mcp_backends: Vec::new(),
+            allow_mcp_tools: true,
+        };
+
+        let result = spawner
+            .spawn(config, CancellationToken::new())
+            .await
+            .expect("spawn sub-agent");
+
+        let events = event_store
+            .load_events(result.session_id)
+            .await
+            .expect("load events");
+
+        let mut saw_session_created = false;
+        let mut saw_assistant_message = false;
+        let mut seen_visibility = None;
+        let mut seen_preapproved = None;
+
+        for (_, event) in events {
+            match event {
+                SessionEvent::SessionCreated { config, .. } => {
+                    saw_session_created = true;
+                    assert_eq!(config.parent_session_id, Some(parent_session_id));
+                    let configured_system = config
+                        .system_prompt
+                        .as_deref()
+                        .expect("expected system prompt in session config");
+                    assert!(
+                        configured_system.starts_with(system_prompt.as_str()),
+                        "expected system prompt prefix, got: {configured_system:?}"
+                    );
+                    match &config.tool_config.visibility {
+                        ToolVisibility::Whitelist(allowed) => {
+                            seen_visibility = Some(allowed.clone());
+                        }
+                        other => panic!("expected whitelist visibility, got {other:?}"),
+                    }
+                    seen_preapproved =
+                        Some(config.tool_config.approval_policy.preapproved.tools.clone());
+                }
+                SessionEvent::AssistantMessageAdded { .. } => {
+                    saw_assistant_message = true;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_session_created, "expected SessionCreated event");
+        assert!(
+            saw_assistant_message,
+            "expected AssistantMessageAdded event"
+        );
+
+        let expected: HashSet<String> = allowed_tools.into_iter().collect();
+        assert_eq!(seen_visibility, Some(expected.clone()));
+        assert_eq!(seen_preapproved, Some(expected));
+
+        let captured_system = system_capture
+            .lock()
+            .expect("system capture lock poisoned")
+            .clone();
+        let captured_system = captured_system.expect("expected captured system prompt");
+        assert!(
+            captured_system.starts_with(system_prompt.as_str()),
+            "expected system prompt prefix, got: {captured_system:?}"
+        );
     }
 }
