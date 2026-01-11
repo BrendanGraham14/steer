@@ -1,7 +1,6 @@
 pub mod config;
 pub mod error;
 pub mod local;
-pub mod local_manager;
 pub mod manager;
 pub mod ops;
 pub mod result;
@@ -15,7 +14,7 @@ pub use error::{
     WorkspaceManagerError, WorkspaceManagerResult,
 };
 pub use local::LocalEnvironmentManager;
-pub use local_manager::LocalWorkspaceManager;
+pub use local::LocalWorkspaceManager;
 pub use manager::{
     CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
     EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, RepoManager,
