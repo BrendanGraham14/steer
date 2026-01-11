@@ -4,9 +4,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::GrepResult;
-use steer_tools::tools::GREP_TOOL_NAME;
-use steer_tools::tools::grep::GrepError;
-use steer_tools::tools::grep::GrepParams;
+use steer_tools::tools::grep::{GrepError, GrepParams, GrepToolSpec};
 use super::workspace_op_error;
 use steer_workspace::{GrepRequest, WorkspaceOpContext};
 
@@ -16,8 +14,8 @@ pub struct GrepTool;
 impl StaticTool for GrepTool {
     type Params = GrepParams;
     type Output = GrepResult;
+    type Spec = GrepToolSpec;
 
-    const NAME: &'static str = GREP_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Fast content search built on ripgrep for blazing performance at any scale.
 - Searches using regular expressions or literal strings
 - Supports regex syntax like "log.*Error", "function\\s+\\w+", etc.

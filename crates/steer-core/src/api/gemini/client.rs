@@ -1244,6 +1244,7 @@ mod tests {
 
         let tool = ToolSchema {
             name: "create_issue".to_string(),
+            display_name: "Create Issue".to_string(),
             description: "Create an issue".to_string(),
             input_schema: InputSchema {
                 schema_type: "object".to_string(),

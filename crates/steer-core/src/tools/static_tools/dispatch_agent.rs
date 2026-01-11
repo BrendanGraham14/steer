@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use crate::agents::{
     McpAccessPolicy, agent_spec, agent_specs, agent_specs_prompt, default_agent_spec_id,
 };
+use steer_tools::ToolSpec;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::runtime::RuntimeService;
 use crate::app::domain::types::SessionId;
@@ -23,7 +24,7 @@ use crate::workspace::{
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
 use steer_tools::tools::dispatch_agent::{
-    DISPATCH_AGENT_TOOL_NAME, DispatchAgentError, DispatchAgentParams, DispatchAgentTarget,
+    DispatchAgentError, DispatchAgentParams, DispatchAgentTarget, DispatchAgentToolSpec,
     WorkspaceTarget,
 };
 use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
@@ -92,8 +93,8 @@ pub struct DispatchAgentTool;
 impl StaticTool for DispatchAgentTool {
     type Params = DispatchAgentParams;
     type Output = AgentResult;
+    type Spec = DispatchAgentToolSpec;
 
-    const NAME: &'static str = DISPATCH_AGENT_TOOL_NAME;
     const DESCRIPTION: &'static str = "Launch a sub-agent to search for files or code";
     const REQUIRES_APPROVAL: bool = false;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::AGENT;
@@ -106,7 +107,8 @@ impl StaticTool for DispatchAgentTool {
         let input_schema = schema_gen.into_root_schema_for::<Self::Params>();
 
         steer_tools::ToolSchema {
-            name: Self::NAME.to_string(),
+            name: Self::Spec::NAME.to_string(),
+            display_name: Self::Spec::DISPLAY_NAME.to_string(),
             description: dispatch_agent_description(),
             input_schema: input_schema.into(),
         }

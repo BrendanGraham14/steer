@@ -4,9 +4,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::ReplaceResult;
-use steer_tools::tools::REPLACE_TOOL_NAME;
-use steer_tools::tools::replace::ReplaceError;
-use steer_tools::tools::replace::ReplaceParams;
+use steer_tools::tools::replace::{ReplaceError, ReplaceParams, ReplaceToolSpec};
 use steer_workspace::{WriteFileRequest, WorkspaceOpContext};
 use super::workspace_op_error;
 
@@ -16,8 +14,8 @@ pub struct ReplaceTool;
 impl StaticTool for ReplaceTool {
     type Params = ReplaceParams;
     type Output = ReplaceResult;
+    type Spec = ReplaceToolSpec;
 
-    const NAME: &'static str = REPLACE_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Writes a file to the local filesystem.
 
 Before using this tool:

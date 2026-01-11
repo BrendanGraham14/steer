@@ -3,11 +3,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{EditResult, MultiEditResult};
-use steer_tools::tools::EDIT_TOOL_NAME;
-use steer_tools::tools::edit::EditParams;
-use steer_tools::tools::edit::EditError;
-use steer_tools::tools::edit::multi_edit::{MULTI_EDIT_TOOL_NAME, MultiEditParams};
-use steer_tools::tools::edit::multi_edit::MultiEditError;
+use steer_tools::tools::edit::{EditError, EditParams, EditToolSpec};
 use super::workspace_op_error;
 use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
 
@@ -66,8 +62,8 @@ Remember: when making multiple file edits in a row to the same file, you should 
 impl StaticTool for EditTool {
     type Params = EditParams;
     type Output = EditResult;
+    type Spec = EditToolSpec;
 
-    const NAME: &'static str = EDIT_TOOL_NAME;
     const DESCRIPTION: &'static str = EDIT_DESCRIPTION;
     const REQUIRES_APPROVAL: bool = true;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
@@ -104,8 +100,8 @@ pub struct MultiEditTool;
 impl StaticTool for MultiEditTool {
     type Params = MultiEditParams;
     type Output = MultiEditResult;
+    type Spec = MultiEditToolSpec;
 
-    const NAME: &'static str = MULTI_EDIT_TOOL_NAME;
     const DESCRIPTION: &'static str = "This is a tool for making multiple edits to a single file in one operation. Prefer this tool over the edit_file tool when you need to make multiple edits to the same file.";
     const REQUIRES_APPROVAL: bool = true;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;

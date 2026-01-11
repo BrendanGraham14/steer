@@ -4,9 +4,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::AstGrepResult;
-use steer_tools::tools::AST_GREP_TOOL_NAME;
-use steer_tools::tools::astgrep::AstGrepError;
-use steer_tools::tools::astgrep::AstGrepParams;
+use steer_tools::tools::astgrep::{AstGrepError, AstGrepParams, AstGrepToolSpec};
 use super::workspace_op_error;
 use steer_workspace::{AstGrepRequest, WorkspaceOpContext};
 
@@ -16,8 +14,8 @@ pub struct AstGrepTool;
 impl StaticTool for AstGrepTool {
     type Params = AstGrepParams;
     type Output = AstGrepResult;
+    type Spec = AstGrepToolSpec;
 
-    const NAME: &'static str = AST_GREP_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Structural code search using abstract syntax trees (AST).
 - Searches code by its syntactic structure, not just text patterns
 - Use $METAVAR placeholders (e.g., $VAR, $FUNC, $ARGS) to match any code element

@@ -5,4 +5,4 @@ pub mod tools;
 
 pub use error::ToolError;
 pub use result::{ToolOutput, ToolResult};
-pub use schema::{InputSchema, ToolCall, ToolSchema};
+pub use schema::{InputSchema, ToolCall, ToolSchema, ToolSpec};

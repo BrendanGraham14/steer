@@ -2,7 +2,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::result::FetchResult;
+
 pub const FETCH_TOOL_NAME: &str = "web_fetch";
+
+pub struct FetchToolSpec;
+
+impl ToolSpec for FetchToolSpec {
+    type Params = FetchParams;
+    type Result = FetchResult;
+    type Error = FetchError;
+
+    const NAME: &'static str = FETCH_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "Fetch URL";
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]

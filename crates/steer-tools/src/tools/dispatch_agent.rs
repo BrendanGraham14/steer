@@ -3,8 +3,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::WorkspaceOpError;
+use crate::result::AgentResult;
 
 pub const DISPATCH_AGENT_TOOL_NAME: &str = "dispatch_agent";
+
+pub struct DispatchAgentToolSpec;
+
+impl ToolSpec for DispatchAgentToolSpec {
+    type Params = DispatchAgentParams;
+    type Result = AgentResult;
+    type Error = DispatchAgentError;
+
+    const NAME: &'static str = DISPATCH_AGENT_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "Dispatch Agent";
+}
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

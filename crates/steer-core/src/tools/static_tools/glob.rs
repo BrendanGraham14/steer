@@ -4,9 +4,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::GlobResult;
-use steer_tools::tools::GLOB_TOOL_NAME;
-use steer_tools::tools::glob::GlobError;
-use steer_tools::tools::glob::GlobParams;
+use steer_tools::tools::glob::{GlobError, GlobParams, GlobToolSpec};
 use super::workspace_op_error;
 use steer_workspace::{GlobRequest, WorkspaceOpContext};
 
@@ -16,8 +14,8 @@ pub struct GlobTool;
 impl StaticTool for GlobTool {
     type Params = GlobParams;
     type Output = GlobResult;
+    type Spec = GlobToolSpec;
 
-    const NAME: &'static str = GLOB_TOOL_NAME;
     const DESCRIPTION: &'static str = r#"Fast file pattern matching tool that works with any codebase size.
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time

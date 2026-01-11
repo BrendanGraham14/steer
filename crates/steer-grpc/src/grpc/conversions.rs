@@ -1959,7 +1959,8 @@ pub(crate) fn proto_to_mcp_server_state(
                 .tool_names
                 .into_iter()
                 .map(|name| steer_tools::ToolSchema {
-                    name,
+                    name: name.clone(),
+                    display_name: name,
                     description: String::new(),
                     input_schema: steer_tools::InputSchema {
                         properties: Default::default(),

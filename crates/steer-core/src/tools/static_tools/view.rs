@@ -4,9 +4,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::FileContentResult;
-use steer_tools::tools::VIEW_TOOL_NAME;
-use steer_tools::tools::view::ViewError;
-use steer_tools::tools::view::ViewParams;
+use steer_tools::tools::view::{ViewError, ViewParams, ViewToolSpec};
 use super::workspace_op_error;
 use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
 
@@ -16,8 +14,8 @@ pub struct ViewTool;
 impl StaticTool for ViewTool {
     type Params = ViewParams;
     type Output = FileContentResult;
+    type Spec = ViewToolSpec;
 
-    const NAME: &'static str = VIEW_TOOL_NAME;
     const DESCRIPTION: &'static str = concat!(
         "Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path.\n",
         "By default, it reads up to 2000 lines starting from the beginning of the file. You can optionally specify a line offset and limit\n",

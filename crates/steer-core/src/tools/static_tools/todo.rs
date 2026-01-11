@@ -6,23 +6,12 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::{TodoListResult, TodoWriteResult};
-use steer_tools::tools::TODO_READ_TOOL_NAME;
-use steer_tools::tools::TODO_WRITE_TOOL_NAME;
 use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
-use steer_tools::tools::todo::read::TodoReadError;
-use steer_tools::tools::todo::read::TodoReadParams;
-use steer_tools::tools::todo::write::TodoWriteError;
-use steer_tools::tools::todo::write::TodoWriteParams;
+use steer_tools::tools::todo::read::{TodoReadError, TodoReadParams, TodoReadToolSpec};
+use steer_tools::tools::todo::write::{TodoWriteError, TodoWriteParams, TodoWriteToolSpec};
+use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
 
-pub struct TodoReadTool;
-
-#[async_trait]
-impl StaticTool for TodoReadTool {
-    type Params = TodoReadParams;
-    type Output = TodoListResult;
-
-    const NAME: &'static str = TODO_READ_TOOL_NAME;
-    const DESCRIPTION: &'static str = r#"Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of
+const TODO_READ_DESCRIPTION: &str = r#"Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of
 the status of the current task list. You should make use of this tool as often as possible, especially in the following situations:
 - At the beginning of conversations to see what's pending
 - Before starting new tasks to prioritize work
@@ -36,6 +25,42 @@ Usage:
 - Returns a list of todo items with their status, priority, and content
 - Use this information to track progress and plan next steps
 - If no todos exist yet, an empty list will be returned"#;
+
+const TODO_WRITE_DESCRIPTION: &str = r#"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+
+When to Use This Tool:
+1. Complex multi-step tasks - When a task requires 3 or more distinct steps
+2. Non-trivial tasks - Tasks requiring careful planning
+3. User explicitly requests todo list
+4. User provides multiple tasks
+5. After receiving new instructions
+6. After completing a task - Mark it complete
+
+When NOT to Use This Tool:
+1. Single, straightforward tasks
+2. Trivial tasks
+3. Tasks completed in less than 3 steps
+4. Purely conversational requests
+
+Task States:
+- pending: Task not yet started
+- in_progress: Currently working on (limit to ONE at a time)
+- completed: Task finished successfully
+
+Task Management:
+- Update status in real-time
+- Mark tasks complete IMMEDIATELY after finishing
+- Only have ONE task in_progress at any time"#;
+
+pub struct TodoReadTool;
+
+#[async_trait]
+impl StaticTool for TodoReadTool {
+    type Params = TodoReadParams;
+    type Output = TodoListResult;
+    type Spec = TodoReadToolSpec;
+
+    const DESCRIPTION: &'static str = TODO_READ_DESCRIPTION;
     const REQUIRES_APPROVAL: bool = false;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
 
@@ -63,33 +88,9 @@ pub struct TodoWriteTool;
 impl StaticTool for TodoWriteTool {
     type Params = TodoWriteParams;
     type Output = TodoWriteResult;
+    type Spec = TodoWriteToolSpec;
 
-    const NAME: &'static str = TODO_WRITE_TOOL_NAME;
-    const DESCRIPTION: &'static str = r#"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
-
-When to Use This Tool:
-1. Complex multi-step tasks - When a task requires 3 or more distinct steps
-2. Non-trivial tasks - Tasks requiring careful planning
-3. User explicitly requests todo list
-4. User provides multiple tasks
-5. After receiving new instructions
-6. After completing a task - Mark it complete
-
-When NOT to Use This Tool:
-1. Single, straightforward tasks
-2. Trivial tasks
-3. Tasks completed in less than 3 steps
-4. Purely conversational requests
-
-Task States:
-- pending: Task not yet started
-- in_progress: Currently working on (limit to ONE at a time)
-- completed: Task finished successfully
-
-Task Management:
-- Update status in real-time
-- Mark tasks complete IMMEDIATELY after finishing
-- Only have ONE task in_progress at any time"#;
+    const DESCRIPTION: &'static str = TODO_WRITE_DESCRIPTION;
     const REQUIRES_APPROVAL: bool = false;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
 

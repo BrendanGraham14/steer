@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::app::domain::types::{SessionId, ToolCallId};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::ToolResult;
-use steer_tools::ToolSchema;
+use steer_tools::{ToolSchema, ToolSpec};
 
 use super::capability::Capabilities;
 use super::services::ToolServices;
@@ -63,8 +63,8 @@ impl StaticToolError {
 pub trait StaticTool: Send + Sync + 'static {
     type Params: DeserializeOwned + JsonSchema + Send;
     type Output: Into<ToolResult> + Send;
+    type Spec: ToolSpec<Params = Self::Params, Result = Self::Output>;
 
-    const NAME: &'static str;
     const DESCRIPTION: &'static str;
     const REQUIRES_APPROVAL: bool;
     const REQUIRED_CAPABILITIES: Capabilities;
@@ -86,7 +86,8 @@ pub trait StaticTool: Send + Sync + 'static {
         let input_schema = schema_gen.into_root_schema_for::<Self::Params>();
 
         ToolSchema {
-            name: Self::NAME.to_string(),
+            name: Self::Spec::NAME.to_string(),
+            display_name: Self::Spec::DISPLAY_NAME.to_string(),
             description: Self::DESCRIPTION.to_string(),
             input_schema: input_schema.into(),
         }
@@ -96,6 +97,7 @@ pub trait StaticTool: Send + Sync + 'static {
 #[async_trait]
 pub trait StaticToolErased: Send + Sync {
     fn name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn requires_approval(&self) -> bool;
     fn required_capabilities(&self) -> Capabilities;
@@ -114,7 +116,11 @@ where
     T: StaticTool,
 {
     fn name(&self) -> &'static str {
-        T::NAME
+        T::Spec::NAME
+    }
+
+    fn display_name(&self) -> &'static str {
+        T::Spec::DISPLAY_NAME
     }
 
     fn description(&self) -> &'static str {

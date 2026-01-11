@@ -140,6 +140,7 @@ message ToolSchema {
   string name = 1;
   string description = 2;
   string input_schema_json = 3;
+  string display_name = 4;
 }
 
 // Response containing all tool schemas

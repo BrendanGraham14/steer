@@ -6,8 +6,8 @@ use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
-use steer_tools::result::{FetchResult, ToolResult};
-use steer_tools::tools::fetch::{FETCH_TOOL_NAME, FetchError, FetchParams};
+use steer_tools::result::FetchResult;
+use steer_tools::tools::fetch::{FetchError, FetchParams, FetchToolSpec};
 
 const DESCRIPTION: &str = r#"- Fetches content from a specified URL and processes it using an AI model
 - Takes a URL and a prompt as input
@@ -24,29 +24,14 @@ Usage notes:
   - This tool is read-only and does not modify any files
   - Results may be summarized if the content is very large"#;
 
-#[derive(Debug)]
-pub struct FetchOutput {
-    pub url: String,
-    pub content: String,
-}
-
-impl From<FetchOutput> for ToolResult {
-    fn from(output: FetchOutput) -> Self {
-        ToolResult::Fetch(FetchResult {
-            url: output.url,
-            content: output.content,
-        })
-    }
-}
-
 pub struct FetchTool;
 
 #[async_trait]
 impl StaticTool for FetchTool {
     type Params = FetchParams;
-    type Output = FetchOutput;
+    type Output = FetchResult;
+    type Spec = FetchToolSpec;
 
-    const NAME: &'static str = FETCH_TOOL_NAME;
     const DESCRIPTION: &'static str = DESCRIPTION;
     const REQUIRES_APPROVAL: bool = true;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::from_bits_truncate(
@@ -104,7 +89,7 @@ Provide a concise response based only on the content above.
 
         let result_content = response.extract_text().trim().to_string();
 
-        Ok(FetchOutput {
+        Ok(FetchResult {
             url: params.url,
             content: result_content,
         })

@@ -3,8 +3,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::WorkspaceOpError;
+use crate::result::ReplaceResult;
 
 pub const REPLACE_TOOL_NAME: &str = "write_file";
+
+pub struct ReplaceToolSpec;
+
+impl ToolSpec for ReplaceToolSpec {
+    type Params = ReplaceParams;
+    type Result = ReplaceResult;
+    type Error = ReplaceError;
+
+    const NAME: &'static str = REPLACE_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "Replace File";
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]

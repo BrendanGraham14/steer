@@ -1194,6 +1194,7 @@ mod tests {
 
         let tools = vec![ToolSchema {
             name: "get_weather".to_string(),
+            display_name: "Get Weather".to_string(),
             description: "Get the weather".to_string(),
             input_schema: steer_tools::InputSchema {
                 schema_type: "object".to_string(),

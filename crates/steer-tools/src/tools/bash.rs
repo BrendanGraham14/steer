@@ -2,7 +2,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::result::BashResult;
+
 pub const BASH_TOOL_NAME: &str = "bash";
+
+pub struct BashToolSpec;
+
+impl ToolSpec for BashToolSpec {
+    type Params = BashParams;
+    type Result = BashResult;
+    type Error = BashError;
+
+    const NAME: &'static str = BASH_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "Bash";
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]

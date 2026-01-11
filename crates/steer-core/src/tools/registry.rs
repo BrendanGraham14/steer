@@ -92,6 +92,7 @@ mod tests {
     use async_trait::async_trait;
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use steer_tools::ToolSpec;
 
     #[derive(Debug, Deserialize, JsonSchema)]
     struct TestParams {
@@ -114,12 +115,23 @@ mod tests {
 
     struct TestTool;
 
+    struct TestToolSpec;
+
+    impl ToolSpec for TestToolSpec {
+        type Params = TestParams;
+        type Result = TestOutput;
+        type Error = StaticToolError;
+
+        const NAME: &'static str = "test_tool";
+        const DISPLAY_NAME: &'static str = "Test Tool";
+    }
+
     #[async_trait]
     impl super::super::static_tool::StaticTool for TestTool {
         type Params = TestParams;
         type Output = TestOutput;
+        type Spec = TestToolSpec;
 
-        const NAME: &'static str = "test_tool";
         const DESCRIPTION: &'static str = "A test tool";
         const REQUIRES_APPROVAL: bool = false;
         const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
@@ -137,12 +149,23 @@ mod tests {
 
     struct AgentTool;
 
+    struct AgentToolSpec;
+
+    impl ToolSpec for AgentToolSpec {
+        type Params = TestParams;
+        type Result = TestOutput;
+        type Error = StaticToolError;
+
+        const NAME: &'static str = "agent_tool";
+        const DISPLAY_NAME: &'static str = "Agent Tool";
+    }
+
     #[async_trait]
     impl super::super::static_tool::StaticTool for AgentTool {
         type Params = TestParams;
         type Output = TestOutput;
+        type Spec = AgentToolSpec;
 
-        const NAME: &'static str = "agent_tool";
         const DESCRIPTION: &'static str = "Needs agent spawner";
         const REQUIRES_APPROVAL: bool = false;
         const REQUIRED_CAPABILITIES: Capabilities = Capabilities::AGENT;

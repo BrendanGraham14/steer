@@ -10,9 +10,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::BashResult;
-use steer_tools::tools::BASH_TOOL_NAME;
-use steer_tools::tools::bash::BashParams;
-use steer_tools::tools::bash::BashError;
+use steer_tools::tools::bash::{BashError, BashParams, BashToolSpec};
 
 pub struct BashTool;
 
@@ -20,8 +18,8 @@ pub struct BashTool;
 impl StaticTool for BashTool {
     type Params = BashParams;
     type Output = BashResult;
+    type Spec = BashToolSpec;
 
-    const NAME: &'static str = BASH_TOOL_NAME;
     const DESCRIPTION: &'static str = "Run a bash command in the terminal";
     const REQUIRES_APPROVAL: bool = true;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;

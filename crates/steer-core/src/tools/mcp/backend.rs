@@ -269,6 +269,14 @@ impl McpBackend {
     }
 
     fn mcp_tool_to_schema(&self, tool: &Tool) -> ToolSchema {
+        let display_name = tool
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.title.as_deref())
+            .filter(|title| !title.trim().is_empty())
+            .map(|title| format!("{}: {}", self.server_name, title))
+            .unwrap_or_else(|| format!("{}: {}", self.server_name, tool.name));
+
         let description = match &tool.description {
             Some(desc) if !desc.is_empty() => desc.to_string(),
             _ => format!(
@@ -301,6 +309,7 @@ impl McpBackend {
 
         ToolSchema {
             name: format!("mcp__{}__{}", self.server_name, tool.name),
+            display_name,
             description,
             input_schema,
         }

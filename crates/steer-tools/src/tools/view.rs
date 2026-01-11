@@ -3,8 +3,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::WorkspaceOpError;
+use crate::result::FileContentResult;
 
 pub const VIEW_TOOL_NAME: &str = "read_file";
+
+pub struct ViewToolSpec;
+
+impl ToolSpec for ViewToolSpec {
+    type Params = ViewParams;
+    type Result = FileContentResult;
+    type Error = ViewError;
+
+    const NAME: &'static str = VIEW_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "View File";
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]

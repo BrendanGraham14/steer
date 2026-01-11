@@ -3,8 +3,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::WorkspaceOpError;
+use crate::result::AstGrepResult;
 
 pub const AST_GREP_TOOL_NAME: &str = "astgrep";
+
+pub struct AstGrepToolSpec;
+
+impl ToolSpec for AstGrepToolSpec {
+    type Params = AstGrepParams;
+    type Result = AstGrepResult;
+    type Error = AstGrepError;
+
+    const NAME: &'static str = AST_GREP_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "AST Grep";
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]

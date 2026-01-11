@@ -96,10 +96,12 @@ Each module typically defines its own error type (e.g., `ApiError`, `SessionErro
 
 # Tool Contract (steer-tools ↔ steer-core)
 
-**steer-tools is the contract.** It owns tool names, param/result types, and tool-specific execution errors. steer-core implements behavior without redefining the contract.
+**steer-tools is the contract.** It owns tool names, display names, param/result types, and tool-specific execution errors. steer-core implements behavior without redefining the contract.
 
 **Rules**
 - Tool names and schemas live in `crates/steer-tools/src/tools/*`. steer-core must import constants/types from `steer_tools::tools::*` (no duplicate name definitions or param structs in core).
+- Each tool contract defines a `ToolSpec` implementation (name, display_name, params/result/error types). steer-core static tools must reference the contract `ToolSpec` instead of redefining metadata.
+- `ToolSchema` includes `display_name`; always populate it (fallback to `name` only for legacy data). Descriptions live in steer-core and may be implementation-specific.
 - Tool-specific execution errors live in `crates/steer-tools/src/error.rs` as `ToolExecutionError` variants, with per-tool enums in each tool module. These are the only details allowed for execution failures.
 - steer-core static tools return `ToolError::Execution(ToolExecutionError::<Tool>(...))` for execution failures, and must not invent new error kinds.
 - `ToolError::InvalidParams` always includes `{ tool_name, message }`. There is no `ToolError::Io`; map raw I/O failures to `ToolExecutionError::External` (or a tool-specific `...Error::Workspace(...)` where applicable).
@@ -107,7 +109,7 @@ Each module typically defines its own error type (e.g., `ApiError`, `SessionErro
 - Workspace failures should be mapped to `WorkspaceOpError` and wrapped in the appropriate tool-specific error enum.
 
 **Adding a new tool**
-1. Define the contract in `crates/steer-tools/src/tools/<tool>.rs`: `*_TOOL_NAME`, params/result types, and a tool-specific error enum.
+1. Define the contract in `crates/steer-tools/src/tools/<tool>.rs`: `*_TOOL_NAME`, a `ToolSpec` impl (name, display_name, params/result/error types), and a tool-specific error enum.
 2. Export it from `crates/steer-tools/src/tools/mod.rs`.
 3. Implement the tool in `crates/steer-core/src/tools/static_tools/<tool>.rs` using the contract types.
 4. Register the tool in `crates/steer-core/src/tools/factory.rs`.

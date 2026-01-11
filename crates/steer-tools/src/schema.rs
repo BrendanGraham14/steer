@@ -1,5 +1,9 @@
-use serde::{Deserialize, Serialize};
+
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use std::error::Error as StdError;
+use schemars::JsonSchema;
+use crate::error::ToolExecutionError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputSchema {
@@ -39,8 +43,19 @@ impl From<schemars::Schema> for InputSchema {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
     pub name: String,
+    #[serde(default)]
+    pub display_name: String,
     pub description: String,
     pub input_schema: InputSchema,
+}
+
+pub trait ToolSpec {
+    type Params: DeserializeOwned + JsonSchema + Send;
+    type Result: Into<crate::result::ToolResult> + Send;
+    type Error: StdError + Send + Sync + 'static;
+
+    const NAME: &'static str;
+    const DISPLAY_NAME: &'static str;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

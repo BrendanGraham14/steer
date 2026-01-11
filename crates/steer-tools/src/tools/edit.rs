@@ -3,8 +3,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::error::WorkspaceOpError;
+use crate::result::{EditResult, MultiEditResult};
 
 pub const EDIT_TOOL_NAME: &str = "edit_file";
+
+pub struct EditToolSpec;
+
+impl ToolSpec for EditToolSpec {
+    type Params = EditParams;
+    type Result = EditResult;
+    type Error = EditError;
+
+    const NAME: &'static str = EDIT_TOOL_NAME;
+    const DISPLAY_NAME: &'static str = "Edit File";
+}
 
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]
@@ -35,6 +47,17 @@ pub mod multi_edit {
     use super::*;
 
     pub const MULTI_EDIT_TOOL_NAME: &str = "multi_edit";
+
+    pub struct MultiEditToolSpec;
+
+    impl ToolSpec for MultiEditToolSpec {
+        type Params = MultiEditParams;
+        type Result = MultiEditResult;
+        type Error = MultiEditError;
+
+        const NAME: &'static str = MULTI_EDIT_TOOL_NAME;
+        const DISPLAY_NAME: &'static str = "Multi Edit";
+    }
 
     #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
     #[serde(tag = "code", rename_all = "snake_case")]

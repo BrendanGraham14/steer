@@ -2,6 +2,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::Display;
 
+use crate::ToolSpec;
+use crate::result::{TodoListResult, TodoWriteResult};
+
 #[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema, Hash, Display)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
@@ -44,6 +47,17 @@ pub mod read {
 
     pub const TODO_READ_TOOL_NAME: &str = "TodoRead";
 
+    pub struct TodoReadToolSpec;
+
+    impl ToolSpec for TodoReadToolSpec {
+        type Params = TodoReadParams;
+        type Result = TodoListResult;
+        type Error = TodoReadError;
+
+        const NAME: &'static str = TODO_READ_TOOL_NAME;
+        const DISPLAY_NAME: &'static str = "Read Todos";
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
     #[serde(tag = "code", rename_all = "snake_case")]
     pub enum TodoReadError {
@@ -61,6 +75,17 @@ pub mod write {
     use thiserror::Error;
 
     pub const TODO_WRITE_TOOL_NAME: &str = "TodoWrite";
+
+    pub struct TodoWriteToolSpec;
+
+    impl ToolSpec for TodoWriteToolSpec {
+        type Params = TodoWriteParams;
+        type Result = TodoWriteResult;
+        type Error = TodoWriteError;
+
+        const NAME: &'static str = TODO_WRITE_TOOL_NAME;
+        const DISPLAY_NAME: &'static str = "Write Todos";
+    }
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
     #[serde(tag = "code", rename_all = "snake_case")]

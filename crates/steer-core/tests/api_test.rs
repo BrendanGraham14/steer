@@ -698,6 +698,7 @@ async fn test_gemini_api_complex_tool_schema() {
     // Define a tool with a complex schema
     let complex_tool = Tool {
         name: "complex_operation".to_string(),
+        display_name: "Complex Operation".to_string(),
         description: "Performs a complex operation with nested parameters.".to_string(),
         input_schema: InputSchema {
             schema_type: "object".to_string(),
@@ -948,6 +949,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
     // Define the 'get_weather' tool for the API call, 'ls' is usually predefined
     let weather_tool = Tool {
         name: "get_weather".to_string(),
+        display_name: "Get Weather".to_string(),
         description: "Gets the weather for a location".to_string(),
         input_schema: InputSchema {
             schema_type: "object".to_string(),
