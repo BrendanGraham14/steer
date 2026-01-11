@@ -1440,6 +1440,7 @@ mod tests {
     fn test_schema(name: &str) -> ToolSchema {
         ToolSchema {
             name: name.to_string(),
+            display_name: name.to_string(),
             description: String::new(),
             input_schema: InputSchema {
                 properties: Default::default(),

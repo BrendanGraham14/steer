@@ -14,8 +14,10 @@ use crate::app::domain::session::EventStore;
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId};
 use crate::config::model::ModelId;
+use crate::prompts::system_prompt_for_model;
 use crate::session::state::SessionConfig;
 use crate::tools::ToolExecutor;
+use tracing::warn;
 
 use super::session_actor::{SessionActorHandle, SessionError, spawn_session_actor};
 use super::subscription::SessionEventSubscription;
@@ -206,6 +208,11 @@ impl RuntimeSupervisor {
 
         self.event_store.create_session(session_id).await?;
 
+        let mut config = config;
+        if let Some(system_prompt) = self.resolve_system_prompt(&config).await {
+            config.system_prompt = Some(system_prompt);
+        }
+
         let session_created_event = SessionEvent::SessionCreated {
             config: Box::new(config.clone()),
             metadata: config.metadata.clone(),
@@ -218,6 +225,10 @@ impl RuntimeSupervisor {
         let mut state = AppState::new(session_id);
         state.cached_system_prompt = config.system_prompt.clone();
         state.session_config = Some(config);
+        state.cached_system_prompt = state
+            .session_config
+            .as_ref()
+            .and_then(|config| config.system_prompt.clone());
 
         let handle = spawn_session_actor(
             session_id,
@@ -251,6 +262,13 @@ impl RuntimeSupervisor {
             apply_event_to_state(&mut state, event);
         }
 
+        if let Some(config) = state.session_config.as_mut() {
+            if let Some(system_prompt) = self.resolve_system_prompt(config).await {
+                config.system_prompt = Some(system_prompt.clone());
+                state.cached_system_prompt = Some(system_prompt);
+            }
+        }
+
         let handle = spawn_session_actor(
             session_id,
             state,
@@ -268,6 +286,44 @@ impl RuntimeSupervisor {
         );
 
         Ok(())
+    }
+
+    async fn resolve_system_prompt(&self, config: &SessionConfig) -> Option<String> {
+        let mut prompt = config
+            .system_prompt
+            .as_ref()
+            .and_then(|prompt| {
+                if prompt.trim().is_empty() {
+                    None
+                } else {
+                    Some(prompt.clone())
+                }
+            })
+            .unwrap_or_else(|| system_prompt_for_model(&config.default_model));
+
+        if prompt.contains("<env>") {
+            return Some(prompt);
+        }
+
+        let workspace = match self.tool_executor.workspace() {
+            Some(workspace) => workspace,
+            None => return Some(prompt),
+        };
+
+        match workspace.environment().await {
+            Ok(env_info) => {
+                let context = env_info.as_context();
+                if !context.is_empty() {
+                    prompt.push_str("\n\n");
+                    prompt.push_str(&context);
+                }
+            }
+            Err(error) => {
+                warn!(error = %error, "Failed to collect environment info for system prompt");
+            }
+        }
+
+        Some(prompt)
     }
 
     async fn suspend_session(&mut self, session_id: SessionId) -> Result<(), RuntimeError> {

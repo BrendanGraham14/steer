@@ -147,6 +147,12 @@ impl ToolExecutor {
         &self.backend_registry
     }
 
+    pub fn workspace(&self) -> Option<Arc<dyn crate::workspace::Workspace>> {
+        self.tool_services
+            .as_ref()
+            .map(|services| services.workspace.clone())
+    }
+
     #[instrument(skip(self, tool_call, session_id, token), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
     pub async fn execute_tool_with_session(
         &self,
