@@ -19,7 +19,7 @@ use crate::auth::{
 };
 use crate::auth::{ModelId as AuthModelId, ProviderId as AuthProviderId};
 use crate::config::model::{ModelId, ModelParameters};
-use steer_tools::{ToolCall, ToolSchema};
+use steer_tools::{InputSchema, ToolCall, ToolSchema};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -116,7 +116,7 @@ struct CompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<System>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<Vec<ToolSchema>>,
+    tools: Option<Vec<ClaudeTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,6 +127,23 @@ struct CompletionRequest {
     stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<Thinking>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ClaudeTool {
+    name: String,
+    description: String,
+    input_schema: InputSchema,
+}
+
+impl From<ToolSchema> for ClaudeTool {
+    fn from(tool: ToolSchema) -> Self {
+        Self {
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -656,6 +673,7 @@ impl Provider for AnthropicClient {
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
         let mut claude_messages = convert_messages(messages)?;
+        let tools = tools.map(|tools| tools.into_iter().map(ClaudeTool::from).collect());
 
         if claude_messages.is_empty() {
             return Err(ApiError::InvalidRequest {
@@ -876,6 +894,7 @@ impl Provider for AnthropicClient {
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
         let mut claude_messages = convert_messages(messages)?;
+        let tools = tools.map(|tools| tools.into_iter().map(ClaudeTool::from).collect());
 
         if claude_messages.is_empty() {
             return Err(ApiError::InvalidRequest {
