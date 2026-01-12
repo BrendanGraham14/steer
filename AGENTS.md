@@ -153,6 +153,21 @@ Key principles:
 - No circular dependencies: each crate has clear, one-way dependencies
 - Tool execution (backends) is separate from workspace operations
 
+## Workspace Orchestration (Environments + Workspaces)
+Steer separates execution environments (sandboxes) from VCS workspaces (jj
+workspaces or git workdirs) that live inside them. An environment can host
+multiple repos; each repo can have multiple jj workspaces, while git and no-VCS
+repos are treated as single-workspace only.
+
+Key points:
+- Identifiers are type-safe newtypes: `EnvironmentId`, `RepoId`, `WorkspaceId`.
+- `RepoRef` and `WorkspaceRef` scope repos/workspaces to an environment for
+  session affinity and UI grouping.
+- Workspace orchestration (create/list/delete) is jj-only for now; git workspaces
+  are fixed and orchestration is disabled.
+- Managers live in `steer-workspace` (provider); client access goes through
+  `steer-grpc` and `steer-remote-workspace` (no in-process shortcuts).
+
 ## Crate Responsibilities
 
 ### steer-proto
