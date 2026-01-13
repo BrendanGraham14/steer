@@ -44,6 +44,7 @@ pub struct Gutter {
     role: RoleGlyph,
     spinner: Option<char>,
     hovered: bool,
+    hidden: bool,
     pub width: u16,
 }
 
@@ -59,6 +60,7 @@ impl Gutter {
             role,
             spinner: None,
             hovered: false,
+            hidden: false,
             width,
         }
     }
@@ -73,16 +75,24 @@ impl Gutter {
         self
     }
 
-    /// Produce a stable cache key capturing visual-affecting state
+    /// Hide the glyph (renders as empty space, preserving width)
+    pub fn with_hidden(mut self, hidden: bool) -> Self {
+        self.hidden = hidden;
+        self
+    }
+
     pub fn cache_key(&self) -> String {
         format!(
-            "role={:?};spin={:?};hover={};w={}",
-            self.role, self.spinner, self.hovered, self.width
+            "role={:?};spin={:?};hover={};hidden={};w={}",
+            self.role, self.spinner, self.hovered, self.hidden, self.width
         )
     }
 
-    // Just return a styled Span, not Lines
     pub fn span(&self, theme: &Theme) -> Span<'static> {
+        if self.hidden {
+            return Span::raw(" ".repeat(self.width as usize));
+        }
+
         let mut style = theme.style(self.role.theme_component());
 
         if self.spinner.is_some() {

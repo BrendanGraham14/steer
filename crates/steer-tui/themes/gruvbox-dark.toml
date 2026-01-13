@@ -62,14 +62,18 @@ input_panel_label_confirm_exit = { fg = "bright_red" }
 
 # Chat list
 chat_list_border = { fg = "bg3" }
-user_message = { fg = "fg1" }
+user_message = { fg = "fg1", bg = "bg0_h" }
 user_message_role = { fg = "bright_green", bold = true }
+user_message_accent = { fg = "bright_green" }
 assistant_message = { fg = "fg1" }
 assistant_message_role = { fg = "bright_blue", bold = true }
+assistant_message_accent = { fg = "bg3" }
 system_message = { fg = "gray" }
 system_message_role = { fg = "bright_yellow" }
+system_message_accent = { fg = "bg3" }
 
 # Tool calls
+tool_accent = { fg = "bg3" }
 tool_call = { fg = "bright_cyan" }
 tool_call_border = { fg = "cyan" }
 tool_call_header = { fg = "bright_cyan" }

@@ -157,12 +157,16 @@ pub enum Component {
     ChatListBackground,
     UserMessage,
     UserMessageRole,
+    UserMessageAccent,
     AssistantMessage,
     AssistantMessageRole,
+    AssistantMessageAccent,
     SystemMessage,
     SystemMessageRole,
+    SystemMessageAccent,
 
     // Tool calls
+    ToolAccent,
     ToolCall,
     ToolCallBorder,
     ToolCallHeader,
@@ -476,12 +480,19 @@ fn create_default_theme() -> CompiledTheme {
         Style::default().fg(Color::DarkGray),
     );
     styles.insert(Component::ChatListBackground, Style::default());
-    styles.insert(Component::UserMessage, Style::default());
+    styles.insert(
+        Component::UserMessage,
+        Style::default().bg(Color::Rgb(30, 35, 40)),
+    );
     styles.insert(
         Component::UserMessageRole,
         Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
+    );
+    styles.insert(
+        Component::UserMessageAccent,
+        Style::default().fg(Color::Green),
     );
     styles.insert(Component::AssistantMessage, Style::default());
     styles.insert(
@@ -490,13 +501,22 @@ fn create_default_theme() -> CompiledTheme {
             .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
     );
+    styles.insert(
+        Component::AssistantMessageAccent,
+        Style::default().fg(Color::DarkGray),
+    );
     styles.insert(Component::SystemMessage, Style::default());
     styles.insert(
         Component::SystemMessageRole,
         Style::default().fg(Color::Yellow),
     );
+    styles.insert(
+        Component::SystemMessageAccent,
+        Style::default().fg(Color::DarkGray),
+    );
 
     // Tool styles
+    styles.insert(Component::ToolAccent, Style::default().fg(Color::DarkGray));
     styles.insert(Component::ToolCall, Style::default().fg(Color::Cyan));
     styles.insert(Component::ToolCallBorder, Style::default().fg(Color::Cyan));
     styles.insert(Component::ToolCallHeader, Style::default().fg(Color::Cyan));

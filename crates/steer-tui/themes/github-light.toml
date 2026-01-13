@@ -58,14 +58,18 @@ input_panel_label_confirm_exit = { fg = "danger_fg" }
 
 # Chat list
 chat_list_border = { fg = "border_default" }
-user_message = { fg = "fg_default" }
+user_message = { fg = "fg_default", bg = "bg_highlight" }
 user_message_role = { fg = "accent_fg", bold = true }
+user_message_accent = { fg = "accent_fg" }
 assistant_message = { fg = "fg_default" }
 assistant_message_role = { fg = "success_fg", bold = true }
+assistant_message_accent = { fg = "border_muted" }
 system_message = { fg = "fg_muted" }
 system_message_role = { fg = "attention_fg" }
+system_message_accent = { fg = "border_muted" }
 
 # Tool calls
+tool_accent = { fg = "border_muted" }
 tool_call = { fg = "syntax_constant" }
 tool_call_border = { fg = "border_default" }
 tool_call_header = { fg = "done_fg" }

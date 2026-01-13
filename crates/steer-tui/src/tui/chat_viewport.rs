@@ -4,10 +4,8 @@ use crate::tui::core_commands::{CommandResponse, CompactResult};
 use crate::tui::{
     model::{ChatItem, ChatItemData},
     state::chat_store::ChatStore,
-    theme::Theme,
-    widgets::{
-        ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, Gutter, RoleGlyph, ViewMode,
-    },
+    theme::{Component, Theme},
+    widgets::{ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, ViewMode},
 };
 use ratatui::{
     Frame,
@@ -630,98 +628,86 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
     }
 }
 
-/// Helper function to create a widget for a flattened item
 fn create_widget_for_flattened_item(
     item: &FlattenedItem,
     theme: &Theme,
-    is_hovered: bool,
-    spinner_state: usize,
+    _is_hovered: bool,
+    _spinner_state: usize,
 ) -> Box<dyn ChatRenderable + Send + Sync> {
     use crate::tui::widgets::chat_widgets::{
         CommandResponseWidget, InFlightOperationWidget, SlashInputWidget, SystemNoticeWidget,
-        format_app_command, get_spinner_char, row_widget::RowWidget,
+        format_app_command, row_widget::RowWidget,
     };
 
     match item {
         FlattenedItem::MessageText { message, .. } => {
             let chat_block = ChatBlock::Message(message.clone());
-
-            // Determine role glyph from message type
-            let role = match &message.data {
-                MessageData::User { .. } => RoleGlyph::User,
-                MessageData::Assistant { .. } => RoleGlyph::Assistant,
-                MessageData::Tool { .. } => RoleGlyph::Tool,
-            };
-
-            // Create gutter widget
-            let gutter = Gutter::new(role).with_hover(is_hovered);
-
-            // Create body widget
             let body = Box::new(DynamicChatWidget::from_block(chat_block, theme));
 
-            // Wrap in RowWidget
-            Box::new(RowWidget::new(gutter, body))
+            match &message.data {
+                MessageData::User { .. } => {
+                    let user_message_style = theme.style(Component::UserMessage);
+                    let accent_style = theme.style(Component::UserMessageAccent);
+                    Box::new(
+                        RowWidget::new(body)
+                            .with_accent(accent_style)
+                            .with_row_background(user_message_style)
+                            .with_padding_lines(),
+                    )
+                }
+                MessageData::Assistant { .. } => Box::new(RowWidget::new(body)),
+                MessageData::Tool { .. } => {
+                    let accent_style = theme.style(Component::ToolAccent);
+                    Box::new(RowWidget::new(body).with_accent(accent_style))
+                }
+            }
         }
         FlattenedItem::ToolInteraction { call, result, .. } => {
             let chat_block = ChatBlock::ToolInteraction {
                 call: call.clone(),
                 result: result.clone(),
             };
-
-            let mut gutter = Gutter::new(RoleGlyph::Tool).with_hover(is_hovered);
-
-            // Show spinner if tool call is pending (i.e., no result yet)
-            if result.is_none() {
-                gutter = gutter.with_spinner(get_spinner_char(spinner_state));
-            }
-
             let body = Box::new(DynamicChatWidget::from_block(chat_block, theme));
-            Box::new(RowWidget::new(gutter, body))
+            let accent_style = theme.style(Component::ToolAccent);
+            Box::new(RowWidget::new(body).with_accent(accent_style))
         }
         FlattenedItem::Meta { item, .. } => {
-            // Delegate to the original function for meta items
+            let accent_style = theme.style(Component::SystemMessageAccent);
+
             match &item.data {
                 ChatItemData::SystemNotice {
                     level, text, ts, ..
                 } => {
-                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(SystemNoticeWidget::new(*level, text.clone(), *ts));
-                    Box::new(RowWidget::new(gutter, body))
+                    Box::new(RowWidget::new(body).with_accent(accent_style))
                 }
                 ChatItemData::CoreCmdResponse {
                     command: cmd,
                     response,
                     ..
                 } => {
-                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format_app_command(cmd),
                         response.clone().into(),
                     ));
-                    Box::new(RowWidget::new(gutter, body))
+                    Box::new(RowWidget::new(body).with_accent(accent_style))
                 }
                 ChatItemData::InFlightOperation { label, .. } => {
-                    let gutter = Gutter::new(RoleGlyph::Meta)
-                        .with_hover(is_hovered)
-                        .with_spinner(get_spinner_char(spinner_state));
-
                     let body = Box::new(InFlightOperationWidget::new(label.clone()));
-                    Box::new(RowWidget::new(gutter, body))
+                    Box::new(RowWidget::new(body).with_accent(accent_style))
                 }
                 ChatItemData::SlashInput { raw, .. } => {
-                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(SlashInputWidget::new(raw.clone()));
-                    Box::new(RowWidget::new(gutter, body))
+                    Box::new(RowWidget::new(body).with_accent(accent_style))
                 }
                 ChatItemData::TuiCommandResponse {
                     command, response, ..
                 } => {
-                    let gutter = Gutter::new(RoleGlyph::Meta).with_hover(is_hovered);
                     let body = Box::new(CommandResponseWidget::new(
                         format!("/{command}"),
                         response.clone().into(),
                     ));
-                    Box::new(RowWidget::new(gutter, body))
+                    Box::new(RowWidget::new(body).with_accent(accent_style))
                 }
                 _ => unreachable!("All meta items should be handled"),
             }

@@ -73,14 +73,18 @@ input_panel_label_confirm_exit = { fg = "storm_red" }
 
 # Chat list
 chat_list_border = { fg = "storm_fg_gutter" }
-user_message = { fg = "storm_fg" }
+user_message = { fg = "storm_fg", bg = "storm_bg_dark" }
 user_message_role = { fg = "storm_green", bold = true }
+user_message_accent = { fg = "storm_green" }
 assistant_message = { fg = "storm_fg" }
 assistant_message_role = { fg = "storm_blue", bold = true }
+assistant_message_accent = { fg = "storm_fg_gutter" }
 system_message = { fg = "storm_dark5" }
 system_message_role = { fg = "storm_yellow" }
+system_message_accent = { fg = "storm_fg_gutter" }
 
 # Tool calls
+tool_accent = { fg = "storm_fg_gutter" }
 tool_call = { fg = "storm_cyan" }
 tool_call_border = { fg = "storm_blue5" }
 tool_call_header = { fg = "storm_cyan" }

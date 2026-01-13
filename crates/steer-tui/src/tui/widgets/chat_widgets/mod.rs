@@ -12,7 +12,6 @@ pub mod tool_widget;
 
 pub use chat_widget::{ChatRenderable, DynamicChatWidget, HeightCache, ParagraphWidget};
 pub use command_response::CommandResponseWidget;
-pub use gutter::{Gutter, RoleGlyph};
 pub use in_flight_operation::InFlightOperationWidget;
 pub use message_widget::MessageWidget;
 pub use row_widget::RowWidget;

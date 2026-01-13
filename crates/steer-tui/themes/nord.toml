@@ -28,6 +28,7 @@ gray = "#4c566a"
 comment = "#616e88"
 # Nord palette
 nord0 = "#2e3440"
+nord_darker = "#242933"
 nord1 = "#3b4252"
 nord2 = "#434c5e"
 nord3 = "#4c566a"
@@ -62,14 +63,18 @@ input_panel_label_confirm_exit = { fg = "nord11" }
 
 # Chat list
 chat_list_border = { fg = "nord3" }
-user_message = { fg = "nord4" }
+user_message = { fg = "nord4", bg = "nord_darker" }
 user_message_role = { fg = "nord14", bold = true }
+user_message_accent = { fg = "nord14" }
 assistant_message = { fg = "nord4" }
 assistant_message_role = { fg = "nord9", bold = true }
+assistant_message_accent = { fg = "nord3" }
 system_message = { fg = "comment" }
 system_message_role = { fg = "nord13" }
+system_message_accent = { fg = "nord3" }
 
 # Tool calls
+tool_accent = { fg = "nord3" }
 tool_call = { fg = "nord8" }
 tool_call_border = { fg = "nord7" }
 tool_call_header = { fg = "nord8" }

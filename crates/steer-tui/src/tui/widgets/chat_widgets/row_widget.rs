@@ -1,35 +1,57 @@
-use ratatui::text::{Line, Span};
+use ratatui::{
+    style::Style,
+    text::{Line, Span},
+};
+use unicode_width::UnicodeWidthStr;
 
 use crate::tui::{
     theme::Theme,
-    widgets::{ChatRenderable, Gutter, ViewMode},
+    widgets::{ChatRenderable, ViewMode},
 };
 
-/// Composite wrapper for one chat list row
+const ACCENT_WIDTH: u16 = 1;
+const PADDING: u16 = 2;
+
 pub struct RowWidget {
-    gutter: Gutter,
     body: Box<dyn ChatRenderable + Send + Sync>,
-    /// Cached decorated lines for current (width, mode, theme, gutter-state, body-state)
+    row_background: Option<Style>,
+    accent_style: Option<Style>,
+    has_padding_lines: bool,
     cached_lines: Option<Vec<Line<'static>>>,
     last_width: u16,
     last_mode: ViewMode,
     last_theme_name: String,
-    last_gutter_key: String,
     last_body_fingerprint: u64,
 }
 
 impl RowWidget {
-    pub fn new(gutter: Gutter, body: Box<dyn ChatRenderable + Send + Sync>) -> Self {
+    pub fn new(body: Box<dyn ChatRenderable + Send + Sync>) -> Self {
         Self {
-            gutter,
             body,
+            row_background: None,
+            accent_style: None,
+            has_padding_lines: false,
             cached_lines: None,
             last_width: 0,
             last_mode: ViewMode::Compact,
             last_theme_name: String::new(),
-            last_gutter_key: String::new(),
             last_body_fingerprint: 0,
         }
+    }
+
+    pub fn with_accent(mut self, style: Style) -> Self {
+        self.accent_style = Some(style);
+        self
+    }
+
+    pub fn with_row_background(mut self, style: Style) -> Self {
+        self.row_background = Some(style);
+        self
+    }
+
+    pub fn with_padding_lines(mut self) -> Self {
+        self.has_padding_lines = true;
+        self
     }
 }
 impl ChatRenderable for RowWidget {
@@ -37,15 +59,18 @@ impl ChatRenderable for RowWidget {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        // Include theme and gutter state in cache key
         let theme_key = theme.name.clone();
-        let gutter_key = self.gutter.cache_key();
+        let accent_width = if self.accent_style.is_some() {
+            ACCENT_WIDTH
+        } else {
+            0
+        };
 
-        let gutter_span = self.gutter.span(theme);
-        let body_width = width.saturating_sub(self.gutter.width);
+        let body_width = width
+            .saturating_sub(accent_width)
+            .saturating_sub(PADDING * 2);
         let body_lines = self.body.lines(body_width, mode, theme);
 
-        // Compute a lightweight fingerprint of the body's rendered lines
         let mut hasher = DefaultHasher::new();
         body_lines.len().hash(&mut hasher);
         if let Some(first) = body_lines.first() {
@@ -54,7 +79,6 @@ impl ChatRenderable for RowWidget {
             }
         }
         if body_lines.len() > 1 {
-            // hash last line too for basic change detection
             if let Some(last) = body_lines.last() {
                 for s in &last.spans {
                     s.content.hash(&mut hasher);
@@ -66,7 +90,6 @@ impl ChatRenderable for RowWidget {
         if self.last_width == width
             && self.last_mode == mode
             && self.last_theme_name == theme_key
-            && self.last_gutter_key == gutter_key
             && self.last_body_fingerprint == body_fp
         {
             if let Some(ref lines) = self.cached_lines {
@@ -74,32 +97,81 @@ impl ChatRenderable for RowWidget {
             }
         }
 
-        // Prefix first line with gutter, rest with spaces
-        let decorated: Vec<Line<'static>> = body_lines
-            .iter()
-            .enumerate()
-            .map(|(i, line)| {
-                let spans = line.spans.clone();
-                if i == 0 {
-                    let mut first_line_spans = Vec::with_capacity(1 + spans.len());
-                    first_line_spans.push(gutter_span.clone());
-                    first_line_spans.extend(spans);
-                    Line::from(first_line_spans)
+        let has_accent = self.accent_style.is_some();
+        let accent_width = if has_accent { ACCENT_WIDTH as usize } else { 0 };
+        let bg_color = self.row_background.and_then(|s| s.bg);
+        let padding_style = if let Some(bg) = bg_color {
+            Style::default().bg(bg)
+        } else {
+            Style::default()
+        };
+
+        let make_padding_line = |w: u16| -> Line<'static> {
+            let mut acc = Vec::with_capacity(3);
+            acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            if let Some(accent) = self.accent_style {
+                acc.push(Span::styled("▌", accent));
+            }
+            let fill_width = w
+                .saturating_sub(PADDING)
+                .saturating_sub(accent_width as u16) as usize;
+            acc.push(Span::styled(" ".repeat(fill_width), padding_style));
+            Line::from(acc)
+        };
+
+        let extra_lines = if self.has_padding_lines { 2 } else { 0 };
+        let mut lines = Vec::with_capacity(body_lines.len() + extra_lines);
+
+        if self.has_padding_lines {
+            lines.push(make_padding_line(width));
+        }
+
+        for line in body_lines.iter() {
+            let spans = line.spans.clone();
+            let mut acc = Vec::with_capacity(5 + spans.len());
+
+            acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            if let Some(accent) = self.accent_style {
+                acc.push(Span::styled("▌", accent));
+            }
+            acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+
+            let content_width: usize = spans.iter().map(|s| s.content.width()).sum();
+
+            for span in spans {
+                let styled_span = if span.style.bg.is_none() {
+                    if let Some(bg) = bg_color {
+                        Span::styled(span.content, span.style.bg(bg))
+                    } else {
+                        span
+                    }
                 } else {
-                    let mut other_line_spans = Vec::with_capacity(1 + spans.len());
-                    other_line_spans.push(Span::raw(" ".repeat(self.gutter.width as usize)));
-                    other_line_spans.extend(spans);
-                    Line::from(other_line_spans)
-                }
-            })
-            .collect();
+                    span
+                };
+                acc.push(styled_span);
+            }
+
+            let used_width = (PADDING as usize) + accent_width + (PADDING as usize) + content_width;
+            let remaining = (width as usize).saturating_sub(used_width);
+            let right_padding = PADDING as usize;
+            let fill = remaining.saturating_sub(right_padding);
+            if fill > 0 {
+                acc.push(Span::styled(" ".repeat(fill), padding_style));
+            }
+            acc.push(Span::styled(" ".repeat(right_padding), padding_style));
+
+            lines.push(Line::from(acc));
+        }
+
+        if self.has_padding_lines {
+            lines.push(make_padding_line(width));
+        }
 
         self.last_width = width;
         self.last_mode = mode;
         self.last_theme_name = theme_key;
-        self.last_gutter_key = gutter_key;
         self.last_body_fingerprint = body_fp;
-        self.cached_lines = Some(decorated);
+        self.cached_lines = Some(lines);
         self.cached_lines.as_ref().unwrap()
     }
 }
@@ -114,14 +186,13 @@ mod tests {
 
     use super::RowWidget;
     use crate::tui::{
-        theme::Theme,
-        widgets::{ChatRenderable, Gutter, RoleGlyph, ViewMode, chat_widgets::MessageWidget},
+        theme::{Component, Theme},
+        widgets::{ChatRenderable, ViewMode, chat_widgets::MessageWidget},
     };
 
     #[test]
     fn test_row_widget_render_layout() {
         let theme = Theme::default();
-        let gutter = Gutter::new(RoleGlyph::Assistant);
         let message = Message {
             data: MessageData::Assistant {
                 content: vec![AssistantContent::Text {
@@ -133,13 +204,13 @@ mod tests {
             timestamp: 0,
         };
         let message_widget = MessageWidget::new(message);
-        let mut row = RowWidget::new(gutter, Box::new(message_widget));
+        let accent_style = theme.style(Component::AssistantMessageAccent);
+        let mut row = RowWidget::new(Box::new(message_widget)).with_accent(accent_style);
 
-        // Create a test terminal
-        let backend = TestBackend::new(20, 5);
+        let backend = TestBackend::new(30, 5);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let area = Rect::new(0, 0, 20, 2);
+        let area = Rect::new(0, 0, 30, 2);
         terminal
             .draw(|f| {
                 let lines = row.lines(area.width, ViewMode::Compact, &theme);
@@ -148,10 +219,9 @@ mod tests {
             })
             .unwrap();
 
-        // Check layout
         let buffer = terminal.backend().buffer();
         let buffer_lines = buffer.content.chunks(buffer.area.width as usize);
-        let expected_line_symbols = ["  ◀ Hello world", "    How are you?"];
+        let expected_line_symbols = ["  ▌  Hello world", "  ▌  How are you?"];
 
         for (i, line) in buffer_lines.enumerate() {
             if i >= expected_line_symbols.len() {
@@ -159,7 +229,38 @@ mod tests {
             }
             let line_content = line.iter().map(|cell| cell.symbol()).collect::<String>();
             let expected = expected_line_symbols[i];
-            assert_eq!(&line_content[..expected.len()], expected);
+            assert_eq!(
+                &line_content[..expected.len()],
+                expected,
+                "Line {i} mismatch"
+            );
         }
+    }
+
+    #[test]
+    fn test_row_widget_with_padding_lines() {
+        let theme = Theme::default();
+        let message = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "Test".to_string(),
+                }],
+            },
+            id: "1".to_string(),
+            parent_message_id: None,
+            timestamp: 0,
+        };
+        let message_widget = MessageWidget::new(message);
+        let accent_style = theme.style(Component::UserMessageAccent);
+        let mut row = RowWidget::new(Box::new(message_widget))
+            .with_accent(accent_style)
+            .with_padding_lines();
+
+        let lines = row.lines(30, ViewMode::Compact, &theme);
+        assert_eq!(
+            lines.len(),
+            3,
+            "Should have top padding + content + bottom padding"
+        );
     }
 }

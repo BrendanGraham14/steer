@@ -55,14 +55,18 @@ input_panel_label_confirm_exit = { fg = "red" }
 
 # Chat list
 chat_list_border = { fg = "base01" }
-user_message = { fg = "base0" }
+user_message = { fg = "base0", bg = "base02" }
 user_message_role = { fg = "green", bold = true }
+user_message_accent = { fg = "green" }
 assistant_message = { fg = "base0" }
 assistant_message_role = { fg = "blue", bold = true }
+assistant_message_accent = { fg = "base01" }
 system_message = { fg = "base01" }
 system_message_role = { fg = "yellow" }
+system_message_accent = { fg = "base01" }
 
 # Tool calls
+tool_accent = { fg = "base01" }
 tool_call = { fg = "cyan" }
 tool_call_border = { fg = "cyan" }
 tool_call_header = { fg = "cyan" }

@@ -13,7 +13,6 @@ pub mod status_bar;
 pub use chat_list_state::{ChatListState, ViewMode, VisibleRange};
 pub use chat_widgets::{
     chat_widget::{ChatBlock, ChatRenderable, DynamicChatWidget, HeightCache, ParagraphWidget},
-    gutter::{Gutter, RoleGlyph},
     slash_input::SlashInputWidget,
     system_notice::SystemNoticeWidget,
 };

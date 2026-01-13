@@ -48,6 +48,8 @@ sapphire = "#74c7ec"
 sky = "#89dceb"
 teal = "#94e2d5"
 maroon = "#eba0ac"
+mantle = "#181825"
+crust = "#11111b"
 
 # Component styles
 [components]
@@ -67,14 +69,18 @@ input_panel_label_confirm_exit = { fg = "red" }
 
 # Chat list
 chat_list_border = { fg = "surface2" }
-user_message = { fg = "foreground" }
+user_message = { fg = "foreground", bg = "mantle" }
 user_message_role = { fg = "green", bold = true }
+user_message_accent = { fg = "green" }
 assistant_message = { fg = "foreground" }
 assistant_message_role = { fg = "blue", bold = true }
+assistant_message_accent = { fg = "surface2" }
 system_message = { fg = "overlay1" }
 system_message_role = { fg = "yellow" }
+system_message_accent = { fg = "surface2" }
 
 # Tool calls
+tool_accent = { fg = "surface2" }
 tool_call = { fg = "sapphire" }
 tool_call_border = { fg = "sapphire" }
 tool_call_header = { fg = "sapphire" }

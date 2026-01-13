@@ -48,14 +48,18 @@ input_panel_label_confirm_exit = { fg = "hue_5" }
 
 # Chat list
 chat_list_border = { fg = "guide" }
-user_message = { fg = "mono_1" }
+user_message = { fg = "mono_1", bg = "line_highlight" }
 user_message_role = { fg = "hue_2", bold = true }
+user_message_accent = { fg = "hue_2" }
 assistant_message = { fg = "mono_1" }
 assistant_message_role = { fg = "hue_4", bold = true }
+assistant_message_accent = { fg = "guide" }
 system_message = { fg = "mono_2" }
 system_message_role = { fg = "hue_6" }
+system_message_accent = { fg = "guide" }
 
 # Tool calls
+tool_accent = { fg = "guide" }
 tool_call = { fg = "hue_1" }
 tool_call_border = { fg = "guide" }
 tool_call_header = { fg = "hue_3" }
