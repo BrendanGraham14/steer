@@ -42,9 +42,7 @@ impl StaticTool for GrepTool {
             .workspace
             .grep(request, &op_ctx)
             .await
-            .map_err(|e| {
-                StaticToolError::execution(GrepError::Workspace(workspace_op_error(e)))
-            })?;
+            .map_err(|e| StaticToolError::execution(GrepError::Workspace(workspace_op_error(e))))?;
         Ok(GrepResult(result))
     }
 }

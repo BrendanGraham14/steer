@@ -16,9 +16,9 @@ pub use error::{
 pub use local::LocalEnvironmentManager;
 pub use local::LocalWorkspaceManager;
 pub use manager::{
-    CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentDeletePolicy,
-    EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest, RepoManager,
-    WorkspaceCreateStrategy, WorkspaceManager,
+    CreateEnvironmentRequest, CreateWorkspaceRequest, DeleteWorkspaceRequest,
+    EnvironmentDeletePolicy, EnvironmentDescriptor, EnvironmentManager, ListWorkspacesRequest,
+    RepoManager, WorkspaceCreateStrategy, WorkspaceManager,
 };
 pub use ops::{
     ApplyEditsRequest, AstGrepRequest, EditOperation, GlobRequest, GrepRequest,

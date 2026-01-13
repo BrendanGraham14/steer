@@ -251,9 +251,7 @@ impl WorkspaceManager for LocalWorkspaceManager {
                 request.environment_id.as_uuid().to_string(),
             ));
         }
-        self.registry
-            .list_workspaces(request.environment_id)
-            .await
+        self.registry.list_workspaces(request.environment_id).await
     }
 
     async fn open_workspace(

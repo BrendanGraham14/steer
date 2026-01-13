@@ -544,19 +544,15 @@ mod tests {
     }
 
     fn insert_stub_provider(client: &Client, provider_id: ProviderId, error: StubErrorKind) {
-        client
-            .provider_map
-            .write()
-            .unwrap()
-            .insert(
-                provider_id,
-                ProviderEntry {
-                    provider: Arc::new(StubProvider::new(error)),
-                    auth_source: AuthSource::ApiKey {
-                        origin: ApiKeyOrigin::Stored,
-                    },
+        client.provider_map.write().unwrap().insert(
+            provider_id,
+            ProviderEntry {
+                provider: Arc::new(StubProvider::new(error)),
+                auth_source: AuthSource::ApiKey {
+                    origin: ApiKeyOrigin::Stored,
                 },
-            );
+            },
+        );
     }
 
     #[tokio::test]

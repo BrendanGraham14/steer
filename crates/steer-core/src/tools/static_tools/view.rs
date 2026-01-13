@@ -40,8 +40,6 @@ impl StaticTool for ViewTool {
             .workspace
             .read_file(request, &op_ctx)
             .await
-            .map_err(|e| {
-                StaticToolError::execution(ViewError::Workspace(workspace_op_error(e)))
-            })
+            .map_err(|e| StaticToolError::execution(ViewError::Workspace(workspace_op_error(e))))
     }
 }

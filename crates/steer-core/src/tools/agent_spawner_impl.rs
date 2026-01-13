@@ -147,12 +147,12 @@ impl AgentSpawner for DefaultAgentSpawner {
 #[cfg(test)]
 mod tests {
     use super::DefaultAgentSpawner;
-    use crate::api::{ApiError, CompletionResponse, Provider};
     use crate::api::Client as ApiClient;
+    use crate::api::{ApiError, CompletionResponse, Provider};
     use crate::app::conversation::AssistantContent;
-    use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::session::EventStore;
+    use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::auth::ProviderRegistry;
     use crate::config::model::builtin;
     use crate::model_registry::ModelRegistry;
@@ -164,6 +164,8 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
+    use steer_tools::tools::edit::multi_edit::MULTI_EDIT_TOOL_NAME;
+    use steer_tools::tools::replace::REPLACE_TOOL_NAME;
     use steer_tools::tools::{
         BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
         VIEW_TOOL_NAME,

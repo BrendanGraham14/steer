@@ -34,8 +34,6 @@ impl StaticTool for LsTool {
             .workspace
             .list_directory(request, &op_ctx)
             .await
-            .map_err(|e| {
-                StaticToolError::execution(LsError::Workspace(workspace_op_error(e)))
-            })
+            .map_err(|e| StaticToolError::execution(LsError::Workspace(workspace_op_error(e))))
     }
 }

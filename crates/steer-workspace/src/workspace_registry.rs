@@ -401,10 +401,7 @@ mod tests {
         assert_eq!(fetched.environment_id, environment_id);
         assert_eq!(fetched.name.as_deref(), Some("alpha"));
 
-        let list = registry
-            .list_workspaces(environment_id)
-            .await
-            .unwrap();
+        let list = registry.list_workspaces(environment_id).await.unwrap();
         assert_eq!(list.len(), 1);
 
         registry.delete_workspace(workspace_id).await.unwrap();

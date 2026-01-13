@@ -1121,10 +1121,7 @@ mod tests {
             parent_message_id: None,
         };
 
-        let model_id = ModelId::new(
-            crate::config::provider::openai(),
-            "gpt-4.1-mini-2025-04-14",
-        );
+        let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-mini-2025-04-14");
         let token = CancellationToken::new();
 
         let mut stream = client

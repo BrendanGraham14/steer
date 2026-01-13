@@ -13,9 +13,7 @@ pub struct ListWorkspaceCommand {
 impl Command for ListWorkspaceCommand {
     async fn execute(&self) -> Result<()> {
         let client = connect_client(self.remote.as_deref()).await?;
-        let workspaces = client
-            .list_workspaces(self.environment_id.clone())
-            .await?;
+        let workspaces = client.list_workspaces(self.environment_id.clone()).await?;
 
         if workspaces.is_empty() {
             println!("No workspaces found.");

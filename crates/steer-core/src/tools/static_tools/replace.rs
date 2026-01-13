@@ -4,7 +4,7 @@ use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::ReplaceResult;
 use steer_tools::tools::replace::{ReplaceError, ReplaceParams, ReplaceToolSpec};
-use steer_workspace::{WriteFileRequest, WorkspaceOpContext};
+use steer_workspace::{WorkspaceOpContext, WriteFileRequest};
 use super::workspace_op_error;
 
 pub struct ReplaceTool;

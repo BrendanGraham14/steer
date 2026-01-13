@@ -8,7 +8,6 @@ use steer_tools::result::{TodoListResult, TodoWriteResult};
 use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
 use steer_tools::tools::todo::read::{TodoReadError, TodoReadParams, TodoReadToolSpec};
 use steer_tools::tools::todo::write::{TodoWriteError, TodoWriteParams, TodoWriteToolSpec};
-use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
 
 const TODO_READ_DESCRIPTION: &str = r#"Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of
 the status of the current task list. You should make use of this tool as often as possible, especially in the following situations:

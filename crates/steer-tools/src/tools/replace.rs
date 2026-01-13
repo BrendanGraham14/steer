@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::ToolSpec;
 use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::ReplaceResult;
 

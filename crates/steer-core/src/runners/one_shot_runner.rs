@@ -314,6 +314,7 @@ mod tests {
     use crate::api::Client as ApiClient;
     use crate::api::{ApiError, CompletionResponse, Provider};
     use crate::app::conversation::{AssistantContent, Message, MessageData};
+    use crate::app::domain::action::ApprovalDecision;
     use crate::app::domain::runtime::RuntimeService;
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::validation::ValidatorRegistry;
@@ -322,14 +323,13 @@ mod tests {
     use crate::session::state::{
         ApprovalRules, SessionToolConfig, UnapprovedBehavior, WorkspaceConfig,
     };
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::{BackendRegistry, ToolExecutor};
     use dotenvy::dotenv;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
-    use crate::app::domain::ApprovalDecision;
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use steer_tools::ToolCall;
     use steer_tools::tools::BASH_TOOL_NAME;
     use tokio_util::sync::CancellationToken;

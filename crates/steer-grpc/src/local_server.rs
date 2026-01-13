@@ -126,8 +126,9 @@ pub async fn setup_local_grpc_with_catalog(
         model_registry.clone(),
     ));
 
-    let workspace_path = workspace_root
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let workspace_path = workspace_root.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    });
     let environment_root = steer_core::utils::paths::AppPaths::local_environment_root();
     let workspace =
         steer_core::workspace::create_workspace(&steer_core::workspace::WorkspaceConfig::Local {
@@ -418,12 +419,10 @@ mod tests {
     async fn test_compaction_flow_end_to_end() {
         let workspace_root = test_workspace_root();
         let model = steer_core::config::model::builtin::claude_sonnet_4_5();
-        let setup = setup_local_grpc_with_stub_provider(
-            model.clone(),
-            workspace_root.path().to_path_buf(),
-        )
-            .await
-            .expect("local grpc setup");
+        let setup =
+            setup_local_grpc_with_stub_provider(model.clone(), workspace_root.path().to_path_buf())
+                .await
+                .expect("local grpc setup");
 
         let session_id = setup
             .runtime_service

@@ -18,8 +18,8 @@ use crate::tools::services::{SubAgentConfig, SubAgentError, ToolServices};
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use crate::tools::{BackendRegistry, ToolExecutor, ToolRegistry};
 use crate::workspace::{
-    create_workspace_from_session_config, CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsKind,
-    VcsStatus, Workspace, WorkspaceCreateStrategy, WorkspaceRef,
+    CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsKind, VcsStatus, Workspace,
+    WorkspaceCreateStrategy, WorkspaceRef, create_workspace_from_session_config,
 };
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
 use steer_tools::tools::dispatch_agent::{
@@ -199,8 +199,9 @@ impl StaticTool for DispatchAgentTool {
 
             let base_repo_id = repo_id.ok_or_else(|| {
                 StaticToolError::execution(DispatchAgentError::WorkspaceUnavailable {
-                    message: "Current path is not a supported workspace; cannot create new workspace"
-                        .to_string(),
+                    message:
+                        "Current path is not a supported workspace; cannot create new workspace"
+                            .to_string(),
                 })
             })?;
 

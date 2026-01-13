@@ -4,11 +4,9 @@ pub mod plugin_registry;
 pub mod registry;
 pub mod storage;
 
-
 pub use error::{AuthError, Result};
 pub use plugin_registry::AuthPluginRegistry;
 pub use registry::ProviderRegistry;
-pub use storage::{AuthStorage, AuthTokens, Credential, CredentialType, DefaultAuthStorage};
 pub use steer_auth_plugin::flow::{
     AuthFlowWrapper, AuthMethod, AuthProgress, AuthenticationFlow, DynAuthenticationFlow,
 };
@@ -19,3 +17,4 @@ pub use steer_auth_plugin::{
     AuthHeaderProvider, AuthSource, HeaderPair, InstructionPolicy, ModelVisibilityPolicy,
     RequestKind,
 };
+pub use storage::{AuthStorage, AuthTokens, Credential, CredentialType, DefaultAuthStorage};

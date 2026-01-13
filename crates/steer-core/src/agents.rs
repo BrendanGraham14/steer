@@ -126,10 +126,7 @@ pub fn agent_specs_prompt() -> String {
         if let Some(model) = model {
             details.push_str(&format!("; model: {model}"));
         }
-        lines.push(format!(
-            "- {}: {} ({details})",
-            spec.id, spec.description
-        ));
+        lines.push(format!("- {}: {} ({details})", spec.id, spec.description));
     }
     lines.join("\n")
 }

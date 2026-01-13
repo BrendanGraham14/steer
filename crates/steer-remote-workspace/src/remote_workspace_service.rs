@@ -331,11 +331,10 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         request: Request<crate::proto::GetEnvironmentInfoRequest>,
     ) -> Result<Response<crate::proto::GetEnvironmentInfoResponse>, Status> {
         let _req = request.into_inner();
-        let env_info = self
-            .workspace
-            .environment()
-            .await
-            .map_err(|e| Status::internal(format!("Failed to collect environment info: {e}")))?;
+        let env_info =
+            self.workspace.environment().await.map_err(|e| {
+                Status::internal(format!("Failed to collect environment info: {e}"))
+            })?;
 
         let response = crate::proto::GetEnvironmentInfoResponse {
             working_directory: env_info.working_directory.to_string_lossy().to_string(),

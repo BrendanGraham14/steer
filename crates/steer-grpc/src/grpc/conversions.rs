@@ -196,12 +196,10 @@ fn tool_error_to_proto(error: &steer_tools::error::ToolError) -> proto::ToolErro
                 message: message.clone(),
             })
         }
-        ToolError::Execution(error) => {
-            ErrorType::Execution(proto::ExecutionError {
-                tool_name: error.tool_name().to_string(),
-                message: error.to_string(),
-            })
-        }
+        ToolError::Execution(error) => ErrorType::Execution(proto::ExecutionError {
+            tool_name: error.tool_name().to_string(),
+            message: error.to_string(),
+        }),
         ToolError::Cancelled(name) => ErrorType::Cancelled(name.clone()),
         ToolError::Timeout(name) => ErrorType::Timeout(name.clone()),
         ToolError::DeniedByUser(name) => ErrorType::DeniedByUser(name.clone()),
@@ -628,11 +626,14 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
         system_prompt: config.system_prompt.clone(),
         default_model: Some(model_to_proto(config.default_model.clone())),
         workspace_id: config.workspace_id.map(|id| id.as_uuid().to_string()),
-        workspace_ref: config.workspace_ref.as_ref().map(|reference| proto::WorkspaceRef {
-            environment_id: reference.environment_id.as_uuid().to_string(),
-            workspace_id: reference.workspace_id.as_uuid().to_string(),
-            repo_id: reference.repo_id.as_uuid().to_string(),
-        }),
+        workspace_ref: config
+            .workspace_ref
+            .as_ref()
+            .map(|reference| proto::WorkspaceRef {
+                environment_id: reference.environment_id.as_uuid().to_string(),
+                workspace_id: reference.workspace_id.as_uuid().to_string(),
+                repo_id: reference.repo_id.as_uuid().to_string(),
+            }),
         parent_session_id: config.parent_session_id.as_ref().map(SessionId::to_string),
         workspace_name: config.workspace_name.clone(),
         repo_ref: config.repo_ref.as_ref().map(repo_ref_to_proto),

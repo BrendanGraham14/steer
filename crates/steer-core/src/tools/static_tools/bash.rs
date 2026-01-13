@@ -67,30 +67,22 @@ async fn run_command(
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| {
-            StaticToolError::execution(BashError::Io {
-                message: e.to_string(),
-            })
-        })?;
+    let mut child = cmd.spawn().map_err(|e| {
+        StaticToolError::execution(BashError::Io {
+            message: e.to_string(),
+        })
+    })?;
 
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| {
-            StaticToolError::execution(BashError::Io {
-                message: "Failed to capture stdout".to_string(),
-            })
-        })?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| {
-            StaticToolError::execution(BashError::Io {
-                message: "Failed to capture stderr".to_string(),
-            })
-        })?;
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        StaticToolError::execution(BashError::Io {
+            message: "Failed to capture stdout".to_string(),
+        })
+    })?;
+    let mut stderr = child.stderr.take().ok_or_else(|| {
+        StaticToolError::execution(BashError::Io {
+            message: "Failed to capture stderr".to_string(),
+        })
+    })?;
 
     let stdout_handle = tokio::spawn(async move {
         let mut buf = Vec::new();

@@ -177,10 +177,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                             if let Some(change_id) = revision.change_id.as_ref() {
                                 summary_line.push_str(&format!("  change {change_id}"));
                             }
-                            lines.push(Line::from(Span::styled(
-                                summary_line,
-                                Style::default(),
-                            )));
+                            lines.push(Line::from(Span::styled(summary_line, Style::default())));
                             if !revision.summary.trim().is_empty() {
                                 lines.push(Line::from(Span::styled(
                                     format!("  summary: {}", revision.summary),

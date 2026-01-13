@@ -1,7 +1,7 @@
 use crate::grpc::conversions::{
     environment_descriptor_to_proto, message_to_proto, proto_to_model, proto_to_tool_config,
-    proto_to_workspace_config, session_event_to_proto, stream_delta_to_proto,
-    repo_info_to_proto, workspace_info_to_proto, workspace_status_to_proto,
+    proto_to_workspace_config, repo_info_to_proto, session_event_to_proto, stream_delta_to_proto,
+    workspace_info_to_proto, workspace_status_to_proto,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
+use steer_core::auth::api_key::ApiKeyAuthFlow;
 use steer_core::auth::{
     AuthFlowWrapper, AuthMethod, AuthSource, DynAuthenticationFlow, ModelId as AuthModelId,
     ModelVisibilityPolicy, ProviderId as AuthProviderId,
 };
-use steer_core::auth::api_key::ApiKeyAuthFlow;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{self as proto, *};
 use steer_workspace::{EnvironmentManager, RepoManager, WorkspaceManager};
@@ -1364,10 +1364,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map_err(Self::workspace_manager_error_to_status)?;
 
         Ok(Response::new(proto::ListWorkspacesResponse {
-            workspaces: workspaces
-                .iter()
-                .map(workspace_info_to_proto)
-                .collect(),
+            workspaces: workspaces.iter().map(workspace_info_to_proto).collect(),
         }))
     }
 

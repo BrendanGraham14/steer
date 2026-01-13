@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::{EditResult, MultiEditResult};
+use steer_tools::tools::edit::multi_edit::{MultiEditError, MultiEditParams, MultiEditToolSpec};
 use steer_tools::tools::edit::{EditError, EditParams, EditToolSpec};
 use super::workspace_op_error;
 use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
@@ -85,9 +86,7 @@ impl StaticTool for EditTool {
             .workspace
             .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| {
-                StaticToolError::execution(EditError::Workspace(workspace_op_error(e)))
-            })
+            .map_err(|e| StaticToolError::execution(EditError::Workspace(workspace_op_error(e))))
     }
 }
 

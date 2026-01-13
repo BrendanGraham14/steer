@@ -18,8 +18,8 @@ use steer_core::app::conversation::Message;
 use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
-    GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest, ListSessionsRequest,
-    ListReposRequest, ListWorkspacesRequest, ResolveRepoRequest, SessionInfo, SessionState,
+    GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest, ListReposRequest,
+    ListSessionsRequest, ListWorkspacesRequest, ResolveRepoRequest, SessionInfo, SessionState,
     agent_service_client::AgentServiceClient,
 };
 
@@ -78,11 +78,14 @@ impl AgentClient {
             system_prompt: config.system_prompt,
             default_model: Some(model_to_proto(config.default_model)),
             workspace_id: config.workspace_id.map(|id| id.as_uuid().to_string()),
-            workspace_ref: config.workspace_ref.as_ref().map(|reference| proto::WorkspaceRef {
-                environment_id: reference.environment_id.as_uuid().to_string(),
-                workspace_id: reference.workspace_id.as_uuid().to_string(),
-                repo_id: reference.repo_id.as_uuid().to_string(),
-            }),
+            workspace_ref: config
+                .workspace_ref
+                .as_ref()
+                .map(|reference| proto::WorkspaceRef {
+                    environment_id: reference.environment_id.as_uuid().to_string(),
+                    workspace_id: reference.workspace_id.as_uuid().to_string(),
+                    repo_id: reference.repo_id.as_uuid().to_string(),
+                }),
             parent_session_id: config.parent_session_id.as_ref().map(|id| id.to_string()),
             workspace_name: config.workspace_name.clone(),
             repo_ref: config

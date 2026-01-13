@@ -14,8 +14,8 @@ use steer_core::tools::static_tools::{
 use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::tools::LS_TOOL_NAME;
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
-use steer_workspace::{Workspace, WorkspaceOpContext};
 use steer_workspace::local::LocalWorkspace;
+use steer_workspace::{Workspace, WorkspaceOpContext};
 
 use serde_json::json;
 use std::sync::Arc;

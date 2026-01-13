@@ -11,7 +11,5 @@ pub mod setup;
 pub mod tool_registry;
 
 pub use file_cache::FileCache;
-pub use setup::{
-    AuthStatus, RemoteProviderConfig, RemoteProviderRegistry, SetupState, SetupStep,
-};
+pub use setup::{AuthStatus, RemoteProviderConfig, RemoteProviderRegistry, SetupState, SetupStep};
 pub use tool_registry::{ToolCallInfo, ToolCallRegistry, ToolRegistryMetrics, ToolStatus};

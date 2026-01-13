@@ -37,8 +37,6 @@ impl StaticTool for GlobTool {
             .workspace
             .glob(request, &op_ctx)
             .await
-            .map_err(|e| {
-                StaticToolError::execution(GlobError::Workspace(workspace_op_error(e)))
-            })
+            .map_err(|e| StaticToolError::execution(GlobError::Workspace(workspace_op_error(e))))
     }
 }
