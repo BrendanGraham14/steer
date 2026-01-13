@@ -106,10 +106,12 @@ impl MessageEventProcessor {
         }
 
         if let Some(item) = ctx.chat_store.get_mut_by_id(&message.id.clone()) {
-            item.data = ChatItemData::Message(message);
+            item.data = ChatItemData::Message(message.clone());
         } else {
-            ctx.chat_store.add_message(message);
+            ctx.chat_store.add_message(message.clone());
         }
+        ctx.chat_store
+            .set_active_message_id(Some(message.id.clone()));
         *ctx.messages_updated = true;
     }
 

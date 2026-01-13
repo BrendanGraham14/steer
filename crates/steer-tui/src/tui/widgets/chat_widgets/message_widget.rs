@@ -7,6 +7,7 @@ use crate::tui::widgets::{ChatRenderable, ViewMode, markdown};
 
 pub struct MessageWidget {
     message: Message,
+    is_edited: bool,
     rendered_lines: Option<Vec<Line<'static>>>,
     last_width: u16,
     last_mode: ViewMode,
@@ -18,6 +19,7 @@ impl MessageWidget {
     pub fn new(message: Message) -> Self {
         Self {
             message,
+            is_edited: false,
             rendered_lines: None,
             last_width: 0,
             last_mode: ViewMode::Compact,
@@ -26,7 +28,12 @@ impl MessageWidget {
         }
     }
 
-    fn content_hash(message: &Message) -> u64 {
+    pub fn with_edited_indicator(mut self, is_edited: bool) -> Self {
+        self.is_edited = is_edited;
+        self
+    }
+
+    fn content_hash(message: &Message, is_edited: bool) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -82,6 +89,7 @@ impl MessageWidget {
                 s.hash(&mut hasher);
             }
         }
+        is_edited.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -94,7 +102,7 @@ impl MessageWidget {
 impl ChatRenderable for MessageWidget {
     fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
         let theme_key = theme.name.clone();
-        let content_hash = Self::content_hash(&self.message);
+        let content_hash = Self::content_hash(&self.message, self.is_edited);
         let cache_valid = self.rendered_lines.is_some()
             && self.last_width == width
             && self.last_mode == mode
@@ -205,6 +213,12 @@ impl ChatRenderable for MessageWidget {
                             }
                         }
                     }
+                }
+
+                if self.is_edited {
+                    lines.push(Line::from(""));
+                    let edited_style = theme.style(Component::DimText);
+                    lines.push(Line::from(Span::styled("(edited)", edited_style)));
                 }
             }
             MessageData::Assistant { content, .. } => {
@@ -327,6 +341,41 @@ mod tests {
         // Test with wrapping
         let height_wrapped = widget.lines(8, ViewMode::Compact, &theme).len();
         assert!(height_wrapped > 1); // Should wrap
+    }
+
+    #[test]
+    fn test_message_widget_edited_indicator() {
+        let theme = Theme::default();
+        let user_msg = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Edited message".to_string(),
+                }],
+            },
+            timestamp: 0,
+            id: "edited-id".to_string(),
+            parent_message_id: None,
+        };
+
+        let mut widget = MessageWidget::new(user_msg).with_edited_indicator(true);
+        let lines = widget.lines(30, ViewMode::Compact, &theme);
+        assert!(lines.len() >= 3, "Expected blank line before edited label");
+
+        let blank_line = &lines[lines.len() - 2];
+        let blank_text = blank_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(blank_text.is_empty(), "Expected blank spacer line");
+
+        let last_line = lines.last().unwrap();
+        let rendered = last_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(rendered, "(edited)");
     }
 
     #[test]

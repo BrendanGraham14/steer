@@ -325,6 +325,10 @@ impl Tui {
         }
 
         self.chat_store.ingest_messages(&messages);
+        if let Some(message) = messages.last() {
+            self.chat_store
+                .set_active_message_id(Some(message.id().to_string()));
+        }
 
         // The rest of the tool registry population code remains the same
         // Extract tool calls from assistant messages

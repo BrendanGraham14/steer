@@ -21,7 +21,11 @@ use steer_tools::{ToolResult, schema::ToolCall};
 #[derive(Debug, Clone)]
 enum FlattenedItem {
     /// Text content from a message (user or assistant)
-    MessageText { message: Message, id: String },
+    MessageText {
+        message: Message,
+        id: String,
+        is_edited: bool,
+    },
     /// Tool call coupled with its result
     ToolInteraction {
         call: ToolCall,
@@ -53,8 +57,11 @@ impl FlattenedItem {
     fn content_hash(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         match self {
-            FlattenedItem::MessageText { message, .. } => {
+            FlattenedItem::MessageText {
+                message, is_edited, ..
+            } => {
                 hash_message_content(message, &mut hasher);
+                is_edited.hash(&mut hasher);
             }
             FlattenedItem::ToolInteraction { call, result, .. } => {
                 call.id.hash(&mut hasher);
@@ -209,8 +216,10 @@ impl ChatViewport {
             raw.clone()
         };
 
+        let edited_message_ids = build_edited_message_ids(chat_store);
+
         // Flatten raw items into 1:1 widget items
-        let flattened = self.flatten_items(&filtered_items);
+        let flattened = self.flatten_items(&filtered_items, &edited_message_ids);
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -256,7 +265,11 @@ impl ChatViewport {
     }
 
     /// Flatten raw ChatItems into 1:1 widget items
-    fn flatten_items(&self, raw: &[&ChatItem]) -> Vec<FlattenedItem> {
+    fn flatten_items(
+        &self,
+        raw: &[&ChatItem],
+        edited_message_ids: &HashSet<String>,
+    ) -> Vec<FlattenedItem> {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
         raw.iter().for_each(|item| {
@@ -291,6 +304,7 @@ impl ChatViewport {
                                 flattened.push(FlattenedItem::MessageText {
                                     message: row.clone(),
                                     id: format!("{}_text", row.id()),
+                                    is_edited: false,
                                 });
                             }
 
@@ -315,10 +329,12 @@ impl ChatViewport {
                             // Skip - they should always be coupled with a tool call
                         }
                         MessageData::User { .. } => {
+                            let is_edited = edited_message_ids.contains(row.id());
                             // User messages and others
                             flattened.push(FlattenedItem::MessageText {
                                 message: row.clone(),
                                 id: row.id().to_string(),
+                                is_edited,
                             });
                         }
                     }
@@ -640,9 +656,15 @@ fn create_widget_for_flattened_item(
     };
 
     match item {
-        FlattenedItem::MessageText { message, .. } => {
-            let chat_block = ChatBlock::Message(message.clone());
-            let body = Box::new(DynamicChatWidget::from_block(chat_block, theme));
+        FlattenedItem::MessageText {
+            message, is_edited, ..
+        } => {
+            let body = Box::new(
+                crate::tui::widgets::chat_widgets::message_widget::MessageWidget::new(
+                    message.clone(),
+                )
+                .with_edited_indicator(*is_edited),
+            );
 
             match &message.data {
                 MessageData::User { .. } => {
@@ -725,6 +747,29 @@ pub fn format_command_response(resp: &CommandResponse) -> String {
             CompactResult::InsufficientMessages => "Not enough messages to compact.".to_string(),
         },
     }
+}
+
+fn build_edited_message_ids(chat_store: &ChatStore) -> HashSet<String> {
+    let mut edited_message_ids = HashSet::new();
+    let mut seen_by_parent: HashMap<Option<String>, String> = HashMap::new();
+
+    for item in chat_store.iter_items() {
+        let ChatItemData::Message(message) = &item.data else {
+            continue;
+        };
+        if !matches!(message.data, MessageData::User { .. }) {
+            continue;
+        }
+
+        let parent_id = message.parent_message_id().map(|id| id.to_string());
+        if seen_by_parent.contains_key(&parent_id) {
+            edited_message_ids.insert(message.id().to_string());
+        } else {
+            seen_by_parent.insert(parent_id, message.id().to_string());
+        }
+    }
+
+    edited_message_ids
 }
 
 /// Build the lineage set by following parent_message_id chain backwards from active_message_id
