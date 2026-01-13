@@ -8,6 +8,7 @@ use crate::utils::VcsUtils;
 use jj_lib::config::ConfigGetError;
 use jj_lib::file_util;
 use jj_lib::fileset::{self, FilesetDiagnostics};
+use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::gitignore::GitIgnoreFile;
 use jj_lib::matchers::Matcher;
 use jj_lib::repo::Repo;

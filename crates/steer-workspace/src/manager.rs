@@ -53,6 +53,7 @@ pub trait EnvironmentManager: Send + Sync + std::fmt::Debug {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkspaceCreateStrategy {
     JjWorkspace,
+    GitWorktree,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

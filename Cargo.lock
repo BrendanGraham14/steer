@@ -1842,6 +1842,7 @@ dependencies = [
  "gix-utils",
  "gix-validate",
  "gix-worktree 0.42.0",
+ "gix-worktree-state",
  "once_cell",
  "parking_lot",
  "signal-hook",
@@ -3093,6 +3094,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gix-worktree-state"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06ba9b17cbacc02b25801197b20100f7f9bd621db1e7fce9d3c8ab3175207bf8"
+dependencies = [
+ "bstr",
+ "gix-features 0.43.1",
+ "gix-filter 0.20.0",
+ "gix-fs 0.16.1",
+ "gix-glob 0.21.0",
+ "gix-hash 0.19.0",
+ "gix-index 0.41.0",
+ "gix-object 0.50.2",
+ "gix-path",
+ "gix-worktree 0.42.0",
+ "io-close",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3636,6 +3657,16 @@ checksum = "a9ce9099a85f468663d3225bf87e85d0548968441e1db12248b996b24f0f5b5a"
 dependencies = [
  "chrono",
  "logos",
+]
+
+[[package]]
+name = "io-close"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cadcf447f06744f8ce713d2d6239bb5bde2c357a452397a9ed90c625da390bc"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -6474,6 +6505,7 @@ dependencies = [
  "fuzzy-matcher",
  "gethostname",
  "gix 0.73.0",
+ "gix-worktree-state",
  "glob",
  "grep-regex",
  "grep-searcher",

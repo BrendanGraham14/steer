@@ -28,7 +28,9 @@ gix = { version = "0.73", default-features = false, features = [
     "excludes",
     "revision",
     "interrupt",
+    "worktree-mutation",
 ] }
+gix-worktree-state = "0.20.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"

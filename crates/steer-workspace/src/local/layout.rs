@@ -56,4 +56,9 @@ impl WorkspaceLayout {
             counter += 1;
         }
     }
+
+    pub(crate) fn default_workspace_name_for_path(&self, path: &Path) -> Option<String> {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+    }
 }

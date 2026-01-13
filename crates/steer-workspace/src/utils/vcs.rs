@@ -203,7 +203,7 @@ impl VcsUtils {
     }
 
     #[cfg(test)]
-    pub(crate) fn detect_provider_for_tests(path: &Path) -> Option<Box<dyn VcsProvider>> {
+    fn detect_provider_for_tests(path: &Path) -> Option<Box<dyn VcsProvider>> {
         Self::detect_provider(path)
     }
 }

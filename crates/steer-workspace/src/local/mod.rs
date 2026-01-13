@@ -1,4 +1,5 @@
 mod environment;
+pub(crate) mod git;
 pub(crate) mod jj;
 mod layout;
 mod manager;

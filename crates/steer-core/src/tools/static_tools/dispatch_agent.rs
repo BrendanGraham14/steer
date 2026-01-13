@@ -18,7 +18,7 @@ use crate::tools::services::{SubAgentConfig, SubAgentError, ToolServices};
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use crate::tools::{BackendRegistry, ToolExecutor, ToolRegistry};
 use crate::workspace::{
-    create_workspace_from_session_config, CreateWorkspaceRequest, EnvironmentId, RepoRef,
+    create_workspace_from_session_config, CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsKind,
     VcsStatus, Workspace, WorkspaceCreateStrategy, WorkspaceRef,
 };
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
@@ -46,37 +46,37 @@ fn dispatch_agent_description() -> String {
     format!(
         r#"Launch a new agent to help with a focused task. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
 
-When to use the Agent tool:
-- If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended
+    When to use the Agent tool:
+    - If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended
 
-When NOT to use the Agent tool:
-- If you want to read a specific file path, use the {} or {} tool instead of the Agent tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the {} tool instead, to find the match more quickly
-- If you are searching for code within a specific file or set of 2-3 files, use the {} tool instead, to find the match more quickly
+    When NOT to use the Agent tool:
+    - If you want to read a specific file path, use the {} or {} tool instead of the Agent tool, to find the match more quickly
+    - If you are searching for a specific class definition like "class Foo", use the {} tool instead, to find the match more quickly
+    - If you are searching for code within a specific file or set of 2-3 files, use the {} tool instead, to find the match more quickly
 
-Usage notes:
-1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
-2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-3. Each invocation returns a session_id. Pass it back via `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue the conversation with the same agent.
-4. When `target.session` is `resume`, the session_id must refer to a child of the current session. The `agent` and `workspace` options are ignored and the existing session config is used.
-5. The agent's outputs should generally be trusted
-6. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
-7. IMPORTANT: New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
-8. If the agent spec omits a model, the parent session's default model is used.
+    Usage notes:
+    1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
+    2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
+    3. Each invocation returns a session_id. Pass it back via `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue the conversation with the same agent.
+    4. When `target.session` is `resume`, the session_id must refer to a child of the current session. The `agent` and `workspace` options are ignored and the existing session config is used.
+    5. The agent's outputs should generally be trusted
+    6. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
+    7. IMPORTANT: New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
+    8. If the agent spec omits a model, the parent session's default model is used.
 
-Workspace options:
-- `workspace: {{ "location": "current" }}` to run in the current workspace
-- `workspace: {{ "location": "new", "name": "..." }}` to run in a fresh workspace (jj workspace or git worktree)
+    Workspace options:
+    - `workspace: {{ "location": "current" }}` to run in the current workspace
+    - `workspace: {{ "location": "new", "name": "..." }}` to run in a fresh workspace (jj workspace or git worktree)
 
-Session options:
-- `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue a prior dispatch_agent session
+    Session options:
+    - `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue a prior dispatch_agent session
 
-New session options:
-- `target: {{ "session": "new", "workspace": {{ "location": "current" }} }}` to run in the current workspace
-- `target: {{ "session": "new", "workspace": {{ "location": "new", "name": "..." }} }}` to run in a new workspace
-- `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
+    New session options:
+    - `target: {{ "session": "new", "workspace": {{ "location": "current" }} }}` to run in the current workspace
+    - `target: {{ "session": "new", "workspace": {{ "location": "new", "name": "..." }} }}` to run in a new workspace
+    - `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
 
-{agent_specs_block}"#,
+    {agent_specs_block}"#,
         VIEW_TOOL_NAME,
         LS_TOOL_NAME,
         GREP_TOOL_NAME,
@@ -199,16 +199,24 @@ impl StaticTool for DispatchAgentTool {
 
             let base_repo_id = repo_id.ok_or_else(|| {
                 StaticToolError::execution(DispatchAgentError::WorkspaceUnavailable {
-                    message: "Current path is not a jj workspace; cannot create new workspace"
+                    message: "Current path is not a supported workspace; cannot create new workspace"
                         .to_string(),
                 })
             })?;
+
+            let strategy = match repo_ref
+                .as_ref()
+                .and_then(|reference| reference.vcs_kind.as_ref())
+            {
+                Some(VcsKind::Git) => WorkspaceCreateStrategy::GitWorktree,
+                _ => WorkspaceCreateStrategy::JjWorkspace,
+            };
 
             let create_request = CreateWorkspaceRequest {
                 repo_id: base_repo_id,
                 name: requested_workspace_name.clone(),
                 parent_workspace_id: workspace_id,
-                strategy: WorkspaceCreateStrategy::JjWorkspace,
+                strategy,
             };
 
             let info = manager

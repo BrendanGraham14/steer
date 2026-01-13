@@ -1288,6 +1288,9 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             Ok(proto::WorkspaceCreateStrategy::JjWorkspace) => {
                 steer_workspace::WorkspaceCreateStrategy::JjWorkspace
             }
+            Ok(proto::WorkspaceCreateStrategy::GitWorktree) => {
+                steer_workspace::WorkspaceCreateStrategy::GitWorktree
+            }
             _ => {
                 return Err(Status::invalid_argument(
                     "Unsupported workspace create strategy",

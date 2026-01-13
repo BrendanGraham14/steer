@@ -580,6 +580,7 @@ message WorkspaceStatus {
 enum WorkspaceCreateStrategy {
   WORKSPACE_CREATE_STRATEGY_UNSPECIFIED = 0;
   WORKSPACE_CREATE_STRATEGY_JJ_WORKSPACE = 1;
+  WORKSPACE_CREATE_STRATEGY_GIT_WORKTREE = 2;
 }
 
 message CreateWorkspaceRequest {
