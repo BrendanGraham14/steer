@@ -26,6 +26,7 @@ use steer_proto::agent::v1::{
 pub struct AgentClient {
     client: Mutex<AgentServiceClient<Channel>>,
     session_id: Mutex<Option<String>>,
+    client_event_tx: mpsc::Sender<ClientEvent>,
     client_event_rx: Mutex<Option<mpsc::Receiver<ClientEvent>>>,
     stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -38,10 +39,13 @@ impl AgentClient {
 
         info!("Successfully connected to gRPC server");
 
+        let (client_event_tx, client_event_rx) = mpsc::channel::<ClientEvent>(100);
+
         Ok(Self {
             client: Mutex::new(client),
             session_id: Mutex::new(None),
-            client_event_rx: Mutex::new(None),
+            client_event_tx,
+            client_event_rx: Mutex::new(Some(client_event_rx)),
             stream_handle: Mutex::new(None),
         })
     }
@@ -50,11 +54,13 @@ impl AgentClient {
         info!("Creating gRPC client from provided channel");
 
         let client = AgentServiceClient::new(channel);
+        let (client_event_tx, client_event_rx) = mpsc::channel::<ClientEvent>(100);
 
         Ok(Self {
             client: Mutex::new(client),
             session_id: Mutex::new(None),
-            client_event_rx: Mutex::new(None),
+            client_event_tx,
+            client_event_rx: Mutex::new(Some(client_event_rx)),
             stream_handle: Mutex::new(None),
         })
     }
@@ -136,7 +142,12 @@ impl AgentClient {
 
         debug!("Subscribing to session events for session: {}", session_id);
 
-        let (evt_tx, evt_rx) = mpsc::channel::<ClientEvent>(100);
+        if let Some(handle) = self.stream_handle.lock().await.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        let evt_tx = self.client_event_tx.clone();
 
         let request = Request::new(proto::SubscribeSessionEventsRequest {
             session_id: session_id.clone(),
@@ -187,7 +198,6 @@ impl AgentClient {
         });
 
         *self.stream_handle.lock().await = Some(stream_handle);
-        *self.client_event_rx.lock().await = Some(evt_rx);
 
         info!("Event subscription started for session: {}", session_id);
         Ok(())

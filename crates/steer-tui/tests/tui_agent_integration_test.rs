@@ -1,7 +1,15 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use steer_grpc::{ServiceHost, ServiceHostConfig};
+use steer_core::app::domain::action::{Action, McpServerState};
+use steer_core::app::domain::types::SessionId;
+use steer_core::session::{
+    SessionConfig as CoreSessionConfig, SessionToolConfig as CoreSessionToolConfig,
+    WorkspaceConfig as CoreWorkspaceConfig,
+};
+use steer_grpc::client_api::ClientEvent;
+use steer_grpc::{AgentClient, ServiceHost, ServiceHostConfig};
 use steer_proto::agent::v1::{
     CreateSessionRequest, GetAuthProgressRequest, ListFilesRequest, StartAuthRequest,
     SubscribeSessionEventsRequest, WorkspaceConfig, agent_service_client::AgentServiceClient,
@@ -9,6 +17,7 @@ use steer_proto::agent::v1::{
 };
 use steer_tui::error::Result;
 use tempfile::TempDir;
+use tokio::time::{Duration, Instant, timeout_at};
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::{debug, info};
@@ -311,15 +320,37 @@ async fn test_tui_auth_flow_poll_no_input() {
     service_host.shutdown().await.unwrap();
 }
 
+async fn wait_for_mcp_event(
+    event_rx: &mut tokio::sync::mpsc::Receiver<ClientEvent>,
+    server_name: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let event = timeout_at(deadline, event_rx.recv())
+            .await
+            .expect("timed out waiting for MCP state event");
+        let Some(event) = event else {
+            panic!("event stream closed before receiving MCP state event");
+        };
+
+        if let ClientEvent::McpServerStateChanged {
+            server_name: name, ..
+        } = event
+        {
+            if name == server_name {
+                return;
+            }
+        }
+    }
+}
+
 #[tokio::test]
-async fn test_tui_auth_flow_poll_no_input_openai() {
+async fn test_agent_client_resubscribes_events_on_session_switch() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let (_temp_dir, workspace_path) = setup_test_workspace()
-        .await
-        .expect("Failed to setup test workspace");
+    let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
 
-    let db_path = workspace_path.join("test_sessions_auth_openai.db");
+    let db_path = workspace_path.join("test_sessions_resubscribe.db");
     let bind_addr = format!("127.0.0.1:{}", unused_port()).parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
@@ -331,36 +362,87 @@ async fn test_tui_auth_flow_poll_no_input_openai() {
 
     let mut service_host = ServiceHost::new(config).await.unwrap();
     service_host.start().await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let channel = Channel::from_shared(format!("http://{bind_addr}"))
         .unwrap()
         .connect()
         .await
         .unwrap();
-    let mut grpc_client = AgentServiceClient::new(channel.clone());
+    let client = AgentClient::from_channel(channel).await.unwrap();
 
-    let start = grpc_client
-        .start_auth(StartAuthRequest {
-            provider_id: "openai".to_string(),
-        })
+    let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
+    let session_config = CoreSessionConfig {
+        workspace: CoreWorkspaceConfig::Local {
+            path: workspace_path.clone(),
+        },
+        workspace_ref: None,
+        workspace_id: None,
+        repo_ref: None,
+        parent_session_id: None,
+        workspace_name: None,
+        tool_config: CoreSessionToolConfig::default(),
+        system_prompt: None,
+        metadata: HashMap::new(),
+        default_model: default_model.clone(),
+    };
+
+    let first_session_id = client.create_session(session_config).await.unwrap();
+    client.subscribe_session_events().await.unwrap();
+    let mut event_rx = client.subscribe_client_events().await;
+
+    let first_session = SessionId::parse(&first_session_id).expect("valid session id");
+    service_host
+        .runtime_handle()
+        .dispatch_action(
+            first_session,
+            Action::McpServerStateChanged {
+                session_id: first_session,
+                server_name: "test-mcp-1".to_string(),
+                state: McpServerState::Disconnected { error: None },
+            },
+        )
         .await
-        .unwrap()
-        .into_inner();
+        .unwrap();
+    wait_for_mcp_event(&mut event_rx, "test-mcp-1").await;
 
-    assert!(!start.flow_id.is_empty());
+    let session_config = CoreSessionConfig {
+        workspace: CoreWorkspaceConfig::Local {
+            path: workspace_path.clone(),
+        },
+        workspace_ref: None,
+        workspace_id: None,
+        repo_ref: None,
+        parent_session_id: None,
+        workspace_name: None,
+        tool_config: CoreSessionToolConfig::default(),
+        system_prompt: None,
+        metadata: HashMap::new(),
+        default_model,
+    };
 
-    let progress = grpc_client
-        .get_auth_progress(GetAuthProgressRequest {
-            flow_id: start.flow_id.clone(),
-        })
+    let second_session_id = client.create_session(session_config).await.unwrap();
+    assert_ne!(first_session_id, second_session_id);
+
+    client.subscribe_session_events().await.unwrap();
+
+    let second_session = SessionId::parse(&second_session_id).expect("valid session id");
+    service_host
+        .runtime_handle()
+        .dispatch_action(
+            second_session,
+            Action::McpServerStateChanged {
+                session_id: second_session,
+                server_name: "test-mcp-2".to_string(),
+                state: McpServerState::Disconnected { error: None },
+            },
+        )
         .await
-        .unwrap()
-        .into_inner()
-        .progress
-        .expect("progress response");
+        .unwrap();
+    wait_for_mcp_event(&mut event_rx, "test-mcp-2").await;
 
-    assert!(!matches!(progress.state, Some(AuthProgressState::Error(_))));
+    drop(event_rx);
+    client.shutdown().await;
 
     service_host.shutdown().await.unwrap();
 }

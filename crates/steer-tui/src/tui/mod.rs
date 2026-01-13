@@ -450,6 +450,7 @@ impl Tui {
             .map_err(|e| Error::Generic(format!("Failed to create new session: {e}")))?;
 
         self.session_id = new_session_id.clone();
+        self.client.subscribe_session_events().await?;
         self.chat_store = ChatStore::new();
         self.tool_registry = ToolCallRegistry::new();
         self.chat_viewport = ChatViewport::new();
