@@ -4,7 +4,7 @@ use crate::tui::model::{ChatItem, ChatItemData, RowId};
 use steer_core::app::conversation::{Message, MessageData};
 
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// Stable key for accessing chat items
@@ -352,5 +352,105 @@ impl ChatStore {
         for m in msgs {
             self.add_message(m.clone());
         }
+    }
+
+    /// Build the lineage set by following parent_message_id chain backwards from active_message_id
+    pub fn build_lineage_set(&self) -> HashSet<String> {
+        let mut lineage = HashSet::new();
+        let Some(active_id) = &self.active_message_id else {
+            for item in self.items.values() {
+                if let ChatItemData::Message(msg) = &item.data {
+                    lineage.insert(msg.id().to_string());
+                }
+            }
+            return lineage;
+        };
+
+        let mut current = Some(active_id.clone());
+        while let Some(id) = current {
+            lineage.insert(id.clone());
+
+            current = self.get_by_id(&id).and_then(|item| {
+                if let ChatItemData::Message(msg) = &item.data {
+                    msg.parent_message_id().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            });
+        }
+
+        lineage
+    }
+
+    /// Get user messages that are in the active branch lineage
+    pub fn user_messages_in_lineage(&self) -> Vec<(String, String)> {
+        let lineage = self.build_lineage_set();
+
+        self.items
+            .values()
+            .filter_map(|item| {
+                if let ChatItemData::Message(message) = &item.data {
+                    if matches!(&message.data, MessageData::User { .. })
+                        && lineage.contains(message.id())
+                        && !self.is_before_compaction(message.id())
+                    {
+                        Some((message.id().to_string(), message.content_string()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+    use steer_core::app::conversation::UserContent;
+
+    fn user_message(id: &str, parent_id: Option<&str>, text: &str) -> Message {
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: text.to_string(),
+                }],
+            },
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            id: id.to_string(),
+            parent_message_id: parent_id.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_user_messages_in_lineage_filters_branch() {
+        let mut store = ChatStore::new();
+        store.add_message(user_message("msg1", None, "Root"));
+        store.add_message(user_message("msg2", Some("msg1"), "Branch A"));
+        store.add_message(user_message("msg3", Some("msg1"), "Branch B"));
+
+        store.set_active_message_id(Some("msg2".to_string()));
+
+        let messages = store.user_messages_in_lineage();
+        let ids: Vec<_> = messages.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["msg1", "msg2"]);
+    }
+
+    #[test]
+    fn test_user_messages_in_lineage_without_active() {
+        let mut store = ChatStore::new();
+        store.add_message(user_message("msg1", None, "Root"));
+        store.add_message(user_message("msg2", Some("msg1"), "Branch A"));
+        store.add_message(user_message("msg3", Some("msg1"), "Branch B"));
+
+        let messages = store.user_messages_in_lineage();
+        let ids: Vec<_> = messages.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["msg1", "msg2", "msg3"]);
     }
 }

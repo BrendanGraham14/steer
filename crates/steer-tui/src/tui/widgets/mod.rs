@@ -2,6 +2,7 @@ pub mod chat_list_state;
 pub mod chat_widgets;
 pub mod clipping;
 pub mod diff;
+pub mod edit_selection_overlay;
 pub mod formatters;
 pub mod fuzzy_finder;
 pub mod input_panel;
@@ -16,6 +17,7 @@ pub use chat_widgets::{
     slash_input::SlashInputWidget,
     system_notice::SystemNoticeWidget,
 };
+pub use edit_selection_overlay::{EditSelectionOverlay, EditSelectionOverlayState};
 pub use fuzzy_finder::{FuzzyFinder, FuzzyFinderResult, PickerItem};
 pub use input_panel::{InputPanel, InputPanelState};
 pub use popup_list::{PopupList, PopupListState, StatefulPopupList};

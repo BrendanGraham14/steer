@@ -25,7 +25,7 @@ use steer_tools::schema::ToolCall;
 use crate::tui::InputMode;
 use crate::tui::model::ChatItem;
 use crate::tui::state::file_cache::FileCache;
-use crate::tui::theme::{Component, Theme};
+use crate::tui::theme::Theme;
 use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderMode};
 
 /// Stateful data for the [`InputPanel`] widget.
@@ -369,38 +369,11 @@ impl StatefulWidget for InputPanel<'_> {
     type State = InputPanelState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        // Handle approval prompt
         if let Some(tool_call) = self.current_approval {
             ApprovalWidget::new(tool_call, self.theme).render(area, buf);
             return;
         }
 
-        // Handle edit message selection mode
-        if self.input_mode == InputMode::EditMessageSelection {
-            let title = ModeTitleWidget::new(
-                self.input_mode,
-                self.is_processing,
-                self.spinner_state,
-                self.theme,
-                state.has_content(),
-            )
-            .render();
-
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .style(self.theme.style(Component::InputPanelBorderCommand))
-                .border_style(self.theme.style(Component::InputPanelBorderCommand));
-
-            EditSelectionWidget::new(self.theme).block(block).render(
-                area,
-                buf,
-                &mut state.edit_selection,
-            );
-            return;
-        }
-
-        // Handle normal text input modes
         let title = ModeTitleWidget::new(
             self.input_mode,
             self.is_processing,

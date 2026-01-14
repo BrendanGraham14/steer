@@ -60,6 +60,7 @@ use crate::tui::state::{ChatStore, ToolCallRegistry};
 use crate::tui::chat_viewport::ChatViewport;
 use crate::tui::terminal::{SetupGuard, cleanup};
 use crate::tui::ui_layout::UiLayout;
+use crate::tui::widgets::EditSelectionOverlayState;
 use crate::tui::widgets::InputPanel;
 
 pub mod commands;
@@ -179,6 +180,7 @@ pub struct Tui {
     last_revision: u64,
     /// Update checker status
     update_status: UpdateStatus,
+    edit_selection_state: EditSelectionOverlayState,
 }
 
 const MAX_MODE_DEPTH: usize = 8;
@@ -300,6 +302,7 @@ impl Tui {
             mode_stack: VecDeque::new(),
             last_revision: 0,
             update_status: UpdateStatus::Checking,
+            edit_selection_state: EditSelectionOverlayState::default(),
         };
 
         // Disarm guard; Tui instance will handle cleanup
@@ -777,18 +780,8 @@ impl Tui {
                 &self.chat_store,
             );
 
-            let hovered_id = self
-                .input_panel_state
-                .get_hovered_id()
-                .map(|s| s.to_string());
-
-            self.chat_viewport.render(
-                f,
-                layout.chat_area,
-                spinner_state,
-                hovered_id.as_deref(),
-                &self.theme,
-            );
+            self.chat_viewport
+                .render(f, layout.chat_area, spinner_state, None, &self.theme);
 
             let input_panel = InputPanel::new(
                 input_mode,
@@ -835,6 +828,12 @@ impl Tui {
                     &self.theme,
                     &self.command_registry,
                 );
+            }
+
+            if input_mode == InputMode::EditMessageSelection {
+                use crate::tui::widgets::EditSelectionOverlay;
+                let overlay = EditSelectionOverlay::new(&self.theme);
+                f.render_stateful_widget(overlay, terminal_size, &mut self.edit_selection_state);
             }
         })?;
         Ok(())
@@ -1417,38 +1416,10 @@ impl Tui {
         }
     }
 
-    /// Scroll chat list to show a specific message
-    fn scroll_to_message_id(&mut self, message_id: &str) {
-        // Find the index of the message in the chat store
-        let mut target_index = None;
-        for (idx, item) in self.chat_store.items().enumerate() {
-            if let crate::tui::model::ChatItemData::Message(message) = &item.data {
-                if message.id() == message_id {
-                    target_index = Some(idx);
-                    break;
-                }
-            }
-        }
-
-        if let Some(idx) = target_index {
-            // Scroll to center the message if possible
-            self.chat_viewport.state_mut().scroll_to_item(idx);
-        }
-    }
-
-    /// Enter edit message selection mode
     fn enter_edit_selection_mode(&mut self) {
         self.switch_mode(InputMode::EditMessageSelection);
-
-        // Populate the edit selection messages in the input panel state
-        self.input_panel_state
-            .populate_edit_selection(self.chat_store.iter_items());
-
-        // Scroll to the hovered message if there is one
-        if let Some(id) = self.input_panel_state.get_hovered_id() {
-            let id = id.to_string();
-            self.scroll_to_message_id(&id);
-        }
+        let messages = self.chat_store.user_messages_in_lineage();
+        self.edit_selection_state.populate(messages);
     }
 }
 
