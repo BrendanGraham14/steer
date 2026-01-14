@@ -3,13 +3,11 @@
 //! This module contains the input panel widget and its sub-components.
 
 mod approval_prompt;
-mod edit_selection;
 mod fuzzy_state;
 mod mode_title;
 mod textarea;
 
 pub use approval_prompt::ApprovalWidget;
-pub use edit_selection::{EditSelectionState, EditSelectionWidget};
 pub use fuzzy_state::FuzzyFinderHelper;
 pub use mode_title::ModeTitleWidget;
 pub use textarea::TextAreaWidget;
@@ -23,7 +21,6 @@ use tui_textarea::{Input, TextArea};
 use steer_tools::schema::ToolCall;
 
 use crate::tui::InputMode;
-use crate::tui::model::ChatItem;
 use crate::tui::state::file_cache::FileCache;
 use crate::tui::theme::Theme;
 use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderMode};
@@ -32,7 +29,6 @@ use crate::tui::widgets::fuzzy_finder::{FuzzyFinder, FuzzyFinderMode};
 #[derive(Debug)]
 pub struct InputPanelState {
     pub textarea: TextArea<'static>,
-    pub edit_selection: EditSelectionState,
     pub file_cache: FileCache,
     pub fuzzy_finder: FuzzyFinder,
 }
@@ -55,7 +51,6 @@ impl InputPanelState {
         );
         Self {
             textarea,
-            edit_selection: EditSelectionState::default(),
             file_cache: FileCache::new(session_id),
             fuzzy_finder: FuzzyFinder::new(),
         }
@@ -126,41 +121,6 @@ impl InputPanelState {
             ));
             self.fuzzy_finder.deactivate();
         }
-    }
-
-    /// Move to previous message in edit selection
-    pub fn edit_selection_prev(&mut self) -> Option<&(String, String)> {
-        self.edit_selection.select_prev()
-    }
-
-    /// Move to next message in edit selection
-    pub fn edit_selection_next(&mut self) -> Option<&(String, String)> {
-        self.edit_selection.select_next()
-    }
-
-    /// Get the currently selected message
-    pub fn get_selected_message(&self) -> Option<&(String, String)> {
-        self.edit_selection.get_selected()
-    }
-
-    /// Populate edit selection with messages from chat items
-    pub fn populate_edit_selection<'a>(&mut self, chat_items: impl Iterator<Item = &'a ChatItem>) {
-        self.edit_selection.populate_from_chat_items(chat_items);
-    }
-
-    /// Get the hovered edit selection ID
-    pub fn get_hovered_edit_id(&self) -> Option<&str> {
-        self.edit_selection.get_hovered_id()
-    }
-
-    /// Get the hovered edit selection ID (alias for compatibility)
-    pub fn get_hovered_id(&self) -> Option<&str> {
-        self.get_hovered_edit_id()
-    }
-
-    /// Clear edit selection
-    pub fn clear_edit_selection(&mut self) {
-        self.edit_selection.clear();
     }
 
     /// Activate fuzzy finder for files
@@ -399,9 +359,6 @@ mod tests {
     #[test]
     fn test_input_panel_state_default() {
         let state = InputPanelState::default();
-        assert!(state.edit_selection.messages.is_empty());
-        assert_eq!(state.edit_selection.selected_index, 0);
-        assert!(state.edit_selection.hovered_id.is_none());
         assert_eq!(state.content(), "");
     }
 
