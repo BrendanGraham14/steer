@@ -1138,6 +1138,7 @@ fn apply_instruction_policy(
                 system
             }
         }
+        Some(InstructionPolicy::Override(override_text)) => Some(override_text.clone()),
     }
 }
 

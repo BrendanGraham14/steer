@@ -1108,6 +1108,16 @@ fn truncate_body(body: &str) -> String {
     }
 }
 
+fn extract_system_context(system: &str) -> Option<&str> {
+    if let Some(index) =
+        system.find("Here is useful information about the environment you are running in:")
+    {
+        return Some(&system[index..]);
+    }
+
+    system.find("<env>").map(|index| &system[index..])
+}
+
 fn apply_instruction_policy(
     system: Option<String>,
     policy: Option<&InstructionPolicy>,
@@ -1133,6 +1143,17 @@ fn apply_instruction_policy(
                 Some(default.clone())
             } else {
                 system
+            }
+        }
+        Some(InstructionPolicy::Override(override_text)) => {
+            let context = system
+                .as_deref()
+                .and_then(extract_system_context)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            match context {
+                Some(context) => Some(format!("{override_text}\n\n{context}")),
+                None => Some(override_text.clone()),
             }
         }
     }

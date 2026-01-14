@@ -6277,6 +6277,7 @@ dependencies = [
  "serde_urlencoded",
  "sha2",
  "steer-auth-plugin",
+ "steer-tools",
  "tokio",
  "tracing",
  "url",

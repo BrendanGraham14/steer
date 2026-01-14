@@ -53,6 +53,7 @@ pub trait AuthHeaderProvider: Send + Sync {
 pub enum InstructionPolicy {
     Prefix(String),
     DefaultIfEmpty(String),
+    Override(String),
 }
 
 #[derive(Debug, Clone)]
