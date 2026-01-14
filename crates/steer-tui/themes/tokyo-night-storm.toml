@@ -66,16 +66,20 @@ input_panel_border_active = { fg = "storm_blue" }
 input_panel_border_command = { fg = "storm_cyan" }
 input_panel_border_approval = { fg = "storm_red", bold = true }
 input_panel_border_error = { fg = "storm_red1", bold = true }
+input_panel_border_edit = { fg = "storm_orange" }
 input_panel_label = { fg = "storm_fg_dark" }
 input_panel_label_active = { fg = "storm_blue" }
 input_panel_label_command = { fg = "storm_cyan" }
 input_panel_label_confirm_exit = { fg = "storm_red" }
+input_panel_label_edit = { fg = "storm_orange" }
 
 # Chat list
 chat_list_border = { fg = "storm_fg_gutter" }
 user_message = { fg = "storm_fg", bg = "storm_bg_dark" }
 user_message_role = { fg = "storm_green", bold = true }
 user_message_accent = { fg = "storm_green" }
+user_message_edit = { fg = "storm_fg", bg = "storm_bg_highlight" }
+user_message_edit_accent = { fg = "storm_orange" }
 assistant_message = { fg = "storm_fg" }
 assistant_message_role = { fg = "storm_blue", bold = true }
 assistant_message_accent = { fg = "storm_fg_gutter" }

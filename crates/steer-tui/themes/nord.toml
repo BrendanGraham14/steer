@@ -56,16 +56,20 @@ input_panel_border_active = { fg = "nord8" }
 input_panel_border_command = { fg = "nord7" }
 input_panel_border_approval = { fg = "nord11", bold = true }
 input_panel_border_error = { fg = "nord11", bold = true }
+input_panel_border_edit = { fg = "nord13" }
 input_panel_label = { fg = "nord4" }
 input_panel_label_active = { fg = "nord8" }
 input_panel_label_command = { fg = "nord7" }
 input_panel_label_confirm_exit = { fg = "nord11" }
+input_panel_label_edit = { fg = "nord13" }
 
 # Chat list
 chat_list_border = { fg = "nord3" }
 user_message = { fg = "nord4", bg = "nord_darker" }
 user_message_role = { fg = "nord14", bold = true }
 user_message_accent = { fg = "nord14" }
+user_message_edit = { fg = "nord4", bg = "nord1" }
+user_message_edit_accent = { fg = "nord13" }
 assistant_message = { fg = "nord4" }
 assistant_message_role = { fg = "nord9", bold = true }
 assistant_message_accent = { fg = "nord3" }

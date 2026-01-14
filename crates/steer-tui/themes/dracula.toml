@@ -47,16 +47,20 @@ input_panel_border_active = { fg = "purple" }
 input_panel_border_command = { fg = "cyan" }
 input_panel_border_approval = { fg = "red", bold = true }
 input_panel_border_error = { fg = "red", bold = true }
+input_panel_border_edit = { fg = "orange" }
 input_panel_label = { fg = "foreground" }
 input_panel_label_active = { fg = "purple" }
 input_panel_label_command = { fg = "cyan" }
 input_panel_label_confirm_exit = { fg = "red" }
+input_panel_label_edit = { fg = "orange" }
 
 # Chat list
 chat_list_border = { fg = "comment" }
 user_message = { fg = "foreground", bg = "black" }
 user_message_role = { fg = "green", bold = true }
 user_message_accent = { fg = "green" }
+user_message_edit = { fg = "foreground", bg = "current_line" }
+user_message_edit_accent = { fg = "orange" }
 assistant_message = { fg = "foreground" }
 assistant_message_role = { fg = "purple", bold = true }
 assistant_message_accent = { fg = "dark_gray" }

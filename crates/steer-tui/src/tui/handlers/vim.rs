@@ -34,6 +34,9 @@ impl Tui {
                         self.switch_mode(InputMode::ConfirmExit);
                     }
                 }
+                KeyCode::Char('e') => {
+                    self.cancel_edit_mode();
+                }
                 KeyCode::Char('r') => {
                     if self.vim_state.pending_operator.is_some() {
                         // Redo when operator pending
@@ -399,6 +402,11 @@ impl Tui {
     async fn handle_vim_insert(&mut self, key: KeyEvent) -> Result<bool> {
         // Try common text manipulation first
         if self.handle_text_manipulation(key)? {
+            return Ok(false);
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
+            self.cancel_edit_mode();
             return Ok(false);
         }
 

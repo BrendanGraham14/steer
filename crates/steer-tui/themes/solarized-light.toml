@@ -38,16 +38,20 @@ input_panel_border_active = { fg = "blue" }
 input_panel_border_command = { fg = "cyan" }
 input_panel_border_approval = { fg = "orange", bold = true }
 input_panel_border_error = { fg = "red", bold = true }
+input_panel_border_edit = { fg = "yellow" }
 input_panel_label = { fg = "base00" }
 input_panel_label_active = { fg = "blue" }
 input_panel_label_command = { fg = "cyan" }
 input_panel_label_confirm_exit = { fg = "red" }
+input_panel_label_edit = { fg = "yellow" }
 
 # Chat list
 chat_list_border = { fg = "base1" }
 user_message = { fg = "base00", bg = "base2" }
 user_message_role = { fg = "base01", bold = true }
 user_message_accent = { fg = "blue" }
+user_message_edit = { fg = "base00", bg = "base2" }
+user_message_edit_accent = { fg = "yellow" }
 assistant_message = { fg = "base00" }
 assistant_message_role = { fg = "green", bold = true }
 assistant_message_accent = { fg = "base1" }

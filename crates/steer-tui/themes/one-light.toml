@@ -41,16 +41,20 @@ input_panel_border_active = { fg = "accent" }
 input_panel_border_command = { fg = "hue_1" }
 input_panel_border_approval = { fg = "hue_6", bold = true }
 input_panel_border_error = { fg = "hue_5", bold = true }
+input_panel_border_edit = { fg = "hue_6" }
 input_panel_label = { fg = "mono_1" }
 input_panel_label_active = { fg = "accent" }
 input_panel_label_command = { fg = "hue_1" }
 input_panel_label_confirm_exit = { fg = "hue_5" }
+input_panel_label_edit = { fg = "hue_6" }
 
 # Chat list
 chat_list_border = { fg = "guide" }
 user_message = { fg = "mono_1", bg = "line_highlight" }
 user_message_role = { fg = "hue_2", bold = true }
 user_message_accent = { fg = "hue_2" }
+user_message_edit = { fg = "mono_1", bg = "selection" }
+user_message_edit_accent = { fg = "hue_6" }
 assistant_message = { fg = "mono_1" }
 assistant_message_role = { fg = "hue_4", bold = true }
 assistant_message_accent = { fg = "guide" }

@@ -62,16 +62,20 @@ input_panel_border_active = { fg = "lavender" }
 input_panel_border_command = { fg = "sapphire" }
 input_panel_border_approval = { fg = "red", bold = true }
 input_panel_border_error = { fg = "red", bold = true }
+input_panel_border_edit = { fg = "peach" }
 input_panel_label = { fg = "subtext1" }
 input_panel_label_active = { fg = "lavender" }
 input_panel_label_command = { fg = "sapphire" }
 input_panel_label_confirm_exit = { fg = "red" }
+input_panel_label_edit = { fg = "peach" }
 
 # Chat list
 chat_list_border = { fg = "surface2" }
 user_message = { fg = "foreground", bg = "mantle" }
 user_message_role = { fg = "green", bold = true }
 user_message_accent = { fg = "green" }
+user_message_edit = { fg = "foreground", bg = "surface0" }
+user_message_edit_accent = { fg = "peach" }
 assistant_message = { fg = "foreground" }
 assistant_message_role = { fg = "blue", bold = true }
 assistant_message_accent = { fg = "surface2" }

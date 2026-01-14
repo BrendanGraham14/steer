@@ -304,6 +304,8 @@ pub struct InputPanel<'a> {
     pub current_approval: Option<&'a ToolCall>,
     pub is_processing: bool,
     pub spinner_state: usize,
+    pub is_editing: bool,
+    pub editing_preview: Option<&'a str>,
     pub theme: &'a Theme,
 }
 
@@ -313,6 +315,8 @@ impl<'a> InputPanel<'a> {
         current_approval: Option<&'a ToolCall>,
         is_processing: bool,
         spinner_state: usize,
+        is_editing: bool,
+        editing_preview: Option<&'a str>,
         theme: &'a Theme,
     ) -> Self {
         Self {
@@ -320,6 +324,8 @@ impl<'a> InputPanel<'a> {
             current_approval,
             is_processing,
             spinner_state,
+            is_editing,
+            editing_preview,
             theme,
         }
     }
@@ -338,6 +344,8 @@ impl StatefulWidget for InputPanel<'_> {
             self.input_mode,
             self.is_processing,
             self.spinner_state,
+            self.is_editing,
+            self.editing_preview,
             self.theme,
             state.has_content(),
         )
@@ -348,6 +356,7 @@ impl StatefulWidget for InputPanel<'_> {
         TextAreaWidget::new(&mut state.textarea, self.theme)
             .with_block(block)
             .with_mode(self.input_mode)
+            .with_editing(self.is_editing)
             .render(area, buf);
     }
 }

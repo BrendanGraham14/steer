@@ -147,10 +147,12 @@ pub enum Component {
     InputPanelBorderCommand,
     InputPanelBorderApproval,
     InputPanelBorderError,
+    InputPanelBorderEdit,
     InputPanelLabel,
     InputPanelLabelActive,
     InputPanelLabelCommand,
     InputPanelLabelConfirmExit,
+    InputPanelLabelEdit,
 
     // Chat list
     ChatListBorder,
@@ -158,6 +160,8 @@ pub enum Component {
     UserMessage,
     UserMessageRole,
     UserMessageAccent,
+    UserMessageEdit,
+    UserMessageEditAccent,
     AssistantMessage,
     AssistantMessageRole,
     AssistantMessageAccent,
@@ -473,6 +477,14 @@ fn create_default_theme() -> CompiledTheme {
             .fg(Color::LightRed)
             .add_modifier(Modifier::BOLD),
     );
+    styles.insert(
+        Component::InputPanelBorderEdit,
+        Style::default().fg(Color::Yellow),
+    );
+    styles.insert(
+        Component::InputPanelLabelEdit,
+        Style::default().fg(Color::Yellow),
+    );
 
     // Chat list styles
     styles.insert(
@@ -493,6 +505,14 @@ fn create_default_theme() -> CompiledTheme {
     styles.insert(
         Component::UserMessageAccent,
         Style::default().fg(Color::Green),
+    );
+    styles.insert(
+        Component::UserMessageEdit,
+        Style::default().bg(Color::Rgb(40, 45, 50)),
+    );
+    styles.insert(
+        Component::UserMessageEditAccent,
+        Style::default().fg(Color::Yellow),
     );
     styles.insert(Component::AssistantMessage, Style::default());
     styles.insert(

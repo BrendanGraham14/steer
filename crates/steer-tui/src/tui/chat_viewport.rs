@@ -25,6 +25,7 @@ enum FlattenedItem {
         message: Message,
         id: String,
         is_edited: bool,
+        is_editing: bool,
     },
     /// Tool call coupled with its result
     ToolInteraction {
@@ -58,10 +59,14 @@ impl FlattenedItem {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         match self {
             FlattenedItem::MessageText {
-                message, is_edited, ..
+                message,
+                is_edited,
+                is_editing,
+                ..
             } => {
                 hash_message_content(message, &mut hasher);
                 is_edited.hash(&mut hasher);
+                is_editing.hash(&mut hasher);
             }
             FlattenedItem::ToolInteraction { call, result, .. } => {
                 call.id.hash(&mut hasher);
@@ -188,6 +193,7 @@ impl ChatViewport {
         mode: ViewMode,
         theme: &Theme,
         chat_store: &ChatStore,
+        editing_message_id: Option<&str>,
     ) {
         // Check if we need to rebuild
         let width_changed = width != self.last_width;
@@ -219,7 +225,8 @@ impl ChatViewport {
         let edited_message_ids = build_edited_message_ids(chat_store);
 
         // Flatten raw items into 1:1 widget items
-        let flattened = self.flatten_items(&filtered_items, &edited_message_ids);
+        let flattened =
+            self.flatten_items(&filtered_items, &edited_message_ids, editing_message_id);
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -269,6 +276,7 @@ impl ChatViewport {
         &self,
         raw: &[&ChatItem],
         edited_message_ids: &HashSet<String>,
+        editing_message_id: Option<&str>,
     ) -> Vec<FlattenedItem> {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
@@ -305,6 +313,7 @@ impl ChatViewport {
                                     message: row.clone(),
                                     id: format!("{}_text", row.id()),
                                     is_edited: false,
+                                    is_editing: false,
                                 });
                             }
 
@@ -330,11 +339,14 @@ impl ChatViewport {
                         }
                         MessageData::User { .. } => {
                             let is_edited = edited_message_ids.contains(row.id());
+                            let is_editing =
+                                editing_message_id.is_some_and(|editing_id| editing_id == row.id());
                             // User messages and others
                             flattened.push(FlattenedItem::MessageText {
                                 message: row.clone(),
                                 id: row.id().to_string(),
                                 is_edited,
+                                is_editing,
                             });
                         }
                     }
@@ -657,7 +669,10 @@ fn create_widget_for_flattened_item(
 
     match item {
         FlattenedItem::MessageText {
-            message, is_edited, ..
+            message,
+            is_edited,
+            is_editing,
+            ..
         } => {
             let body = Box::new(
                 crate::tui::widgets::chat_widgets::message_widget::MessageWidget::new(
@@ -668,8 +683,17 @@ fn create_widget_for_flattened_item(
 
             match &message.data {
                 MessageData::User { .. } => {
-                    let user_message_style = theme.style(Component::UserMessage);
-                    let accent_style = theme.style(Component::UserMessageAccent);
+                    let (user_message_style, accent_style) = if *is_editing {
+                        (
+                            theme.style(Component::UserMessageEdit),
+                            theme.style(Component::UserMessageEditAccent),
+                        )
+                    } else {
+                        (
+                            theme.style(Component::UserMessage),
+                            theme.style(Component::UserMessageAccent),
+                        )
+                    };
                     Box::new(
                         RowWidget::new(body)
                             .with_accent(accent_style)
@@ -906,6 +930,7 @@ mod tests {
                     ViewMode::Compact,
                     &theme,
                     &chat_store,
+                    None,
                 );
 
                 // Render the viewport
@@ -974,7 +999,14 @@ mod tests {
 
                 // Rebuild viewport
                 let chat_store = create_test_chat_store();
-                viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme, &chat_store);
+                viewport.rebuild(
+                    &messages.iter().collect(),
+                    area.width,
+                    ViewMode::Compact,
+                    &theme,
+                    &chat_store,
+                    None,
+                );
 
                 // Measure visible rows
                 let _rows = viewport.measure_visible_rows(area, &theme);
@@ -1061,7 +1093,14 @@ mod tests {
 
             // Rebuild viewport
             let chat_store = create_test_chat_store();
-            viewport.rebuild(&messages.iter().collect(), area.width, ViewMode::Compact, &theme, &chat_store);
+            viewport.rebuild(
+                &messages.iter().collect(),
+                area.width,
+                ViewMode::Compact,
+                &theme,
+                &chat_store,
+                None,
+            );
 
             let _rows = viewport.measure_visible_rows(area, &theme);
             let total_height = viewport.state.total_content_height;
@@ -1137,6 +1176,7 @@ mod tests {
             ViewMode::Compact,
             &theme,
             &chat_store,
+            None,
         );
 
         // Scroll to top
@@ -1181,6 +1221,7 @@ mod tests {
             ViewMode::Compact,
             &theme,
             &chat_store,
+            None,
         );
 
         // Debug: print heights

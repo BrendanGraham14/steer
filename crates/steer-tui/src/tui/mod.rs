@@ -704,6 +704,14 @@ impl Tui {
 
     /// Draw the UI
     fn draw(&mut self) -> Result<()> {
+        let editing_message_id = self.editing_message_id.clone();
+        let is_editing = editing_message_id.is_some();
+        let editing_preview = if is_editing {
+            self.editing_preview()
+        } else {
+            None
+        };
+
         self.terminal.draw(|f| {
             // Check if we're in setup mode
             if let Some(setup_state) = &self.setup_state {
@@ -778,6 +786,7 @@ impl Tui {
                 self.chat_viewport.state().view_mode,
                 &self.theme,
                 &self.chat_store,
+                editing_message_id.as_deref(),
             );
 
             self.chat_viewport
@@ -788,6 +797,8 @@ impl Tui {
                 current_tool_call,
                 is_processing,
                 spinner_state,
+                is_editing,
+                editing_preview.as_deref(),
                 &self.theme,
             );
             f.render_stateful_widget(input_panel, layout.input_area, &mut self.input_panel_state);
@@ -1030,6 +1041,7 @@ impl Tui {
         }
 
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
+            self.chat_viewport.mark_dirty();
             if let Err(e) = self
                 .client
                 .edit_message(message_id_to_edit, content, self.current_model.clone())
@@ -1411,9 +1423,45 @@ impl Tui {
 
                     // Store the message ID we're editing
                     self.editing_message_id = Some(message_id.to_string());
+                    self.chat_viewport.mark_dirty();
                 }
             }
         }
+    }
+
+    fn cancel_edit_mode(&mut self) {
+        if self.editing_message_id.is_some() {
+            self.editing_message_id = None;
+            self.chat_viewport.mark_dirty();
+        }
+    }
+
+    fn editing_preview(&self) -> Option<String> {
+        const EDIT_PREVIEW_MAX_LEN: usize = 40;
+
+        let message_id = self.editing_message_id.as_ref()?;
+        let item = self.chat_store.get_by_id(message_id)?;
+        let crate::tui::model::ChatItemData::Message(message) = &item.data else {
+            return None;
+        };
+
+        let content = message.content_string();
+        let preview_line = content
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        if preview_line.is_empty() {
+            return None;
+        }
+
+        let mut chars = preview_line.chars();
+        let mut preview: String = chars.by_ref().take(EDIT_PREVIEW_MAX_LEN).collect();
+        if chars.next().is_some() {
+            preview.push('…');
+        }
+
+        Some(preview)
     }
 
     fn enter_edit_selection_mode(&mut self) {

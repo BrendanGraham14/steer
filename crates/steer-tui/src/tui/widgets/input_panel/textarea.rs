@@ -15,6 +15,7 @@ pub struct TextAreaWidget<'a> {
     theme: &'a Theme,
     block: Option<Block<'a>>,
     mode: Option<InputMode>,
+    is_editing: bool,
 }
 
 impl<'a> TextAreaWidget<'a> {
@@ -25,6 +26,7 @@ impl<'a> TextAreaWidget<'a> {
             theme,
             block: None,
             mode: None,
+            is_editing: false,
         }
     }
 
@@ -39,6 +41,11 @@ impl<'a> TextAreaWidget<'a> {
         self.mode = Some(mode);
         self
     }
+
+    pub fn with_editing(mut self, is_editing: bool) -> Self {
+        self.is_editing = is_editing;
+        self
+    }
 }
 
 impl<'a> Widget for TextAreaWidget<'a> {
@@ -46,7 +53,9 @@ impl<'a> Widget for TextAreaWidget<'a> {
         // Take ownership of block to avoid borrow issues
         let (inner_area, theme, _mode) = if let Some(block) = self.block {
             let styled_block = if let Some(mode) = self.mode {
-                apply_mode_styling(block, mode, self.theme)
+                apply_mode_styling(block, mode, self.theme, self.is_editing)
+            } else if self.is_editing {
+                apply_mode_styling(block, InputMode::Simple, self.theme, true)
             } else {
                 block
             };
@@ -91,7 +100,17 @@ impl<'a> Widget for TextAreaWidget<'a> {
 }
 
 /// Apply mode-specific styling to a block
-fn apply_mode_styling<'a>(mut block: Block<'a>, mode: InputMode, theme: &Theme) -> Block<'a> {
+fn apply_mode_styling<'a>(
+    mut block: Block<'a>,
+    mode: InputMode,
+    theme: &Theme,
+    is_editing: bool,
+) -> Block<'a> {
+    if is_editing {
+        let style = theme.style(Component::InputPanelBorderEdit);
+        return block.style(style).border_style(style);
+    }
+
     match mode {
         InputMode::Simple | InputMode::VimInsert => {
             // Active border and text style

@@ -13,6 +13,8 @@ pub struct ModeTitleWidget<'a> {
     mode: InputMode,
     is_processing: bool,
     spinner_state: usize,
+    is_editing: bool,
+    editing_preview: Option<&'a str>,
     theme: &'a Theme,
     has_content: bool,
 }
@@ -23,6 +25,8 @@ impl<'a> ModeTitleWidget<'a> {
         mode: InputMode,
         is_processing: bool,
         spinner_state: usize,
+        is_editing: bool,
+        editing_preview: Option<&'a str>,
         theme: &'a Theme,
         has_content: bool,
     ) -> Self {
@@ -30,6 +34,8 @@ impl<'a> ModeTitleWidget<'a> {
             mode,
             is_processing,
             spinner_state,
+            is_editing,
+            editing_preview,
             theme,
             has_content,
         }
@@ -49,6 +55,21 @@ impl<'a> ModeTitleWidget<'a> {
 
         // Add mode title content
         spans.push(Span::raw(" "));
+
+        if self.is_editing {
+            spans.push(Span::styled(
+                "Editing",
+                self.theme.style(Component::InputPanelLabelEdit),
+            ));
+            if let Some(preview) = self.editing_preview {
+                spans.push(Span::styled(": ", self.theme.style(Component::DimText)));
+                spans.push(Span::styled(
+                    preview.to_string(),
+                    self.theme.style(Component::InputPanelLabel),
+                ));
+            }
+            spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
+        }
 
         let formatted_mode = self.get_formatted_mode();
         if let Some(mode) = formatted_mode {
@@ -92,7 +113,7 @@ impl<'a> ModeTitleWidget<'a> {
 
     /// Get the keybinds for the current mode
     fn get_mode_keybinds(&self) -> Vec<(&'static str, &'static str)> {
-        match self.mode {
+        let mut keybinds = match self.mode {
             InputMode::Simple => {
                 if self.has_content {
                     vec![("Enter", "send"), ("ESC ESC", "clear")]
@@ -141,7 +162,13 @@ impl<'a> ModeTitleWidget<'a> {
                 // No keybinds shown during setup mode
                 vec![]
             }
+        };
+
+        if self.is_editing {
+            keybinds.insert(0, ("Ctrl+E", "cancel edit"));
         }
+
+        keybinds
     }
 }
 

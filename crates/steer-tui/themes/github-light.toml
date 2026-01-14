@@ -51,16 +51,20 @@ input_panel_border_active = { fg = "accent_fg" }
 input_panel_border_command = { fg = "syntax_constant" }
 input_panel_border_approval = { fg = "attention_fg", bold = true }
 input_panel_border_error = { fg = "danger_fg", bold = true }
+input_panel_border_edit = { fg = "attention_fg" }
 input_panel_label = { fg = "fg_default" }
 input_panel_label_active = { fg = "accent_fg" }
 input_panel_label_command = { fg = "syntax_constant" }
 input_panel_label_confirm_exit = { fg = "danger_fg" }
+input_panel_label_edit = { fg = "attention_fg" }
 
 # Chat list
 chat_list_border = { fg = "border_default" }
 user_message = { fg = "fg_default", bg = "bg_highlight" }
 user_message_role = { fg = "accent_fg", bold = true }
 user_message_accent = { fg = "accent_fg" }
+user_message_edit = { fg = "fg_default", bg = "bg_highlight" }
+user_message_edit_accent = { fg = "attention_fg" }
 assistant_message = { fg = "fg_default" }
 assistant_message_role = { fg = "success_fg", bold = true }
 assistant_message_accent = { fg = "border_muted" }

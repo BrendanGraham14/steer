@@ -144,6 +144,10 @@ impl Tui {
                     .update_results(picker_items);
             }
 
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cancel_edit_mode();
+            }
+
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_processing {
                     self.client.cancel_operation().await?;
