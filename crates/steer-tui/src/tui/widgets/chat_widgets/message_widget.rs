@@ -55,7 +55,7 @@ impl MessageWidget {
                 for b in content {
                     match b {
                         AssistantContent::Text { text } => text.hash(&mut hasher),
-                        AssistantContent::ToolCall { tool_call } => {
+                        AssistantContent::ToolCall { tool_call, .. } => {
                             tool_call.id.hash(&mut hasher);
                             tool_call.name.hash(&mut hasher);
                             // parameters may be large; include their JSON string length and a hash of the string

@@ -394,7 +394,7 @@ impl XAIClient {
                             AssistantContent::Text { text } => {
                                 text_parts.push(text.clone());
                             }
-                            AssistantContent::ToolCall { tool_call } => {
+                            AssistantContent::ToolCall { tool_call, .. } => {
                                 tool_calls.push(XAIToolCall {
                                     id: tool_call.id.clone(),
                                     tool_type: "function".to_string(),
@@ -651,6 +651,7 @@ impl Provider for XAIClient {
                             name: tool_call.function.name.clone(),
                             parameters,
                         },
+                        thought_signature: None,
                     });
                 }
             }
@@ -850,6 +851,7 @@ impl XAIClient {
                                     name: tool_call.name.clone(),
                                     parameters,
                                 },
+                                thought_signature: None,
                             });
                         } else {
                             final_content.push(block);
@@ -932,6 +934,7 @@ impl XAIClient {
                                         name: entry.name.clone(),
                                         parameters: serde_json::Value::String(entry.args.clone()),
                                     },
+                                    thought_signature: None,
                                 });
                                 tool_call_indices.push(Some(tc.index));
                                 e.insert(pos);

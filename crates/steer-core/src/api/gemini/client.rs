@@ -10,7 +10,8 @@ use crate::api::error::{ApiError, StreamError};
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
-    AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
+    AssistantContent, Message as AppMessage, ThoughtContent, ThoughtSignature, ToolResult,
+    UserContent,
 };
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
@@ -133,6 +134,8 @@ enum GeminiRequestPart {
     FunctionCall {
         #[serde(rename = "functionCall")]
         function_call: GeminiFunctionCall, // Used for model turns in history
+        #[serde(rename = "thoughtSignature", skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     #[serde(rename = "functionResponse")]
     FunctionResponse {
@@ -176,6 +179,8 @@ enum GeminiResponsePartData {
 struct GeminiResponsePart {
     #[serde(default)] // Defaults to false if missing
     thought: bool,
+    #[serde(default, rename = "thoughtSignature", alias = "thought_signature")]
+    thought_signature: Option<String>,
 
     #[serde(flatten)] // Look for data fields directly in this struct's JSON
     data: GeminiResponsePartData,
@@ -407,12 +412,18 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                         AssistantContent::Text { text } => {
                             Some(GeminiRequestPart::Text { text: text.clone() })
                         }
-                        AssistantContent::ToolCall { tool_call } => {
+                        AssistantContent::ToolCall {
+                            tool_call,
+                            thought_signature,
+                        } => {
                             Some(GeminiRequestPart::FunctionCall {
                                 function_call: GeminiFunctionCall {
                                     name: tool_call.name.clone(),
                                     args: tool_call.parameters.clone(),
                                 },
+                                thought_signature: thought_signature
+                                    .as_ref()
+                                    .map(|signature| signature.as_str().to_string()),
                             })
                         }
                         AssistantContent::Thought { .. } => {
@@ -712,6 +723,10 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
                                 name: function_call.name.clone(),
                                 parameters: function_call.args.clone(),
                             },
+                            thought_signature: part
+                                .thought_signature
+                                .clone()
+                                .map(ThoughtSignature::new),
                         })
                     }
                     GeminiResponsePartData::FileData { file_data } => {
@@ -1024,8 +1039,16 @@ impl GeminiClient {
                 if let Some(candidates) = chunk.candidates {
                     for candidate in candidates {
                         for part in candidate.content.parts {
-                            if part.thought {
-                                if let GeminiResponsePartData::Text { text } = part.data {
+                            let GeminiResponsePart {
+                                thought,
+                                thought_signature,
+                                data,
+                            } = part;
+                            let thought_signature =
+                                thought_signature.map(ThoughtSignature::new);
+
+                            if thought {
+                                if let GeminiResponsePartData::Text { text } = data {
                                     match content.last_mut() {
                                         Some(AssistantContent::Thought {
                                             thought: ThoughtContent::Simple { text: buf },
@@ -1039,7 +1062,7 @@ impl GeminiClient {
                                     yield StreamChunk::ThinkingDelta(text);
                                 }
                             } else {
-                                match part.data {
+                                match data {
                                     GeminiResponsePartData::Text { text } => {
                                         match content.last_mut() {
                                             Some(AssistantContent::Text { text: buf }) => buf.push_str(&text),
@@ -1057,6 +1080,7 @@ impl GeminiClient {
                                                 name: function_call.name.clone(),
                                                 parameters: function_call.args.clone(),
                                             },
+                                            thought_signature,
                                         });
                                         yield StreamChunk::ToolUseStart {
                                             id: id.clone(),
@@ -1419,7 +1443,7 @@ mod tests {
         let events = vec![
             Ok(SseEvent {
                 event_type: None,
-                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"NYC"}}}]}}]}"#.to_string(),
+                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"NYC"}},"thoughtSignature":"sig_123"}]}}]}"#.to_string(),
                 id: None,
             }),
         ];
@@ -1439,8 +1463,16 @@ mod tests {
         let complete = stream.next().await.unwrap();
         if let StreamChunk::MessageComplete(response) = complete {
             assert_eq!(response.content.len(), 1);
-            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+            if let AssistantContent::ToolCall {
+                tool_call,
+                thought_signature,
+            } = &response.content[0]
+            {
                 assert_eq!(tool_call.name, "get_weather");
+                assert_eq!(
+                    thought_signature.as_ref().map(|sig| sig.as_str()),
+                    Some("sig_123")
+                );
             } else {
                 panic!("Expected ToolCall");
             }

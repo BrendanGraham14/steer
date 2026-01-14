@@ -92,7 +92,7 @@ impl MessageEventProcessor {
                 message.id
             );
             for block in content {
-                if let AssistantContent::ToolCall { tool_call } = block {
+                if let AssistantContent::ToolCall { tool_call, .. } = block {
                     tracing::debug!(
                         target: "tui.message_event",
                         "Found ToolCall in Assistant message: id={}, name={}, params={}",
@@ -282,7 +282,7 @@ impl MessageEventProcessor {
                     } = &mut message.data
                     {
                         let tool_call = match blocks.iter_mut().find_map(|block| {
-                            if let AssistantContent::ToolCall { tool_call } = block {
+                            if let AssistantContent::ToolCall { tool_call, .. } = block {
                                 if tool_call.id == tool_call_id {
                                     return Some(tool_call);
                                 }
@@ -297,9 +297,10 @@ impl MessageEventProcessor {
                                         name: "unknown".to_string(),
                                         parameters: serde_json::Value::String(String::new()),
                                     },
+                                    thought_signature: None,
                                 });
                                 match blocks.last_mut() {
-                                    Some(AssistantContent::ToolCall { tool_call }) => tool_call,
+                                    Some(AssistantContent::ToolCall { tool_call, .. }) => tool_call,
                                     _ => return false,
                                 }
                             }
@@ -455,7 +456,10 @@ mod tests {
 
         let assistant_message = Message {
             data: MessageData::Assistant {
-                content: vec![AssistantContent::ToolCall { tool_call }],
+                content: vec![AssistantContent::ToolCall {
+                    tool_call,
+                    thought_signature: None,
+                }],
             },
             id: "msg_123".to_string(),
             timestamp: 1234567890,

@@ -722,6 +722,7 @@ mod tests {
                 CompletionResponse {
                     content: vec![AssistantContent::ToolCall {
                         tool_call: self.tool_call.clone(),
+                        thought_signature: None,
                     }],
                 }
             } else {

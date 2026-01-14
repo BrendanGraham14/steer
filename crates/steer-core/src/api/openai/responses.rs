@@ -318,6 +318,7 @@ impl Client {
                                 name,
                                 parameters,
                             },
+                            thought_signature: None,
                         });
                     }
                     ResponseOutputItem::WebSearchCall { .. }
@@ -380,7 +381,7 @@ impl Client {
                                     annotations: vec![],
                                 });
                             }
-                            AssistantContent::ToolCall { tool_call } => {
+                            AssistantContent::ToolCall { tool_call, .. } => {
                                 // Add as a proper function_call item
                                 function_calls.push(InputItem::FunctionCall {
                                     item_type: "function_call".to_string(),
@@ -862,6 +863,7 @@ impl Client {
                                             name: entry.0.clone(),
                                             parameters: serde_json::Value::String(entry.1.clone()),
                                         },
+                                        thought_signature: None,
                                     });
                                     tool_call_keys.push(Some(call_id.clone()));
                                     tool_call_positions.insert(call_id.clone(), pos);
@@ -899,6 +901,7 @@ impl Client {
                                         name: entry.0.clone(),
                                         parameters: serde_json::Value::String(entry.1.clone()),
                                     },
+                                    thought_signature: None,
                                 });
                                 tool_call_keys.push(Some(call_id.clone()));
                                 tool_call_positions.insert(call_id.clone(), pos);
@@ -947,6 +950,7 @@ impl Client {
                                                 name: entry.0.clone(),
                                                 parameters: serde_json::Value::String(entry.1.clone()),
                                             },
+                                            thought_signature: None,
                                         });
                                         tool_call_keys.push(Some(call_id.clone()));
                                         tool_call_positions.insert(call_id.clone(), pos);
@@ -988,6 +992,7 @@ impl Client {
                                         name: name.clone(),
                                         parameters,
                                     },
+                                    thought_signature: None,
                                 });
                             } else {
                                 final_content.push(block);
@@ -1305,6 +1310,7 @@ mod tests {
                             name: "ls".to_string(),
                             parameters: serde_json::json!({"path": "."}),
                         },
+                        thought_signature: None,
                     }],
                 },
                 timestamp: 2000,
@@ -1371,6 +1377,7 @@ mod tests {
                 name: "get_weather".to_string(),
                 parameters: serde_json::json!({"location": "Boston"}),
             },
+            thought_signature: None,
         }];
 
         assert_eq!(actual, expected);
@@ -1567,7 +1574,7 @@ mod tests {
         let complete = stream.next().await.unwrap();
         if let StreamChunk::MessageComplete(response) = complete {
             assert_eq!(response.content.len(), 1);
-            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+            if let AssistantContent::ToolCall { tool_call, .. } = &response.content[0] {
                 assert_eq!(tool_call.id, "call_123");
                 assert_eq!(tool_call.name, "get_weather");
             } else {
@@ -1629,7 +1636,7 @@ mod tests {
         let complete = stream.next().await.unwrap();
         if let StreamChunk::MessageComplete(response) = complete {
             assert_eq!(response.content.len(), 1);
-            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+            if let AssistantContent::ToolCall { tool_call, .. } = &response.content[0] {
                 assert_eq!(tool_call.id, "call_123");
                 assert_eq!(tool_call.name, "get_weather");
             } else {

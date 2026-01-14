@@ -128,6 +128,7 @@ mod tests {
                     },
                     AssistantContent::ToolCall {
                         tool_call: tool_call.clone(),
+                        thought_signature: None,
                     },
                 ],
                 timestamp: 1001,

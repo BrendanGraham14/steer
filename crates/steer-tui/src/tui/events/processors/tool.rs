@@ -268,6 +268,7 @@ mod tests {
             data: MessageData::Assistant {
                 content: vec![AssistantContent::ToolCall {
                     tool_call: full_call.clone(),
+                    thought_signature: None,
                 }],
             },
             id: "a1".to_string(),

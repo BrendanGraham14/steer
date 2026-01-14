@@ -933,7 +933,7 @@ fn handle_model_response_complete(
     let tool_calls: Vec<_> = content
         .iter()
         .filter_map(|c| {
-            if let AssistantContent::ToolCall { tool_call } = c {
+            if let AssistantContent::ToolCall { tool_call, .. } = c {
                 Some(tool_call.clone())
             } else {
                 None
@@ -1727,6 +1727,7 @@ mod tests {
             },
             AssistantContent::ToolCall {
                 tool_call: tool_call.clone(),
+                thought_signature: None,
             },
         ];
 

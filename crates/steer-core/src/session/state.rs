@@ -576,7 +576,9 @@ impl SessionState {
         match &message.data {
             MessageData::Assistant { content, .. } => {
                 for c in content {
-                    if let crate::app::conversation::AssistantContent::ToolCall { tool_call } = c {
+                    if let crate::app::conversation::AssistantContent::ToolCall { tool_call, .. } =
+                        c
+                    {
                         tool_call_ids.push(tool_call.id.clone());
                     }
                 }

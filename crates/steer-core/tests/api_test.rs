@@ -377,7 +377,7 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
             }
             StreamChunk::MessageComplete(response) => {
                 for item in response.content {
-                    if let AssistantContent::ToolCall { tool_call } = item {
+                    if let AssistantContent::ToolCall { tool_call, .. } = item {
                         saw_tool_call = true;
                         if tool_call.id.is_empty() {
                             saw_empty_id = true;
@@ -452,6 +452,7 @@ async fn test_api_with_tool_response() {
                                 name: "ls".to_string(),
                                 parameters: serde_json::json!({ "path": "." }),
                             },
+                            thought_signature: None,
                         }],
                     },
                     timestamp: ts2,
@@ -633,6 +634,7 @@ async fn test_gemini_api_tool_result_error() {
                         name: "ls".to_string(),
                         parameters: serde_json::json!({ "path": "." }),
                     },
+                    thought_signature: None,
                 }],
             },
             timestamp: ts2,
@@ -810,6 +812,7 @@ async fn test_gemini_api_tool_result_json() {
                         name: "list_files".to_string(),
                         parameters: serde_json::json!({}), // Empty input for simplicity
                     },
+                    thought_signature: None,
                 }],
             },
             timestamp: ts2,
@@ -895,6 +898,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
                             name: "ls".to_string(),
                             parameters: serde_json::json!({ "path": "." }),
                         },
+                        thought_signature: None,
                     },
                     AssistantContent::ToolCall {
                         tool_call: ToolCall {
@@ -902,6 +906,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
                             name: "get_weather".to_string(),
                             parameters: serde_json::json!({ "location": "SF" }),
                         },
+                        thought_signature: None,
                     },
                 ],
             },
@@ -1029,6 +1034,7 @@ async fn test_api_with_cancelled_tool_execution() {
                                 name: "ls".to_string(),
                                 parameters: serde_json::json!({ "path": "." }),
                             },
+                            thought_signature: None,
                         }],
                     },
                     timestamp: ts2,

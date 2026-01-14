@@ -57,7 +57,7 @@ impl CompletionResponse {
         self.content
             .iter()
             .filter_map(|block| {
-                if let AssistantContent::ToolCall { tool_call } = block {
+                if let AssistantContent::ToolCall { tool_call, .. } = block {
                     Some(tool_call.clone())
                 } else {
                     None

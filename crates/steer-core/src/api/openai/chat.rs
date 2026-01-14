@@ -239,7 +239,7 @@ impl Client {
                             }
                             text_content.push_str(&text);
                         }
-                        AssistantContent::ToolCall { tool_call } => {
+                        AssistantContent::ToolCall { tool_call, .. } => {
                             tool_calls.push(OpenAIToolCall {
                                 id: tool_call.id.clone(),
                                 tool_type: "function".to_string(),
@@ -329,6 +329,7 @@ impl Client {
                         name: tc.function.name.clone(),
                         parameters: arguments,
                     },
+                    thought_signature: None,
                 });
             }
         }
@@ -526,6 +527,7 @@ impl Client {
                                     name: tool_call.name.clone(),
                                     parameters,
                                 },
+                                thought_signature: None,
                             });
                         } else {
                             final_content.push(block);
@@ -608,6 +610,7 @@ impl Client {
                                         name: entry.name.clone(),
                                         parameters: serde_json::Value::String(entry.args.clone()),
                                     },
+                                    thought_signature: None,
                                 });
                                 tool_call_indices.push(Some(tc.index));
                                 e.insert(pos);
@@ -1017,7 +1020,7 @@ mod tests {
         let complete = stream.next().await.unwrap();
         if let StreamChunk::MessageComplete(response) = complete {
             assert_eq!(response.content.len(), 1);
-            if let AssistantContent::ToolCall { tool_call } = &response.content[0] {
+            if let AssistantContent::ToolCall { tool_call, .. } = &response.content[0] {
                 assert_eq!(tool_call.name, "get_weather");
                 assert_eq!(tool_call.id, "call_abc");
             } else {

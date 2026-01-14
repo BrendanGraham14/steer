@@ -394,7 +394,7 @@ pub(crate) fn message_to_proto(
                         AssistantContent::Text { text } => proto::AssistantContent {
                             content: Some(proto::assistant_content::Content::Text(text.clone())),
                         },
-                        AssistantContent::ToolCall { tool_call } => proto::AssistantContent {
+                        AssistantContent::ToolCall { tool_call, .. } => proto::AssistantContent {
                             content: Some(proto::assistant_content::Content::ToolCall(
                                 proto::ToolCall {
                                     id: tool_call.id.clone(),
@@ -1307,6 +1307,7 @@ pub(crate) fn proto_to_message(
                             match proto_tool_call_to_core(&tool_call) {
                                 Ok(core_tool_call) => Some(AssistantContent::ToolCall {
                                     tool_call: core_tool_call,
+                                    thought_signature: None,
                                 }),
                                 Err(_) => None, // Skip invalid tool calls
                             }
@@ -1412,6 +1413,7 @@ fn proto_assistant_message_to_core(
                     match proto_tool_call_to_core(&tool_call) {
                         Ok(core_tool_call) => Some(AssistantContent::ToolCall {
                             tool_call: core_tool_call,
+                            thought_signature: None,
                         }),
                         Err(_) => None, // Skip invalid tool calls
                     }

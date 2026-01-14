@@ -336,7 +336,7 @@ impl Tui {
                     message.id()
                 );
                 for block in content {
-                    if let AssistantContent::ToolCall { tool_call } = block {
+                    if let AssistantContent::ToolCall { tool_call, .. } = block {
                         debug!(
                             target: "tui.restore",
                             "Found ToolCall in Assistant message: id={}, name={}, params={}",
@@ -1703,6 +1703,7 @@ mod tests {
             data: MessageData::Assistant {
                 content: vec![AssistantContent::ToolCall {
                     tool_call: tool_call.clone(),
+                    thought_signature: None,
                 }],
             },
             id: "msg_assistant".to_string(),
@@ -1786,6 +1787,7 @@ mod tests {
             data: MessageData::Assistant {
                 content: vec![AssistantContent::ToolCall {
                     tool_call: tool_call.clone(),
+                    thought_signature: None,
                 }],
             },
             id: "msg_456".to_string(),

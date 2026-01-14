@@ -216,6 +216,7 @@ impl AgentInterpreter {
                                 .filter_map(|c| {
                                     if let crate::app::conversation::AssistantContent::ToolCall {
                                         tool_call,
+                                        ..
                                     } = c
                                     {
                                         Some(tool_call.clone())

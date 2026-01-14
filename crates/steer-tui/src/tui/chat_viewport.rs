@@ -299,7 +299,7 @@ impl ChatViewport {
                             // Emit ToolInteraction for each tool call
                             let mut tool_idx = 0;
                             for block in content {
-                                if let AssistantContent::ToolCall { tool_call } = block {
+                                if let AssistantContent::ToolCall { tool_call, .. } = block {
                                     if let Some(result) = tool_results.remove(&tool_call.id) {
                                         // Only create a tool interaction for the tool call if it has a result.
                                         // Otherwise, we rely on the ToolInteraction emitted for PendingToolCall.
@@ -606,7 +606,7 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
             for b in content {
                 match b {
                     AssistantContent::Text { text } => text.hash(hasher),
-                    AssistantContent::ToolCall { tool_call } => {
+                    AssistantContent::ToolCall { tool_call, .. } => {
                         tool_call.id.hash(hasher);
                         tool_call.name.hash(hasher);
                         tool_call.parameters.to_string().hash(hasher);

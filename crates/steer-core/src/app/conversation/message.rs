@@ -67,6 +67,20 @@ pub enum ThoughtContent {
     Redacted { data: String },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct ThoughtSignature(String);
+
+impl ThoughtSignature {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 impl ThoughtContent {
     /// Extract displayable text from any thought type
     pub fn display_text(&self) -> String {
@@ -83,7 +97,11 @@ impl ThoughtContent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantContent {
     Text { text: String },
-    ToolCall { tool_call: ToolCall },
+    ToolCall {
+        tool_call: ToolCall,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<ThoughtSignature>,
+    },
     Thought { thought: ThoughtContent },
 }
 
@@ -198,7 +216,7 @@ impl Message {
                 .iter()
                 .map(|c| match c {
                     AssistantContent::Text { text } => text.clone(),
-                    AssistantContent::ToolCall { tool_call } => {
+                    AssistantContent::ToolCall { tool_call, .. } => {
                         format!("[Tool Call: {}]", tool_call.name)
                     }
                     AssistantContent::Thought { thought } => {

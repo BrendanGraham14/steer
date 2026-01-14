@@ -51,7 +51,7 @@ impl MessageGraph {
         for message in self.messages.iter() {
             if let MessageData::Assistant { content, .. } = &message.data {
                 for content_block in content {
-                    if let AssistantContent::ToolCall { tool_call } = content_block {
+                    if let AssistantContent::ToolCall { tool_call, .. } = content_block {
                         if tool_call.id == tool_id {
                             return Some(tool_call.name.clone());
                         }

@@ -206,6 +206,7 @@ mod tests {
                                 name: name.clone(),
                                 parameters: serde_json::json!({}),
                             },
+                            thought_signature: None,
                         },
                     })
                     .collect();
@@ -464,6 +465,7 @@ mod tests {
                     },
                     AssistantContent::ToolCall {
                         tool_call: tool_call.clone(),
+                        thought_signature: None,
                     },
                 ],
                 timestamp: 1001,

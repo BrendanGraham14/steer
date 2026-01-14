@@ -125,7 +125,7 @@ impl ChatBlock {
                                 has_text = true;
                             }
                         }
-                        AssistantContent::ToolCall { tool_call } => {
+                        AssistantContent::ToolCall { tool_call, .. } => {
                             tool_calls.push(tool_call.clone());
                         }
                         AssistantContent::Thought { .. } => {
@@ -176,7 +176,7 @@ impl ChatBlock {
                 let has_corresponding_call = all_messages.iter().any(|msg_row| {
                     if let MessageData::Assistant { content, .. } = &msg_row.data {
                         content.iter().any(|block| {
-                            if let AssistantContent::ToolCall { tool_call } = block {
+                            if let AssistantContent::ToolCall { tool_call, .. } = block {
                                 tool_call.id == *tool_use_id
                             } else {
                                 false

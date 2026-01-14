@@ -480,13 +480,15 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                             })
                         }
                     }
-                    AssistantContent::ToolCall { tool_call } => Some(ClaudeContentBlock::ToolUse {
-                        id: tool_call.id.clone(),
-                        name: tool_call.name.clone(),
-                        input: tool_call.parameters.clone(),
-                        cache_control: None,
-                        extra: Default::default(),
-                    }),
+                    AssistantContent::ToolCall { tool_call, .. } => {
+                        Some(ClaudeContentBlock::ToolUse {
+                            id: tool_call.id.clone(),
+                            name: tool_call.name.clone(),
+                            input: tool_call.parameters.clone(),
+                            cache_control: None,
+                            extra: Default::default(),
+                        })
+                    }
                     AssistantContent::Thought { thought } => {
                         match thought {
                             ThoughtContent::Signed { text, signature } => {
@@ -631,6 +633,7 @@ fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<Assista
                     name,
                     parameters: input,
                 },
+                thought_signature: None,
             }),
             ClaudeContentBlock::ToolResult { .. } => {
                 warn!("Unexpected ToolResult block received in Claude response content");
@@ -1204,6 +1207,7 @@ fn block_state_to_content(state: BlockState) -> Option<AssistantContent> {
                         name,
                         parameters,
                     },
+                    thought_signature: None,
                 })
             }
         }
