@@ -106,6 +106,11 @@ fn apply_mode_styling<'a>(
     theme: &Theme,
     is_editing: bool,
 ) -> Block<'a> {
+    if mode == InputMode::ConfirmExit {
+        let style = theme.style(Component::InputPanelBorderError);
+        return block.style(style).border_style(style);
+    }
+
     if is_editing {
         let style = theme.style(Component::InputPanelBorderEdit);
         return block.style(style).border_style(style);
@@ -125,10 +130,6 @@ fn apply_mode_styling<'a>(
         }
         InputMode::BashCommand => {
             let style = theme.style(Component::InputPanelBorderCommand);
-            block = block.style(style).border_style(style);
-        }
-        InputMode::ConfirmExit => {
-            let style = theme.style(Component::InputPanelBorderError);
             block = block.style(style).border_style(style);
         }
         InputMode::EditMessageSelection => {

@@ -1042,7 +1042,16 @@ impl Tui {
 
         if let Some(message_id_to_edit) = self.editing_message_id.take() {
             self.chat_viewport.mark_dirty();
-            if let Err(e) = self
+            if content.starts_with('!') && content.len() > 1 {
+                let command = content[1..].trim().to_string();
+                if let Err(e) = self
+                    .client
+                    .execute_bash_command(command)
+                    .await
+                {
+                    self.push_notice(NoticeLevel::Error, format!("Cannot run command: {e}"));
+                }
+            } else if let Err(e) = self
                 .client
                 .edit_message(message_id_to_edit, content, self.current_model.clone())
                 .await
