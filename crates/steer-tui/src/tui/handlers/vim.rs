@@ -34,9 +34,6 @@ impl Tui {
                         self.switch_mode(InputMode::ConfirmExit);
                     }
                 }
-                KeyCode::Char('e') => {
-                    self.cancel_edit_mode();
-                }
                 KeyCode::Char('r') => {
                     if self.vim_state.pending_operator.is_some() {
                         // Redo when operator pending
@@ -354,8 +351,6 @@ impl Tui {
                 self.vim_state.replace_mode = false;
             }
 
-            // Other commands
-            KeyCode::Char('e') => self.enter_edit_selection_mode(),
             KeyCode::Char('/') => {
                 // Switch to command mode with fuzzy finder like Simple/VimInsert modes
                 self.input_panel_state.clear();

@@ -21,6 +21,12 @@ impl Tui {
         match key.code {
             KeyCode::Esc => {
                 // Check for double-tap first
+                if self.editing_message_id.is_some() {
+                    self.cancel_edit_mode();
+                    self.double_tap_tracker.clear_key(&KeyCode::Esc);
+                    return Ok(false);
+                }
+
                 if self
                     .double_tap_tracker
                     .is_double_tap(KeyCode::Esc, Duration::from_millis(300))
@@ -143,7 +149,6 @@ impl Tui {
                     .fuzzy_finder
                     .update_results(picker_items);
             }
-
 
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_processing {
