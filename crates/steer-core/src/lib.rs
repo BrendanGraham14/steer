@@ -11,6 +11,7 @@ pub mod error;
 pub mod model_registry;
 pub mod preferences;
 pub mod prompts;
+pub mod primary_agents;
 pub mod runners;
 pub mod session;
 pub mod test_utils;
