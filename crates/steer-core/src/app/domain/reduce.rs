@@ -1793,6 +1793,74 @@ mod tests {
     }
 
     #[test]
+    fn test_out_of_order_completion_missing_model_error() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        let op_a = OpId::new();
+        let op_b = OpId::new();
+
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("first").unwrap(),
+                op_id: op_a,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 1,
+            },
+        );
+
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("second").unwrap(),
+                op_id: op_b,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 2,
+            },
+        );
+
+        let _ = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id: op_a,
+                message_id: MessageId::new(),
+                content: vec![AssistantContent::Text {
+                    text: "done A".to_string(),
+                }],
+                timestamp: 3,
+            },
+        );
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id: op_b,
+                message_id: MessageId::new(),
+                content: vec![AssistantContent::Text {
+                    text: "done B".to_string(),
+                }],
+                timestamp: 4,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::Error { message },
+                ..
+            } if message.contains("Missing model for operation")
+        )));
+    }
+
+    #[test]
     fn test_tool_approval_does_not_call_model_before_result() {
         let mut state = test_state();
         let session_id = state.session_id;
