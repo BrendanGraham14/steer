@@ -46,7 +46,7 @@ pub mod read {
     use super::*;
     use thiserror::Error;
 
-    pub const TODO_READ_TOOL_NAME: &str = "TodoRead";
+    pub const TODO_READ_TOOL_NAME: &str = "read_todos";
 
     pub struct TodoReadToolSpec;
 
@@ -79,7 +79,7 @@ pub mod write {
     use super::*;
     use thiserror::Error;
 
-    pub const TODO_WRITE_TOOL_NAME: &str = "TodoWrite";
+    pub const TODO_WRITE_TOOL_NAME: &str = "write_todos";
 
     pub struct TodoWriteToolSpec;
 
