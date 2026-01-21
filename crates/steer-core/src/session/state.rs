@@ -342,7 +342,13 @@ impl Default for ToolApprovalPolicy {
     fn default() -> Self {
         Self {
             default_behavior: UnapprovedBehavior::Prompt,
-            preapproved: ApprovalRules::default(),
+            preapproved: ApprovalRules {
+                tools: READ_ONLY_TOOL_NAMES
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+                per_tool: HashMap::new(),
+            },
         }
     }
 }

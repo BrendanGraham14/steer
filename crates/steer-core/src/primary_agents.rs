@@ -8,7 +8,6 @@ use crate::config::model::ModelId;
 use crate::session::state::{
     ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolVisibility, UnapprovedBehavior,
 };
-
 pub const DEFAULT_PRIMARY_AGENT_ID: &str = "normal";
 
 const PLANNER_SYSTEM_PROMPT: &str = "You are in planner mode. Provide a concise, step-by-step \
@@ -78,7 +77,8 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
         PrimaryAgentSpec {
             id: "normal".to_string(),
             name: "Normal".to_string(),
-            description: "Default mode with full tools and approvals.".to_string(),
+            description: "Default agent with full tool visibility. Tools which can write require explicit approvals."
+                .to_string(),
             model: None,
             system_prompt: None,
             tool_visibility: ToolVisibility::All,
@@ -87,7 +87,7 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
         PrimaryAgentSpec {
             id: "planner".to_string(),
             name: "Planner".to_string(),
-            description: "Planning-only mode with read-only tools.".to_string(),
+            description: "Planning-only agent with read-only tools.".to_string(),
             model: None,
             system_prompt: Some(PLANNER_SYSTEM_PROMPT.to_string()),
             tool_visibility: ToolVisibility::ReadOnly,
@@ -96,7 +96,7 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
         PrimaryAgentSpec {
             id: "yolo".to_string(),
             name: "Yolo".to_string(),
-            description: "Full tools with auto-approval.".to_string(),
+            description: "Full tool visibility with auto-approval for all tools.".to_string(),
             model: None,
             system_prompt: None,
             tool_visibility: ToolVisibility::All,
