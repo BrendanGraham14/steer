@@ -34,6 +34,13 @@ pub fn format_app_command(cmd: &CoreCommandType) -> String {
                 "/model".to_string()
             }
         }
+        CoreCommandType::Agent { target } => {
+            if let Some(agent) = target {
+                format!("/agent {agent}")
+            } else {
+                "/agent".to_string()
+            }
+        }
         CoreCommandType::Compact => "/compact".to_string(),
     }
 }
@@ -72,6 +79,16 @@ mod tests {
         assert_eq!(
             format_app_command(&CoreCommandType::Model { target: None }),
             "/model"
+        );
+        assert_eq!(
+            format_app_command(&CoreCommandType::Agent {
+                target: Some("planner".to_string())
+            }),
+            "/agent planner"
+        );
+        assert_eq!(
+            format_app_command(&CoreCommandType::Agent { target: None }),
+            "/agent"
         );
 
         assert_eq!(

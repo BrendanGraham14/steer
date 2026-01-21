@@ -320,6 +320,32 @@ impl AgentClient {
         Ok(())
     }
 
+    pub async fn switch_primary_agent(&self, primary_agent_id: String) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(proto::SwitchPrimaryAgentRequest {
+            session_id,
+            primary_agent_id,
+        });
+
+        self.client
+            .lock()
+            .await
+            .switch_primary_agent(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
     pub async fn cancel_operation(&self) -> GrpcResult<()> {
         let session_id = self
             .session_id

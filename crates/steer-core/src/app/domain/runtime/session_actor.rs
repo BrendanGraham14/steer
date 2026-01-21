@@ -540,7 +540,14 @@ impl SessionActor {
             }
 
             Effect::ReloadToolSchemas { session_id: _ } => {
-                let schemas = self.tool_executor.get_tool_schemas().await;
+                let resolver = self
+                    .session_mcp_backends
+                    .as_ref()
+                    as &dyn crate::tools::BackendResolver;
+                let schemas = self
+                    .tool_executor
+                    .get_tool_schemas_with_resolver(Some(resolver))
+                    .await;
                 let schemas = match &self.state.session_config {
                     Some(config) => config.filter_tools_by_visibility(schemas),
                     None => schemas,

@@ -14,6 +14,7 @@ use crate::app::domain::session::EventStore;
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId};
 use crate::config::model::ModelId;
+use crate::primary_agents::default_primary_agent_id;
 use crate::prompts::system_prompt_for_model;
 use crate::session::state::SessionConfig;
 use crate::tools::ToolExecutor;
@@ -224,8 +225,14 @@ impl RuntimeSupervisor {
             .await?;
 
         let mut state = AppState::new(session_id);
-        state.session_config = Some(config.clone());
-        state.cached_system_context = system_context;
+        state.apply_session_config(
+            &config,
+            Some(default_primary_agent_id().to_string()),
+            true,
+        );
+        if let Some(system_context) = system_context {
+            state.cached_system_context = Some(system_context);
+        }
 
         let handle = spawn_session_actor(
             session_id,

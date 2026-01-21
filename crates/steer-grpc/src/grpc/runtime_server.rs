@@ -800,6 +800,21 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         }
     }
 
+    async fn switch_primary_agent(
+        &self,
+        request: Request<SwitchPrimaryAgentRequest>,
+    ) -> Result<Response<SwitchPrimaryAgentResponse>, Status> {
+        let req = request.into_inner();
+        let session_id = Self::parse_session_id(&req.session_id)?;
+
+        self.runtime
+            .switch_primary_agent(session_id, req.primary_agent_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to switch primary agent: {e}")))?;
+
+        Ok(Response::new(SwitchPrimaryAgentResponse {}))
+    }
+
     async fn cancel_operation(
         &self,
         request: Request<CancelOperationRequest>,

@@ -15,6 +15,7 @@ pub enum CommandResponse {
 #[serde(tag = "command_type", rename_all = "snake_case")]
 pub enum CoreCommandType {
     Model { target: Option<String> },
+    Agent { target: Option<String> },
     Compact,
 }
 
@@ -39,6 +40,14 @@ impl CoreCommandType {
                 };
                 Ok(CoreCommandType::Model { target })
             }
+            "agent" | "mode" => {
+                let target = if parts.len() > 1 {
+                    Some(parts[1..].join(" "))
+                } else {
+                    None
+                };
+                Ok(CoreCommandType::Agent { target })
+            }
             "compact" => Ok(CoreCommandType::Compact),
             cmd => Err(SlashCommandError::UnknownCommand(cmd.to_string())),
         }
@@ -51,6 +60,13 @@ impl CoreCommandType {
                     format!("model {model}")
                 } else {
                     "model".to_string()
+                }
+            }
+            CoreCommandType::Agent { target } => {
+                if let Some(agent) = target {
+                    format!("agent {agent}")
+                } else {
+                    "agent".to_string()
                 }
             }
             CoreCommandType::Compact => "compact".to_string(),

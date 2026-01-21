@@ -2,6 +2,7 @@ use crate::app::conversation::MessageGraph;
 use crate::app::domain::action::McpServerState;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::app::SystemContext;
+use crate::prompts::system_prompt_for_model;
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use steer_tools::{ToolCall, ToolSchema};
 pub struct AppState {
     pub session_id: SessionId,
     pub session_config: Option<SessionConfig>,
+    pub base_session_config: Option<SessionConfig>,
     pub primary_agent_id: Option<String>,
 
     pub message_graph: MessageGraph,
@@ -97,6 +99,7 @@ impl AppState {
         Self {
             session_id,
             session_config: None,
+            base_session_config: None,
             primary_agent_id: None,
             message_graph: MessageGraph::new(),
             cached_system_context: None,
@@ -209,5 +212,54 @@ impl AppState {
     pub fn increment_sequence(&mut self) -> u64 {
         self.event_sequence += 1;
         self.event_sequence
+    }
+
+    pub fn apply_session_config(
+        &mut self,
+        config: &SessionConfig,
+        primary_agent_id: Option<String>,
+        update_base: bool,
+    ) {
+        self.session_config = Some(config.clone());
+        let prompt = config
+            .system_prompt
+            .as_ref()
+            .and_then(|prompt| {
+                if prompt.trim().is_empty() {
+                    None
+                } else {
+                    Some(prompt.clone())
+                }
+            })
+            .unwrap_or_else(|| system_prompt_for_model(&config.default_model));
+        let environment = self
+            .cached_system_context
+            .as_ref()
+            .and_then(|context| context.environment.clone());
+        self.cached_system_context = Some(SystemContext::with_environment(prompt, environment));
+
+        self.approved_tools = config
+            .tool_config
+            .approval_policy
+            .pre_approved_tools()
+            .clone();
+        self.approved_bash_patterns.clear();
+        self.static_bash_patterns = config
+            .tool_config
+            .approval_policy
+            .preapproved
+            .bash_patterns()
+            .map(|patterns| patterns.to_vec())
+            .unwrap_or_default();
+        self.pending_approval = None;
+        self.approval_queue.clear();
+
+        if let Some(primary_agent_id) = primary_agent_id {
+            self.primary_agent_id = Some(primary_agent_id);
+        }
+
+        if update_base {
+            self.base_session_config = Some(config.clone());
+        }
     }
 }

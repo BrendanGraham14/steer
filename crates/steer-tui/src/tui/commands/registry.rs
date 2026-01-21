@@ -154,9 +154,10 @@ mod tests {
     fn test_fuzzy_search_exact_match() {
         let registry = CommandRegistry::new();
         let results = registry.search("model");
-        assert_eq!(results.len(), 2);
+        assert!(results.len() >= 2);
         assert_eq!(results[0].name, "model");
-        assert_eq!(results[1].name, "editing-mode");
+        let names: Vec<&str> = results.iter().map(|cmd| cmd.name.as_str()).collect();
+        assert!(names.contains(&"editing-mode"));
     }
 
     #[test]

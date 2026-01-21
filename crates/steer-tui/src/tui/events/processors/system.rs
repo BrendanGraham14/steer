@@ -35,6 +35,7 @@ impl EventProcessor for SystemEventProcessor {
             ClientEvent::Error { .. }
                 | ClientEvent::CompactResult { .. }
                 | ClientEvent::ConversationCompacted { .. }
+                | ClientEvent::SessionConfigUpdated { .. }
         )
     }
 
@@ -83,6 +84,20 @@ impl EventProcessor for SystemEventProcessor {
             ClientEvent::ConversationCompacted { record } => {
                 ctx.chat_store
                     .set_compaction_head(Some(record.compacted_head_message_id.to_string()));
+                *ctx.messages_updated = true;
+                ProcessingResult::Handled
+            }
+            ClientEvent::SessionConfigUpdated { primary_agent_id, .. } => {
+                let chat_item = crate::tui::model::ChatItem {
+                    parent_chat_item_id: None,
+                    data: ChatItemData::SystemNotice {
+                        id: generate_row_id(),
+                        level: NoticeLevel::Info,
+                        text: format!("Primary agent switched to: {primary_agent_id}"),
+                        ts: time::OffsetDateTime::now_utc(),
+                    },
+                };
+                ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
             }

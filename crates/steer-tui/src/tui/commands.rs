@@ -99,6 +99,7 @@ impl TuiCommandType {
 #[strum(serialize_all = "kebab-case")]
 pub enum CoreCommandType {
     Model,
+    Agent,
     Compact,
 }
 
@@ -106,6 +107,7 @@ impl CoreCommandType {
     pub fn command_name(&self) -> String {
         match self {
             CoreCommandType::Model => self.to_string(),
+            CoreCommandType::Agent => self.to_string(),
             CoreCommandType::Compact => self.to_string(),
         }
     }
@@ -113,6 +115,7 @@ impl CoreCommandType {
     pub fn description(&self) -> &'static str {
         match self {
             CoreCommandType::Model => "Show or change the current model",
+            CoreCommandType::Agent => "Switch primary agent mode (normal/planner/yolo)",
             CoreCommandType::Compact => "Summarize the current conversation",
         }
     }
@@ -120,6 +123,7 @@ impl CoreCommandType {
     pub fn usage(&self) -> String {
         match self {
             CoreCommandType::Model => format!("/{} [model_name]", self.command_name()),
+            CoreCommandType::Agent => format!("/{} <mode>", self.command_name()),
             CoreCommandType::Compact => format!("/{}", self.command_name()),
         }
     }
@@ -133,6 +137,14 @@ impl CoreCommandType {
                     Some(args.join(" "))
                 };
                 Some(CoreCommand::Model { target })
+            }
+            CoreCommandType::Agent => {
+                let target = if args.is_empty() {
+                    None
+                } else {
+                    Some(args.join(" "))
+                };
+                Some(CoreCommand::Agent { target })
             }
             CoreCommandType::Compact => Some(CoreCommand::Compact),
         }
@@ -244,6 +256,16 @@ impl AppCommand {
             }
         }
 
+        if cmd_name == "mode" {
+            let args: Vec<&str> = parts.into_iter().skip(1).collect();
+            let target = if args.is_empty() {
+                None
+            } else {
+                Some(args.join(" "))
+            };
+            return Ok(AppCommand::Core(CoreCommand::Agent { target }));
+        }
+
         // Note: Custom commands will be resolved by the caller using the registry
         // since we can't access the registry from here
         Err(TuiCommandError::UnknownCommand(command.to_string()))
@@ -319,6 +341,14 @@ mod tests {
         assert!(matches!(
             AppCommand::parse("/compact").unwrap(),
             AppCommand::Core(CoreCommand::Compact)
+        ));
+        assert!(matches!(
+            AppCommand::parse("/agent planner").unwrap(),
+            AppCommand::Core(CoreCommand::Agent { .. })
+        ));
+        assert!(matches!(
+            AppCommand::parse("/mode yolo").unwrap(),
+            AppCommand::Core(CoreCommand::Agent { .. })
         ));
     }
 

@@ -4,7 +4,6 @@ use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
 use crate::primary_agents::{apply_primary_agent_to_config, default_primary_agent_id, primary_agent_spec};
-use crate::prompts::system_prompt_for_model;
 use crate::session::state::{BackendConfig, ToolDecision};
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
@@ -1220,7 +1219,11 @@ fn handle_switch_primary_agent(
         }];
     }
 
-    let Some(base_config) = state.session_config.as_ref() else {
+    let Some(base_config) = state
+        .base_session_config
+        .as_ref()
+        .or(state.session_config.as_ref())
+    else {
         return vec![Effect::EmitEvent {
             session_id,
             event: SessionEvent::Error {
@@ -1241,7 +1244,7 @@ fn handle_switch_primary_agent(
     let new_config = apply_primary_agent_to_config(&spec, base_config);
     let backend_effects = mcp_backend_diff_effects(session_id, base_config, &new_config);
 
-    apply_session_config_state(state, &new_config, Some(agent_id.clone()));
+    apply_session_config_state(state, &new_config, Some(agent_id.clone()), false);
 
     let mut effects = Vec::new();
     effects.push(Effect::EmitEvent {
@@ -1261,45 +1264,9 @@ fn apply_session_config_state(
     state: &mut AppState,
     config: &crate::session::state::SessionConfig,
     primary_agent_id: Option<String>,
+    update_base: bool,
 ) {
-    state.session_config = Some(config.clone());
-    let prompt = config
-        .system_prompt
-        .as_ref()
-        .and_then(|prompt| {
-            if prompt.trim().is_empty() {
-                None
-            } else {
-                Some(prompt.clone())
-            }
-        })
-        .unwrap_or_else(|| system_prompt_for_model(&config.default_model));
-    let environment = state
-        .cached_system_context
-        .as_ref()
-        .and_then(|context| context.environment.clone());
-    state.cached_system_context =
-        Some(crate::app::SystemContext::with_environment(prompt, environment));
-
-    state.approved_tools = config
-        .tool_config
-        .approval_policy
-        .pre_approved_tools()
-        .clone();
-    state.approved_bash_patterns.clear();
-    state.static_bash_patterns = config
-        .tool_config
-        .approval_policy
-        .preapproved
-        .bash_patterns()
-        .map(|patterns| patterns.to_vec())
-        .unwrap_or_default();
-    state.pending_approval = None;
-    state.approval_queue.clear();
-
-    if let Some(primary_agent_id) = primary_agent_id {
-        state.primary_agent_id = Some(primary_agent_id);
-    }
+    state.apply_session_config(config, primary_agent_id, update_base);
 }
 
 fn mcp_backend_diff_effects(
@@ -1377,13 +1344,18 @@ fn collect_mcp_backends(
 pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
-            apply_session_config_state(state, config, Some(default_primary_agent_id().to_string()));
+            apply_session_config_state(
+                state,
+                config,
+                Some(default_primary_agent_id().to_string()),
+                true,
+            );
         }
         SessionEvent::SessionConfigUpdated {
             config,
             primary_agent_id,
         } => {
-            apply_session_config_state(state, config, Some(primary_agent_id.clone()));
+            apply_session_config_state(state, config, Some(primary_agent_id.clone()), false);
         }
         SessionEvent::AssistantMessageAdded { message, .. }
         | SessionEvent::UserMessageAdded { message }
@@ -1655,7 +1627,7 @@ mod tests {
         let mut state = test_state();
         let session_id = state.session_id;
         let config = base_session_config();
-        apply_session_config_state(&mut state, &config, Some("normal".to_string()));
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
 
         let effects = reduce(
             &mut state,
@@ -1685,7 +1657,7 @@ mod tests {
         let mut state = test_state();
         let session_id = state.session_id;
         let config = base_session_config();
-        apply_session_config_state(&mut state, &config, Some("normal".to_string()));
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
 
         let _ = reduce(
             &mut state,
@@ -1703,11 +1675,39 @@ mod tests {
     }
 
     #[test]
+    fn test_switch_primary_agent_restores_base_prompt() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let mut config = base_session_config();
+        config.system_prompt = Some("base prompt".to_string());
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        let _ = reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "planner".to_string(),
+            },
+        );
+
+        let _ = reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "normal".to_string(),
+            },
+        );
+
+        let updated = state.session_config.as_ref().expect("config");
+        assert_eq!(updated.system_prompt, Some("base prompt".to_string()));
+    }
+
+    #[test]
     fn test_switch_primary_agent_blocked_during_operation() {
         let mut state = test_state();
         let session_id = state.session_id;
         let config = base_session_config();
-        apply_session_config_state(&mut state, &config, Some("normal".to_string()));
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
 
         state.current_operation = Some(OperationState {
             op_id: OpId::new(),

@@ -1363,6 +1363,26 @@ impl Tui {
                         self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
                     }
                 }
+                crate::tui::core_commands::CoreCommandType::Agent { target } => {
+                    if let Some(agent_id) = target {
+                        if let Err(e) = self.client.switch_primary_agent(agent_id.clone()).await {
+                            self.push_notice(
+                                NoticeLevel::Error,
+                                format!("Failed to switch mode: {e}"),
+                            );
+                        } else {
+                            self.push_notice(
+                                NoticeLevel::Info,
+                                format!("Switching primary agent to: {agent_id}"),
+                            );
+                        }
+                    } else {
+                        self.push_notice(
+                            NoticeLevel::Error,
+                            "Usage: /agent <mode>".to_string(),
+                        );
+                    }
+                }
                 crate::tui::core_commands::CoreCommandType::Model { target } => {
                     if let Some(model_name) = target {
                         match self.client.resolve_model(&model_name).await {

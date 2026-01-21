@@ -81,4 +81,8 @@ pub enum ClientEvent {
         server_name: String,
         state: McpServerState,
     },
+    SessionConfigUpdated {
+        config: SessionConfig,
+        primary_agent_id: String,
+    },
 }

@@ -641,6 +641,99 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
     }
 }
 
+pub(crate) fn proto_to_session_config(
+    proto_config: proto::SessionConfig,
+) -> Result<SessionConfig, ConversionError> {
+    let tool_config = proto_config
+        .tool_config
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "session_config.tool_config".to_string(),
+        })?;
+    let workspace_config = proto_config
+        .workspace_config
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "session_config.workspace_config".to_string(),
+        })?;
+    let default_model = proto_config
+        .default_model
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "session_config.default_model".to_string(),
+        })
+        .and_then(|spec| proto_to_model(&spec))?;
+
+    let workspace_id = match proto_config.workspace_id {
+        Some(id) => {
+            let uuid = Uuid::parse_str(&id).map_err(|_| ConversionError::InvalidValue {
+                field: "workspace_id".to_string(),
+                value: id.clone(),
+            })?;
+            Some(steer_workspace::WorkspaceId::from_uuid(uuid))
+        }
+        None => None,
+    };
+
+    let workspace_ref = match proto_config.workspace_ref {
+        Some(reference) => {
+            let environment_id = parse_environment_id(&reference.environment_id)?;
+            let workspace_id = parse_workspace_id(&reference.workspace_id)?;
+            let repo_id = parse_repo_id(&reference.repo_id)?;
+            Some(steer_workspace::WorkspaceRef {
+                environment_id,
+                workspace_id,
+                repo_id,
+            })
+        }
+        None => None,
+    };
+
+    let repo_ref = match proto_config.repo_ref {
+        Some(reference) => {
+            let environment_id = parse_environment_id(&reference.environment_id)?;
+            let repo_id = parse_repo_id(&reference.repo_id)?;
+            let vcs_kind = reference.vcs_kind.and_then(|value| {
+                match steer_proto::remote_workspace::v1::VcsKind::try_from(value) {
+                    Ok(steer_proto::remote_workspace::v1::VcsKind::Git) => {
+                        Some(steer_workspace::VcsKind::Git)
+                    }
+                    Ok(steer_proto::remote_workspace::v1::VcsKind::Jj) => {
+                        Some(steer_workspace::VcsKind::Jj)
+                    }
+                    _ => None,
+                }
+            });
+            Some(steer_workspace::RepoRef {
+                environment_id,
+                repo_id,
+                root_path: std::path::PathBuf::from(reference.root_path),
+                vcs_kind,
+            })
+        }
+        None => None,
+    };
+
+    let parent_session_id = match proto_config.parent_session_id {
+        Some(parent) => Some(
+            SessionId::parse(&parent).ok_or_else(|| ConversionError::InvalidData {
+                message: format!("Invalid parent_session_id: {parent}"),
+            })?,
+        ),
+        None => None,
+    };
+
+    Ok(SessionConfig {
+        default_model,
+        workspace: proto_to_workspace_config(workspace_config),
+        workspace_ref,
+        workspace_id,
+        repo_ref,
+        parent_session_id,
+        workspace_name: proto_config.workspace_name,
+        tool_config: proto_to_tool_config(tool_config),
+        system_prompt: proto_config.system_prompt,
+        metadata: proto_config.metadata,
+    })
+}
+
 /// Convert from protobuf WorkspaceConfig to internal WorkspaceConfig
 pub(crate) fn proto_to_workspace_config(proto_config: proto::WorkspaceConfig) -> WorkspaceConfig {
     match proto_config.config {
@@ -1575,7 +1668,15 @@ pub(crate) fn session_event_to_proto(
 
     let event = match session_event {
         SessionEvent::SessionCreated { .. } => None,
-        SessionEvent::SessionConfigUpdated { .. } => None,
+        SessionEvent::SessionConfigUpdated {
+            config,
+            primary_agent_id,
+        } => Some(proto::session_event::Event::SessionConfigUpdated(
+            proto::SessionConfigUpdatedEvent {
+                config: Some(session_config_to_proto(&config)),
+                primary_agent_id,
+            },
+        )),
         SessionEvent::AssistantMessageAdded { message, model } => {
             let proto_message = message_to_proto(message)?;
             let id = proto_message.id;
@@ -2309,6 +2410,16 @@ pub(crate) fn proto_to_client_event(
             })?;
             let record = compaction_record_from_proto(record)?;
             ClientEvent::ConversationCompacted { record }
+        }
+        proto::session_event::Event::SessionConfigUpdated(e) => {
+            let config = e.config.ok_or_else(|| ConversionError::MissingField {
+                field: "session_config_updated.config".to_string(),
+            })?;
+            let config = proto_to_session_config(config)?;
+            ClientEvent::SessionConfigUpdated {
+                config,
+                primary_agent_id: e.primary_agent_id,
+            }
         }
         proto::session_event::Event::Error(e) => ClientEvent::Error { message: e.message },
         proto::session_event::Event::WorkspaceChanged(_) => ClientEvent::WorkspaceChanged,

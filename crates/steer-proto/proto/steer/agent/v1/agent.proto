@@ -19,6 +19,7 @@ service AgentService {
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   rpc EditMessage(EditMessageRequest) returns (EditMessageResponse);
   rpc ApproveTool(ApproveToolRequest) returns (ApproveToolResponse);
+  rpc SwitchPrimaryAgent(SwitchPrimaryAgentRequest) returns (SwitchPrimaryAgentResponse);
   rpc CancelOperation(CancelOperationRequest) returns (CancelOperationResponse);
   rpc CompactSession(CompactSessionRequest) returns (CompactSessionResponse);
   rpc ExecuteBashCommand(ExecuteBashCommandRequest) returns (ExecuteBashCommandResponse);
@@ -80,6 +81,7 @@ message SessionEvent {
     StreamDeltaEvent stream_delta = 20;
     CompactResultEvent compact_result = 21;
     McpServerStateChangedEvent mcp_server_state_changed = 22;
+    SessionConfigUpdatedEvent session_config_updated = 23;
   }
 
   reserved 13;
@@ -98,6 +100,11 @@ message AssistantMessageAddedEvent {
 message UserMessageAddedEvent {
   string id = 1;
   UserMessage message = 2;
+}
+
+message SessionConfigUpdatedEvent {
+  SessionConfig config = 1;
+  string primary_agent_id = 2;
 }
 
 // Tool result message - no model attribution
@@ -270,6 +277,15 @@ message ApproveToolRequest {
 }
 
 message ApproveToolResponse {
+  // Empty response
+}
+
+message SwitchPrimaryAgentRequest {
+  string session_id = 1;
+  string primary_agent_id = 2;
+}
+
+message SwitchPrimaryAgentResponse {
   // Empty response
 }
 
