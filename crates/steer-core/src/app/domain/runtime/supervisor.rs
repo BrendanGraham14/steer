@@ -625,6 +625,18 @@ impl RuntimeHandle {
         self.dispatch_action(session_id, action).await
     }
 
+    pub async fn switch_primary_agent(
+        &self,
+        session_id: SessionId,
+        agent_id: String,
+    ) -> Result<(), RuntimeError> {
+        let action = Action::SwitchPrimaryAgent {
+            session_id,
+            agent_id,
+        };
+        self.dispatch_action(session_id, action).await
+    }
+
     pub async fn cancel_operation(
         &self,
         session_id: SessionId,

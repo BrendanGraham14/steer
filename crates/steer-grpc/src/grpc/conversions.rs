@@ -1575,6 +1575,7 @@ pub(crate) fn session_event_to_proto(
 
     let event = match session_event {
         SessionEvent::SessionCreated { .. } => None,
+        SessionEvent::SessionConfigUpdated { .. } => None,
         SessionEvent::AssistantMessageAdded { message, model } => {
             let proto_message = message_to_proto(message)?;
             let id = proto_message.id;

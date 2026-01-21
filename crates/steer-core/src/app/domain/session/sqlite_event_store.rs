@@ -228,6 +228,16 @@ impl EventStore for SqliteEventStore {
         .await
         .map_err(|e| EventStoreError::database(format!("Failed to append event: {e}")))?;
 
+        if let SessionEvent::SessionConfigUpdated { config, .. } = event {
+            self.update_session_catalog(session_id, Some(config), false, None)
+                .await
+                .map_err(|e| {
+                    EventStoreError::database(format!(
+                        "Failed to update session config after event append: {e}"
+                    ))
+                })?;
+        }
+
         Ok(next_seq as u64)
     }
 
@@ -724,5 +734,30 @@ mod tests {
             }
             other => panic!("Expected Whitelist visibility, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_updates_config_on_session_config_updated() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.system_prompt = Some("updated".to_string());
+
+        let event = SessionEvent::SessionConfigUpdated {
+            config: Box::new(config.clone()),
+            primary_agent_id: "planner".to_string(),
+        };
+
+        store.append(session_id, &event).await.unwrap();
+
+        let loaded = store
+            .get_session_config(session_id)
+            .await
+            .unwrap()
+            .expect("config");
+        assert_eq!(loaded.system_prompt, config.system_prompt);
     }
 }

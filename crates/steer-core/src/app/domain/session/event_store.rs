@@ -119,19 +119,29 @@ impl EventStore for InMemoryEventStore {
 
         drop(events);
 
-        if let SessionEvent::SessionCreated { config, .. } = event {
-            let mut catalog = self.catalog.write().unwrap();
-            let now = Utc::now();
-            catalog.insert(
-                session_id,
-                InMemoryCatalogEntry {
-                    config: *config.clone(),
-                    created_at: now,
-                    updated_at: now,
-                    message_count: 0,
-                    last_model: None,
-                },
-            );
+        match event {
+            SessionEvent::SessionCreated { config, .. } => {
+                let mut catalog = self.catalog.write().unwrap();
+                let now = Utc::now();
+                catalog.insert(
+                    session_id,
+                    InMemoryCatalogEntry {
+                        config: *config.clone(),
+                        created_at: now,
+                        updated_at: now,
+                        message_count: 0,
+                        last_model: None,
+                    },
+                );
+            }
+            SessionEvent::SessionConfigUpdated { config, .. } => {
+                let mut catalog = self.catalog.write().unwrap();
+                if let Some(entry) = catalog.get_mut(&session_id) {
+                    entry.config = *config.clone();
+                    entry.updated_at = Utc::now();
+                }
+            }
+            _ => {}
         }
 
         Ok(seq)
@@ -285,6 +295,9 @@ impl SessionCatalog for InMemoryEventStore {
 mod tests {
     use super::*;
     use crate::app::domain::event::SessionEvent;
+    use crate::config::model::builtin;
+    use crate::session::state::SessionConfig;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_in_memory_store_append_and_load() {
@@ -303,6 +316,40 @@ mod tests {
         let events = store.load_events(session_id).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_updates_config_on_session_config_updated() {
+        let store = InMemoryEventStore::new();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.system_prompt = Some("initial".to_string());
+
+        let created = SessionEvent::SessionCreated {
+            config: Box::new(config.clone()),
+            metadata: HashMap::new(),
+            parent_session_id: None,
+        };
+        store.append(session_id, &created).await.unwrap();
+
+        let mut updated = config.clone();
+        updated.system_prompt = Some("updated".to_string());
+
+        let event = SessionEvent::SessionConfigUpdated {
+            config: Box::new(updated.clone()),
+            primary_agent_id: "planner".to_string(),
+        };
+        store.append(session_id, &event).await.unwrap();
+
+        let loaded = store
+            .get_session_config(session_id)
+            .await
+            .unwrap()
+            .expect("config");
+        assert_eq!(loaded.system_prompt, updated.system_prompt);
     }
 
     #[tokio::test]
