@@ -3,6 +3,8 @@ use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpSe
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
+use crate::primary_agents::{apply_primary_agent_to_config, default_primary_agent_id, primary_agent_spec};
+use crate::prompts::system_prompt_for_model;
 use crate::session::state::{BackendConfig, ToolDecision};
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
@@ -125,6 +127,11 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.tools = schemas;
             vec![]
         }
+
+        Action::SwitchPrimaryAgent {
+            session_id,
+            agent_id,
+        } => handle_switch_primary_agent(state, session_id, agent_id),
 
         Action::McpServerStateChanged {
             session_id,
@@ -1199,26 +1206,184 @@ fn handle_hydrate(
     emit_mcp_connect_effects(state, session_id)
 }
 
+fn handle_switch_primary_agent(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    agent_id: String,
+) -> Vec<Effect> {
+    if state.current_operation.is_some() {
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "Cannot switch primary agent while an operation is active.".to_string(),
+            },
+        }];
+    }
+
+    let Some(base_config) = state.session_config.as_ref() else {
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "Cannot switch primary agent without session config.".to_string(),
+            },
+        }];
+    };
+
+    let Some(spec) = primary_agent_spec(&agent_id) else {
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: format!("Unknown primary agent '{agent_id}'."),
+            },
+        }];
+    };
+
+    let new_config = apply_primary_agent_to_config(&spec, base_config);
+    let backend_effects = mcp_backend_diff_effects(session_id, base_config, &new_config);
+
+    apply_session_config_state(state, &new_config, Some(agent_id.clone()));
+
+    let mut effects = Vec::new();
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::SessionConfigUpdated {
+            config: Box::new(new_config),
+            primary_agent_id: agent_id,
+        },
+    });
+    effects.extend(backend_effects);
+    effects.push(Effect::ReloadToolSchemas { session_id });
+
+    effects
+}
+
+fn apply_session_config_state(
+    state: &mut AppState,
+    config: &crate::session::state::SessionConfig,
+    primary_agent_id: Option<String>,
+) {
+    state.session_config = Some(config.clone());
+    let prompt = config
+        .system_prompt
+        .as_ref()
+        .and_then(|prompt| {
+            if prompt.trim().is_empty() {
+                None
+            } else {
+                Some(prompt.clone())
+            }
+        })
+        .unwrap_or_else(|| system_prompt_for_model(&config.default_model));
+    let environment = state
+        .cached_system_context
+        .as_ref()
+        .and_then(|context| context.environment.clone());
+    state.cached_system_context =
+        Some(crate::app::SystemContext::with_environment(prompt, environment));
+
+    state.approved_tools = config
+        .tool_config
+        .approval_policy
+        .pre_approved_tools()
+        .clone();
+    state.approved_bash_patterns.clear();
+    state.static_bash_patterns = config
+        .tool_config
+        .approval_policy
+        .preapproved
+        .bash_patterns()
+        .map(|patterns| patterns.to_vec())
+        .unwrap_or_default();
+    state.pending_approval = None;
+    state.approval_queue.clear();
+
+    if let Some(primary_agent_id) = primary_agent_id {
+        state.primary_agent_id = Some(primary_agent_id);
+    }
+}
+
+fn mcp_backend_diff_effects(
+    session_id: crate::app::domain::types::SessionId,
+    old_config: &crate::session::state::SessionConfig,
+    new_config: &crate::session::state::SessionConfig,
+) -> Vec<Effect> {
+    let old_map = collect_mcp_backends(old_config);
+    let new_map = collect_mcp_backends(new_config);
+
+    let mut effects = Vec::new();
+
+    for (server_name, (old_transport, old_filter)) in &old_map {
+        match new_map.get(server_name) {
+            None => {
+                effects.push(Effect::DisconnectMcpServer {
+                    session_id,
+                    server_name: server_name.clone(),
+                });
+            }
+            Some((new_transport, new_filter)) => {
+                if new_transport != old_transport || new_filter != old_filter {
+                    effects.push(Effect::DisconnectMcpServer {
+                        session_id,
+                        server_name: server_name.clone(),
+                    });
+                    effects.push(Effect::ConnectMcpServer {
+                        session_id,
+                        config: McpServerConfig {
+                            server_name: server_name.clone(),
+                            transport: new_transport.clone(),
+                            tool_filter: new_filter.clone(),
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    for (server_name, (new_transport, new_filter)) in &new_map {
+        if !old_map.contains_key(server_name) {
+            effects.push(Effect::ConnectMcpServer {
+                session_id,
+                config: McpServerConfig {
+                    server_name: server_name.clone(),
+                    transport: new_transport.clone(),
+                    tool_filter: new_filter.clone(),
+                },
+            });
+        }
+    }
+
+    effects
+}
+
+fn collect_mcp_backends(
+    config: &crate::session::state::SessionConfig,
+) -> std::collections::HashMap<String, (crate::tools::McpTransport, crate::session::state::ToolFilter)>
+{
+    let mut map = std::collections::HashMap::new();
+
+    for backend_config in &config.tool_config.backends {
+        let BackendConfig::Mcp {
+            server_name,
+            transport,
+            tool_filter,
+        } = backend_config;
+
+        map.insert(server_name.clone(), (transport.clone(), tool_filter.clone()));
+    }
+
+    map
+}
+
 pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
-            state.session_config = Some((**config).clone());
-            state.cached_system_context = None;
-
-            state.approved_tools = config
-                .tool_config
-                .approval_policy
-                .pre_approved_tools()
-                .clone();
-
-            if let Some(patterns) = config
-                .tool_config
-                .approval_policy
-                .preapproved
-                .bash_patterns()
-            {
-                state.static_bash_patterns = patterns.to_vec();
-            }
+            apply_session_config_state(state, config, Some(default_primary_agent_id().to_string()));
+        }
+        SessionEvent::SessionConfigUpdated {
+            config,
+            primary_agent_id,
+        } => {
+            apply_session_config_state(state, config, Some(primary_agent_id.clone()));
         }
         SessionEvent::AssistantMessageAdded { message, .. }
         | SessionEvent::UserMessageAdded { message }
@@ -1450,6 +1615,12 @@ mod tests {
         }
     }
 
+    fn base_session_config() -> SessionConfig {
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.tool_config.visibility = ToolVisibility::All;
+        config
+    }
+
     #[test]
     fn test_user_input_starts_operation() {
         let mut state = test_state();
@@ -1477,6 +1648,89 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::CallModel { .. }))
         );
+    }
+
+    #[test]
+    fn test_switch_primary_agent_updates_visibility() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let config = base_session_config();
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()));
+
+        let effects = reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "planner".to_string(),
+            },
+        );
+
+        let updated = state.session_config.as_ref().expect("config");
+        assert!(matches!(updated.tool_config.visibility, ToolVisibility::ReadOnly));
+        assert_eq!(state.primary_agent_id.as_deref(), Some("planner"));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::SessionConfigUpdated { .. },
+                ..
+            }
+        )));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, Effect::ReloadToolSchemas { .. })));
+    }
+
+    #[test]
+    fn test_switch_primary_agent_yolo_auto_approves() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let config = base_session_config();
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()));
+
+        let _ = reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "yolo".to_string(),
+            },
+        );
+
+        let updated = state.session_config.as_ref().expect("config");
+        assert_eq!(
+            updated.tool_config.approval_policy.default_behavior,
+            UnapprovedBehavior::Allow
+        );
+    }
+
+    #[test]
+    fn test_switch_primary_agent_blocked_during_operation() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let config = base_session_config();
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()));
+
+        state.current_operation = Some(OperationState {
+            op_id: OpId::new(),
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+
+        let effects = reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "planner".to_string(),
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::Error { .. },
+                ..
+            }
+        )));
+        assert!(state.primary_agent_id.as_deref() == Some("normal"));
     }
 
     #[test]

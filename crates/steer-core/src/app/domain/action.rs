@@ -67,6 +67,11 @@ pub enum Action {
         source: SchemaSource,
     },
 
+    SwitchPrimaryAgent {
+        session_id: SessionId,
+        agent_id: String,
+    },
+
     McpServerStateChanged {
         session_id: SessionId,
         server_name: String,
@@ -177,6 +182,7 @@ impl Action {
             | Action::ToolResult { session_id, .. }
             | Action::ToolSchemasAvailable { session_id, .. }
             | Action::ToolSchemasUpdated { session_id, .. }
+            | Action::SwitchPrimaryAgent { session_id, .. }
             | Action::McpServerStateChanged { session_id, .. }
             | Action::ModelResponseComplete { session_id, .. }
             | Action::ModelResponseError { session_id, .. }

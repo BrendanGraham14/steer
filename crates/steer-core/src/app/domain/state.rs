@@ -12,6 +12,7 @@ use steer_tools::{ToolCall, ToolSchema};
 pub struct AppState {
     pub session_id: SessionId,
     pub session_config: Option<SessionConfig>,
+    pub primary_agent_id: Option<String>,
 
     pub message_graph: MessageGraph,
 
@@ -96,6 +97,7 @@ impl AppState {
         Self {
             session_id,
             session_config: None,
+            primary_agent_id: None,
             message_graph: MessageGraph::new(),
             cached_system_context: None,
             tools: Vec::new(),

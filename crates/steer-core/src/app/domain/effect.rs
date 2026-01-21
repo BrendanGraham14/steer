@@ -58,6 +58,10 @@ pub enum Effect {
         op_id: OpId,
         model: ModelId,
     },
+
+    ReloadToolSchemas {
+        session_id: SessionId,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +82,8 @@ impl Effect {
             | Effect::CancelOperation { session_id, .. }
             | Effect::ConnectMcpServer { session_id, .. }
             | Effect::DisconnectMcpServer { session_id, .. }
-            | Effect::RequestCompaction { session_id, .. } => *session_id,
+            | Effect::RequestCompaction { session_id, .. }
+            | Effect::ReloadToolSchemas { session_id } => *session_id,
         }
     }
 

@@ -171,6 +171,7 @@ impl SqliteEventStore {
     fn event_type_string(event: &SessionEvent) -> &'static str {
         match event {
             SessionEvent::SessionCreated { .. } => "session_created",
+            SessionEvent::SessionConfigUpdated { .. } => "session_config_updated",
             SessionEvent::AssistantMessageAdded { .. } => "assistant_message_added",
             SessionEvent::UserMessageAdded { .. } => "user_message_added",
             SessionEvent::ToolMessageAdded { .. } => "tool_message_added",

@@ -22,6 +22,11 @@ pub enum SessionEvent {
         parent_session_id: Option<SessionId>,
     },
 
+    SessionConfigUpdated {
+        config: Box<SessionConfig>,
+        primary_agent_id: String,
+    },
+
     /// Assistant-authored message; includes the model that produced it.
     AssistantMessageAdded {
         message: Message,

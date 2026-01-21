@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
-use crate::app::domain::action::{Action, McpServerState};
+use crate::app::domain::action::{Action, McpServerState, SchemaSource};
 use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::SessionEvent;
@@ -535,6 +535,23 @@ impl SessionActor {
 
                     let _ = action_tx.send(action).await;
                 });
+
+                Ok(())
+            }
+
+            Effect::ReloadToolSchemas { session_id } => {
+                let schemas = self.tool_executor.get_tool_schemas().await;
+                let schemas = match &self.state.session_config {
+                    Some(config) => config.filter_tools_by_visibility(schemas),
+                    None => schemas,
+                };
+
+                self.handle_action(Action::ToolSchemasUpdated {
+                    session_id,
+                    schemas,
+                    source: SchemaSource::Workspace,
+                })
+                .await?;
 
                 Ok(())
             }
