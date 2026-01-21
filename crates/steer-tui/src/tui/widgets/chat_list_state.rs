@@ -12,6 +12,8 @@ pub enum ViewMode {
 pub struct ChatListState {
     /// Current scroll offset (row-based)
     pub offset: usize,
+    /// Pending scroll target to resolve during measurement
+    scroll_target: Option<ScrollTarget>,
     /// View preferences
     pub view_mode: ViewMode,
     /// Cached visible range for efficient rendering
@@ -32,6 +34,12 @@ pub struct VisibleRange {
     pub last_y: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollTarget {
+    Bottom,
+    Item(usize),
+}
+
 impl Default for ChatListState {
     fn default() -> Self {
         Self::new()
@@ -42,6 +50,7 @@ impl ChatListState {
     pub fn new() -> Self {
         Self {
             offset: 0,
+            scroll_target: None,
             view_mode: ViewMode::Compact,
             visible_range: None,
             total_content_height: 0,
@@ -51,23 +60,44 @@ impl ChatListState {
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        // This will be calculated during render
-        self.offset = usize::MAX;
+        // Resolve during render when we know total height
+        self.scroll_target = Some(ScrollTarget::Bottom);
         self.user_scrolled = false;
     }
 
-    pub fn scroll_up(&mut self, amount: usize) {
+    pub fn scroll_up(&mut self, amount: usize) -> bool {
+        self.scroll_target = None;
+        let previous = self.offset;
         self.offset = self.offset.saturating_sub(amount);
-        self.user_scrolled = true;
+        if let Some(max_offset) = self.max_offset() {
+            self.offset = self.offset.min(max_offset);
+        }
+        if self.offset != previous {
+            self.user_scrolled = true;
+            true
+        } else {
+            false
+        }
     }
 
-    pub fn scroll_down(&mut self, amount: usize) {
+    pub fn scroll_down(&mut self, amount: usize) -> bool {
+        self.scroll_target = None;
+        let previous = self.offset;
         self.offset = self.offset.saturating_add(amount);
-        self.user_scrolled = true;
+        if let Some(max_offset) = self.max_offset() {
+            self.offset = self.offset.min(max_offset);
+        }
+        if self.offset != previous {
+            self.user_scrolled = true;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn scroll_to_top(&mut self) {
         self.offset = 0;
+        self.scroll_target = None;
         self.user_scrolled = true;
     }
 
@@ -86,12 +116,8 @@ impl ChatListState {
 
     /// Scroll to center a specific item in the viewport
     pub fn scroll_to_item(&mut self, index: usize) {
-        // Special encoding: use high values to indicate specific item scrolling
-        // We use u16::MAX - 1 - index to encode the target item
-        if index < (usize::MAX - 100) {
-            self.offset = usize::MAX - 1 - index;
-            self.user_scrolled = true;
-        }
+        self.scroll_target = Some(ScrollTarget::Item(index));
+        self.user_scrolled = true;
     }
 
     pub fn toggle_view_mode(&mut self) {
@@ -99,5 +125,20 @@ impl ChatListState {
             ViewMode::Compact => ViewMode::Detailed,
             ViewMode::Detailed => ViewMode::Compact,
         };
+    }
+
+    pub fn take_scroll_target(&mut self) -> Option<ScrollTarget> {
+        self.scroll_target.take()
+    }
+
+    fn max_offset(&self) -> Option<usize> {
+        if self.total_content_height == 0 || self.last_viewport_height == 0 {
+            None
+        } else {
+            Some(
+                self.total_content_height
+                    .saturating_sub(self.last_viewport_height as usize),
+            )
+        }
     }
 }

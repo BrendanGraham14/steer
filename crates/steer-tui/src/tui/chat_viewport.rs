@@ -5,11 +5,12 @@ use crate::tui::{
     model::{ChatItem, ChatItemData},
     state::chat_store::ChatStore,
     theme::{Component, Theme},
-    widgets::{ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, ViewMode},
+    widgets::{ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, ScrollTarget, ViewMode},
 };
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
+    text::{Line, Span},
 };
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -91,12 +92,24 @@ impl FlattenedItem {
     }
 }
 
+#[derive(Debug, Clone)]
+enum RowKind {
+    Item { idx: usize },
+    Gap,
+}
+
 /// Metrics for a single row to be rendered
 #[derive(Debug, Clone)]
 struct RowMetrics {
-    idx: usize,                // index into self.items
+    kind: RowKind,
     render_h: usize,           // actual height to render in viewport
     first_visible_line: usize, // line offset for partial rendering
+}
+
+#[derive(Debug, Clone)]
+struct Segment {
+    kind: RowKind,
+    height: usize,
 }
 
 /// Widget item wrapper for height caching
@@ -390,14 +403,14 @@ impl ChatViewport {
             return Vec::new();
         }
 
-        let spacing = theme.message_spacing();
+        let spacing = theme.message_spacing() as usize;
         let mut total_height: usize = 0;
         let mut item_top_positions = Vec::with_capacity(self.items.len());
         let items_len = self.items.len();
+        let mut segments: Vec<Segment> = Vec::with_capacity(items_len.saturating_mul(2));
 
-        // Calculate total height and item positions
+        // Calculate total height and build segments
         for (idx, item) in self.items.iter_mut().enumerate() {
-            // Get or calculate height
             let h = item
                 .cached_heights
                 .get_height(self.state.view_mode)
@@ -412,11 +425,18 @@ impl ChatViewport {
                 });
 
             item_top_positions.push(total_height);
+            segments.push(Segment {
+                kind: RowKind::Item { idx },
+                height: h,
+            });
             total_height = total_height.saturating_add(h);
 
-            // Add spacing after all messages except the last
-            if idx + 1 < items_len && item.item.is_message() {
-                total_height = total_height.saturating_add(spacing as usize);
+            if idx + 1 < items_len && item.item.is_message() && spacing > 0 {
+                segments.push(Segment {
+                    kind: RowKind::Gap,
+                    height: spacing,
+                });
+                total_height = total_height.saturating_add(spacing);
             }
         }
 
@@ -424,82 +444,55 @@ impl ChatViewport {
         self.state.total_content_height = total_height;
         self.state.last_viewport_height = area.height;
         let viewport_height = area.height as usize;
+        let max_offset = total_height.saturating_sub(viewport_height);
 
-        // Adjust scroll offset if needed
-        if self.state.offset == usize::MAX || total_height <= viewport_height {
-            // Scroll to bottom or fit in view
-            self.state.offset = total_height.saturating_sub(viewport_height);
-            self.state.user_scrolled = false;
-        } else if self.state.offset > usize::MAX - 100 {
-            // Special case: scroll to specific item
-            let target_idx = usize::MAX - 1 - self.state.offset;
-            if let Some(&item_y) = item_top_positions.get(target_idx) {
-                let half_viewport = viewport_height / 2;
-                self.state.offset = item_y.saturating_sub(half_viewport);
-                self.state.offset = self
-                    .state
-                    .offset
-                    .min(total_height.saturating_sub(viewport_height));
+        if let Some(target) = self.state.take_scroll_target() {
+            match target {
+                ScrollTarget::Bottom => {
+                    self.state.offset = max_offset;
+                    self.state.user_scrolled = false;
+                }
+                ScrollTarget::Item(target_idx) => {
+                    if let Some(&item_y) = item_top_positions.get(target_idx) {
+                        let half_viewport = viewport_height / 2;
+                        self.state.offset = item_y.saturating_sub(half_viewport);
+                    }
+                }
             }
-        } else {
-            // Ensure we don't scroll past the bottom
-            self.state.offset = self
-                .state
-                .offset
-                .min(total_height.saturating_sub(viewport_height));
         }
 
-        // Build RowMetrics for visible items
+        self.state.offset = self.state.offset.min(max_offset);
+
+        // Build RowMetrics for visible segments
         let mut rows = Vec::new();
-        let mut cumulative_y = 0;
+        let mut cumulative_y: usize = 0;
+        let viewport_bottom = self.state.offset.saturating_add(viewport_height);
 
-        for (idx, item) in self.items.iter().enumerate() {
-            let item_height = item
-                .cached_heights
-                .get_height(self.state.view_mode)
-                .expect("Height should be cached");
+        for segment in segments {
+            let segment_bottom = cumulative_y.saturating_add(segment.height);
 
-            let item_bottom = cumulative_y + item_height;
-
-            // Check if item is visible
-            if item_bottom > self.state.offset
-                && cumulative_y < self.state.offset.saturating_add(viewport_height)
-            {
-                // Calculate render height and first visible line
+            if segment_bottom > self.state.offset && cumulative_y < viewport_bottom {
                 let (render_h, first_visible_line) = if cumulative_y < self.state.offset {
-                    // Item starts above viewport - partial render from offset
                     let first_line = self.state.offset - cumulative_y;
-                    let visible_height = item_height.saturating_sub(first_line);
+                    let visible_height = segment.height.saturating_sub(first_line);
                     (visible_height.min(viewport_height), first_line)
-                } else if item_bottom > self.state.offset.saturating_add(viewport_height) {
-                    // Item extends below viewport - clip to viewport
-                    let visible_height = self
-                        .state
-                        .offset
-                        .saturating_add(viewport_height)
-                        .saturating_sub(cumulative_y);
+                } else if segment_bottom > viewport_bottom {
+                    let visible_height = viewport_bottom.saturating_sub(cumulative_y);
                     (visible_height, 0)
                 } else {
-                    // Item fully visible
-                    (item_height, 0)
+                    (segment.height, 0)
                 };
 
                 rows.push(RowMetrics {
-                    idx,
+                    kind: segment.kind,
                     render_h,
                     first_visible_line,
                 });
             }
 
-            cumulative_y = cumulative_y.saturating_add(item_height);
+            cumulative_y = segment_bottom;
 
-            // Add spacing after messages
-            if idx + 1 < items_len && item.item.is_message() {
-                cumulative_y = cumulative_y.saturating_add(spacing as usize);
-            }
-
-            // Early exit if we're past the visible area
-            if cumulative_y > self.state.offset.saturating_add(viewport_height) {
+            if cumulative_y > viewport_bottom {
                 break;
             }
         }
@@ -516,7 +509,11 @@ impl ChatViewport {
         theme: &Theme,
     ) {
         for row in rows {
-            let widget_item = &mut self.items[row.idx];
+            let idx = match row.kind {
+                RowKind::Item { idx } => idx,
+                RowKind::Gap => continue,
+            };
+            let widget_item = &mut self.items[idx];
             let is_hovered = hovered.is_some_and(|h| h == widget_item.id);
 
             // Only recreate widget if hover state changed or it needs animation
@@ -566,17 +563,10 @@ impl ChatViewport {
         self.prepare_visible_widgets(&rows, hovered, spinner, theme);
 
         // Build constraints for ratatui Layout
-        let spacing = theme.message_spacing();
-        let mut constraints = Vec::with_capacity(rows.len() * 2);
+        let mut constraints = Vec::with_capacity(rows.len());
 
-        for (i, row) in rows.iter().enumerate() {
-            // Add constraint for the widget
+        for row in &rows {
             constraints.push(Constraint::Length(row.render_h as u16));
-
-            // Add spacing after messages (except last row)
-            if i + 1 < rows.len() && self.items[row.idx].item.is_message() {
-                constraints.push(Constraint::Length(spacing));
-            }
         }
 
         let rects = Layout::vertical(constraints).split(area);
@@ -585,23 +575,35 @@ impl ChatViewport {
         // Render each visible row
         for row in &rows {
             if let Some(rect) = rect_iter.next() {
-                let widget_item = &mut self.items[row.idx];
+                match row.kind {
+                    RowKind::Item { idx } => {
+                        let widget_item = &mut self.items[idx];
 
-                let lines = widget_item
-                    .widget
-                    .lines(rect.width, self.state.view_mode, theme);
+                        let lines = widget_item
+                            .widget
+                            .lines(rect.width, self.state.view_mode, theme);
 
-                let start = row.first_visible_line;
-                let end = (start + row.render_h).min(lines.len());
-                let buf = f.buffer_mut();
-                for (row_idx, line) in lines[start..end].iter().enumerate() {
-                    let y = rect.y + row_idx as u16;
-                    buf.set_line(rect.x, y, line, rect.width);
-                }
-
-                // Skip the spacer rect if present
-                if row.idx + 1 < self.items.len() && self.items[row.idx].item.is_message() {
-                    rect_iter.next();
+                        let start = row.first_visible_line;
+                        let end = (start + row.render_h).min(lines.len());
+                        let buf = f.buffer_mut();
+                        for (row_idx, line) in lines[start..end].iter().enumerate() {
+                            let y = rect.y + row_idx as u16;
+                            buf.set_line(rect.x, y, line, rect.width);
+                        }
+                    }
+                    RowKind::Gap => {
+                        if rect.width > 0 && rect.height > 0 {
+                            let gap_style = theme.style(Component::ChatListBackground);
+                            let gap_line = Line::from(Span::styled(
+                                " ".repeat(rect.width as usize),
+                                gap_style,
+                            ));
+                            let buf = f.buffer_mut();
+                            for y in 0..rect.height {
+                                buf.set_line(rect.x, rect.y + y, &gap_line, rect.width);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -863,7 +865,7 @@ mod tests {
     use crate::tui::model::NoticeLevel;
     use ratatui::{Terminal, backend::TestBackend};
     use std::time::SystemTime;
-    use steer_core::app::conversation::{Message, MessageData, UserContent};
+    use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
     use steer_tools::result::ExternalResult;
 
     fn create_test_message(content: &str, id: &str) -> ChatItem {
@@ -872,6 +874,25 @@ mod tests {
             data: ChatItemData::Message(Message {
                 data: MessageData::User {
                     content: vec![UserContent::Text {
+                        text: content.to_string(),
+                    }],
+                },
+                timestamp: SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                id: id.to_string(),
+                parent_message_id: None,
+            }),
+        }
+    }
+
+    fn create_assistant_message(content: &str, id: &str) -> ChatItem {
+        ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::Message(Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::Text {
                         text: content.to_string(),
                     }],
                 },
@@ -1018,7 +1039,7 @@ mod tests {
                 assert!(total_height > area.height as usize, "Content should be taller than viewport for this test - total_height: {}, viewport_height: {}", total_height, area.height);
 
                 // Scroll to bottom
-                viewport.state.offset = usize::MAX; // This triggers scroll-to-bottom logic
+                viewport.state.scroll_to_bottom();
 
                 // Render
                 viewport.render(f, area, 0, None, &theme);
@@ -1111,7 +1132,7 @@ mod tests {
             assert!(total_height > area.height as usize, "Content should be much taller than viewport - total_height: {}, viewport_height: {}", total_height, area.height);
 
             // Scroll to bottom
-            viewport.state.offset = usize::MAX;
+            viewport.state.scroll_to_bottom();
 
             // Render
             viewport.render(f, area, 0, None, &theme);
@@ -1183,7 +1204,14 @@ mod tests {
 
         // Should see all messages if they fit
         assert!(!rows.is_empty(), "Should have visible rows");
-        assert_eq!(rows[0].idx, 0, "First visible row should be index 0");
+        match rows[0].kind {
+            RowKind::Item { idx } => {
+                assert_eq!(idx, 0, "First visible row should be index 0");
+            }
+            RowKind::Gap => {
+                panic!("First visible row should be a message row");
+            }
+        }
         assert_eq!(
             rows[0].first_visible_line, 0,
             "First row should start from line 0"
@@ -1240,7 +1268,14 @@ mod tests {
         let rows = viewport.measure_visible_rows(area, &theme);
 
         assert!(!rows.is_empty(), "Should have visible rows");
-        assert_eq!(rows[0].idx, 0, "First visible row should still be index 0");
+        match rows[0].kind {
+            RowKind::Item { idx } => {
+                assert_eq!(idx, 0, "First visible row should still be index 0");
+            }
+            RowKind::Gap => {
+                panic!("First visible row should be a message row");
+            }
+        }
 
         // Only check first_visible_line if the first message is actually tall enough
         if viewport.items[0]
@@ -1254,6 +1289,65 @@ mod tests {
                 "First row should skip 5 lines"
             );
         }
+    }
+
+    #[test]
+    fn test_gap_rows_render_when_offset_in_spacing() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let messages = vec![
+            create_assistant_message("First message", "msg1"),
+            create_assistant_message("Second message", "msg2"),
+        ];
+
+        let backend = TestBackend::new(80, 2);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+
+                let chat_store = create_test_chat_store();
+                viewport.rebuild(
+                    &messages.iter().collect(),
+                    area.width,
+                    ViewMode::Compact,
+                    &theme,
+                    &chat_store,
+                    None,
+                );
+
+                let _rows = viewport.measure_visible_rows(area, &theme);
+                let first_height = viewport.items[0]
+                    .cached_heights
+                    .get_height(ViewMode::Compact)
+                    .unwrap_or(0);
+                assert!(first_height > 0, "First message should have height");
+
+                // Offset to the spacing row immediately after the first item.
+                viewport.state.offset = first_height;
+
+                viewport.render(f, area, 0, None, &theme);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let line0: String = (0..80)
+            .map(|x| buffer.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        let line1: String = (0..80)
+            .map(|x| buffer.cell((x, 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+
+        assert!(
+            !line0.contains("Second message"),
+            "First visible line should be the gap row"
+        );
+        assert!(
+            line1.contains("Second message"),
+            "Second line should contain the next message"
+        );
     }
 
     #[test]

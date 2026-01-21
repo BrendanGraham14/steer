@@ -11,7 +11,7 @@ pub mod popup_list;
 pub mod setup;
 pub mod status_bar;
 
-pub use chat_list_state::{ChatListState, ViewMode, VisibleRange};
+pub use chat_list_state::{ChatListState, ScrollTarget, ViewMode, VisibleRange};
 pub use chat_widgets::{
     chat_widget::{ChatBlock, ChatRenderable, DynamicChatWidget, HeightCache, ParagraphWidget},
     slash_input::SlashInputWidget,

@@ -678,8 +678,7 @@ impl Tui {
                     || (self.input_mode == InputMode::Simple
                         && self.input_panel_state.content().is_empty())
                 {
-                    self.chat_viewport.state_mut().scroll_up(3);
-                    true
+                    self.chat_viewport.state_mut().scroll_up(3)
                 } else {
                     false
                 }
@@ -690,8 +689,7 @@ impl Tui {
                     || (self.input_mode == InputMode::Simple
                         && self.input_panel_state.content().is_empty())
                 {
-                    self.chat_viewport.state_mut().scroll_down(3);
-                    true
+                    self.chat_viewport.state_mut().scroll_down(3)
                 } else {
                     false
                 }
